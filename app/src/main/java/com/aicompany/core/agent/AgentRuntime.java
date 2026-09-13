@@ -210,7 +210,9 @@ public class AgentRuntime {
                             ceoService.executeAgentTask(
                                     agentId,
                                     prompt,
-                                    taskSummary
+                                    taskSummary,
+                                    missionId,
+                                    taskId
                             );
 
                 } catch (Exception ex) {

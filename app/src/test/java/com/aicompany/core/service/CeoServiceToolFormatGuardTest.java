@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
@@ -25,7 +26,8 @@ class CeoServiceToolFormatGuardTest {
             "qwen2.5-coder:14b",
             "qwen3:8b",
             JsonMapper.builder().build(),
-            mock(EvidenceAcquisitionService.class)
+            mock(EvidenceAcquisitionService.class),
+            mock(CompanyEventPublisher.class)
     );
 
     @Test

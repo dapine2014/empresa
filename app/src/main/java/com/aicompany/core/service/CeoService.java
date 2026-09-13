@@ -2,6 +2,7 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
+import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,19 +59,22 @@ public class CeoService {
     private final String agentModel;
     private final JsonMapper jsonMapper;
     private final EvidenceAcquisitionService evidenceAcquisitionService;
+    private final CompanyEventPublisher events;
 
     public CeoService(
             RestClient ollama,
             @Value("${ollama.ceo-model}") String ceoModel,
             @Value("${ollama.agent-model}") String agentModel,
             JsonMapper jsonMapper,
-            EvidenceAcquisitionService evidenceAcquisitionService) {
+            EvidenceAcquisitionService evidenceAcquisitionService,
+            CompanyEventPublisher events) {
 
         this.ollama = ollama;
         this.ceoModel = ceoModel;
         this.agentModel = agentModel;
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
+        this.events = events;
     }
 
     public String chat(String message) {
@@ -118,7 +122,9 @@ public class CeoService {
     public AgentResult executeAgentTask(
             String agentId,
             String prompt,
-            String taskSummary) {
+            String taskSummary,
+            String missionId,
+            String taskId) {
 
         var system =
                 systemPrompt()
@@ -171,7 +177,8 @@ public class CeoService {
                     toolCall.query()
             );
 
-            var toolResultJson = executeTool(agentId, toolCall);
+            var toolResultJson =
+                    executeTool(agentId, missionId, taskId, toolCall);
 
             messages.add(Map.of(
                     "role", "assistant",
@@ -281,10 +288,33 @@ public class CeoService {
      * descarta aquí — no llega al modelo, para que no pueda citarlo como si
      * fuera una fuente real. Si ninguno sobrevive, se le informa al modelo
      * explícitamente para que no invente evidencia.
+     *
+     * <p>Eventos Kafka (`EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` §22, prefijo
+     * obligatorio {@code EMPRESA_}): {@code EMPRESA_EVIDENCE_SEARCH_STARTED}
+     * al recibir la query, {@code EMPRESA_EVIDENCE_SEARCH_COMPLETED} con el
+     * conteo de candidatos crudos, y por cada candidato confirmado o
+     * descartado {@code EMPRESA_EVIDENCE_VERIFIED}/{@code
+     * EMPRESA_EVIDENCE_REJECTED}. Deliberadamente **no** se emite un
+     * {@code EMPRESA_EVIDENCE_CANDIDATE_CREATED} por resultado crudo (lo
+     * sugiere el doc de referencia): sería redundante con el conteo que ya
+     * va en {@code SEARCH_COMPLETED} y multiplicaría el volumen de eventos
+     * sin agregar información nueva — mismo criterio que llevó a que
+     * {@code confirmReachable} nunca marque {@code verified=true} solo por
+     * un fetch exitoso.
      */
     private String executeTool(
             String agentId,
+            String missionId,
+            String taskId,
             ToolCall toolCall) {
+
+        events.publish(
+                "EMPRESA_EVIDENCE_SEARCH_STARTED",
+                missionId,
+                taskId,
+                agentId,
+                Map.of("query", toolCall.query())
+        );
 
         try {
 
@@ -292,6 +322,17 @@ public class CeoService {
                     evidenceAcquisitionService.searchEvidence(
                             toolCall.query()
                     );
+
+            events.publish(
+                    "EMPRESA_EVIDENCE_SEARCH_COMPLETED",
+                    missionId,
+                    taskId,
+                    agentId,
+                    Map.of(
+                            "query", toolCall.query(),
+                            "candidatesFound", candidates.size()
+                    )
+            );
 
             var confirmed = new ArrayList<Map<String, Object>>();
 
@@ -323,6 +364,18 @@ public class CeoService {
                             evidence.description()
                     ));
 
+                    events.publish(
+                            "EMPRESA_EVIDENCE_VERIFIED",
+                            missionId,
+                            taskId,
+                            agentId,
+                            Map.of(
+                                    "query", toolCall.query(),
+                                    "url", candidate.url(),
+                                    "title", candidate.title() == null ? "" : candidate.title()
+                            )
+                    );
+
                 } catch (Exception unreachableOrUnrelated) {
 
                     log.info(
@@ -330,6 +383,20 @@ public class CeoService {
                             agentId,
                             candidate.url(),
                             unreachableOrUnrelated.getMessage()
+                    );
+
+                    events.publish(
+                            "EMPRESA_EVIDENCE_REJECTED",
+                            missionId,
+                            taskId,
+                            agentId,
+                            Map.of(
+                                    "query", toolCall.query(),
+                                    "url", candidate.url() == null ? "" : candidate.url(),
+                                    "reason", unreachableOrUnrelated.getMessage() == null
+                                            ? "motivo desconocido"
+                                            : unreachableOrUnrelated.getMessage()
+                            )
                     );
                 }
             }

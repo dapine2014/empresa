@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.evidence.EvidenceDedupKey;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
@@ -92,6 +93,19 @@ public class MissionMemoryService {
      * del "Evidence Engine": permite que la evidencia acumulada por la
      * empresa se pueda consultar/auditar independientemente de la tarea
      * puntual que la generó.
+     *
+     * <p>Deduplicación (`EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` §17): el id del
+     * nodo ya no es {@code "{taskId}-EVIDENCE-{índice}"} (garantizaba un
+     * nodo nuevo por tarea, aunque dos agentes citaran exactamente la misma
+     * fuente) sino {@link EvidenceDedupKey#stableId}, una clave estable
+     * derivada de {@code source}+{@code description} normalizados. Si dos
+     * tareas citan la misma evidencia, comparten el mismo nodo — cada una
+     * igual gana su propia relación {@code (:AgentTask)-[:HAS_EVIDENCE]}
+     * hacia él (así se puede consultar cuántos agentes corroboraron un
+     * mismo dato), pero el contenido del nodo (`missionId`/`agentId`/
+     * `description`/`source`/`sourceType`/`verified`) solo se fija en la
+     * primera escritura ({@code ON CREATE SET}) — las siguientes citas de
+     * la misma evidencia no lo pisan, solo refrescan {@code updatedAt}.
      */
     public void recordEvidence(
             String taskId,
@@ -106,9 +120,7 @@ public class MissionMemoryService {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
 
-                for (int i = 0; i < evidenceList.size(); i++) {
-
-                    var evidence = evidenceList.get(i);
+                for (var evidence : evidenceList) {
 
                     if (evidence == null) {
                         continue;
@@ -116,14 +128,16 @@ public class MissionMemoryService {
 
                     tx.run("MATCH (t:AgentTask {id:$taskId}) " +
                                     "MERGE (e:Evidence {id:$evidenceId}) " +
-                                    "SET e.missionId=$missionId, e.agentId=$agentId, " +
+                                    "ON CREATE SET e.missionId=$missionId, e.agentId=$agentId, " +
                                     "e.description=$description, e.source=$source, " +
                                     "e.sourceType=$sourceType, e.verified=$verified, " +
-                                    "e.updatedAt=$updatedAt " +
+                                    "e.createdAt=$updatedAt, e.updatedAt=$updatedAt " +
+                                    "ON MATCH SET e.updatedAt=$updatedAt " +
                                     "MERGE (t)-[:HAS_EVIDENCE]->(e)",
                             Map.of(
                                     "taskId", taskId,
-                                    "evidenceId", taskId + "-EVIDENCE-" + i,
+                                    "evidenceId", EvidenceDedupKey.stableId(
+                                            evidence.source(), evidence.description()),
                                     "missionId", missionId,
                                     "agentId", agentId,
                                     "description", evidence.description() == null ? "" : evidence.description(),
