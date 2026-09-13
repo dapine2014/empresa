@@ -26,10 +26,11 @@ class MissionExecutorTest {
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
     private final ContradictionDetector contradictionDetector = mock(ContradictionDetector.class);
     private final AppProperties appProperties = new AppProperties("AI Company", 50.0, 60);
+    private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
 
     private final MissionExecutor executor = new MissionExecutor(
             memory, runtime, ceoService, Runnable::run, events, jsonMapper,
-            contradictionDetector, appProperties
+            contradictionDetector, appProperties, opportunityMemory
     );
 
     @Test
@@ -53,6 +54,43 @@ class MissionExecutorTest {
         verify(ceoService, times(1)).executeMission(anyString(), anyString());
 
         assertFalse(resultsCaptor.getValue().contains("AGENTES_FALLIDOS"));
+
+        verify(opportunityMemory).recordOpportunity("MISSION-1", "instrucción");
+    }
+
+    @Test
+    void recordsCustomerCandidatesFromAgentResults() throws Exception {
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        var candidate = new AgentResult.CustomerCandidate(
+                "Microempresas de logística en Medellín",
+                "Identificadas en estudios de mercado citados por el agente",
+                "https://example.com/estudio-logistica",
+                "WEB"
+        );
+
+        var salesResult = new AgentResult(
+                "sales", "MARKET_DISCOVERY", "NOT_VALIDATED",
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                "recomendación de sales", 0.5, List.of(candidate)
+        );
+
+        when(runtime.execute(anyString(), eq("MISSION-1"), eq("sales"), anyString(), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(salesResult));
+
+        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString())).thenReturn("consolidado");
+
+        executor.executeAsync("MISSION-1", "instrucción").get();
+
+        verify(opportunityMemory).recordOpportunity("MISSION-1", "instrucción");
+        verify(opportunityMemory).recordCandidates("MISSION-1", "sales", List.of(candidate));
+        // Los demás agentes no reportaron candidatos -- se llama igual,
+        // pero con lista vacía (recordCandidates no hace nada con eso).
+        verify(opportunityMemory).recordCandidates("MISSION-1", "product", List.of());
     }
 
     @Test
@@ -170,6 +208,7 @@ class MissionExecutorTest {
         verify(memory).updateMission(
                 eq("MISSION-1"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
         verify(ceoService, never()).executeMission(anyString(), anyString());
+        verify(opportunityMemory, never()).recordOpportunity(anyString(), anyString());
     }
 
     private void stubAgent(String agentId) {

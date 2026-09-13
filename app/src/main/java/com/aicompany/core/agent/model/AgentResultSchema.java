@@ -61,6 +61,31 @@ public final class AgentResultSchema {
             "additionalProperties", false
     );
 
+    /**
+     * Debe coincidir con {@link AgentResult.CustomerCandidate}. Reutiliza
+     * {@code EVIDENCE_SOURCE_TYPES}: es el mismo concepto de "de dónde
+     * salió este dato" que en `Evidence`, no uno nuevo.
+     */
+    private static final Map<String, Object> CUSTOMER_CANDIDATE_ITEM_SCHEMA = Map.of(
+            "type", "object",
+            "properties", Map.of(
+                    "name", Map.of("type", "string", "minLength", 1),
+                    "description", Map.of("type", "string", "minLength", 1),
+                    "source", Map.of("type", "string"),
+                    "sourceType", Map.of(
+                            "type", "string",
+                            "enum", EVIDENCE_SOURCE_TYPES
+                    )
+            ),
+            "required", List.of(
+                    "name",
+                    "description",
+                    "source",
+                    "sourceType"
+            ),
+            "additionalProperties", false
+    );
+
     private static final Map<String, Object> CALCULATION_ITEM_SCHEMA = Map.of(
             "type", "object",
             "properties", Map.of(
@@ -113,7 +138,11 @@ public final class AgentResultSchema {
                     )),
                     Map.entry("risks", stringArray()),
                     Map.entry("recommendation", Map.of("type", "string", "minLength", 1)),
-                    Map.entry("confidence", Map.of("type", "number"))
+                    Map.entry("confidence", Map.of("type", "number")),
+                    Map.entry("customerCandidates", Map.of(
+                            "type", "array",
+                            "items", CUSTOMER_CANDIDATE_ITEM_SCHEMA
+                    ))
             ),
             "required", List.of(
                     "agent",
@@ -127,7 +156,8 @@ public final class AgentResultSchema {
                     "calculations",
                     "risks",
                     "recommendation",
-                    "confidence"
+                    "confidence",
+                    "customerCandidates"
             ),
             "additionalProperties", false
     );

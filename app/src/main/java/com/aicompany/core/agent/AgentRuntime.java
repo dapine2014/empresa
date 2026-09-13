@@ -505,6 +505,12 @@ public class AgentRuntime {
                 - No declares un resultado futuro como
                   resultado verificado.
                 - No presentes cálculos sin comprobarlos.
+                - customerCandidates es para perfiles de clientes
+                  concretos y reales que hayas identificado en tu
+                  investigación (no genéricos como "microempresarios en
+                  general") — nunca un cliente real ni contactado, eso
+                  solo lo registra un humano. Si no identificaste ninguno,
+                  déjalo como lista vacía; no inventes uno para llenarlo.
                 - Responde ÚNICAMENTE con JSON válido.
                 - No utilices Markdown.
                 - No agregues texto antes o después del JSON.
@@ -529,7 +535,8 @@ public class AgentRuntime {
                   "calculations": [],
                   "risks": [],
                   "recommendation": "",
-                  "confidence": 0.0
+                  "confidence": 0.0,
+                  "customerCandidates": []
                 }
 
                 EVIDENCE:
@@ -549,6 +556,15 @@ public class AgentRuntime {
                   "inputB": 0,
                   "operation": "ADD|SUBTRACT",
                   "result": 0
+                }
+
+                CUSTOMER_CANDIDATE:
+
+                {
+                  "name": "",
+                  "description": "",
+                  "source": "",
+                  "sourceType": "WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE"
                 }
 
                 ACCIÓN:

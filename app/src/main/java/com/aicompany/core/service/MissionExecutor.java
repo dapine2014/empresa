@@ -53,6 +53,7 @@ public class MissionExecutor {
     private final JsonMapper jsonMapper;
     private final ContradictionDetector contradictionDetector;
     private final AppProperties appProperties;
+    private final OpportunityMemoryService opportunityMemory;
 
     public MissionExecutor(
             MissionMemoryService memory,
@@ -63,7 +64,8 @@ public class MissionExecutor {
             CompanyEventPublisher events,
             JsonMapper jsonMapper,
             ContradictionDetector contradictionDetector,
-            AppProperties appProperties) {
+            AppProperties appProperties,
+            OpportunityMemoryService opportunityMemory) {
 
         this.memory = memory;
         this.runtime = runtime;
@@ -73,6 +75,7 @@ public class MissionExecutor {
         this.jsonMapper = jsonMapper;
         this.contradictionDetector = contradictionDetector;
         this.appProperties = appProperties;
+        this.opportunityMemory = opportunityMemory;
     }
 
     public CompletableFuture<Void> executeAsync(
@@ -375,6 +378,28 @@ public class MissionExecutor {
                         failedAgents.stream()
                                 .map(AgentExecutionOutcome::agentId)
                                 .toList()
+                );
+            }
+
+            /*
+             * Flujo Opportunity -> Customer candidato (100% nivel 🟢,
+             * `empresa.md` §5): la misión produjo al menos un resultado,
+             * así que hay una oportunidad de negocio real que registrar.
+             * Los candidatos de cliente que cada agente haya identificado
+             * (campo opcional `AgentResult.customerCandidates`, casi
+             * siempre vacío) quedan como nodos `Customer {status:'LEAD'}`
+             * separados de los clientes reales de `CustomerController`
+             * (canal humano, sin cambios) — ver
+             * `OpportunityMemoryService` para el porqué de esa separación.
+             */
+            opportunityMemory.recordOpportunity(missionId, instruction);
+
+            for (var result : agentResults) {
+
+                opportunityMemory.recordCandidates(
+                        missionId,
+                        result.agent(),
+                        result.customerCandidates()
                 );
             }
 

@@ -25,8 +25,38 @@ public record AgentResult(
         List<Calculation> calculations,
         @JsonDeserialize(contentUsing = LenientStringDeserializer.class) List<String> risks,
         String recommendation,
-        double confidence
+        double confidence,
+        List<CustomerCandidate> customerCandidates
 ) {
+
+    /**
+     * Constructor de compatibilidad sin {@code customerCandidates} (queda
+     * vacío) — evita tocar cada uno de los {@code new AgentResult(...)} ya
+     * existentes en los tests con las 12 posiciones originales, solo por
+     * agregar un campo que casi ningún agente/acción va a poblar.
+     */
+    public AgentResult(
+            String agent,
+            String action,
+            String verificationStatus,
+            List<String> facts,
+            List<String> hypotheses,
+            List<String> estimates,
+            List<Evidence> evidence,
+            List<String> evidenceRequired,
+            List<Calculation> calculations,
+            List<String> risks,
+            String recommendation,
+            double confidence) {
+
+        this(
+                agent, action, verificationStatus,
+                facts, hypotheses, estimates,
+                evidence, evidenceRequired, calculations, risks,
+                recommendation, confidence,
+                List.of()
+        );
+    }
 
     public record Evidence(
             String description,
@@ -42,6 +72,22 @@ public record AgentResult(
             double inputB,
             String operation,
             double result
+    ) {
+    }
+
+    /**
+     * Candidato de cliente (LEAD/PROSPECT) identificado por un agente
+     * durante su investigación — nunca un cliente real ni verificado
+     * (para eso existe {@code CustomerController}, canal humano con
+     * evidencia obligatoria). Deliberadamente sin campo {@code verified}:
+     * un candidato de agente jamás se marca verificado, es una hipótesis
+     * de a quién vender, no una relación real confirmada.
+     */
+    public record CustomerCandidate(
+            String name,
+            String description,
+            String source,
+            String sourceType
     ) {
     }
 
