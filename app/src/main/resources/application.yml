@@ -29,7 +29,7 @@ neo4j:
 ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
   ceo-model: ${OLLAMA_CEO_MODEL:qwen2.5-coder:14b}
-  agent-model: ${OLLAMA_AGENT_MODEL:qwen2.5-coder:7b}
+  agent-model: ${OLLAMA_AGENT_MODEL:qwen3:8b}
 
 evidence:
   web-search:

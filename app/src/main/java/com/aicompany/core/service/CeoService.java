@@ -141,7 +141,8 @@ public class CeoService {
                         agentModel,
                         toolDecisionMessages,
                         null,
-                        AGENT_TOOLS
+                        AGENT_TOOLS,
+                        true
                 );
 
         var toolCall =
@@ -198,7 +199,8 @@ public class CeoService {
                         agentModel,
                         messages,
                         AgentResultSchema.SCHEMA,
-                        null
+                        null,
+                        false
                 );
 
         var response = finalTurn.content();
@@ -539,6 +541,38 @@ public class CeoService {
         return normalized;
     }
 
+    /**
+     * Sin modificador de acceso a propósito: permite que
+     * {@code CeoServiceToolFormatGuardTest} verifique que esta protección
+     * realmente lanza, sin depender de {@code RestClient}/Ollama real.
+     *
+     * No combinar nunca 'format' y 'tools' en la misma llamada a Ollama:
+     * verificado en vivo (con qwen2.5-coder:7b y con qwen3:8b) que Ollama
+     * fuerza la gramática del `format` y el modelo ya no puede pedir la
+     * herramienta — con qwen3 además inventó una URL y datos falsos
+     * simulando que sí la había llamado. Si esto se dispara, es un error
+     * de programación (alguien juntó los dos turnos por accidente), no
+     * una condición esperada en runtime.
+     */
+    void rejectFormatCombinedWithTools(
+            String operation,
+            Object format,
+            List<Map<String, Object>> tools) {
+
+        if (format != null && tools != null && !tools.isEmpty()) {
+
+            throw new IllegalArgumentException(
+                    "callModel: 'format' y 'tools' no pueden combinarse "
+                            + "en la misma llamada a Ollama (operation="
+                            + operation
+                            + ") — fuerza al modelo a alucinar una "
+                            + "respuesta de herramienta falsa en vez de "
+                            + "pedirla de verdad. Usa dos llamadas "
+                            + "separadas."
+            );
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private ModelMessage callModel(
             String operation,
@@ -547,6 +581,34 @@ public class CeoService {
             List<Map<String, Object>> messages,
             Object format,
             List<Map<String, Object>> tools) {
+
+        return callModel(operation, actor, model, messages, format, tools, null);
+    }
+
+    /**
+     * @param think Modelos con "modo pensamiento" (p. ej. qwen3) generan un
+     *              razonamiento previo separado del contenido final
+     *              ({@code message.thinking}, no mezclado con
+     *              {@code message.content}). Verificado en vivo: para
+     *              nuestro turno de decisión (¿busco evidencia o no?) el
+     *              pensamiento mejora notablemente la confiabilidad de la
+     *              decisión, a costa de latencia (varios segundos más por
+     *              llamada); para el turno final (llenar el contrato ya
+     *              con la evidencia en mano) no aporta y solo suma
+     *              latencia, así que ahí se desactiva. {@code null} deja
+     *              el default del modelo (para operaciones que no usan
+     *              modelos con pensamiento, como el CEO).
+     */
+    private ModelMessage callModel(
+            String operation,
+            String actor,
+            String model,
+            List<Map<String, Object>> messages,
+            Object format,
+            List<Map<String, Object>> tools,
+            Boolean think) {
+
+        rejectFormatCombinedWithTools(operation, format, tools);
 
         var startedAt = System.nanoTime();
 
@@ -561,6 +623,10 @@ public class CeoService {
 
         if (tools != null && !tools.isEmpty()) {
             body.put("tools", tools);
+        }
+
+        if (think != null) {
+            body.put("think", think);
         }
 
         Map<String, Object> response;
