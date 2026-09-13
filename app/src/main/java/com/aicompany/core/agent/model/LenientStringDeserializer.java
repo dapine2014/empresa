@@ -46,7 +46,7 @@ public class LenientStringDeserializer extends StdDeserializer<String> {
             return null;
         }
 
-        if (node.isTextual()) {
+        if (node.isString()) {
             return node.asString();
         }
 
@@ -56,7 +56,7 @@ public class LenientStringDeserializer extends StdDeserializer<String> {
 
                 var value = node.get(key);
 
-                if (value != null && value.isTextual()) {
+                if (value != null && value.isString()) {
                     return value.asString();
                 }
             }

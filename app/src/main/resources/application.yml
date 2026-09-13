@@ -31,6 +31,13 @@ ollama:
   ceo-model: ${OLLAMA_CEO_MODEL:qwen2.5-coder:14b}
   agent-model: ${OLLAMA_AGENT_MODEL:qwen2.5-coder:7b}
 
+evidence:
+  web-search:
+    base-url: ${EVIDENCE_WEB_SEARCH_BASE_URL:https://google.serper.dev}
+    api-key: ${EVIDENCE_WEB_SEARCH_API_KEY:}
+    country: ${EVIDENCE_WEB_SEARCH_COUNTRY:CO}
+    language: ${EVIDENCE_WEB_SEARCH_LANGUAGE:es}
+
 management:
   endpoints:
     web:

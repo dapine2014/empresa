@@ -22,6 +22,16 @@ public class AgentRuntime {
     private static final Logger log =
             LoggerFactory.getLogger(AgentRuntime.class);
 
+    /**
+     * Intento 1 → normal. Intento 2 → corrección. Intento 3 → corrección
+     * final. Se reintenta tanto si {@link CeoService#executeAgentTask}
+     * lanza excepción (Ollama no devolvió JSON parseable) como si
+     * {@link AgentResultValidator} rechaza el resultado ya parseado — en
+     * ambos casos el agente recibe el motivo exacto del rechazo y se le
+     * pide corregir solo eso, en vez de fallar la tarea al primer intento.
+     */
+    private static final int MAX_RESULT_RETRIES = 2;
+
     private final CeoService ceoService;
     private final MissionMemoryService memory;
     private final Executor agentTaskExecutor;
@@ -138,40 +148,152 @@ public class AgentRuntime {
 
         try {
 
-            var prompt = buildPrompt(
-                    agentId,
-                    action,
-                    instruction
-            );
+            AgentResult result = null;
+            String validationFeedback = null;
 
-            var result =
-                    ceoService.executeAgentTask(
-                            agentId,
-                            prompt
-                    );
+            for (int attempt = 0; attempt <= MAX_RESULT_RETRIES; attempt++) {
 
-            var validation =
-                    validator.validate(result);
+                var prompt = buildPrompt(
+                        agentId,
+                        action,
+                        instruction
+                );
 
-            if (!validation.valid()) {
+                if (validationFeedback != null) {
 
-                var message =
-                        "Resultado de agente inválido: "
-                                + String.join(
-                                "; ",
-                                validation.errors()
-                        );
+                    prompt += """
 
-                log.warn(
-                        "TASK {} - agent {} rejected by validation: {}",
+                            CORRECCIÓN DEL INTENTO ANTERIOR
+
+                            El resultado anterior fue rechazado.
+                            Corrige únicamente los errores indicados.
+
+                            ERRORES:
+                            %s
+
+                            No inventes evidencia.
+                            Mantén estrictamente el contrato AgentResult.
+                            Los cálculos deben ser matemáticamente consistentes.
+                            """.formatted(validationFeedback);
+                }
+
+                log.info(
+                        "TASK {} - agent {} inference attempt={}",
                         taskId,
                         agentId,
+                        attempt + 1
+                );
+
+                if (attempt > 0) {
+
+                    events.publishTask(
+                            "EMPRESA_TASK_RETRY",
+                            taskId,
+                            missionId,
+                            agentId,
+                            "RETRYING",
+                            "Reintentando resultado del agente. Intento "
+                                    + (attempt + 1)
+                                    + " de "
+                                    + (MAX_RESULT_RETRIES + 1)
+                    );
+                }
+
+                try {
+
+                    result =
+                            ceoService.executeAgentTask(
+                                    agentId,
+                                    prompt
+                            );
+
+                } catch (Exception ex) {
+
+                    var reason =
+                            safeMessage(
+                                    ex,
+                                    "El agente no devolvió una respuesta procesable."
+                            );
+
+                    if (attempt == MAX_RESULT_RETRIES) {
+
+                        // Último intento: sí queremos el stack trace completo,
+                        // esto ya no se va a reintentar.
+                        log.warn(
+                                "TASK {} - agent {} inference failed attempt={} reason={}",
+                                taskId,
+                                agentId,
+                                attempt + 1,
+                                reason,
+                                ex
+                        );
+
+                        throw new IllegalStateException(
+                                "El agente " + agentId
+                                        + " no produjo un resultado "
+                                        + "procesable después de "
+                                        + (MAX_RESULT_RETRIES + 1)
+                                        + " intentos: "
+                                        + reason,
+                                ex
+                        );
+                    }
+
+                    // Intentos intermedios: solo el mensaje, sin stack trace
+                    // completo — es una condición esperada que se reintenta,
+                    // no un fallo final; el stack trace aquí solo genera
+                    // ruido en los logs.
+                    log.warn(
+                            "TASK {} - agent {} inference failed attempt={} "
+                                    + "reason={} (se reintentará)",
+                            taskId,
+                            agentId,
+                            attempt + 1,
+                            reason
+                    );
+
+                    validationFeedback = reason;
+                    continue;
+                }
+
+                var validation =
+                        validator.validate(result);
+
+                if (validation.valid()) {
+
+                    log.info(
+                            "TASK {} - agent {} validation passed attempt={}",
+                            taskId,
+                            agentId,
+                            attempt + 1
+                    );
+
+                    break;
+                }
+
+                log.warn(
+                        "TASK {} - agent {} validation rejected attempt={} errors={}",
+                        taskId,
+                        agentId,
+                        attempt + 1,
                         validation.errors()
                 );
 
-                throw new IllegalStateException(
-                        message
-                );
+                validationFeedback =
+                        String.join(
+                                "\n- ",
+                                validation.errors()
+                        );
+
+                if (attempt == MAX_RESULT_RETRIES) {
+
+                    throw new IllegalStateException(
+                            "Resultado de agente inválido después de "
+                                    + (MAX_RESULT_RETRIES + 1)
+                                    + " intentos: "
+                                    + validationFeedback
+                    );
+                }
             }
 
             var evidenceValidation =
