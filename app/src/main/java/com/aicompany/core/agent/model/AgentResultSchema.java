@@ -29,12 +29,27 @@ public final class AgentResultSchema {
             "SUBTRACT"
     );
 
+    /**
+     * Debe coincidir exactamente con
+     * {@link com.aicompany.core.agent.validation.EvidenceValidationGate}
+     * — si no, el modelo puede generar un {@code sourceType} sintácticamente
+     * válido para el schema pero que el gate rechaza siempre (reproducido en
+     * vivo: con tool-calling real el modelo devolvió "academic repository",
+     * "blog post", etc. antes de este `enum`).
+     */
+    private static final List<String> EVIDENCE_SOURCE_TYPES = List.of(
+            "WEB", "CUSTOMER", "TRANSACTION", "INTERNAL", "NONE"
+    );
+
     private static final Map<String, Object> EVIDENCE_ITEM_SCHEMA = Map.of(
             "type", "object",
             "properties", Map.of(
                     "description", Map.of("type", "string", "minLength", 1),
                     "source", Map.of("type", "string"),
-                    "sourceType", Map.of("type", "string", "minLength", 1),
+                    "sourceType", Map.of(
+                            "type", "string",
+                            "enum", EVIDENCE_SOURCE_TYPES
+                    ),
                     "verified", Map.of("type", "boolean")
             ),
             "required", List.of(

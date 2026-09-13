@@ -160,7 +160,7 @@ Cobertura: `EMPRESA_MISSION_CREATED` (`MissionService.start`, antes de lanzar la
 
 ### LLM: Ollama
 
-`CeoService` es el **único** cliente de Ollama: `RestClient` POST a `/api/chat`, no streaming. Usa dos modelos distintos según el rol (visto en pruebas: CEO en `qwen2.5-coder:14b` para razonamiento/consolidación, agentes en `qwen2.5-coder:7b` para ejecución paralela — el 14B es notablemente más lento, ver `EMPRESA_AI_TODO.md` §5). Las llamadas de tipo `AGENT_TASK` piden `format: json` a Ollama (ver contrato `AgentResult` arriba); el chat del CEO y la consolidación de misión no. Todos los system/user prompts están en español y son fuertemente anti-alucinación: los agentes no deben inventar clientes, ventas, ingresos, búsquedas web ni evidencia, y deben separar hecho / hipótesis / estimación / resultado verificado.
+`CeoService` es el **único** cliente de Ollama: `RestClient` POST a `/api/chat`, no streaming. Usa dos modelos distintos según el rol (visto en pruebas: CEO en `qwen2.5-coder:14b` para razonamiento/consolidación, agentes en `qwen2.5-coder:7b` para ejecución paralela — el 14B es notablemente más lento, ver `EMPRESA_AI_TODO.md` §5). Las tareas de agente (`executeAgentTask`) hacen hasta dos llamadas por intento (`AGENT_TOOL_CALL` con `tools`, luego `AGENT_TASK` con `format: AgentResultSchema.SCHEMA` — nunca ambos a la vez, ver "Evidence Acquisition" más abajo); el chat del CEO y la consolidación de misión son una sola llamada sin `format` ni `tools`. Todos los system/user prompts están en español y son fuertemente anti-alucinación: los agentes no deben inventar clientes, ventas, ingresos, búsquedas web ni evidencia, y deben separar hecho / hipótesis / estimación / resultado verificado.
 
 ### Configuración
 
@@ -188,7 +188,22 @@ Primera pieza de `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md`. Búsqueda web + recuperaci
 
 **Cadena completa verificada en vivo con datos 100% reales** (`EVIDENCE_WEB_SEARCH_API_KEY` configurada en `.env` / `docker-compose.yml`, no committeada): `SerperSearchAdapter.search("precios asesoría empresarial para microempresas Colombia", "co", "es", 5)` devolvió 9 resultados reales de Google → se tomó el primero (camaramedellin.com.co) → `EvidenceAcquisitionService.confirmReachable` hizo un fetch real de esa URL → `EvidenceValidationGate.validate(...)` → `valid=true` → `MissionMemoryService.recordEvidence(...)` persistió el nodo `Evidence` real en Neo4j, confirmado con Cypher (`(:AgentTask)-[:HAS_EVIDENCE]->(:Evidence)` con `source` = la URL real, `verified=false` como está diseñado). Sin mocks en ningún punto de esta cadena. 56 tests en el proyecto (20 del módulo `evidence`: `SerperSearchAdapterTest`, `WebPageFetcherTest`, `EvidenceAcquisitionServiceTest`).
 
-**Explícitamente NO hecho todavía** (decisión de alcance, no olvido): tool-calling con Ollama (§13-14 del doc) — el módulo `evidence` sigue sin invocarse desde `AgentRuntime`/`CeoService`, así que ningún agente puede llamarlo todavía dentro de una misión real; tampoco hay eventos Kafka nuevos (`EMPRESA_EVIDENCE_*`), deduplicación, ni scoring. La búsqueda/fetch/persistencia en sí ya están verificadas en vivo (ver arriba) — lo que falta es conectar esa capacidad al flujo de agentes.
+**Conectado al flujo real de agentes** (`CeoService.executeAgentTask`, tool-calling con Ollama): cada tarea de agente ahora hace hasta dos turnos con Ollama en vez de uno:
+
+1. **Turno de decisión** (`toolDecisionSystemPrompt` + `AgentRuntime.buildTaskSummary` — un prompt corto y separado, sin `format`, con `tools=[search_web_evidence]`): el agente decide si necesita buscar evidencia real. Si sí, responde con `{"name": "search_web_evidence", "arguments": {"query": "..."}}`.
+2. Si pidió la herramienta, se ejecuta de verdad (`EvidenceAcquisitionService.searchEvidence`) y el resultado real se agrega a la conversación como turno `tool`.
+3. **Turno final** (prompt completo de `AgentRuntime.buildPrompt`, con `format: AgentResultSchema.SCHEMA`, sin `tools`): produce el `AgentResult` estructurado, ahora con la evidencia real (si la pidió) ya en el historial.
+
+Dos hallazgos importantes verificados en vivo antes de este diseño, no asumidos:
+
+- **`format` y `tools` no se pueden combinar**: con ambos presentes, el modelo queda forzado a la gramática del schema y no puede emitir una llamada a herramienta — confirmado reproduciendo la petición contra Ollama real. Por eso son dos turnos, no uno.
+- **El modelo (`qwen2.5-coder:7b`/`14b`) no envuelve su respuesta en `<tool_call>...</tool_call>`** como espera la plantilla de Ollama, así que `message.tool_calls` casi nunca viene poblado — `CeoService.detectInlineToolCall` reconoce la llamada igual cuando viene como JSON suelto en `content`. Tampoco importa si el turno de decisión incluye el prompt completo con "FORMATO OBLIGATORIO" del `AgentResult` en el mismo turno: el modelo lo ignora casi siempre y llena esa plantilla directamente (reproducido incluso con `tool_choice: "required"`, que Ollama acepta pero no parece hacer cumplir con este modelo) — por eso el turno de decisión usa un prompt corto y separado (`taskSummary`), no el prompt completo.
+
+`AgentResultSchema.EVIDENCE_ITEM_SCHEMA.sourceType` ahora tiene el mismo `enum` que `EvidenceValidationGate` (bug real encontrado en vivo: sin el enum, el modelo generaba valores como `"academic repository"` o `"blog post"` que el gate rechazaba siempre).
+
+**Verificado en vivo con una misión real completa** (`MVP-EVIDENCE-004-TOOLCALL-4`): 4 de 5 agentes (`sales`, `finance`, `engineering`, `product`) decidieron llamar a `search_web_evidence`, obtuvieron resultados reales de Serper, y `sales`/`engineering` citaron URLs reales (no inventadas) en su `evidence[]` final — persistidas como nodos `Evidence` reales en Neo4j vía `MissionMemoryService.recordEvidence`, confirmado con Cypher. `finance`/`product` buscaron pero no volcaron los resultados al campo `evidence` de su respuesta final (limitación real de consistencia de un modelo 7B, no un bug de la integración). La misión llegó a `AWAITING_INVESTOR`.
+
+**Pendiente, no bloqueante**: eventos Kafka nuevos (`EMPRESA_EVIDENCE_*`), deduplicación de evidencia, scoring, y mejorar la consistencia con la que los agentes vuelcan resultados de búsqueda al campo `evidence[]`.
 
 ## Al implementar
 

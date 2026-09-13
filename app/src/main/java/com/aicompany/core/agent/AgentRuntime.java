@@ -159,6 +159,11 @@ public class AgentRuntime {
                         instruction
                 );
 
+                var taskSummary = buildTaskSummary(
+                        action,
+                        instruction
+                );
+
                 if (validationFeedback != null) {
 
                     prompt += """
@@ -204,7 +209,8 @@ public class AgentRuntime {
                     result =
                             ceoService.executeAgentTask(
                                     agentId,
-                                    prompt
+                                    prompt,
+                                    taskSummary
                             );
 
                 } catch (Exception ex) {
@@ -390,6 +396,34 @@ public class AgentRuntime {
         }
     }
 
+    /**
+     * Versión corta de la tarea, sin el contrato JSON completo — se usa
+     * solo para el turno de decisión de herramienta en
+     * {@code CeoService.executeAgentTask}. Verificado en vivo: cuando se
+     * le pide al modelo decidir sobre la herramienta *dentro* del mismo
+     * prompt que ya trae el "FORMATO OBLIGATORIO" del AgentResult, el
+     * modelo ignora la herramienta casi siempre (incluso con
+     * `tool_choice: "required"`) y llena directamente la plantilla JSON
+     * — la instrucción de la herramienta pierde contra un ejemplo JSON
+     * concreto y explícito. Con un prompt corto y dedicado, sin esa
+     * plantilla compitiendo, el modelo pide la herramienta de forma
+     * consistente.
+     */
+    private String buildTaskSummary(
+            String action,
+            String instruction) {
+
+        return """
+                ACCIÓN: %s
+
+                MISIÓN:
+                %s
+                """.formatted(
+                action,
+                instruction
+        );
+    }
+
     private String buildPrompt(
             String agentId,
             String action,
@@ -418,6 +452,12 @@ public class AgentRuntime {
                 - Responde ÚNICAMENTE con JSON válido.
                 - No utilices Markdown.
                 - No agregues texto antes o después del JSON.
+
+                Si en el turno anterior pediste evidencia con
+                search_web_evidence, ya la tienes disponible más abajo en
+                la conversación: incorpórala en evidence/facts/
+                evidenceRequired según corresponda, citando la URL real
+                que te devolvió (nunca una URL inventada).
 
                 FORMATO OBLIGATORIO:
 

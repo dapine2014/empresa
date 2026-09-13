@@ -34,14 +34,14 @@ class AgentRuntimeTest {
     void succeedsOnFirstAttemptWithoutRetrying() throws Exception {
         var result = agentResult("finance", "recomendación ok");
 
-        when(ceoService.executeAgentTask(eq("finance"), anyString())).thenReturn(result);
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString())).thenReturn(result);
         when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
         when(evidenceGate.validate(result)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
 
         var future = runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción");
 
         assertEquals(result, future.get());
-        verify(ceoService, times(1)).executeAgentTask(eq("finance"), anyString());
+        verify(ceoService, times(1)).executeAgentTask(eq("finance"), anyString(), anyString());
         verify(events, never()).publishTask(eq("EMPRESA_TASK_RETRY"), any(), any(), any(), any(), any());
         verify(memory).updateTask(eq("TASK-1"), eq("COMPLETED"), anyString());
     }
@@ -51,7 +51,7 @@ class AgentRuntimeTest {
         var badResult = agentResult("finance", "");
         var goodResult = agentResult("finance", "recomendación corregida");
 
-        when(ceoService.executeAgentTask(eq("finance"), anyString()))
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString()))
                 .thenReturn(badResult)
                 .thenReturn(goodResult);
 
@@ -68,7 +68,7 @@ class AgentRuntimeTest {
         assertEquals(goodResult, future.get());
 
         var promptCaptor = ArgumentCaptor.forClass(String.class);
-        verify(ceoService, times(2)).executeAgentTask(eq("finance"), promptCaptor.capture());
+        verify(ceoService, times(2)).executeAgentTask(eq("finance"), promptCaptor.capture(), anyString());
 
         var prompts = promptCaptor.getAllValues();
         assertFalse(prompts.get(0).contains("CORRECCIÓN DEL INTENTO ANTERIOR"));
@@ -82,7 +82,7 @@ class AgentRuntimeTest {
     void retriesAfterUnparsableModelResponse() throws Exception {
         var goodResult = agentResult("engineering", "recomendación ok");
 
-        when(ceoService.executeAgentTask(eq("engineering"), anyString()))
+        when(ceoService.executeAgentTask(eq("engineering"), anyString(), anyString()))
                 .thenThrow(new IllegalStateException("El agente engineering no devolvió un AgentResult JSON válido."))
                 .thenReturn(goodResult);
 
@@ -94,7 +94,7 @@ class AgentRuntimeTest {
         var future = runtime.execute("TASK-1", "MISSION-1", "engineering", "DELIVERY_FEASIBILITY", "instrucción");
 
         assertEquals(goodResult, future.get());
-        verify(ceoService, times(2)).executeAgentTask(eq("engineering"), anyString());
+        verify(ceoService, times(2)).executeAgentTask(eq("engineering"), anyString(), anyString());
         verify(validator, times(1)).validate(any());
     }
 
@@ -102,7 +102,7 @@ class AgentRuntimeTest {
     void failsTaskAfterExhaustingAllRetriesOnValidatorRejection() {
         var badResult = agentResult("finance", "");
 
-        when(ceoService.executeAgentTask(eq("finance"), anyString())).thenReturn(badResult);
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString())).thenReturn(badResult);
         when(validator.validate(badResult))
                 .thenReturn(new AgentResultValidator.ValidationResult(false, List.of("recommendation es obligatorio")));
 
@@ -112,14 +112,14 @@ class AgentRuntimeTest {
         assertInstanceOf(IllegalStateException.class, ex.getCause());
 
         // MAX_RESULT_RETRIES=2 -> 3 intentos en total (0,1,2).
-        verify(ceoService, times(3)).executeAgentTask(eq("finance"), anyString());
+        verify(ceoService, times(3)).executeAgentTask(eq("finance"), anyString(), anyString());
         verify(memory).updateTask(eq("TASK-1"), eq("FAILED"), anyString());
         verify(events).publishTask(eq("EMPRESA_TASK_FAILED"), any(), any(), any(), any(), any());
     }
 
     @Test
     void failsTaskAfterExhaustingAllRetriesOnUnparsableResponse() {
-        when(ceoService.executeAgentTask(eq("finance"), anyString()))
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString()))
                 .thenThrow(new IllegalStateException("respuesta no parseable"));
 
         var future = runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción");
@@ -127,7 +127,7 @@ class AgentRuntimeTest {
         var ex = assertThrows(ExecutionException.class, future::get);
         assertInstanceOf(IllegalStateException.class, ex.getCause());
 
-        verify(ceoService, times(3)).executeAgentTask(eq("finance"), anyString());
+        verify(ceoService, times(3)).executeAgentTask(eq("finance"), anyString(), anyString());
         verify(validator, never()).validate(any());
         verify(memory).updateTask(eq("TASK-1"), eq("FAILED"), anyString());
     }
