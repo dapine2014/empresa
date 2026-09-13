@@ -2,6 +2,7 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
@@ -27,7 +28,8 @@ class CeoServiceToolFormatGuardTest {
             "qwen3:8b",
             JsonMapper.builder().build(),
             mock(EvidenceAcquisitionService.class),
-            mock(CompanyEventPublisher.class)
+            mock(CompanyEventPublisher.class),
+            new SimpleMeterRegistry()
     );
 
     @Test

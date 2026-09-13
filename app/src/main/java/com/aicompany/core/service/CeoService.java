@@ -5,6 +5,8 @@ import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,6 +63,7 @@ public class CeoService {
     private final JsonMapper jsonMapper;
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
+    private final MeterRegistry meterRegistry;
 
     public CeoService(
             RestClient ollama,
@@ -68,7 +71,8 @@ public class CeoService {
             @Value("${ollama.agent-model}") String agentModel,
             JsonMapper jsonMapper,
             EvidenceAcquisitionService evidenceAcquisitionService,
-            CompanyEventPublisher events) {
+            CompanyEventPublisher events,
+            MeterRegistry meterRegistry) {
 
         this.ollama = ollama;
         this.ceoModel = ceoModel;
@@ -76,6 +80,7 @@ public class CeoService {
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
         this.events = events;
+        this.meterRegistry = meterRegistry;
     }
 
     public String chat(String message) {
@@ -319,6 +324,19 @@ public class CeoService {
      * ({@link ToolExecutionResult#confirmedUrls()}) — es la fuente de
      * verdad que usa {@code EvidenceBindingGate} para decidir si el
      * agente citó lo que de verdad se le entregó.
+     *
+     * <p>Observabilidad formal (además de los eventos Kafka, que son un
+     * registro de ocurrencias discretas, no series numéricas agregables):
+     * métricas Micrometer expuestas en {@code /actuator/metrics}, con tag
+     * {@code agent} para poder desglosar por agente —
+     * {@code evidence.search.requests} (contador),
+     * {@code evidence.search.duration} (timer de la llamada real a
+     * {@code searchEvidence}), {@code evidence.candidate.verified}/
+     * {@code evidence.candidate.rejected} (contadores; el segundo con tag
+     * {@code reason} = nombre simple de la excepción, para no explotar
+     * cardinalidad con el mensaje completo) y
+     * {@code evidence.candidate.duration} (timer de {@code confirmReachable}
+     * por candidato, con tag {@code outcome=verified|rejected}).
      */
     private ToolExecutionResult executeTool(
             String agentId,
@@ -334,12 +352,21 @@ public class CeoService {
                 Map.of("query", toolCall.query())
         );
 
+        meterRegistry.counter("evidence.search.requests", "agent", agentId)
+                .increment();
+
         try {
+
+            var searchTimer = Timer.start(meterRegistry);
 
             var candidates =
                     evidenceAcquisitionService.searchEvidence(
                             toolCall.query()
                     );
+
+            searchTimer.stop(
+                    meterRegistry.timer("evidence.search.duration", "agent", agentId)
+            );
 
             events.publish(
                     "EMPRESA_EVIDENCE_SEARCH_COMPLETED",
@@ -361,12 +388,24 @@ public class CeoService {
                     break;
                 }
 
+                var confirmTimer = Timer.start(meterRegistry);
+
                 try {
 
                     var evidence =
                             evidenceAcquisitionService.confirmReachable(
                                     candidate
                             );
+
+                    confirmTimer.stop(
+                            meterRegistry.timer(
+                                    "evidence.candidate.duration",
+                                    "agent", agentId, "outcome", "verified"
+                            )
+                    );
+
+                    meterRegistry.counter("evidence.candidate.verified", "agent", agentId)
+                            .increment();
 
                     confirmed.add(Map.of(
                             "title",
@@ -398,6 +437,19 @@ public class CeoService {
                     );
 
                 } catch (Exception unreachableOrUnrelated) {
+
+                    confirmTimer.stop(
+                            meterRegistry.timer(
+                                    "evidence.candidate.duration",
+                                    "agent", agentId, "outcome", "rejected"
+                            )
+                    );
+
+                    meterRegistry.counter(
+                            "evidence.candidate.rejected",
+                            "agent", agentId,
+                            "reason", unreachableOrUnrelated.getClass().getSimpleName()
+                    ).increment();
 
                     log.info(
                             "TOOL_CANDIDATE_REJECTED agent={} url={} reason={}",

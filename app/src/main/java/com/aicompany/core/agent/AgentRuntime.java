@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -154,7 +155,14 @@ public class AgentRuntime {
         try {
 
             AgentResult result = null;
-            List<String> confirmedEvidenceUrls = List.of();
+            // LinkedHashSet, no List: se ACUMULA entre intentos (no se
+            // sobrescribe) — si el intento 1 buscó y confirmó URLs reales
+            // pero no las citó, y el intento 2 no vuelve a pedir la
+            // herramienta (su turno de decisión es independiente cada
+            // vez), esas URLs reales no deben "olvidarse". El agente sigue
+            // debiendo citar al menos una fuente real de cualquier intento
+            // anterior, no solo del intento actual.
+            var confirmedEvidenceUrls = new LinkedHashSet<String>();
             String validationFeedback = null;
 
             for (int attempt = 0; attempt <= MAX_RESULT_RETRIES; attempt++) {
@@ -222,7 +230,7 @@ public class AgentRuntime {
                             );
 
                     result = outcome.result();
-                    confirmedEvidenceUrls = outcome.confirmedEvidenceUrls();
+                    confirmedEvidenceUrls.addAll(outcome.confirmedEvidenceUrls());
 
                 } catch (Exception ex) {
 

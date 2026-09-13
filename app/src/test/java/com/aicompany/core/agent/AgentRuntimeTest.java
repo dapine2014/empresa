@@ -188,6 +188,41 @@ class AgentRuntimeTest {
         verify(memory).updateTask(eq("TASK-1"), eq("FAILED"), anyString());
     }
 
+    @Test
+    void keepsRequiringCitationAcrossRetriesEvenIfALaterAttemptDoesNotSearchAgain() throws Exception {
+        // El turno de decisión de herramienta es independiente en cada
+        // intento (no ve el feedback de corrección) — si el intento 2 no
+        // vuelve a pedir la herramienta, confirmedEvidenceUrls para ESE
+        // intento viene vacío. El gate no debe "olvidar" la URL real que
+        // sí se confirmó en el intento 1: seguir sin citarla debe seguir
+        // rechazando, no aprobar trivialmente solo porque este intento en
+        // particular no buscó nada nuevo.
+        var unboundResult = agentResult("sales", "sin evidencia citada");
+        var boundResult = agentResultWithEvidence(
+                "sales", "con evidencia citada",
+                List.of(new AgentResult.Evidence(
+                        "fuente real", "https://example.com/real", "WEB", false))
+        );
+
+        when(ceoService.executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
+                .thenReturn(outcome(unboundResult, List.of("https://example.com/real")))
+                .thenReturn(outcome(unboundResult, List.of()))
+                .thenReturn(outcome(boundResult, List.of()));
+
+        when(validator.validate(unboundResult))
+                .thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(validator.validate(boundResult))
+                .thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(boundResult))
+                .thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        var future = runtime.execute("TASK-1", "MISSION-1", "sales", "MARKET_DISCOVERY", "instrucción");
+
+        assertEquals(boundResult, future.get());
+        verify(ceoService, times(3)).executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"));
+        verify(events, times(2)).publishTask(eq("EMPRESA_TASK_RETRY"), any(), any(), any(), any(), any());
+    }
+
     private AgentTaskOutcome outcome(AgentResult result) {
         return new AgentTaskOutcome(result, List.of());
     }
