@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: company-core
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:host.docker.internal:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+
+server:
+  port: 8081
+
+company:
+  name: AI Company
+  events:
+    topic: EMPRESA_EVENTS
+  seed-capital-usd: 50
+  challenge-days: 60
+
+neo4j:
+  uri: ${NEO4J_URI:bolt://localhost:7687}
+  username: ${NEO4J_USERNAME:neo4j}
+  password: ${NEO4J_PASSWORD:}
+
+ollama:
+  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  ceo-model: ${OLLAMA_CEO_MODEL:qwen2.5-coder:14b}
+  agent-model: ${OLLAMA_AGENT_MODEL:qwen2.5-coder:7b}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
