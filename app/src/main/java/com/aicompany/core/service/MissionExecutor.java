@@ -5,6 +5,7 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.AgentExecutionOutcome;
 import com.aicompany.core.model.MissionStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,15 +15,35 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 
 @Service
 public class MissionExecutor {
 
     private static final Logger log =
             LoggerFactory.getLogger(MissionExecutor.class);
+
+    /**
+     * Reintentos a nivel de MISIÓN para un agente que ya agotó sus 3
+     * intentos internos (`AgentRuntime.MAX_RESULT_RETRIES`). Deliberadamente
+     * bajo (1): es una segunda oportunidad completa desde cero (turno de
+     * decisión + turno final nuevos), no una corrección incremental como el
+     * reintento interno — si tampoco funciona a la segunda, lo más probable
+     * es un problema real (no un bache pasajero del modelo) y seguir
+     * insistiendo solo alargaría la misión sin cambiar el resultado.
+     */
+    private static final int MAX_AGENT_REPLANS = 1;
+
+    private record AgentDefinition(
+            String agentId,
+            String action,
+            String objective) {
+    }
 
     private final MissionMemoryService memory;
     private final AgentRuntime runtime;
@@ -138,45 +159,52 @@ public class MissionExecutor {
 
             var definitions = List.of(
 
-                    new String[]{
+                    new AgentDefinition(
                             "sales",
                             "MARKET_DISCOVERY",
                             "Identificar perfiles de clientes y señales de demanda que deban validarse."
-                    },
+                    ),
 
-                    new String[]{
+                    new AgentDefinition(
                             "product",
                             "OFFER_DESIGN",
                             "Definir una oferta mínima vendible alineada con las restricciones de capital."
-                    },
+                    ),
 
-                    new String[]{
+                    new AgentDefinition(
                             "finance",
                             "UNIT_ECONOMICS",
                             "Estimar costos, precio, margen y condiciones necesarias para superar US$50 de utilidad neta."
-                    },
+                    ),
 
-                    new String[]{
+                    new AgentDefinition(
                             "engineering",
                             "DELIVERY_FEASIBILITY",
                             "Evaluar la capacidad de entregar la oferta con los recursos tecnológicos disponibles."
-                    },
+                    ),
 
-                    new String[]{
+                    new AgentDefinition(
                             "qa",
                             "QUALITY_RISK_REVIEW",
                             "Identificar, de forma independiente a los demás agentes (esta tarea corre en paralelo, no tiene acceso a sus resultados), riesgos, huecos de evidencia y supuestos no verificados en la oportunidad de negocio descrita en la misión, antes de comprometer capital."
-                    }
+                    )
             );
 
-            var futures =
-                    new ArrayList<CompletableFuture<AgentResult>>();
+            var definitionsByAgent =
+                    definitions.stream()
+                            .collect(Collectors.toMap(
+                                    AgentDefinition::agentId,
+                                    definition -> definition
+                            ));
+
+            var futuresByAgent =
+                    new LinkedHashMap<String, CompletableFuture<AgentResult>>();
 
             for (var definition : definitions) {
 
-                var agentId = definition[0];
-                var action = definition[1];
-                var objective = definition[2];
+                var agentId = definition.agentId();
+                var action = definition.action();
+                var objective = definition.objective();
 
                 var taskId =
                         missionId
@@ -217,7 +245,7 @@ public class MissionExecutor {
                                         + objective
                         );
 
-                futures.add(future);
+                futuresByAgent.put(agentId, future);
             }
 
             advanceMission(
@@ -233,15 +261,78 @@ public class MissionExecutor {
                     missionId
             );
 
-            CompletableFuture.allOf(
-                    futures.toArray(
-                            new CompletableFuture[0]
-                    )
-            ).join();
+            /*
+             * Agent failure != Mission failure: antes, un solo agente que
+             * agotara sus reintentos tumbaba `allOf(...).join()`, que
+             * propagaba la excepción y mandaba TODA la misión a FAILED,
+             * descartando cualquier resultado de los demás agentes que sí
+             * hubieran completado. Ahora se espera a cada agente por
+             * separado (igual se espera a todos antes de seguir — no se
+             * corta ni se acelera nada) y se captura éxito/fallo por
+             * agente en un `AgentExecutionOutcome`. Solo si TODOS los
+             * agentes fallan no hay nada que consolidar y la misión sí
+             * falla; si al menos uno completó, la misión sigue con
+             * resultado parcial y el CEO recibe explícitamente qué agentes
+             * faltan y por qué, para que sea su consolidación (no un
+             * `catch` genérico) la que decida qué hacer con el hueco.
+             */
+            List<AgentExecutionOutcome> outcomes =
+                    new ArrayList<>();
+
+            for (var entry : futuresByAgent.entrySet()) {
+
+                var agentId = entry.getKey();
+
+                try {
+
+                    var result = entry.getValue().join();
+
+                    outcomes.add(
+                            AgentExecutionOutcome.success(agentId, result)
+                    );
+
+                } catch (Exception ex) {
+
+                    var reason =
+                            safeMessage(
+                                    ex,
+                                    "El agente no completó su tarea."
+                            );
+
+                    log.warn(
+                            "MISSION {} - agent {} did not complete, "
+                                    + "continuing with partial results: {}",
+                            missionId,
+                            agentId,
+                            reason
+                    );
+
+                    outcomes.add(
+                            AgentExecutionOutcome.failure(agentId, reason)
+                    );
+                }
+            }
 
             log.info(
-                    "MISSION {} - all agent tasks completed",
+                    "MISSION {} - all agent tasks settled",
                     missionId
+            );
+
+            /*
+             * Replanificación automática: un agente que agotó sus 3
+             * intentos internos (ver "Reintento de resultados de agente")
+             * todavía puede recuperarse a nivel de misión — se le da hasta
+             * `MAX_AGENT_REPLANS` oportunidades más de correr su tarea
+             * desde cero (turno de decisión + turno final nuevos, no una
+             * continuación del intento fallido). Es un nivel de reintento
+             * distinto y por encima del interno de `AgentRuntime`: ese ya
+             * se agotó cuando llegamos aquí.
+             */
+            outcomes = replanFailedAgents(
+                    missionId,
+                    instruction,
+                    definitionsByAgent,
+                    outcomes
             );
 
             advanceMission(
@@ -252,16 +343,46 @@ public class MissionExecutor {
                     "Todos los agentes terminaron. CEO está revisando resultados."
             );
 
+            var agentResults =
+                    outcomes.stream()
+                            .filter(AgentExecutionOutcome::completed)
+                            .map(AgentExecutionOutcome::result)
+                            .toList();
+
+            var failedAgents =
+                    outcomes.stream()
+                            .filter(outcome -> !outcome.completed())
+                            .toList();
+
+            if (agentResults.isEmpty()) {
+
+                throw new IllegalStateException(
+                        "Los "
+                                + failedAgents.size()
+                                + " agente(s) de la misión fallaron: "
+                                + failedAgents.stream()
+                                        .map(o -> o.agentId() + " (" + o.error() + ")")
+                                        .collect(Collectors.joining("; "))
+                );
+            }
+
+            if (!failedAgents.isEmpty()) {
+
+                log.warn(
+                        "MISSION {} - continuing with partial results, "
+                                + "failed agents={}",
+                        missionId,
+                        failedAgents.stream()
+                                .map(AgentExecutionOutcome::agentId)
+                                .toList()
+                );
+            }
+
             /*
              * Recuperamos los resultados estructurados.
              *
              * Ya no concatenamos texto libre generado por los agentes.
              */
-            var agentResults =
-                    futures.stream()
-                            .map(CompletableFuture::join)
-                            .toList();
-
             var structuredResults =
                     serializeAgentResults(
                             agentResults
@@ -289,13 +410,29 @@ public class MissionExecutor {
             }
 
             var resultsForCeo =
-                    contradictions.isEmpty()
-                            ? structuredResults
-                            : structuredResults
-                                    + "\n\nCONTRADICCIONES_DETECTADAS "
-                                    + "(reglas deterministas, no del modelo; "
-                                    + "no las ignores al consolidar):\n- "
-                                    + String.join("\n- ", contradictions);
+                    structuredResults;
+
+            if (!contradictions.isEmpty()) {
+
+                resultsForCeo +=
+                        "\n\nCONTRADICCIONES_DETECTADAS "
+                                + "(reglas deterministas, no del modelo; "
+                                + "no las ignores al consolidar):\n- "
+                                + String.join("\n- ", contradictions);
+            }
+
+            if (!failedAgents.isEmpty()) {
+
+                resultsForCeo +=
+                        "\n\nAGENTES_FALLIDOS (no completaron su tarea "
+                                + "tras agotar reintentos; este es un "
+                                + "resultado PARCIAL — decide cómo abordar "
+                                + "el hueco en tu recomendación, no lo "
+                                + "ignores):\n- "
+                                + failedAgents.stream()
+                                        .map(o -> o.agentId() + ": " + o.error())
+                                        .collect(Collectors.joining("\n- "));
+            }
 
             advanceMission(
                     missionId,
@@ -339,6 +476,116 @@ public class MissionExecutor {
         }
     }
 
+    /**
+     * Le da a cada agente que agotó sus reintentos internos hasta
+     * {@code MAX_AGENT_REPLANS} oportunidades más de correr su tarea desde
+     * cero antes de aceptarlo como definitivamente fallido. Publica
+     * {@code EMPRESA_MISSION_REPLANNED} (`EMPRESA_AI_NUEVO_TODO_EVIDENCE.md`
+     * §22) por cada intento de replan, con el error anterior como dato —
+     * así queda auditable cuántas veces y por qué se reintentó a este
+     * nivel, no solo a nivel de `AgentRuntime`.
+     */
+    private List<AgentExecutionOutcome> replanFailedAgents(
+            String missionId,
+            String instruction,
+            Map<String, AgentDefinition> definitionsByAgent,
+            List<AgentExecutionOutcome> outcomes) {
+
+        var settled = new ArrayList<AgentExecutionOutcome>();
+
+        for (var outcome : outcomes) {
+
+            var current = outcome;
+            var replanAttempt = 0;
+
+            while (!current.completed() && replanAttempt < MAX_AGENT_REPLANS) {
+
+                replanAttempt++;
+
+                var agentId = current.agentId();
+                var definition = definitionsByAgent.get(agentId);
+                var taskId = missionId + "-" + agentId.toUpperCase();
+
+                log.warn(
+                        "MISSION {} - replanning agent {} (attempt {} of {}) after: {}",
+                        missionId,
+                        agentId,
+                        replanAttempt,
+                        MAX_AGENT_REPLANS,
+                        current.error()
+                );
+
+                events.publish(
+                        "EMPRESA_MISSION_REPLANNED",
+                        missionId,
+                        taskId,
+                        agentId,
+                        Map.of(
+                                "replanAttempt", replanAttempt,
+                                "previousError",
+                                current.error() == null ? "" : current.error()
+                        )
+                );
+
+                memory.createTask(
+                        taskId,
+                        missionId,
+                        agentId,
+                        definition.action()
+                );
+
+                events.publishTask(
+                        "EMPRESA_TASK_CREATED",
+                        taskId,
+                        missionId,
+                        agentId,
+                        "PENDING",
+                        "Tarea replanificada a nivel de misión (intento "
+                                + replanAttempt
+                                + " de "
+                                + MAX_AGENT_REPLANS
+                                + ")."
+                );
+
+                var future =
+                        runtime.execute(
+                                taskId,
+                                missionId,
+                                agentId,
+                                definition.action(),
+                                instruction
+                                        + "\nObjetivo específico: "
+                                        + definition.objective()
+                        );
+
+                try {
+
+                    var result = future.join();
+
+                    current = AgentExecutionOutcome.success(agentId, result);
+
+                    log.info(
+                            "MISSION {} - agent {} recovered after replan attempt {}",
+                            missionId,
+                            agentId,
+                            replanAttempt
+                    );
+
+                } catch (Exception ex) {
+
+                    current = AgentExecutionOutcome.failure(
+                            agentId,
+                            safeMessage(ex, "El agente no completó su tarea.")
+                    );
+                }
+            }
+
+            settled.add(current);
+        }
+
+        return settled;
+    }
+
     private String serializeAgentResults(
             List<AgentResult> results) {
 
@@ -360,6 +607,15 @@ public class MissionExecutor {
                     ex
             );
         }
+    }
+
+    private String safeMessage(
+            Exception ex,
+            String defaultMessage) {
+
+        return ex.getMessage() == null || ex.getMessage().isBlank()
+                ? defaultMessage
+                : ex.getMessage();
     }
 
     private void safeFail(

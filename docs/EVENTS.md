@@ -34,3 +34,5 @@ Eventos de Evidence Acquisition (`CeoService.executeTool`, `EMPRESA_AI_NUEVO_TOD
 No se implementó `EMPRESA_EVIDENCE_CANDIDATE_CREATED` (sugerido en el doc de referencia): sería redundante con `candidatesFound` de `SEARCH_COMPLETED` y multiplicaría el volumen de eventos sin aportar información nueva — decisión documentada en el javadoc de `CeoService.executeTool`.
 
 Verificado en vivo consumiendo `EMPRESA_EVENTS` de punta a punta para una misión real (5 agentes): 5 `SEARCH_STARTED`, 5 `SEARCH_COMPLETED`, 12 `VERIFIED`, 33 `REJECTED` — incluyendo un rechazo real por límite de tamaño de `WebPageFetcher` (2 MB) y varios por contenido no relacionado con la query.
+
+EMPRESA_MISSION_REPLANNED (`MissionExecutor.replanFailedAgents`, `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` §22): se publica cada vez que un agente que agotó sus 3 intentos internos (`EMPRESA_TASK_RETRY` cubre esos) recibe una oportunidad más a nivel de misión de correr su tarea desde cero. `data: {replanAttempt, previousError}`. Máximo de intentos: `MissionExecutor.MAX_AGENT_REPLANS` (hoy, 1) — ver "Replanificación automática" en `CLAUDE.md`.
