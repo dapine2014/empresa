@@ -12,13 +12,24 @@ import java.util.List;
  * URL respondió — eso confundiría "la fuente es accesible" con "el dato
  * concreto está verificado", que es exactamente lo que el resto del
  * proyecto (AgentResultValidator, EvidenceValidationGate) existe para
- * evitar. La verificación semántica del contenido queda pendiente (ver
- * EMPRESA_AI_NUEVO_TODO_EVIDENCE.md §11, §16) — no implementada aquí.
+ * evitar.
  *
- * Todavía NO está conectado a {@code AgentRuntime}/tool-calling de Ollama:
- * requiere una API key de búsqueda real (`EVIDENCE_WEB_SEARCH_API_KEY`)
- * que no estaba disponible al construir esto. Es un módulo standalone,
- * probado de forma aislada.
+ * Verificación semántica: {@code confirmReachable} usa
+ * {@link ClaimRelevanceChecker} (heurística léxica determinista, sin
+ * modelo) para descartar fuentes que respondieron pero no tienen
+ * relación con lo buscado. No confirma que el dato concreto esté en la
+ * página (para eso haría falta NLP/extracción real, ver
+ * EMPRESA_AI_NUEVO_TODO_EVIDENCE.md §11, §16 — sigue sin implementarse) —
+ * solo que la fuente al menos habla del tema.
+ *
+ * Conectado a {@code AgentRuntime}/tool-calling de Ollama vía
+ * {@code CeoService.executeAgentTask}: cuando el modelo pide
+ * {@code search_web_evidence}, {@code CeoService.executeTool} llama a
+ * {@code searchEvidence} para buscar y luego a {@code confirmReachable}
+ * sobre cada candidato antes de devolverle nada al modelo — los
+ * candidatos que no responden o no están relacionados con la consulta se
+ * descartan ahí mismo, nunca llegan al turno final. Ver "Evidence
+ * Acquisition" en CLAUDE.md para el diseño de dos turnos.
  */
 @Service
 public class EvidenceAcquisitionService {
@@ -56,10 +67,15 @@ public class EvidenceAcquisitionService {
     }
 
     /**
-     * Confirma que la URL de un candidato existe y responde con contenido.
-     * NO confirma que el contenido respalde el {@code claim} — por eso el
-     * resultado sigue con {@code verified=false}. Fuente recuperable ≠
-     * afirmación verificada.
+     * Confirma que la URL de un candidato existe, responde con contenido,
+     * y que ese contenido al menos **menciona** los términos de la
+     * búsqueda ({@link ClaimRelevanceChecker} — heurística léxica
+     * determinista, no NLP real). Sigue sin confirmar que el dato
+     * concreto esté ahí — por eso el resultado sigue con
+     * {@code verified=false} siempre. Fuente recuperable y relacionada ≠
+     * afirmación verificada; pero fuente recuperable y **no** relacionada
+     * ya no se acepta como evidencia (antes sí se aceptaba: la URL podía
+     * ser sobre cualquier cosa, con tal de que respondiera).
      */
     public AgentResult.Evidence confirmReachable(EvidenceCandidate candidate) {
 
@@ -70,9 +86,24 @@ public class EvidenceAcquisitionService {
                     "La URL no devolvió contenido: " + candidate.url());
         }
 
+        var relevance = ClaimRelevanceChecker.check(candidate.claim(), content);
+
+        if (!relevance.supported()) {
+            throw new IllegalStateException(
+                    "El contenido de " + candidate.url()
+                            + " no parece relacionado con \""
+                            + candidate.claim()
+                            + "\" (" + relevance.matchedTerms() + "/"
+                            + relevance.totalTerms()
+                            + " términos coincidieron) — no se usa como evidencia."
+            );
+        }
+
         return new AgentResult.Evidence(
                 candidate.claim()
-                        + " — fuente accesible: "
+                        + " — fuente accesible y relacionada ("
+                        + relevance.matchedTerms() + "/" + relevance.totalTerms()
+                        + " términos): "
                         + safe(candidate.title()),
                 candidate.url(),
                 candidate.sourceType(),

@@ -257,10 +257,30 @@ public class CeoService {
     }
 
     /**
-     * Ejecuta {@code search_web_evidence} de verdad. Si falla (sin API key,
-     * error del proveedor, etc.), no tumba la tarea — le devuelve al modelo
-     * un resultado de error para que pueda seguir (declarando
-     * NOT_VALIDATED, por ejemplo) en vez de que la excepción se propague.
+     * Cuántos candidatos de {@code searchEvidence} se confirman de verdad
+     * (fetch + {@link com.aicompany.core.evidence.ClaimRelevanceChecker})
+     * por llamada a la herramienta. Serper puede devolver hasta 10; no
+     * tiene sentido hacerle fetch a los 10 — con los primeros
+     * {@code CANDIDATES_TO_CONFIRM} alcanza para encontrar 1-2 fuentes
+     * reales y relacionadas, y evita que un solo turno de herramienta
+     * dispare 10 requests HTTP salientes en serie.
+     */
+    private static final int CANDIDATES_TO_CONFIRM = 5;
+
+    /**
+     * Ejecuta {@code search_web_evidence} de verdad. Si la búsqueda falla
+     * (sin API key, error del proveedor, etc.), no tumba la tarea — le
+     * devuelve al modelo un resultado de error para que pueda seguir
+     * (declarando NOT_VALIDATED, por ejemplo) en vez de que la excepción se
+     * propague.
+     *
+     * No basta con buscar: antes de devolverle candidatos al modelo, cada
+     * uno pasa por {@code evidenceAcquisitionService.confirmReachable}
+     * (fetch real + verificación léxica de relevancia). Un candidato que no
+     * responde o cuyo contenido no tiene relación con la búsqueda se
+     * descarta aquí — no llega al modelo, para que no pueda citarlo como si
+     * fuera una fuente real. Si ninguno sobrevive, se le informa al modelo
+     * explícitamente para que no invente evidencia.
      */
     private String executeTool(
             String agentId,
@@ -273,23 +293,60 @@ public class CeoService {
                             toolCall.query()
                     );
 
-            var simplified =
-                    candidates.stream()
-                            .map(candidate -> Map.of(
-                                    "title",
-                                    candidate.title() == null
-                                            ? ""
-                                            : candidate.title(),
-                                    "url",
-                                    candidate.url(),
-                                    "snippet",
-                                    candidate.snippet() == null
-                                            ? ""
-                                            : candidate.snippet()
-                            ))
-                            .toList();
+            var confirmed = new ArrayList<Map<String, Object>>();
 
-            return jsonMapper.writeValueAsString(simplified);
+            for (var candidate : candidates) {
+
+                if (confirmed.size() >= CANDIDATES_TO_CONFIRM) {
+                    break;
+                }
+
+                try {
+
+                    var evidence =
+                            evidenceAcquisitionService.confirmReachable(
+                                    candidate
+                            );
+
+                    confirmed.add(Map.of(
+                            "title",
+                            candidate.title() == null
+                                    ? ""
+                                    : candidate.title(),
+                            "url",
+                            evidence.source(),
+                            "snippet",
+                            candidate.snippet() == null
+                                    ? ""
+                                    : candidate.snippet(),
+                            "confirmado",
+                            evidence.description()
+                    ));
+
+                } catch (Exception unreachableOrUnrelated) {
+
+                    log.info(
+                            "TOOL_CANDIDATE_REJECTED agent={} url={} reason={}",
+                            agentId,
+                            candidate.url(),
+                            unreachableOrUnrelated.getMessage()
+                    );
+                }
+            }
+
+            if (confirmed.isEmpty()) {
+                return jsonMapper.writeValueAsString(
+                        Map.of(
+                                "advertencia",
+                                "Ninguno de los resultados de búsqueda fue "
+                                        + "accesible y relacionado con la "
+                                        + "consulta. No hay evidencia real "
+                                        + "disponible para esta afirmación."
+                        )
+                );
+            }
+
+            return jsonMapper.writeValueAsString(confirmed);
 
         } catch (Exception ex) {
 

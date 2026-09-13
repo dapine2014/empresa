@@ -46,7 +46,8 @@ class EvidenceAcquisitionServiceTest {
         var searchPort = mock(WebSearchPort.class);
         var pageFetcher = mock(WebPageFetcher.class);
 
-        when(pageFetcher.fetch("https://example.com/a")).thenReturn("<html>contenido real</html>");
+        when(pageFetcher.fetch("https://example.com/a")).thenReturn(
+                "<html>El precio promedio del servicio de asesoría es variable.</html>");
 
         var service = new EvidenceAcquisitionService(searchPort, pageFetcher, "CO", "es");
 
@@ -62,6 +63,29 @@ class EvidenceAcquisitionServiceTest {
         assertEquals("https://example.com/a", evidence.source());
         assertEquals("WEB", evidence.sourceType());
         assertTrue(evidence.description().contains("precio promedio del servicio"));
+    }
+
+    @Test
+    void confirmReachableRejectsContentUnrelatedToClaim() {
+        var searchPort = mock(WebSearchPort.class);
+        var pageFetcher = mock(WebPageFetcher.class);
+
+        // Página real y accesible, pero sobre un tema completamente
+        // distinto al que se buscaba.
+        when(pageFetcher.fetch("https://example.com/receta")).thenReturn(
+                "<html>Receta de pastel de chocolate: mezcla harina, huevos y azúcar.</html>");
+
+        var service = new EvidenceAcquisitionService(searchPort, pageFetcher, "CO", "es");
+
+        var candidate = new EvidenceCandidate(
+                "costo promedio asesoría empresarial microempresas Colombia",
+                "https://example.com/receta", "Receta", "snippet", "WEB"
+        );
+
+        var ex = assertThrows(IllegalStateException.class,
+                () -> service.confirmReachable(candidate));
+
+        assertTrue(ex.getMessage().contains("no parece relacionado"));
     }
 
     @Test
@@ -89,8 +113,11 @@ class EvidenceAcquisitionServiceTest {
 
         var service = new EvidenceAcquisitionService(searchPort, realFetcher, "CO", "es");
 
+        // Términos elegidos a partir del contenido real de example.com
+        // (verificado en vivo), para que el chequeo de relevancia sea
+        // real y no un mock ajustado a modo.
         var candidate = new EvidenceCandidate(
-                "el dominio example.com existe y responde",
+                "documentation examples domain permission",
                 "https://example.com/", "Example Domain", "snippet", "WEB"
         );
 
