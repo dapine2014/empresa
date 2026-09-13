@@ -27,6 +27,15 @@ public class MissionService {
     public MissionResponse start(String missionId, String instruction) {
         memory.ensureMission(missionId, instruction);
 
+        events.publishMission(
+                "EMPRESA_MISSION_CREATED",
+                missionId,
+                "CREATED",
+                0,
+                "Creada",
+                "Misión recibida"
+        );
+
         executor.executeAsync(missionId, instruction)
                 .whenComplete((ignored, error) -> {
                     if (error != null) {

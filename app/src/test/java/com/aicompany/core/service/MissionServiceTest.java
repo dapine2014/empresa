@@ -38,5 +38,9 @@ class MissionServiceTest {
         verify(memory).ensureMission("MISSION-001", "Investigar una oportunidad");
         verify(executor).executeAsync("MISSION-001", "Investigar una oportunidad");
         verify(memory).find("MISSION-001");
+        verify(eventPublisher).publishMission(
+                "EMPRESA_MISSION_CREATED", "MISSION-001", "CREATED",
+                0, "Creada", "Misión recibida"
+        );
     }
 }

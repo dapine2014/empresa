@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.agent.model.AgentResultSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -300,7 +301,7 @@ log.error(
         ? Map.of(
                 "model", model,
                 "stream", false,
-                "format", "json",
+                "format", AgentResultSchema.SCHEMA,
                 "messages", new Object[]{
                         Map.of(
                                 "role",

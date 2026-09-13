@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
@@ -81,6 +82,60 @@ public class MissionMemoryService {
                     r.get("message").asString(),
                     Instant.parse(r.get("updatedAt").asString())
             ));
+        }
+    }
+
+    /**
+     * Registra la evidencia de una tarea como nodos {@code Evidence} de
+     * primera clase, enlazados a su {@code AgentTask} — no solo como texto
+     * dentro del blob JSON de {@code t.result}. Es la parte de persistencia
+     * del "Evidence Engine": permite que la evidencia acumulada por la
+     * empresa se pueda consultar/auditar independientemente de la tarea
+     * puntual que la generó.
+     */
+    public void recordEvidence(
+            String taskId,
+            String missionId,
+            String agentId,
+            List<AgentResult.Evidence> evidenceList) {
+
+        if (evidenceList == null || evidenceList.isEmpty()) {
+            return;
+        }
+
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+
+                for (int i = 0; i < evidenceList.size(); i++) {
+
+                    var evidence = evidenceList.get(i);
+
+                    if (evidence == null) {
+                        continue;
+                    }
+
+                    tx.run("MATCH (t:AgentTask {id:$taskId}) " +
+                                    "MERGE (e:Evidence {id:$evidenceId}) " +
+                                    "SET e.missionId=$missionId, e.agentId=$agentId, " +
+                                    "e.description=$description, e.source=$source, " +
+                                    "e.sourceType=$sourceType, e.verified=$verified, " +
+                                    "e.updatedAt=$updatedAt " +
+                                    "MERGE (t)-[:HAS_EVIDENCE]->(e)",
+                            Map.of(
+                                    "taskId", taskId,
+                                    "evidenceId", taskId + "-EVIDENCE-" + i,
+                                    "missionId", missionId,
+                                    "agentId", agentId,
+                                    "description", evidence.description() == null ? "" : evidence.description(),
+                                    "source", evidence.source() == null ? "" : evidence.source(),
+                                    "sourceType", evidence.sourceType() == null ? "" : evidence.sourceType(),
+                                    "verified", evidence.verified(),
+                                    "updatedAt", Instant.now().toString()
+                            ));
+                }
+
+                return null;
+            });
         }
     }
 

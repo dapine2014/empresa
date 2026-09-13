@@ -39,11 +39,45 @@ public class CompanyMemoryService {
 
     private void initializeSchema() {
         try (var session = driver.session()) {
+
+            // Núcleo ya en uso por MissionExecutor/AgentRuntime.
             session.run("CREATE CONSTRAINT company_id IF NOT EXISTS FOR (c:Company) REQUIRE c.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT agent_id IF NOT EXISTS FOR (a:Agent) REQUIRE a.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT mission_id IF NOT EXISTS FOR (m:Mission) REQUIRE m.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:AgentTask) REQUIRE t.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT opportunity_id IF NOT EXISTS FOR (o:Opportunity) REQUIRE o.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.id IS UNIQUE").consume();
+
+            // Ampliación de memoria (EMPRESA_AI_TODO.md §21 / status.md §17):
+            // solo el constraint de identidad — sin propiedades ni relaciones
+            // definidas todavía, porque ningún flujo del código las escribe
+            // o las lee aún. Es groundwork deliberado para features futuras
+            // (organización autoevolutiva, mercado de predicción, cartera de
+            // capital, gobernanza, gabinete multi-modelo, auto-mejora de
+            // herramientas, mercado real, transparencia pública); cuando esa
+            // lógica se implemente, definir ahí las propiedades y relaciones
+            // reales según lo que la funcionalidad concreta necesite.
+            session.run("CREATE CONSTRAINT role_id IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT role_version_id IF NOT EXISTS FOR (rv:RoleVersion) REQUIRE rv.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT agent_version_id IF NOT EXISTS FOR (av:AgentVersion) REQUIRE av.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT prediction_id IF NOT EXISTS FOR (p:Prediction) REQUIRE p.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT prediction_outcome_id IF NOT EXISTS FOR (po:PredictionOutcome) REQUIRE po.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT credibility_score_id IF NOT EXISTS FOR (cs:CredibilityScore) REQUIRE cs.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT capital_allocation_id IF NOT EXISTS FOR (ca:CapitalAllocation) REQUIRE ca.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT investment_id IF NOT EXISTS FOR (i:Investment) REQUIRE i.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT portfolio_id IF NOT EXISTS FOR (pf:Portfolio) REQUIRE pf.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT governance_rule_id IF NOT EXISTS FOR (gr:GovernanceRule) REQUIRE gr.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT governance_amendment_id IF NOT EXISTS FOR (ga:GovernanceAmendment) REQUIRE ga.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT model_id IF NOT EXISTS FOR (mo:Model) REQUIRE mo.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT model_assignment_id IF NOT EXISTS FOR (ma:ModelAssignment) REQUIRE ma.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT tool_id IF NOT EXISTS FOR (t2:Tool) REQUIRE t2.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT tool_version_id IF NOT EXISTS FOR (tv:ToolVersion) REQUIRE tv.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT public_decision_id IF NOT EXISTS FOR (pd:PublicDecision) REQUIRE pd.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT customer_id IF NOT EXISTS FOR (cu:Customer) REQUIRE cu.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT decision_id IF NOT EXISTS FOR (d:Decision) REQUIRE d.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT transaction_id IF NOT EXISTS FOR (tx:Transaction) REQUIRE tx.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT lesson_id IF NOT EXISTS FOR (l:Lesson) REQUIRE l.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT strategy_id IF NOT EXISTS FOR (s:Strategy) REQUIRE s.id IS UNIQUE").consume();
         }
     }
 

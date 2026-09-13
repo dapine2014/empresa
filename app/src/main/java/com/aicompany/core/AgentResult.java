@@ -1,18 +1,29 @@
 package com.aicompany.core.agent.model;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import tools.jackson.databind.annotation.JsonDeserialize;
+
 import java.util.List;
 
+/**
+ * {@code NON_EMPTY} recorta, al serializar (no al leer), los campos
+ * null/blank y las listas vacías — reduce el tamaño del prompt de
+ * consolidación del CEO (que recibe estos resultados como JSON) y el
+ * tamaño de lo que se persiste en Neo4j, sin afectar el parseo ni la
+ * validación (que operan sobre el objeto ya deserializado).
+ */
+@JsonInclude(JsonInclude.Include.NON_EMPTY)
 public record AgentResult(
         String agent,
         String action,
         String verificationStatus,
-        List<String> facts,
-        List<String> hypotheses,
-        List<String> estimates,
+        @JsonDeserialize(contentUsing = LenientStringDeserializer.class) List<String> facts,
+        @JsonDeserialize(contentUsing = LenientStringDeserializer.class) List<String> hypotheses,
+        @JsonDeserialize(contentUsing = LenientStringDeserializer.class) List<String> estimates,
         List<Evidence> evidence,
-        List<String> evidenceRequired,
+        @JsonDeserialize(contentUsing = LenientStringDeserializer.class) List<String> evidenceRequired,
         List<Calculation> calculations,
-        List<String> risks,
+        @JsonDeserialize(contentUsing = LenientStringDeserializer.class) List<String> risks,
         String recommendation,
         double confidence
 ) {

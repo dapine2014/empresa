@@ -2,6 +2,7 @@ package com.aicompany.core.agent;
 
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.AgentResultValidator;
+import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.service.CeoService;
 import com.aicompany.core.service.MissionMemoryService;
@@ -26,6 +27,7 @@ public class AgentRuntime {
     private final Executor agentTaskExecutor;
     private final CompanyEventPublisher events;
     private final AgentResultValidator validator;
+    private final EvidenceValidationGate evidenceGate;
     private final JsonMapper jsonMapper;
 
     public AgentRuntime(
@@ -34,6 +36,7 @@ public class AgentRuntime {
             @Qualifier("agentTaskExecutor") Executor agentTaskExecutor,
             CompanyEventPublisher events,
             AgentResultValidator validator,
+            EvidenceValidationGate evidenceGate,
             JsonMapper jsonMapper) {
 
         this.ceoService = ceoService;
@@ -41,6 +44,7 @@ public class AgentRuntime {
         this.agentTaskExecutor = agentTaskExecutor;
         this.events = events;
         this.validator = validator;
+        this.evidenceGate = evidenceGate;
         this.jsonMapper = jsonMapper;
     }
 
@@ -170,6 +174,30 @@ public class AgentRuntime {
                 );
             }
 
+            var evidenceValidation =
+                    evidenceGate.validate(result);
+
+            if (!evidenceValidation.valid()) {
+
+                var message =
+                        "Evidencia inválida: "
+                                + String.join(
+                                "; ",
+                                evidenceValidation.errors()
+                        );
+
+                log.warn(
+                        "TASK {} - agent {} rejected by evidence gate: {}",
+                        taskId,
+                        agentId,
+                        evidenceValidation.errors()
+                );
+
+                throw new IllegalStateException(
+                        message
+                );
+            }
+
             var resultJson =
                     toJson(result);
 
@@ -177,6 +205,13 @@ public class AgentRuntime {
                     taskId,
                     "COMPLETED",
                     resultJson
+            );
+
+            memory.recordEvidence(
+                    taskId,
+                    missionId,
+                    agentId,
+                    result.evidence()
             );
 
             events.publishTask(

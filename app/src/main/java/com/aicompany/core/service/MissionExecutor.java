@@ -2,6 +2,8 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.AgentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.agent.validation.ContradictionDetector;
+import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.MissionStatus;
 import org.slf4j.Logger;
@@ -28,6 +30,8 @@ public class MissionExecutor {
     private final Executor orchestratorExecutor;
     private final CompanyEventPublisher events;
     private final JsonMapper jsonMapper;
+    private final ContradictionDetector contradictionDetector;
+    private final AppProperties appProperties;
 
     public MissionExecutor(
             MissionMemoryService memory,
@@ -36,7 +40,9 @@ public class MissionExecutor {
             @Qualifier("missionOrchestratorExecutor")
             Executor orchestratorExecutor,
             CompanyEventPublisher events,
-            JsonMapper jsonMapper) {
+            JsonMapper jsonMapper,
+            ContradictionDetector contradictionDetector,
+            AppProperties appProperties) {
 
         this.memory = memory;
         this.runtime = runtime;
@@ -44,6 +50,8 @@ public class MissionExecutor {
         this.orchestratorExecutor = orchestratorExecutor;
         this.events = events;
         this.jsonMapper = jsonMapper;
+        this.contradictionDetector = contradictionDetector;
+        this.appProperties = appProperties;
     }
 
     public CompletableFuture<Void> executeAsync(
@@ -102,7 +110,7 @@ public class MissionExecutor {
 
         try {
 
-            memory.updateMission(
+            advanceMission(
                     missionId,
                     MissionStatus.PLANNING,
                     5,
@@ -115,12 +123,12 @@ public class MissionExecutor {
                     missionId
             );
 
-            memory.updateMission(
+            advanceMission(
                     missionId,
                     MissionStatus.DELEGATING,
                     10,
                     "Delegación",
-                    "Asignando tareas paralelas a Sales, Product, Finance y Engineering."
+                    "Asignando tareas paralelas a Sales, Product, Finance, Engineering y QA."
             );
 
             log.info(
@@ -152,6 +160,12 @@ public class MissionExecutor {
                             "engineering",
                             "DELIVERY_FEASIBILITY",
                             "Evaluar la capacidad de entregar la oferta con los recursos tecnológicos disponibles."
+                    },
+
+                    new String[]{
+                            "qa",
+                            "QUALITY_RISK_REVIEW",
+                            "Identificar, de forma independiente a los demás agentes (esta tarea corre en paralelo, no tiene acceso a sus resultados), riesgos, huecos de evidencia y supuestos no verificados en la oportunidad de negocio descrita en la misión, antes de comprometer capital."
                     }
             );
 
@@ -206,7 +220,7 @@ public class MissionExecutor {
                 futures.add(future);
             }
 
-            memory.updateMission(
+            advanceMission(
                     missionId,
                     MissionStatus.WAITING_AGENT_RESULTS,
                     30,
@@ -230,7 +244,7 @@ public class MissionExecutor {
                     missionId
             );
 
-            memory.updateMission(
+            advanceMission(
                     missionId,
                     MissionStatus.EVALUATING,
                     70,
@@ -259,7 +273,31 @@ public class MissionExecutor {
                     agentResults.size()
             );
 
-            memory.updateMission(
+            var contradictions =
+                    contradictionDetector.detect(
+                            agentResults,
+                            appProperties.seedCapitalUsd()
+                    );
+
+            if (!contradictions.isEmpty()) {
+
+                log.warn(
+                        "MISSION {} - contradictions detected: {}",
+                        missionId,
+                        contradictions
+                );
+            }
+
+            var resultsForCeo =
+                    contradictions.isEmpty()
+                            ? structuredResults
+                            : structuredResults
+                                    + "\n\nCONTRADICCIONES_DETECTADAS "
+                                    + "(reglas deterministas, no del modelo; "
+                                    + "no las ignores al consolidar):\n- "
+                                    + String.join("\n- ", contradictions);
+
+            advanceMission(
                     missionId,
                     MissionStatus.CONSOLIDATING,
                     85,
@@ -270,10 +308,10 @@ public class MissionExecutor {
             var finalResult =
                     ceoService.executeMission(
                             instruction,
-                            structuredResults
+                            resultsForCeo
                     );
 
-            memory.updateMission(
+            advanceMission(
                     missionId,
                     MissionStatus.AWAITING_INVESTOR,
                     95,
@@ -335,7 +373,7 @@ public class MissionExecutor {
                             ? "Error inesperado"
                             : ex.getMessage();
 
-            memory.updateMission(
+            advanceMission(
                     missionId,
                     MissionStatus.FAILED,
                     100,
@@ -357,5 +395,39 @@ public class MissionExecutor {
                     memoryError
             );
         }
+    }
+
+    /**
+     * Persiste la transición en Neo4j y la publica en Kafka en la misma
+     * operación, para que las dos memorias no se desincronicen (antes,
+     * las transiciones de misión solo se escribían en Neo4j —
+     * {@code EMPRESA_MISSION_CREATED} figuraba en {@code docs/EVENTS.md}
+     * pero ningún transición de misión llegaba a Kafka).
+     */
+    private void advanceMission(
+            String missionId,
+            MissionStatus status,
+            int progress,
+            String currentStep,
+            String message) {
+
+        memory.updateMission(
+                missionId,
+                status,
+                progress,
+                currentStep,
+                message
+        );
+
+        events.publishMission(
+                status == MissionStatus.FAILED
+                        ? "EMPRESA_MISSION_FAILED"
+                        : "EMPRESA_MISSION_UPDATED",
+                missionId,
+                status.name(),
+                progress,
+                currentStep,
+                message
+        );
     }
 }
