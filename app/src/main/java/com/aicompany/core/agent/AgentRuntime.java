@@ -2,6 +2,7 @@ package com.aicompany.core.agent;
 
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.AgentResultValidator;
+import com.aicompany.core.agent.validation.EvidenceBindingGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.service.CeoService;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -38,6 +40,7 @@ public class AgentRuntime {
     private final CompanyEventPublisher events;
     private final AgentResultValidator validator;
     private final EvidenceValidationGate evidenceGate;
+    private final EvidenceBindingGate evidenceBindingGate;
     private final JsonMapper jsonMapper;
 
     public AgentRuntime(
@@ -47,6 +50,7 @@ public class AgentRuntime {
             CompanyEventPublisher events,
             AgentResultValidator validator,
             EvidenceValidationGate evidenceGate,
+            EvidenceBindingGate evidenceBindingGate,
             JsonMapper jsonMapper) {
 
         this.ceoService = ceoService;
@@ -55,6 +59,7 @@ public class AgentRuntime {
         this.events = events;
         this.validator = validator;
         this.evidenceGate = evidenceGate;
+        this.evidenceBindingGate = evidenceBindingGate;
         this.jsonMapper = jsonMapper;
     }
 
@@ -149,6 +154,7 @@ public class AgentRuntime {
         try {
 
             AgentResult result = null;
+            List<String> confirmedEvidenceUrls = List.of();
             String validationFeedback = null;
 
             for (int attempt = 0; attempt <= MAX_RESULT_RETRIES; attempt++) {
@@ -206,7 +212,7 @@ public class AgentRuntime {
 
                 try {
 
-                    result =
+                    var outcome =
                             ceoService.executeAgentTask(
                                     agentId,
                                     prompt,
@@ -214,6 +220,9 @@ public class AgentRuntime {
                                     missionId,
                                     taskId
                             );
+
+                    result = outcome.result();
+                    confirmedEvidenceUrls = outcome.confirmedEvidenceUrls();
 
                 } catch (Exception ex) {
 
@@ -269,14 +278,51 @@ public class AgentRuntime {
 
                 if (validation.valid()) {
 
-                    log.info(
-                            "TASK {} - agent {} validation passed attempt={}",
+                    var binding =
+                            evidenceBindingGate.check(
+                                    confirmedEvidenceUrls,
+                                    result
+                            );
+
+                    if (binding.bound()) {
+
+                        log.info(
+                                "TASK {} - agent {} validation passed attempt={}",
+                                taskId,
+                                agentId,
+                                attempt + 1
+                        );
+
+                        break;
+                    }
+
+                    log.warn(
+                            "TASK {} - agent {} evidence binding rejected attempt={} errors={}",
                             taskId,
                             agentId,
-                            attempt + 1
+                            attempt + 1,
+                            binding.errors()
                     );
 
-                    break;
+                    validationFeedback =
+                            String.join(
+                                    "\n- ",
+                                    binding.errors()
+                            );
+
+                    if (attempt == MAX_RESULT_RETRIES) {
+
+                        throw new IllegalStateException(
+                                "El agente " + agentId
+                                        + " buscó evidencia real pero no la "
+                                        + "citó en su resultado después de "
+                                        + (MAX_RESULT_RETRIES + 1)
+                                        + " intentos: "
+                                        + validationFeedback
+                        );
+                    }
+
+                    continue;
                 }
 
                 log.warn(

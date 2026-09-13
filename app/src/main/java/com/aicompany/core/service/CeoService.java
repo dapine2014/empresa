@@ -2,6 +2,7 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
+import com.aicompany.core.agent.model.AgentTaskOutcome;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import org.slf4j.Logger;
@@ -118,8 +119,15 @@ public class CeoService {
      * ignora casi siempre y llena directamente esa plantilla (incluso con
      * {@code tool_choice: "required"}) — la plantilla JSON concreta le
      * gana a la instrucción de usar la herramienta.
+     *
+     * <p>Devuelve un {@link AgentTaskOutcome}, no solo el
+     * {@link AgentResult}: también expone qué URLs se confirmaron de
+     * verdad en el turno de herramienta (si hubo uno), para que
+     * {@code AgentRuntime.executeInternal} pueda correr
+     * {@code EvidenceBindingGate} — detectar "buscó evidencia real pero no
+     * la citó" no se puede hacer mirando solo el `AgentResult` final.
      */
-    public AgentResult executeAgentTask(
+    public AgentTaskOutcome executeAgentTask(
             String agentId,
             String prompt,
             String taskSummary,
@@ -168,6 +176,8 @@ public class CeoService {
         messages.add(Map.of("role", "system", "content", system));
         messages.add(Map.of("role", "user", "content", prompt));
 
+        var confirmedEvidenceUrls = List.<String>of();
+
         if (toolCall != null) {
 
             log.info(
@@ -177,8 +187,10 @@ public class CeoService {
                     toolCall.query()
             );
 
-            var toolResultJson =
+            var toolExecution =
                     executeTool(agentId, missionId, taskId, toolCall);
+
+            confirmedEvidenceUrls = toolExecution.confirmedUrls();
 
             messages.add(Map.of(
                     "role", "assistant",
@@ -195,7 +207,7 @@ public class CeoService {
 
             messages.add(Map.of(
                     "role", "tool",
-                    "content", toolResultJson
+                    "content", toolExecution.json()
             ));
         }
 
@@ -242,7 +254,7 @@ public class CeoService {
                     result.confidence()
             );
 
-            return result;
+            return new AgentTaskOutcome(result, confirmedEvidenceUrls);
 
         } catch (Exception ex) {
 
@@ -301,8 +313,14 @@ public class CeoService {
      * sin agregar información nueva — mismo criterio que llevó a que
      * {@code confirmReachable} nunca marque {@code verified=true} solo por
      * un fetch exitoso.
+     *
+     * <p>Devuelve, además del JSON para el turno "tool", las URLs que
+     * realmente sobrevivieron {@code confirmReachable} en esta llamada
+     * ({@link ToolExecutionResult#confirmedUrls()}) — es la fuente de
+     * verdad que usa {@code EvidenceBindingGate} para decidir si el
+     * agente citó lo que de verdad se le entregó.
      */
-    private String executeTool(
+    private ToolExecutionResult executeTool(
             String agentId,
             String missionId,
             String taskId,
@@ -335,6 +353,7 @@ public class CeoService {
             );
 
             var confirmed = new ArrayList<Map<String, Object>>();
+            var confirmedUrls = new ArrayList<String>();
 
             for (var candidate : candidates) {
 
@@ -363,6 +382,8 @@ public class CeoService {
                             "confirmado",
                             evidence.description()
                     ));
+
+                    confirmedUrls.add(evidence.source());
 
                     events.publish(
                             "EMPRESA_EVIDENCE_VERIFIED",
@@ -402,18 +423,24 @@ public class CeoService {
             }
 
             if (confirmed.isEmpty()) {
-                return jsonMapper.writeValueAsString(
-                        Map.of(
-                                "advertencia",
-                                "Ninguno de los resultados de búsqueda fue "
-                                        + "accesible y relacionado con la "
-                                        + "consulta. No hay evidencia real "
-                                        + "disponible para esta afirmación."
-                        )
+                return new ToolExecutionResult(
+                        jsonMapper.writeValueAsString(
+                                Map.of(
+                                        "advertencia",
+                                        "Ninguno de los resultados de búsqueda fue "
+                                                + "accesible y relacionado con la "
+                                                + "consulta. No hay evidencia real "
+                                                + "disponible para esta afirmación."
+                                )
+                        ),
+                        List.of()
                 );
             }
 
-            return jsonMapper.writeValueAsString(confirmed);
+            return new ToolExecutionResult(
+                    jsonMapper.writeValueAsString(confirmed),
+                    confirmedUrls
+            );
 
         } catch (Exception ex) {
 
@@ -425,16 +452,24 @@ public class CeoService {
                     ex.getMessage()
             );
 
-            return jsonMapper.writeValueAsString(
-                    Map.of(
-                            "error",
-                            "No se pudo completar la búsqueda: "
-                                    + (ex.getMessage() == null
-                                    ? "error desconocido"
-                                    : ex.getMessage())
-                    )
+            return new ToolExecutionResult(
+                    jsonMapper.writeValueAsString(
+                            Map.of(
+                                    "error",
+                                    "No se pudo completar la búsqueda: "
+                                            + (ex.getMessage() == null
+                                            ? "error desconocido"
+                                            : ex.getMessage())
+                            )
+                    ),
+                    List.of()
             );
         }
+    }
+
+    private record ToolExecutionResult(
+            String json,
+            List<String> confirmedUrls) {
     }
 
     @SuppressWarnings("unchecked")

@@ -1,7 +1,9 @@
 package com.aicompany.core.agent;
 
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.agent.model.AgentTaskOutcome;
 import com.aicompany.core.agent.validation.AgentResultValidator;
+import com.aicompany.core.agent.validation.EvidenceBindingGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.service.CeoService;
@@ -24,17 +26,19 @@ class AgentRuntimeTest {
     private final CeoService ceoService = mock(CeoService.class);
     private final AgentResultValidator validator = mock(AgentResultValidator.class);
     private final EvidenceValidationGate evidenceGate = mock(EvidenceValidationGate.class);
+    private final EvidenceBindingGate evidenceBindingGate = new EvidenceBindingGate();
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     private final AgentRuntime runtime = new AgentRuntime(
-            ceoService, memory, Runnable::run, events, validator, evidenceGate, jsonMapper
+            ceoService, memory, Runnable::run, events, validator, evidenceGate, evidenceBindingGate, jsonMapper
     );
 
     @Test
     void succeedsOnFirstAttemptWithoutRetrying() throws Exception {
         var result = agentResult("finance", "recomendación ok");
 
-        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"))).thenReturn(result);
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
+                .thenReturn(outcome(result));
         when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
         when(evidenceGate.validate(result)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
 
@@ -52,8 +56,8 @@ class AgentRuntimeTest {
         var goodResult = agentResult("finance", "recomendación corregida");
 
         when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
-                .thenReturn(badResult)
-                .thenReturn(goodResult);
+                .thenReturn(outcome(badResult))
+                .thenReturn(outcome(goodResult));
 
         when(validator.validate(badResult))
                 .thenReturn(new AgentResultValidator.ValidationResult(false, List.of("recommendation es obligatorio")));
@@ -84,7 +88,7 @@ class AgentRuntimeTest {
 
         when(ceoService.executeAgentTask(eq("engineering"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
                 .thenThrow(new IllegalStateException("El agente engineering no devolvió un AgentResult JSON válido."))
-                .thenReturn(goodResult);
+                .thenReturn(outcome(goodResult));
 
         when(validator.validate(goodResult))
                 .thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
@@ -102,7 +106,8 @@ class AgentRuntimeTest {
     void failsTaskAfterExhaustingAllRetriesOnValidatorRejection() {
         var badResult = agentResult("finance", "");
 
-        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"))).thenReturn(badResult);
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
+                .thenReturn(outcome(badResult));
         when(validator.validate(badResult))
                 .thenReturn(new AgentResultValidator.ValidationResult(false, List.of("recommendation es obligatorio")));
 
@@ -132,10 +137,78 @@ class AgentRuntimeTest {
         verify(memory).updateTask(eq("TASK-1"), eq("FAILED"), anyString());
     }
 
+    @Test
+    void retriesWhenAgentSearchedRealEvidenceButDidNotCiteItInResult() throws Exception {
+        // El agente pidió y recibió una URL real confirmada, pero su
+        // evidence[] queda vacío — el gate de binding debe rechazarlo y
+        // dar oportunidad de corregir, igual que el validator sintáctico.
+        var unboundResult = agentResult("sales", "sin evidencia citada");
+        var boundResult = agentResultWithEvidence(
+                "sales", "con evidencia citada",
+                List.of(new AgentResult.Evidence(
+                        "fuente real", "https://example.com/real", "WEB", false))
+        );
+
+        when(ceoService.executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
+                .thenReturn(outcome(unboundResult, List.of("https://example.com/real")))
+                .thenReturn(outcome(boundResult, List.of("https://example.com/real")));
+
+        when(validator.validate(unboundResult))
+                .thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(validator.validate(boundResult))
+                .thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(boundResult))
+                .thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        var future = runtime.execute("TASK-1", "MISSION-1", "sales", "MARKET_DISCOVERY", "instrucción");
+
+        assertEquals(boundResult, future.get());
+        verify(ceoService, times(2)).executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"));
+        verify(events, times(1)).publishTask(eq("EMPRESA_TASK_RETRY"), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void failsTaskAfterExhaustingRetriesWhenEvidenceNeverGetsBound() {
+        var unboundResult = agentResult("sales", "sin evidencia citada");
+
+        when(ceoService.executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
+                .thenReturn(outcome(unboundResult, List.of("https://example.com/real")));
+
+        when(validator.validate(unboundResult))
+                .thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+
+        var future = runtime.execute("TASK-1", "MISSION-1", "sales", "MARKET_DISCOVERY", "instrucción");
+
+        var ex = assertThrows(ExecutionException.class, future::get);
+        assertInstanceOf(IllegalStateException.class, ex.getCause());
+        assertTrue(ex.getCause().getMessage().contains("buscó evidencia real pero no la citó"));
+
+        verify(ceoService, times(3)).executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"));
+        verify(evidenceGate, never()).validate(any(AgentResult.class));
+        verify(memory).updateTask(eq("TASK-1"), eq("FAILED"), anyString());
+    }
+
+    private AgentTaskOutcome outcome(AgentResult result) {
+        return new AgentTaskOutcome(result, List.of());
+    }
+
+    private AgentTaskOutcome outcome(AgentResult result, List<String> confirmedEvidenceUrls) {
+        return new AgentTaskOutcome(result, confirmedEvidenceUrls);
+    }
+
     private AgentResult agentResult(String agent, String recommendation) {
         return new AgentResult(
                 agent, "ACTION", "NOT_VALIDATED",
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                recommendation, 0.5
+        );
+    }
+
+    private AgentResult agentResultWithEvidence(
+            String agent, String recommendation, List<AgentResult.Evidence> evidence) {
+        return new AgentResult(
+                agent, "ACTION", "NOT_VALIDATED",
+                List.of(), List.of(), List.of(), evidence, List.of(), List.of(), List.of(),
                 recommendation, 0.5
         );
     }
