@@ -97,7 +97,21 @@ public class CompanyMemoryService {
                         new String[]{"qa", "Vera", "QA & Operations AI", "escéptica, detallista"}
                 );
                 for (var agent : agents) {
-                    tx.run("MERGE (a:Agent {id:$id}) SET a.name=$name, a.role=$role, a.personality=$personality, a.status='ACTIVE' REMOVE a.title",
+                    // ON CREATE, no SET incondicional de un valor fijo:
+                    // a.status lo va actualizando AgentRuntime en cada
+                    // transición real (WORKING/IDLE) -- un restart del
+                    // proceso no debe pisarlo. La normalización final SÍ
+                    // es incondicional pero idempotente sobre el valor ya
+                    // real: preserva WORKING/IDLE tal cual si ya es uno
+                    // de esos dos, y solo corrige cualquier otra cosa
+                    // (p. ej. 'ACTIVE', el valor fijo que este seed
+                    // escribía antes de este cambio, todavía presente en
+                    // los 6 nodos reales de sesiones anteriores) a IDLE.
+                    tx.run("MERGE (a:Agent {id:$id}) "
+                                    + "ON CREATE SET a.status='IDLE' "
+                                    + "SET a.name=$name, a.role=$role, a.personality=$personality, "
+                                    + "a.status = CASE WHEN a.status IN ['WORKING','IDLE'] THEN a.status ELSE 'IDLE' END "
+                                    + "REMOVE a.title",
                             Map.of("id", agent[0], "name", agent[1], "role", agent[2], "personality", agent[3]));
                 }
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}), (a:Agent) MERGE (a)-[:WORKS_FOR]->(c)");

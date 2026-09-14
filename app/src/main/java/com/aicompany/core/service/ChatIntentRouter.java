@@ -258,15 +258,37 @@ public class ChatIntentRouter {
     private String formatAgentStatus(List<AgentStatusResponse> statuses) {
 
         var lines = statuses.stream()
-                .map(a -> statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status()
-                        + (a.missionId() == null
-                        ? ""
-                        : " (" + a.missionId()
-                        + (a.action() == null ? "" : ", " + a.action())
-                        + ")"))
+                .map(this::formatOneAgentStatus)
                 .collect(Collectors.joining("; "));
 
         return "Estado real de los agentes: " + lines + ".";
+    }
+
+    /**
+     * {@code a.status()} (WORKING/IDLE) es el estado propio del agente,
+     * distinto de {@code a.taskStatus()} (el status de su última
+     * AgentTask) — ver {@code AgentStatusResponse}. Un agente
+     * {@code WORKING} muestra la tarea en curso; uno {@code IDLE} con
+     * historial muestra qué hizo por última vez y cómo terminó, sin
+     * confundir ninguna de las dos cosas con "lo que el agente está
+     * haciendo ahora".
+     */
+    private String formatOneAgentStatus(AgentStatusResponse a) {
+
+        var base = statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status();
+
+        if (a.missionId() == null) {
+            return base;
+        }
+
+        if ("WORKING".equals(a.status())) {
+            return base + " (" + a.missionId()
+                    + (a.action() == null ? "" : ", " + a.action())
+                    + ")";
+        }
+
+        return base + " — última tarea: " + a.action() + " (" + a.missionId()
+                + "), resultado: " + a.taskStatus();
     }
 
     private static final java.util.Set<String> STATUS_GREEN =

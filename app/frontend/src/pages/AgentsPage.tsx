@@ -25,10 +25,11 @@ export default function AgentsPage() {
             <div className="card-title">{agent.role}</div>
             <p className="hint">{agent.personality}</p>
             <p className="hint">
-              {agent.status === 'IDLE'
-                ? 'Inactivo'
-                : `Trabajando en: ${humanizeAction(agent.action)}`}
-              {agent.missionId ? ` (${agent.missionId})` : ''}
+              {agent.status === 'WORKING' && agent.missionId
+                ? `Trabajando en: ${humanizeAction(agent.action)} (${agent.missionId})`
+                : agent.missionId
+                  ? `Inactivo — última tarea: ${humanizeAction(agent.action)} (${agent.missionId}), resultado: ${agent.taskStatus}`
+                  : 'Inactivo'}
             </p>
           </div>
         ))}

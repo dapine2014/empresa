@@ -100,6 +100,33 @@ public class MissionMemoryService {
         }
     }
 
+    /**
+     * Estado propio del agente ({@code WORKING}/{@code IDLE}) — propiedad
+     * real en el nodo {@code Agent}, escrita por {@code AgentRuntime} en
+     * cada transición (no calculada al vuelo desde la última
+     * {@code AgentTask}). Antes de esto, el endpoint de estado exponía el
+     * status de la tarea como si fuera el del agente: un agente con su
+     * última tarea en {@code COMPLETED} se veía "trabajando" para
+     * siempre, tanto en el chat como en la pantalla Agents — reportado
+     * por el usuario con captura de pantalla real.
+     *
+     * <p>Límite conocido, no resuelto: si el proceso se reinicia con un
+     * agente realmente {@code WORKING} (misión en curso), no hay
+     * reconciliación — el nodo queda con ese valor stale hasta la
+     * próxima tarea real de ese agente. Mismo criterio que otros límites
+     * ya documentados en el proyecto (p. ej. DNS rebinding en
+     * `WebPageFetcher`): conocido, aceptado, no bloqueante para el MVP.
+     */
+    public void setAgentStatus(String agentId, String status) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (a:Agent {id:$agentId}) SET a.status=$status",
+                        Map.of("agentId", agentId, "status", status));
+                return null;
+            });
+        }
+    }
+
     public void updateTask(String taskId, String status, String result) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
@@ -150,13 +177,14 @@ public class MissionMemoryService {
     }
 
     /**
-     * Estado real de cada {@code Agent} (los 6: ceo + los 5 delegados):
-     * su {@code AgentTask} más reciente por {@code updatedAt}, en
-     * cualquier misión — base del panel "Agents" del Command Center web.
-     * Un agente sin ninguna tarea asignada nunca queda {@code IDLE} en
-     * Cypher (la fila de {@code OPTIONAL MATCH} sin match trae
-     * {@code latest = null}); se traduce a {@code "IDLE"} en Java, no en
-     * la query.
+     * Estado real de cada {@code Agent} (los 6: ceo + los 5 delegados) —
+     * base del panel "Agents" del Command Center web. {@code status} es
+     * la propiedad propia del nodo {@code Agent} ({@code WORKING}/
+     * {@code IDLE}, ver {@link #setAgentStatus}) — deliberadamente
+     * distinta de {@code taskStatus}, el status de su {@code AgentTask}
+     * más reciente por {@code updatedAt} en cualquier misión (p. ej.
+     * {@code COMPLETED}/{@code FAILED}). Antes se exponía el status de la
+     * tarea como si fuera el del agente.
      */
     public List<AgentStatusResponse> latestTaskPerAgent() {
         try (var session = driver.session()) {
@@ -166,7 +194,8 @@ public class MissionMemoryService {
                             WITH a, t ORDER BY t.updatedAt DESC
                             WITH a, collect(t)[0] AS latest
                             RETURN a.id AS agentId, a.name AS name, a.role AS role, a.personality AS personality,
-                                   latest.status AS status,
+                                   coalesce(a.status, 'IDLE') AS status,
+                                   latest.status AS taskStatus,
                                    latest.missionId AS missionId, latest.action AS action,
                                    latest.updatedAt AS updatedAt
                             ORDER BY a.id
@@ -176,9 +205,10 @@ public class MissionMemoryService {
                             r.get("name").asString(),
                             r.get("role").asString(),
                             r.get("personality").asString(),
-                            r.get("status").isNull() ? "IDLE" : r.get("status").asString(),
+                            r.get("status").asString(),
                             r.get("missionId").isNull() ? null : r.get("missionId").asString(),
                             r.get("action").isNull() ? null : r.get("action").asString(),
+                            r.get("taskStatus").isNull() ? null : r.get("taskStatus").asString(),
                             r.get("updatedAt").isNull() ? null : Instant.parse(r.get("updatedAt").asString())
                     ));
         }

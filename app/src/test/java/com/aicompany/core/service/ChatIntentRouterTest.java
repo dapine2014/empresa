@@ -124,8 +124,8 @@ class ChatIntentRouterTest {
         // (dijo "9" en vez de 25 misiones reales). La respuesta se arma
         // 100% en Java a partir de los datos reales.
         var statuses = List.of(
-                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now()),
-                new AgentStatusResponse("ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico", "IDLE", null, null, null)
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now()),
+                new AgentStatusResponse("ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico", "IDLE", null, null, null, null)
         );
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
 
@@ -137,6 +137,26 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void showsLastTaskInfoWhenAgentIsIdleButHasTaskHistory() {
+        // Agent.status (WORKING/IDLE, propiedad real del nodo Agent) ya
+        // no se confunde con el status de su última AgentTask -- un
+        // agente que terminó su última tarea vuelve a IDLE, pero seguimos
+        // pudiendo mostrar qué hizo y cómo terminó (ambos datos reales,
+        // no inventados). Reportado por el usuario: antes se mostraba
+        // "COMPLETED" como si fuera el estado del agente.
+        var statuses = List.of(
+                new AgentStatusResponse("engineering", "Neo", "Chief Engineering AI", "pragmático, meticuloso",
+                        "IDLE", "MISSION-1", "DELIVERY_FEASIBILITY", "COMPLETED", Instant.now())
+        );
+        when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
+
+        var response = router.route("¿qué agentes están trabajando?");
+
+        assertTrue(response.contains(
+                "⚪ Neo (Chief Engineering AI): IDLE — última tarea: DELIVERY_FEASIBILITY (MISSION-1), resultado: COMPLETED"));
+    }
+
+    @Test
     void routesTeamPresentationQueryToTheSameDeterministicAgentStatus() {
         // "preséntame al equipo" no debe caer al chat general -- ahí el
         // CEO (LLM) elaboraba por encima del roster real inyectado e
@@ -144,7 +164,7 @@ class ChatIntentRouterTest {
         // reproducido en vivo por el usuario. Debe resolverse 100% desde
         // Neo4j, igual que "¿qué agentes están trabajando?".
         var statuses = List.of(
-                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now())
         );
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
 
@@ -157,7 +177,7 @@ class ChatIntentRouterTest {
     @Test
     void routesWhoIsWorkingNowToAgentStatusEvenWithoutTheWordAgente() {
         var statuses = List.of(
-                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now())
         );
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
 
@@ -170,7 +190,7 @@ class ChatIntentRouterTest {
     @Test
     void routesWhatIsEachAgentDoingToAgentStatusEvenWithoutTrabajOrEstado() {
         var statuses = List.of(
-                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now())
         );
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
 
@@ -241,7 +261,7 @@ class ChatIntentRouterTest {
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
 
         var statuses = List.of(
-                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now())
         );
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
         when(missionMemory.findAll(50)).thenReturn(List.of());

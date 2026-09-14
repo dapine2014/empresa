@@ -43,7 +43,7 @@ class CompanyControllerTest {
 
     @Test
     void agentStatusDelegatesToMissionMemoryService() {
-        var statuses = List.of(new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now()));
+        var statuses = List.of(new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now()));
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
 
         assertEquals(statuses, controller.agentStatus());

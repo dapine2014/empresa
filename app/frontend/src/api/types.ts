@@ -39,6 +39,10 @@ export interface MissionStatusResponse {
   tasks: AgentTask[]
 }
 
+// status: estado propio del agente (WORKING/IDLE), propiedad real del
+// nodo Agent en Neo4j -- distinto de taskStatus, el status de su última
+// AgentTask (p. ej. COMPLETED/FAILED). No confundir ambos: un agente
+// puede estar IDLE con su última tarea en COMPLETED.
 export interface AgentStatusResponse {
   agentId: string
   name: string
@@ -47,6 +51,7 @@ export interface AgentStatusResponse {
   status: string
   missionId: string | null
   action: string | null
+  taskStatus: string | null
   updatedAt: string | null
 }
 

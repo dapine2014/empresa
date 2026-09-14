@@ -143,6 +143,8 @@ public class AgentRuntime {
                 "Agente iniciado."
         );
 
+        memory.setAgentStatus(agentId, "WORKING");
+
         events.publishTask(
                 "EMPRESA_TASK_STARTED",
                 taskId,
@@ -449,6 +451,12 @@ public class AgentRuntime {
             );
 
             throw ex;
+
+        } finally {
+
+            // Vuelve a IDLE siempre, éxito o fallo — no debe quedar
+            // "WORKING" para siempre si la tarea termina en excepción.
+            memory.setAgentStatus(agentId, "IDLE");
         }
     }
 

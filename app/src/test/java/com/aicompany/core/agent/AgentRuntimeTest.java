@@ -51,6 +51,46 @@ class AgentRuntimeTest {
     }
 
     @Test
+    void setsAgentStatusToWorkingWhenTaskStartsAndBackToIdleOnSuccess() throws Exception {
+        // Agent.status es una propiedad real en Neo4j, distinta del
+        // status de la AgentTask -- antes no existía, y el frontend/chat
+        // usaban el status de la última tarea como si fuera el del
+        // agente (un agente con la última tarea COMPLETED se mostraba
+        // "trabajando en X" para siempre). Verificado en vivo, reportado
+        // por el usuario.
+        var result = agentResult("finance", "recomendación ok");
+
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
+                .thenReturn(outcome(result));
+        when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(result)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción").get();
+
+        var inOrder = inOrder(memory);
+        inOrder.verify(memory).setAgentStatus("finance", "WORKING");
+        inOrder.verify(memory).updateTask(eq("TASK-1"), eq("COMPLETED"), anyString());
+        inOrder.verify(memory).setAgentStatus("finance", "IDLE");
+    }
+
+    @Test
+    void setsAgentStatusBackToIdleEvenWhenTheTaskFailsAfterExhaustingRetries() {
+        var badResult = agentResult("finance", "");
+
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1")))
+                .thenReturn(outcome(badResult));
+        when(validator.validate(badResult))
+                .thenReturn(new AgentResultValidator.ValidationResult(false, List.of("recommendation es obligatorio")));
+
+        var future = runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción");
+
+        assertThrows(ExecutionException.class, future::get);
+
+        verify(memory).setAgentStatus("finance", "WORKING");
+        verify(memory).setAgentStatus("finance", "IDLE");
+    }
+
+    @Test
     void retriesAfterValidatorRejectionAndIncludesCorrectionInNextPrompt() throws Exception {
         var badResult = agentResult("finance", "");
         var goodResult = agentResult("finance", "recomendación corregida");
