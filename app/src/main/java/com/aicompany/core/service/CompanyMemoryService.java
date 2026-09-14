@@ -79,6 +79,16 @@ public class CompanyMemoryService {
             session.run("CREATE CONSTRAINT transaction_id IF NOT EXISTS FOR (tx:Transaction) REQUIRE tx.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT lesson_id IF NOT EXISTS FOR (l:Lesson) REQUIRE l.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT strategy_id IF NOT EXISTS FOR (s:Strategy) REQUIRE s.id IS UNIQUE").consume();
+
+            // Memoria conversacional del Company Chat (ver CLAUDE.md
+            // "Memoria conversacional"): índice en createdAt desde el día
+            // uno -- la sesión de profiling de Neo4j que precedió a esta
+            // feature encontró que latestTaskPerAgent() ordena en memoria
+            // por no tener un índice así; no se repite ese patrón acá,
+            // donde el volumen de mensajes crece sin límite natural.
+            session.run("CREATE CONSTRAINT conversation_id IF NOT EXISTS FOR (c:Conversation) REQUIRE c.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT message_id IF NOT EXISTS FOR (msg:Message) REQUIRE msg.id IS UNIQUE").consume();
+            session.run("CREATE INDEX message_created_at IF NOT EXISTS FOR (msg:Message) ON (msg.createdAt)").consume();
         }
     }
 
