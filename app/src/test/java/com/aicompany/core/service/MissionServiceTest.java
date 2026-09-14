@@ -23,7 +23,7 @@ class MissionServiceTest {
         var executor = mock(MissionExecutor.class);
         var eventPublisher = mock(CompanyEventPublisher.class);
         var mission = new MissionResponse(
-                "MISSION-001", MissionStatus.CREATED, 0,
+                "MISSION-001", MissionStatus.CREATED, "PRODUCTION", 0,
                 "Creada", "Misión recibida", Instant.parse("2026-09-12T00:00:00Z")
         );
 
@@ -32,10 +32,10 @@ class MissionServiceTest {
         when(memory.find("MISSION-001")).thenReturn(Optional.of(mission));
 
         var service = new MissionService(memory, executor, eventPublisher);
-        var response = service.start("MISSION-001", "Investigar una oportunidad");
+        var response = service.start("MISSION-001", "Investigar una oportunidad", "PRODUCTION");
 
         assertEquals(mission, response);
-        verify(memory).ensureMission("MISSION-001", "Investigar una oportunidad");
+        verify(memory).ensureMission("MISSION-001", "Investigar una oportunidad", "PRODUCTION");
         verify(executor).executeAsync("MISSION-001", "Investigar una oportunidad");
         verify(memory).find("MISSION-001");
         verify(eventPublisher).publishMission(
@@ -69,7 +69,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
 
         var running = new MissionResponse(
-                "MISSION-001", MissionStatus.WAITING_AGENT_RESULTS, 30,
+                "MISSION-001", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30,
                 "Trabajo paralelo", "Los agentes están trabajando en paralelo.",
                 Instant.parse("2026-09-12T00:00:00Z")
         );
@@ -92,7 +92,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
 
         var awaitingInvestor = new MissionResponse(
-                "MISSION-001", MissionStatus.AWAITING_INVESTOR, 95,
+                "MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95,
                 "Recomendación", "informe final",
                 Instant.parse("2026-09-12T00:00:00Z")
         );
@@ -126,7 +126,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
 
         var awaitingInvestor = new MissionResponse(
-                "MISSION-001", MissionStatus.AWAITING_INVESTOR, 95,
+                "MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95,
                 "Recomendación", "informe final",
                 Instant.parse("2026-09-12T00:00:00Z")
         );
@@ -150,7 +150,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
 
         var awaitingInvestor = new MissionResponse(
-                "MISSION-001", MissionStatus.AWAITING_INVESTOR, 95,
+                "MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95,
                 "Recomendación", "informe final",
                 Instant.parse("2026-09-12T00:00:00Z")
         );
@@ -179,7 +179,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
 
         var failed = new MissionResponse(
-                "MISSION-001", MissionStatus.FAILED, 100,
+                "MISSION-001", MissionStatus.FAILED, "PRODUCTION", 100,
                 "Error", "Los 5 agentes fallaron",
                 Instant.parse("2026-09-12T00:00:00Z")
         );

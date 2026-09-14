@@ -89,6 +89,7 @@ public class CeoService {
                                                             "AGENT_STATUS",
                                                             "MISSIONS_NEEDING_ATTENTION",
                                                             "FAILED_MISSIONS",
+                                                            "TEST_MISSIONS",
                                                             "OPPORTUNITIES",
                                                             "COMPANY_PROFIT"
                                                     ),
@@ -97,15 +98,24 @@ public class CeoService {
                                                             + "haciendo cada "
                                                             + "agente ahora. "
                                                             + "MISSIONS_NEEDING_ATTENTION: "
-                                                            + "misiones que "
-                                                            + "esperan tu "
+                                                            + "misiones reales "
+                                                            + "(no de prueba) "
+                                                            + "que esperan tu "
                                                             + "aprobación "
                                                             + "(AWAITING_INVESTOR "
                                                             + "exclusivamente, "
                                                             + "nunca fallidas). "
                                                             + "FAILED_MISSIONS: "
-                                                            + "misiones que "
-                                                            + "fallaron. "
+                                                            + "misiones reales "
+                                                            + "que fallaron. "
+                                                            + "TEST_MISSIONS: "
+                                                            + "misiones de "
+                                                            + "prueba/desarrollo "
+                                                            + "(cualquier "
+                                                            + "estado) -- nunca "
+                                                            + "cuentan como "
+                                                            + "actividad "
+                                                            + "empresarial real. "
                                                             + "OPPORTUNITIES: "
                                                             + "oportunidades "
                                                             + "identificadas. "

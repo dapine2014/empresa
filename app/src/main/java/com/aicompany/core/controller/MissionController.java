@@ -23,7 +23,7 @@ public class MissionController {
 
     @PostMapping
     public ResponseEntity<MissionResponse> start(@Valid @RequestBody MissionCommand command) {
-        return ResponseEntity.accepted().body(missionService.start(command.missionId(), command.instruction()));
+        return ResponseEntity.accepted().body(missionService.start(command.missionId(), command.instruction(), command.environmentOrDefault()));
     }
 
     /**

@@ -68,6 +68,12 @@ public class ChatIntentRouter {
     private static final Pattern MORE_EVIDENCE =
             Pattern.compile("(?i)mas\\s+evidencia");
 
+    // \b explícito: "prueba" (contains) también matcheaba dentro de
+    // "aprueba" ("a" + "prueba"), rompiendo la detección de decisión --
+    // reproducido en vivo (fallo real en test antes de este ajuste).
+    private static final Pattern TEST_ENVIRONMENT =
+            Pattern.compile("\\bprueba");
+
     private final MissionService missionService;
     private final CeoService ceoService;
     private final MissionMemoryService missionMemory;
@@ -98,7 +104,9 @@ public class ChatIntentRouter {
         if (missionStartMatcher.find()) {
 
             var missionId = missionStartMatcher.group(1).toUpperCase(Locale.ROOT);
-            var response = missionService.start(missionId, message);
+            // Una misión iniciada por un comando real de chat del
+            // fundador es trabajo real, no una prueba de desarrollo.
+            var response = missionService.start(missionId, message, "PRODUCTION");
 
             return "He recibido " + missionId + ". Estado: " + response.status()
                     + ". La misión está procesándose en segundo plano. Consulta "
@@ -182,6 +190,7 @@ public class ChatIntentRouter {
         AGENT_STATUS,
         MISSIONS_NEEDING_ATTENTION,
         FAILED_MISSIONS,
+        TEST_MISSIONS,
         OPPORTUNITIES,
         COMPANY_PROFIT
     }
@@ -220,6 +229,14 @@ public class ChatIntentRouter {
             // las 25 necesitaban aprobación"). Consultas separadas, cada
             // una estricta sobre su propio status real.
             return QueryIntent.FAILED_MISSIONS;
+        }
+
+        if (TEST_ENVIRONMENT.matcher(normalized).find() || normalized.contains("entorno de test")) {
+            // "¿qué misiones están en prueba?" -- Mission.environment=TEST,
+            // cualquier status. Reportado por el usuario: sin esto, ~25
+            // misiones de desarrollo (MISSION-STRUCTURED-*, MVP-*, etc.)
+            // contaminaban toda pregunta de negocio real.
+            return QueryIntent.TEST_MISSIONS;
         }
 
         if (normalized.contains("aprobacion")
@@ -265,6 +282,7 @@ public class ChatIntentRouter {
             case "AGENT_STATUS" -> formatAgentStatus(missionMemory.latestTaskPerAgent());
             case "MISSIONS_NEEDING_ATTENTION" -> formatMissionsNeedingAttention(missionMemory.findAll(50));
             case "FAILED_MISSIONS" -> formatFailedMissions(missionMemory.findAll(50));
+            case "TEST_MISSIONS" -> formatTestMissions(missionMemory.findAll(50));
             case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
             case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
             default -> "Dato no reconocido: " + topic + ".";
@@ -342,6 +360,7 @@ public class ChatIntentRouter {
 
         var awaitingApproval = missions.stream()
                 .filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
+                .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
 
         if (awaitingApproval.isEmpty()) {
@@ -360,6 +379,7 @@ public class ChatIntentRouter {
 
         var failed = missions.stream()
                 .filter(m -> m.status() == MissionStatus.FAILED)
+                .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
 
         if (failed.isEmpty()) {
@@ -371,6 +391,31 @@ public class ChatIntentRouter {
                 .collect(Collectors.joining(", "));
 
         return "Tenés " + failed.size() + " misión(es) fallida(s): " + lines + ".";
+    }
+
+    /**
+     * {@code environment == "TEST"}, cualquier status — el histórico de
+     * misiones de desarrollo (~25 al momento de escribir esto:
+     * {@code MISSION-STRUCTURED-*}, {@code MVP-*}, {@code MISSION-DEBUG-*},
+     * etc.) que antes contaminaba toda consulta de negocio real. No es
+     * una lista completa de ids (sería larga y poco útil) — desglose por
+     * status, mismo estilo que el mockup del usuario.
+     */
+    private String formatTestMissions(List<MissionResponse> missions) {
+
+        var test = missions.stream()
+                .filter(m -> "TEST".equals(m.environment()))
+                .toList();
+
+        if (test.isEmpty()) {
+            return "No hay ninguna misión en entorno de prueba en este momento.";
+        }
+
+        var lines = test.stream()
+                .map(m -> m.missionId() + " (" + m.status() + ")")
+                .collect(Collectors.joining(", "));
+
+        return "Tenés " + test.size() + " misión(es) en entorno de prueba: " + lines + ".";
     }
 
     private String formatOpportunities(List<OpportunitySummary> opportunities) {

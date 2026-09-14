@@ -23,13 +23,35 @@ public class MissionMemoryService {
         this.driver = driver;
     }
 
-    public void ensureMission(String missionId, String instruction) {
+    /**
+     * Migración idempotente, para las misiones que ya existían antes de
+     * que {@code Mission.environment} existiera: {@code MISSION-001} es
+     * la misión fundacional real (`docs/MISSION-001.md`, "descubrimiento
+     * del primer negocio"), no una prueba de desarrollo — se marca
+     * {@code PRODUCTION} explícitamente. El resto de misiones viejas sin
+     * {@code environment} (todo el histórico real de sesiones de
+     * depuración: {@code MISSION-STRUCTURED-*}, {@code MVP-*},
+     * {@code MISSION-DEBUG-*}, etc.) no necesita una escritura explícita
+     * — {@link #find}/{@link #findAll} ya las clasifican como
+     * {@code TEST} vía {@code coalesce(m.environment, 'TEST')} al leer.
+     */
+    public void backfillMissionEnvironment() {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, m.status='CREATED', m.progress=0, m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt",
+                tx.run("MATCH (m:Mission {id:'MISSION-001'}) WHERE m.environment IS NULL SET m.environment='PRODUCTION'");
+                return null;
+            });
+        }
+    }
+
+    public void ensureMission(String missionId, String instruction, String environment) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, m.environment=$environment, m.status='CREATED', m.progress=0, m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt",
                         Map.of("id", missionId,
                                 "name", missionId.equals("MISSION-001") ? "MISSION-001 — Descubrimiento del primer negocio" : missionId,
                                 "instruction", instruction,
+                                "environment", environment,
                                 "updatedAt", Instant.now().toString()));
                 tx.run("MATCH (m:Mission {id:$id}), (c:Company {id:'AI-COMPANY'}) MERGE (c)-[:HAS_MISSION]->(m)", Map.of("id", missionId));
                 tx.run("MATCH (m:Mission {id:$id}), (a:Agent {id:'ceo'}) MERGE (m)-[:LED_BY]->(a)", Map.of("id", missionId));
@@ -140,10 +162,11 @@ public class MissionMemoryService {
 
     public Optional<MissionResponse> find(String missionId) {
         try (var session = driver.session()) {
-            var records = session.run("MATCH (m:Mission {id:$id}) RETURN m.status AS status, m.progress AS progress, m.currentStep AS step, m.message AS message, m.updatedAt AS updatedAt", Map.of("id", missionId)).list();
+            var records = session.run("MATCH (m:Mission {id:$id}) RETURN m.status AS status, coalesce(m.environment, 'TEST') AS environment, m.progress AS progress, m.currentStep AS step, m.message AS message, m.updatedAt AS updatedAt", Map.of("id", missionId)).list();
             return records.stream().findFirst().map(r -> new MissionResponse(
                     missionId,
                     MissionStatus.valueOf(r.get("status").asString()),
+                    r.get("environment").asString(),
                     r.get("progress").asInt(),
                     r.get("step").asString(),
                     r.get("message").asString(),
@@ -161,6 +184,7 @@ public class MissionMemoryService {
         try (var session = driver.session()) {
             return session.run(
                             "MATCH (m:Mission) RETURN m.id AS id, m.status AS status, " +
+                                    "coalesce(m.environment, 'TEST') AS environment, " +
                                     "m.progress AS progress, m.currentStep AS step, " +
                                     "m.message AS message, m.updatedAt AS updatedAt " +
                                     "ORDER BY m.updatedAt DESC LIMIT $limit",
@@ -168,6 +192,7 @@ public class MissionMemoryService {
                     .list(r -> new MissionResponse(
                             r.get("id").asString(),
                             MissionStatus.valueOf(r.get("status").asString()),
+                            r.get("environment").asString(),
                             r.get("progress").asInt(),
                             r.get("step").asString(),
                             r.get("message").asString(),

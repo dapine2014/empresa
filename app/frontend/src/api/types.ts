@@ -15,9 +15,13 @@ export type MissionStatus =
   | 'FAILED'
   | 'CANCELLED'
 
+// environment: PRODUCTION (actividad empresarial real) o TEST (misiones
+// de desarrollo/depuración) -- separado de status a propósito, ver
+// CLAUDE.md "MISSION-001 vs. las ~25 misiones de prueba acumuladas".
 export interface MissionResponse {
   missionId: string
   status: MissionStatus
+  environment: string
   progress: number
   currentStep: string
   message: string

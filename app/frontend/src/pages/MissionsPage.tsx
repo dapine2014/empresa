@@ -21,6 +21,7 @@ export default function MissionsPage() {
           <tr>
             <th>Misión</th>
             <th>Estado</th>
+            <th>Entorno</th>
             <th>Progreso</th>
             <th>Paso actual</th>
             <th>Actualizada</th>
@@ -35,6 +36,7 @@ export default function MissionsPage() {
               <td>
                 {statusDot(mission.status)} {mission.status}
               </td>
+              <td>{mission.environment === 'PRODUCTION' ? '🏢 PRODUCTION' : '🧪 TEST'}</td>
               <td>{mission.progress}%</td>
               <td>{mission.currentStep}</td>
               <td>{new Date(mission.updatedAt).toLocaleString()}</td>

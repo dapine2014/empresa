@@ -31,8 +31,8 @@ public class MissionService {
         this.events = events;
     }
 
-    public MissionResponse start(String missionId, String instruction) {
-        memory.ensureMission(missionId, instruction);
+    public MissionResponse start(String missionId, String instruction, String environment) {
+        memory.ensureMission(missionId, instruction, environment);
 
         events.publishMission(
                 "EMPRESA_MISSION_CREATED",

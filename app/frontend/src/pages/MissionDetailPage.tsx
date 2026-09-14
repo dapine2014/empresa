@@ -43,6 +43,8 @@ export default function MissionDetailPage() {
       <h1>{mission.missionId}</h1>
       <p>
         {statusDot(mission.status)} <strong>{mission.status}</strong> — {mission.currentStep} ({mission.progress}%)
+        {' — '}
+        {mission.environment === 'PRODUCTION' ? '🏢 PRODUCTION' : '🧪 TEST'}
       </p>
       <p className="mission-message">{mission.message}</p>
 
