@@ -74,12 +74,23 @@ public class ChatIntentRouter {
     private static final Pattern TEST_ENVIRONMENT =
             Pattern.compile("\\bprueba");
 
+    // Boundary explícito por el mismo motivo que TEST_ENVIRONMENT. Y
+    // deliberadamente NO usa normalize() (que saca tildes): "estás"
+    // (verbo) normaliza a "estas" y choca con el pronombre demostrativo
+    // "estas" -- reproducido en vivo por un test existente que se rompió
+    // ("Hola, ¿cómo estás?" empezaba a interpretarse como una referencia).
+    // Sobre el texto original con tilde, "estás" (verbo) y "estas"
+    // (pronombre) son literales distintos y no chocan.
+    private static final Pattern REFERENCE_PRONOUN =
+            Pattern.compile("(?i)\\b(esas|esos|estas|estos|ellas|ellos)\\b");
+
     private final MissionService missionService;
     private final CeoService ceoService;
     private final MissionMemoryService missionMemory;
     private final OpportunityMemoryService opportunityMemory;
     private final CustomerMemoryService customerMemory;
     private final CompanyMemoryService companyMemory;
+    private final ConversationMemoryService conversationMemory;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -87,7 +98,8 @@ public class ChatIntentRouter {
             MissionMemoryService missionMemory,
             OpportunityMemoryService opportunityMemory,
             CustomerMemoryService customerMemory,
-            CompanyMemoryService companyMemory) {
+            CompanyMemoryService companyMemory,
+            ConversationMemoryService conversationMemory) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -95,9 +107,26 @@ public class ChatIntentRouter {
         this.opportunityMemory = opportunityMemory;
         this.customerMemory = customerMemory;
         this.companyMemory = companyMemory;
+        this.conversationMemory = conversationMemory;
     }
 
+    /**
+     * Graba cada turno (mensaje entrante + respuesta final) sin importar
+     * qué camino de {@link #resolve} lo haya resuelto — auditable, mismo
+     * criterio que {@code Decision}/{@code Evidence}. La lógica de
+     * routing en sí no cambió de forma, solo se movió a {@link #resolve}.
+     */
     public String route(String message) {
+
+        var response = resolve(message);
+
+        conversationMemory.recordMessage("user", message);
+        conversationMemory.recordMessage("ceo", response);
+
+        return response;
+    }
+
+    private String resolve(String message) {
 
         var missionStartMatcher = MISSION_START.matcher(message);
 
@@ -118,6 +147,12 @@ public class ChatIntentRouter {
 
         if (decision != null) {
             return handleDecision(decision, message);
+        }
+
+        var referenceMatcher = REFERENCE_PRONOUN.matcher(message);
+
+        if (referenceMatcher.find()) {
+            return handleReference(message);
         }
 
         var query = detectQuery(message);
@@ -184,6 +219,101 @@ public class ChatIntentRouter {
         return "Decisión registrada: " + decision.decision()
                 + " sobre " + decision.missionId()
                 + ". Quedó guardada como Decision real, no fue una ejecución directa de chat.";
+    }
+
+    private enum ReferencePredicate {
+        ENVIRONMENT_TEST,
+        FAILED,
+        NEEDS_APPROVAL
+    }
+
+    private ReferencePredicate detectReferencePredicate(String normalized) {
+
+        if (TEST_ENVIRONMENT.matcher(normalized).find()) {
+            return ReferencePredicate.ENVIRONMENT_TEST;
+        }
+
+        if (normalized.contains("fallaron")
+                || normalized.contains("fallidas")
+                || normalized.contains("fallida")) {
+            return ReferencePredicate.FAILED;
+        }
+
+        if (normalized.contains("aprobacion") || normalized.contains("necesita")) {
+            return ReferencePredicate.NEEDS_APPROVAL;
+        }
+
+        return null;
+    }
+
+    /**
+     * Resuelve un pronombre demostrativo ("esas"/"esos") contra el foco
+     * de la conversación — nunca contra el texto de una respuesta
+     * anterior, siempre contra el dato real y actual de esas entidades
+     * puntuales en Neo4j. Si el predicado no matchea nada reconocido,
+     * cae al chat general con el foco disponible vía el topic
+     * {@code LAST_MENTIONED} (grounded, no historial crudo al LLM).
+     */
+    private String handleReference(String message) {
+
+        var focus = conversationMemory.lastMentioned();
+
+        if (focus.isEmpty()) {
+            return "No tengo claro a qué te referís — no mencioné ninguna misión todavía en esta conversación.";
+        }
+
+        var predicate = detectReferencePredicate(normalize(message));
+
+        if (predicate == null) {
+            return ceoService.chat(
+                    companyMemory.agentName("ceo").orElse("CEO"),
+                    companyMemory.teamRosterDescription(),
+                    message,
+                    this::answerMemoryTopic
+            );
+        }
+
+        var missions = missionMemory.findByIds(focus.get().ids());
+
+        return formatReferenceAnswer(predicate, missions);
+    }
+
+    private String formatReferenceAnswer(ReferencePredicate predicate, List<MissionResponse> missions) {
+
+        var matching = missions.stream()
+                .filter(m -> matchesReferencePredicate(predicate, m))
+                .toList();
+
+        var total = missions.size();
+
+        var description = switch (predicate) {
+            case ENVIRONMENT_TEST -> "pertenecen al entorno de pruebas";
+            case FAILED -> "fallaron";
+            case NEEDS_APPROVAL -> "están esperando tu aprobación (AWAITING_INVESTOR)";
+        };
+
+        if (matching.size() == total) {
+            return "Correcto. Esas " + total + " misión(es) " + description + ".";
+        }
+
+        if (matching.isEmpty()) {
+            return "No, ninguna de esas " + total + " misión(es) " + description + ".";
+        }
+
+        var matchingIds = matching.stream()
+                .map(MissionResponse::missionId)
+                .collect(Collectors.joining(", "));
+
+        return matching.size() + " de " + total + " misión(es) " + description + ": " + matchingIds + ".";
+    }
+
+    private boolean matchesReferencePredicate(ReferencePredicate predicate, MissionResponse mission) {
+
+        return switch (predicate) {
+            case ENVIRONMENT_TEST -> "TEST".equals(mission.environment());
+            case FAILED -> mission.status() == MissionStatus.FAILED;
+            case NEEDS_APPROVAL -> mission.status() == MissionStatus.AWAITING_INVESTOR;
+        };
     }
 
     private enum QueryIntent {
@@ -283,6 +413,7 @@ public class ChatIntentRouter {
             case "MISSIONS_NEEDING_ATTENTION" -> formatMissionsNeedingAttention(missionMemory.findAll(50));
             case "FAILED_MISSIONS" -> formatFailedMissions(missionMemory.findAll(50));
             case "TEST_MISSIONS" -> formatTestMissions(missionMemory.findAll(50));
+            case "LAST_MENTIONED" -> formatLastMentioned();
             case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
             case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
             default -> "Dato no reconocido: " + topic + ".";
@@ -363,6 +494,11 @@ public class ChatIntentRouter {
                 .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
 
+        conversationMemory.setLastMentioned(
+                "MISSION",
+                awaitingApproval.stream().map(MissionResponse::missionId).toList()
+        );
+
         if (awaitingApproval.isEmpty()) {
             return "No hay ninguna misión que necesite tu aprobación en este momento.";
         }
@@ -381,6 +517,11 @@ public class ChatIntentRouter {
                 .filter(m -> m.status() == MissionStatus.FAILED)
                 .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
+
+        conversationMemory.setLastMentioned(
+                "MISSION",
+                failed.stream().map(MissionResponse::missionId).toList()
+        );
 
         if (failed.isEmpty()) {
             return "No hay ninguna misión fallida en este momento.";
@@ -407,6 +548,11 @@ public class ChatIntentRouter {
                 .filter(m -> "TEST".equals(m.environment()))
                 .toList();
 
+        conversationMemory.setLastMentioned(
+                "MISSION",
+                test.stream().map(MissionResponse::missionId).toList()
+        );
+
         if (test.isEmpty()) {
             return "No hay ninguna misión en entorno de prueba en este momento.";
         }
@@ -416,6 +562,29 @@ public class ChatIntentRouter {
                 .collect(Collectors.joining(", "));
 
         return "Tenés " + test.size() + " misión(es) en entorno de prueba: " + lines + ".";
+    }
+
+    /**
+     * Detalle real del foco actual de la conversación — usado por
+     * {@link #handleReference} cuando el predicado no matchea nada
+     * reconocido (fallback grounded al chat general) y por la
+     * herramienta {@code query_company_memory} del LLM.
+     */
+    private String formatLastMentioned() {
+
+        var focus = conversationMemory.lastMentioned();
+
+        if (focus.isEmpty()) {
+            return "No hay ninguna mención reciente de misiones en esta conversación.";
+        }
+
+        var missions = missionMemory.findByIds(focus.get().ids());
+
+        var lines = missions.stream()
+                .map(m -> m.missionId() + " (environment=" + m.environment() + ", status=" + m.status() + ")")
+                .collect(Collectors.joining(", "));
+
+        return "Las últimas misiones mencionadas fueron: " + lines + ".";
     }
 
     private String formatOpportunities(List<OpportunitySummary> opportunities) {

@@ -4,6 +4,7 @@ import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
 import com.aicompany.core.model.InvestorDecision;
+import com.aicompany.core.model.LastMentioned;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
@@ -25,9 +26,10 @@ class ChatIntentRouterTest {
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
     private final CompanyMemoryService companyMemory = mock(CompanyMemoryService.class);
+    private final ConversationMemoryService conversationMemory = mock(ConversationMemoryService.class);
 
     private final ChatIntentRouter router = new ChatIntentRouter(
-            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory
+            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory, conversationMemory
     );
 
     @Test
@@ -320,6 +322,7 @@ class ChatIntentRouterTest {
         when(missionMemory.findAll(50)).thenReturn(List.of());
         when(opportunityMemory.listRecent(20)).thenReturn(List.of());
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{100.0, 40.0});
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
 
         router.route("Hola, ¿cómo estás?");
 
@@ -331,8 +334,95 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("MISSIONS_NEEDING_ATTENTION").contains("No hay ninguna misión"));
         assertTrue(companyMemoryQuery.apply("FAILED_MISSIONS").contains("No hay ninguna misión"));
         assertTrue(companyMemoryQuery.apply("TEST_MISSIONS").contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("LAST_MENTIONED").contains("No hay ninguna mención reciente"));
         assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
         assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
+    }
+
+    @Test
+    void resolvesReferenceToLastMentionedMissionsAgainstRealCurrentData() {
+        // El ejemplo real reportado por el usuario: "¿Qué necesita mi
+        // aprobación?" lista misiones, "pero esas están en prueba" debe
+        // resolverse contra el dato REAL actual de esos ids puntuales,
+        // no contra el texto de la respuesta anterior.
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-DEBUG-007", "MISSION-STRUCTURED-001")))
+        );
+        when(missionMemory.findByIds(List.of("MISSION-DEBUG-007", "MISSION-STRUCTURED-001"))).thenReturn(List.of(
+                new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now()),
+                new MissionResponse("MISSION-STRUCTURED-001", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now())
+        ));
+
+        var response = router.route("pero esas están en prueba");
+
+        assertTrue(response.contains("Correcto"));
+        assertTrue(response.contains("2"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void resolvesReferenceWhenOnlySomeOfTheMentionedMissionsMatch() {
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-001", "MISSION-DEBUG-007")))
+        );
+        when(missionMemory.findByIds(List.of("MISSION-001", "MISSION-DEBUG-007"))).thenReturn(List.of(
+                new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now()),
+                new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now())
+        ));
+
+        var response = router.route("¿esas están en prueba?");
+
+        assertTrue(response.contains("1"));
+        assertTrue(response.contains("2"));
+        assertTrue(response.contains("MISSION-DEBUG-007"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void respondsDeterministicallyWhenReferenceHasNoFocusYet() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
+
+        var response = router.route("¿esas están en prueba?");
+
+        assertTrue(response.contains("No tengo claro"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void fallsBackToGeneralChatWithLastMentionedToolWhenPredicateNotRecognized() {
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-001")))
+        );
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), eq("contame más sobre esas"), any()))
+                .thenReturn("Ahí va el detalle.");
+
+        var response = router.route("contame más sobre esas");
+
+        assertEquals("Ahí va el detalle.", response);
+    }
+
+    @Test
+    void recordsEveryMessageRegardlessOfWhichPathHandledIt() {
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+
+        router.route("¿Qué necesita mi aprobación?");
+
+        // No hace nada raro con el resultado; solo confirmamos que el
+        // router graba el turno completo (entrada + respuesta final).
+        verify(conversationMemory).recordMessage("user", "¿Qué necesita mi aprobación?");
+        verify(conversationMemory).recordMessage(eq("ceo"), anyString());
+    }
+
+    @Test
+    void testMissionsQueryRecordsItsResultsAsTheNewFocus() {
+        var testMission = new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(testMission));
+
+        router.route("¿Qué misiones están en prueba?");
+
+        verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-DEBUG-007"));
     }
 }
