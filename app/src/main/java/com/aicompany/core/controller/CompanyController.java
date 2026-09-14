@@ -74,17 +74,32 @@ public class CompanyController {
     }
 
     /**
-     * Correo al que se envían las alertas inmediatas (`empresa.md` §18) —
-     * panel "Settings" del Command Center web.
+     * Correo de alertas (a quién le llegan, `empresa.md` §18) y correo
+     * propio del sistema (remitente) — panel "Settings" del Command
+     * Center web. La clave del correo del sistema nunca se devuelve.
      */
     @GetMapping("/settings")
     public SettingsResponse settings() {
-        return new SettingsResponse(memoryService.alertEmail());
+        return new SettingsResponse(memoryService.alertEmail(), memoryService.systemEmail());
     }
 
+    /**
+     * {@code systemEmail}/{@code mailPassword} son opcionales: solo se
+     * actualizan si vienen no vacíos, para no obligar a retipear la clave
+     * del sistema cada vez que se cambia el correo de alertas.
+     */
     @PutMapping("/settings")
     public SettingsResponse updateSettings(@Valid @RequestBody SettingsCommand command) {
         memoryService.setAlertEmail(command.alertEmail());
-        return new SettingsResponse(command.alertEmail());
+
+        if (command.systemEmail() != null && !command.systemEmail().isBlank()) {
+            memoryService.setSystemEmail(command.systemEmail());
+        }
+
+        if (command.mailPassword() != null && !command.mailPassword().isBlank()) {
+            memoryService.setMailPassword(command.mailPassword());
+        }
+
+        return new SettingsResponse(command.alertEmail(), memoryService.systemEmail());
     }
 }

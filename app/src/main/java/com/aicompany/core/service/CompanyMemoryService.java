@@ -86,7 +86,7 @@ public class CompanyMemoryService {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
                 tx.run("MERGE (c:Company {id:'AI-COMPANY'}) "
-                        + "ON CREATE SET c.alertEmail='dapine@gmail.com' "
+                        + "ON CREATE SET c.alertEmail='dapine@gmail.com', c.systemEmail='', c.mailPassword='' "
                         + "SET c.name='AI Company', c.status='ACTIVE', c.seedCapitalUsd=50.0, c.challengeDays=60");
                 var agents = List.of(
                         new String[]{"ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico"},
@@ -156,6 +156,55 @@ public class CompanyMemoryService {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}) SET c.alertEmail=$email", Map.of("email", email));
+                return null;
+            });
+        }
+    }
+
+    /**
+     * Correo propio del sistema (remitente/usuario SMTP de las alertas) —
+     * distinto de {@link #alertEmail}, que es a quién le llegan. Vacío por
+     * default (`ON CREATE` en {@link #initializeCompanyAndAgents}): sin
+     * configurarlo desde el Command Center web, {@link AlertMailService}
+     * no intenta enviar nada.
+     */
+    public String systemEmail() {
+        try (var session = driver.session()) {
+            return session.run(
+                    "MATCH (c:Company {id:'AI-COMPANY'}) RETURN coalesce(c.systemEmail, '') AS email")
+                    .single().get("email").asString();
+        }
+    }
+
+    public void setSystemEmail(String email) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (c:Company {id:'AI-COMPANY'}) SET c.systemEmail=$email", Map.of("email", email));
+                return null;
+            });
+        }
+    }
+
+    /**
+     * App Password SMTP del correo propio del sistema. Se guarda en texto
+     * plano en esta misma instancia de Neo4j (compartida con otros
+     * proyectos en esta máquina, ver "Memoria: Neo4j" en `CLAUDE.md`) —
+     * decisión acordada con el usuario para el alcance de MVP (un solo
+     * operador, máquina de desarrollo propia); nunca se devuelve por API
+     * (`SettingsResponse` no la incluye).
+     */
+    public String mailPassword() {
+        try (var session = driver.session()) {
+            return session.run(
+                    "MATCH (c:Company {id:'AI-COMPANY'}) RETURN coalesce(c.mailPassword, '') AS password")
+                    .single().get("password").asString();
+        }
+    }
+
+    public void setMailPassword(String password) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (c:Company {id:'AI-COMPANY'}) SET c.mailPassword=$password", Map.of("password", password));
                 return null;
             });
         }

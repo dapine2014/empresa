@@ -2,10 +2,11 @@ spring:
   application:
     name: company-core
   mail:
+    # username/password NO van acá: se leen dinámicamente de Neo4j
+    # (Company.systemEmail/mailPassword, ver AlertMailService) porque son
+    # editables desde el Command Center web sin reiniciar el proceso.
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:

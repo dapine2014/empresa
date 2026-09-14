@@ -14,7 +14,9 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,17 +59,39 @@ class CompanyControllerTest {
     }
 
     @Test
-    void settingsReturnsTheConfiguredAlertEmail() {
+    void settingsReturnsTheConfiguredAlertAndSystemEmails() {
         when(memory.alertEmail()).thenReturn("dapine@gmail.com");
+        when(memory.systemEmail()).thenReturn("ai-company@gmail.com");
 
-        assertEquals("dapine@gmail.com", controller.settings().alertEmail());
+        var response = controller.settings();
+
+        assertEquals("dapine@gmail.com", response.alertEmail());
+        assertEquals("ai-company@gmail.com", response.systemEmail());
     }
 
     @Test
     void updateSettingsPersistsTheNewAlertEmail() {
-        var response = controller.updateSettings(new SettingsCommand("nuevo@ejemplo.com"));
+        var response = controller.updateSettings(
+                new SettingsCommand("nuevo@ejemplo.com", null, null));
 
         verify(memory).setAlertEmail("nuevo@ejemplo.com");
         assertEquals("nuevo@ejemplo.com", response.alertEmail());
+    }
+
+    @Test
+    void updateSettingsPersistsTheSystemEmailAndPasswordWhenProvided() {
+        controller.updateSettings(
+                new SettingsCommand("dapine@gmail.com", "ai-company@gmail.com", "app-password-secreta"));
+
+        verify(memory).setSystemEmail("ai-company@gmail.com");
+        verify(memory).setMailPassword("app-password-secreta");
+    }
+
+    @Test
+    void updateSettingsDoesNotOverwriteTheSystemEmailOrPasswordWhenOmitted() {
+        controller.updateSettings(new SettingsCommand("dapine@gmail.com", null, ""));
+
+        verify(memory, never()).setSystemEmail(any());
+        verify(memory, never()).setMailPassword(any());
     }
 }

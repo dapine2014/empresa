@@ -79,8 +79,11 @@ export interface ChatResponse {
 
 export interface SettingsResponse {
   alertEmail: string
+  systemEmail: string
 }
 
 export interface SettingsCommand {
   alertEmail: string
+  systemEmail: string
+  mailPassword: string
 }

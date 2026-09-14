@@ -5,6 +5,8 @@ import { api } from '../api/client'
 export default function SettingsPage() {
   const queryClient = useQueryClient()
   const [alertEmail, setAlertEmail] = useState('')
+  const [systemEmail, setSystemEmail] = useState('')
+  const [mailPassword, setMailPassword] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
 
   const { data, isLoading, error } = useQuery({
@@ -13,16 +15,20 @@ export default function SettingsPage() {
   })
 
   useEffect(() => {
-    if (data) setAlertEmail(data.alertEmail)
+    if (data) {
+      setAlertEmail(data.alertEmail)
+      setSystemEmail(data.systemEmail)
+    }
   }, [data])
 
   const mutation = useMutation({
-    mutationFn: () => api.updateSettings({ alertEmail }),
+    mutationFn: () => api.updateSettings({ alertEmail, systemEmail, mailPassword }),
     onSuccess: (response) => {
-      setFeedback(`Correo de alertas actualizado a ${response.alertEmail}.`)
+      setFeedback('Configuración guardada.')
+      setMailPassword('')
       queryClient.setQueryData(['settings'], response)
     },
-    onError: () => setFeedback('No se pudo actualizar el correo (¿formato válido?).'),
+    onError: () => setFeedback('No se pudo guardar (¿formato de correo válido?).'),
   })
 
   if (isLoading) return <p>Cargando configuración...</p>
@@ -31,9 +37,6 @@ export default function SettingsPage() {
   return (
     <div>
       <h1>Settings</h1>
-      <p className="hint">
-        Correo al que se envían las alertas inmediatas (misión que necesita tu decisión, misión que falló).
-      </p>
 
       <form
         className="decision-form"
@@ -44,7 +47,7 @@ export default function SettingsPage() {
         }}
       >
         <label>
-          Correo de alertas
+          Correo de alertas (a quién le llegan)
           <input
             type="email"
             required
@@ -52,6 +55,30 @@ export default function SettingsPage() {
             onChange={(e) => setAlertEmail(e.target.value)}
           />
         </label>
+
+        <p className="hint">
+          Correo propio del sistema: la cuenta de Gmail que la empresa usa para enviar las alertas.
+        </p>
+        <label>
+          Correo del sistema (remitente)
+          <input
+            type="email"
+            value={systemEmail}
+            onChange={(e) => setSystemEmail(e.target.value)}
+            placeholder="ai-company@gmail.com"
+          />
+        </label>
+        <label>
+          Clave de aplicación de Gmail
+          <input
+            type="password"
+            value={mailPassword}
+            onChange={(e) => setMailPassword(e.target.value)}
+            placeholder={systemEmail ? '•••••• (dejar vacío para no cambiarla)' : 'App Password de Gmail'}
+            autoComplete="new-password"
+          />
+        </label>
+
         <button type="submit" disabled={mutation.isPending || !alertEmail.trim()}>
           {mutation.isPending ? 'Guardando...' : 'Guardar'}
         </button>
