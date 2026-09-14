@@ -176,6 +176,33 @@ public class MissionMemoryService {
     }
 
     /**
+     * Trae el dato real y actual de un conjunto puntual de misiones por
+     * id — usado por {@code ChatIntentRouter} para resolver referencias
+     * conversacionales ("esas"/"esos") contra el estado real de las
+     * misiones mencionadas, nunca contra el texto de una respuesta
+     * anterior que puede estar desactualizado.
+     */
+    public List<MissionResponse> findByIds(List<String> missionIds) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (m:Mission) WHERE m.id IN $ids RETURN m.id AS id, m.status AS status, " +
+                                    "coalesce(m.environment, 'TEST') AS environment, " +
+                                    "m.progress AS progress, m.currentStep AS step, " +
+                                    "m.message AS message, m.updatedAt AS updatedAt",
+                            Map.of("ids", missionIds))
+                    .list(r -> new MissionResponse(
+                            r.get("id").asString(),
+                            MissionStatus.valueOf(r.get("status").asString()),
+                            r.get("environment").asString(),
+                            r.get("progress").asInt(),
+                            r.get("step").asString(),
+                            r.get("message").asString(),
+                            Instant.parse(r.get("updatedAt").asString())
+                    ));
+        }
+    }
+
+    /**
      * Misiones más recientes (no filtra por estado) — base del panel
      * "Missions" del Command Center web. {@code limit} fijo desde el
      * llamador (v1 no expone paginación).
