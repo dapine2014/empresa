@@ -73,19 +73,22 @@ public class ChatIntentRouter {
     private final MissionMemoryService missionMemory;
     private final OpportunityMemoryService opportunityMemory;
     private final CustomerMemoryService customerMemory;
+    private final CompanyMemoryService companyMemory;
 
     public ChatIntentRouter(
             MissionService missionService,
             CeoService ceoService,
             MissionMemoryService missionMemory,
             OpportunityMemoryService opportunityMemory,
-            CustomerMemoryService customerMemory) {
+            CustomerMemoryService customerMemory,
+            CompanyMemoryService companyMemory) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
         this.missionMemory = missionMemory;
         this.opportunityMemory = opportunityMemory;
         this.customerMemory = customerMemory;
+        this.companyMemory = companyMemory;
     }
 
     public String route(String message) {
@@ -115,7 +118,12 @@ public class ChatIntentRouter {
             return handleQuery(query);
         }
 
-        return ceoService.chat(message);
+        return ceoService.chat(
+                companyMemory.agentName("ceo").orElse("CEO"),
+                companyMemory.teamRosterDescription(),
+                message,
+                this::answerMemoryTopic
+        );
     }
 
     private record DetectedDecision(String missionId, InvestorDecision decision) {
@@ -211,18 +219,33 @@ public class ChatIntentRouter {
 
         log.info("CHAT_INTENT_QUERY intent={}", intent);
 
-        return switch (intent) {
-            case AGENT_STATUS -> formatAgentStatus(missionMemory.latestTaskPerAgent());
-            case MISSIONS_NEEDING_ATTENTION -> formatMissionsNeedingAttention(missionMemory.findAll(50));
-            case OPPORTUNITIES -> formatOpportunities(opportunityMemory.listRecent(20));
-            case COMPANY_PROFIT -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
+        return answerMemoryTopic(intent.name());
+    }
+
+    /**
+     * Resuelve un {@code topic} real contra Neo4j reusando los mismos
+     * formatters deterministas de arriba — llamado tanto por el atajo de
+     * keywords ({@link #handleQuery}, sin pasar por Ollama) como por la
+     * herramienta {@code query_company_memory} que {@link CeoService#chat}
+     * puede pedir para el chat general (ver {@code CeoService} para el
+     * porqué: antes de esa herramienta, el CEO alucinaba estos datos en
+     * cualquier frase que no matcheara exactamente un keyword).
+     */
+    String answerMemoryTopic(String topic) {
+
+        return switch (topic) {
+            case "AGENT_STATUS" -> formatAgentStatus(missionMemory.latestTaskPerAgent());
+            case "MISSIONS_NEEDING_ATTENTION" -> formatMissionsNeedingAttention(missionMemory.findAll(50));
+            case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
+            case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
+            default -> "Dato no reconocido: " + topic + ".";
         };
     }
 
     private String formatAgentStatus(List<AgentStatusResponse> statuses) {
 
         var lines = statuses.stream()
-                .map(a -> a.agentId() + ": " + a.status()
+                .map(a -> a.name() + " (" + a.role() + "): " + a.status()
                         + (a.missionId() == null
                         ? ""
                         : " (" + a.missionId()

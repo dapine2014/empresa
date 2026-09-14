@@ -34,7 +34,7 @@ export default function DashboardPage() {
           <div className="card-value">
             {agents.map((a) => (
               <span key={a.agentId} className="agent-chip">
-                {statusDot(a.status)} {a.agentId}
+                {statusDot(a.status)} {a.name}
               </span>
             ))}
           </div>

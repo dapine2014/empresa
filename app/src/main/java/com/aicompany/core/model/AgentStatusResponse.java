@@ -9,6 +9,9 @@ import java.time.Instant;
  */
 public record AgentStatusResponse(
         String agentId,
+        String name,
+        String role,
+        String personality,
         String status,
         String missionId,
         String action,

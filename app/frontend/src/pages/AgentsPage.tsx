@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import { humanizeAction } from '../humanize'
 
 export default function AgentsPage() {
   const { data, isLoading, error } = useQuery({
@@ -15,30 +16,23 @@ export default function AgentsPage() {
   return (
     <div>
       <h1>Agents</h1>
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Agente</th>
-            <th>Estado</th>
-            <th>Misión</th>
-            <th>Acción</th>
-            <th>Actualizado</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data?.map((agent) => (
-            <tr key={agent.agentId}>
-              <td>{agent.agentId.toUpperCase()}</td>
-              <td>
-                {statusDot(agent.status)} {agent.status}
-              </td>
-              <td>{agent.missionId ?? '—'}</td>
-              <td>{agent.action ?? '—'}</td>
-              <td>{agent.updatedAt ? new Date(agent.updatedAt).toLocaleString() : '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="dashboard-cards">
+        {data?.map((agent) => (
+          <div className="card" key={agent.agentId}>
+            <div className="card-value">
+              {statusDot(agent.status)} {agent.name}
+            </div>
+            <div className="card-title">{agent.role}</div>
+            <p className="hint">{agent.personality}</p>
+            <p className="hint">
+              {agent.status === 'IDLE'
+                ? 'Inactivo'
+                : `Trabajando en: ${humanizeAction(agent.action)}`}
+              {agent.missionId ? ` (${agent.missionId})` : ''}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

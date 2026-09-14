@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class CompanyMemoryService {
@@ -86,15 +87,16 @@ public class CompanyMemoryService {
             session.executeWrite(tx -> {
                 tx.run("MERGE (c:Company {id:'AI-COMPANY'}) SET c.name='AI Company', c.status='ACTIVE', c.seedCapitalUsd=50.0, c.challengeDays=60");
                 var agents = List.of(
-                        new String[]{"ceo", "CEO", "Chief Executive Officer AI"},
-                        new String[]{"sales", "Sales", "Director of Sales AI"},
-                        new String[]{"product", "Product", "Chief Product AI"},
-                        new String[]{"finance", "Finance", "Chief Finance AI"},
-                        new String[]{"engineering", "Engineering", "Chief Engineering AI"},
-                        new String[]{"qa", "QA & Operations", "QA & Operations AI"}
+                        new String[]{"ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico"},
+                        new String[]{"sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados"},
+                        new String[]{"product", "Luna", "Chief Product AI", "creativa, centrada en el usuario"},
+                        new String[]{"finance", "Max", "Chief Finance AI", "analítico, conservador"},
+                        new String[]{"engineering", "Neo", "Chief Engineering AI", "pragmático, meticuloso"},
+                        new String[]{"qa", "Vera", "QA & Operations AI", "escéptica, detallista"}
                 );
                 for (var agent : agents) {
-                    tx.run("MERGE (a:Agent {id:$id}) SET a.name=$name, a.title=$title, a.status='ACTIVE'", Map.of("id", agent[0], "name", agent[1], "title", agent[2]));
+                    tx.run("MERGE (a:Agent {id:$id}) SET a.name=$name, a.role=$role, a.personality=$personality, a.status='ACTIVE' REMOVE a.title",
+                            Map.of("id", agent[0], "name", agent[1], "role", agent[2], "personality", agent[3]));
                 }
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}), (a:Agent) MERGE (a)-[:WORKS_FOR]->(c)");
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}), (ceo:Agent {id:'ceo'}) MERGE (c)-[:HAS_CEO]->(ceo)");
@@ -103,13 +105,44 @@ public class CompanyMemoryService {
         }
     }
 
+    /**
+     * Nombre real y persistente de un agente (nunca inventado por el LLM,
+     * ver "Identidad persistente de agentes" en {@code CLAUDE.md}) — usado
+     * para que {@code CeoService.chat} pueda decirle al modelo quién es de
+     * verdad en vez de dejar que lo invente cuando se lo preguntan.
+     */
+    public Optional<String> agentName(String agentId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (a:Agent {id:$id}) RETURN a.name AS name", Map.of("id", agentId))
+                    .list(record -> record.get("name").asString())
+                    .stream().findFirst();
+        }
+    }
+
+    /**
+     * Roster real del equipo (sin el CEO) como texto plano — "buscó cuál
+     * es su equipo real" no es distinto de "buscó su propio nombre":
+     * mismo motivo que {@link #agentName}, para que {@code CeoService.chat}
+     * pueda presentar al equipo real en vez de inventar roles genéricos
+     * cuando alguien le pide "preséntame al equipo" en el chat.
+     */
+    public String teamRosterDescription() {
+        try (var session = driver.session()) {
+            var lines = session.run(
+                    "MATCH (a:Agent) WHERE a.id <> 'ceo' RETURN a.name AS name, a.role AS role ORDER BY a.id")
+                    .list(r -> "- " + r.get("name").asString() + " (" + r.get("role").asString() + ")");
+            return String.join("\n", lines);
+        }
+    }
+
     public List<Map<String, Object>> agents() {
         try (var session = driver.session()) {
-            return session.run("MATCH (a:Agent) RETURN a.id AS id, a.name AS name, a.title AS title ORDER BY a.id")
+            return session.run("MATCH (a:Agent) RETURN a.id AS id, a.name AS name, a.role AS role, a.personality AS personality ORDER BY a.id")
                     .list(record -> Map.of(
                             "id", record.get("id").asString(),
                             "name", record.get("name").asString(),
-                            "title", record.get("title").asString()));
+                            "role", record.get("role").asString(),
+                            "personality", record.get("personality").asString()));
         }
     }
 }

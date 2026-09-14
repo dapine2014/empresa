@@ -34,8 +34,9 @@ public class ActivityMemoryService {
             return session.run("""
                             CALL {
                               MATCH (t:AgentTask)
+                              OPTIONAL MATCH (a1:Agent {id: t.agentId})
                               RETURN 'TASK' AS type, t.missionId AS missionId, t.agentId AS agentId,
-                                     (t.agentId + ' - ' + t.action + ': ' + t.status) AS description,
+                                     (coalesce(a1.name, t.agentId) + ' - ' + t.action + ': ' + t.status) AS description,
                                      t.updatedAt AS timestamp
                               UNION ALL
                               MATCH (m:Mission)
@@ -44,8 +45,9 @@ public class ActivityMemoryService {
                                      m.updatedAt AS timestamp
                               UNION ALL
                               MATCH (e:Evidence)
+                              OPTIONAL MATCH (a2:Agent {id: e.agentId})
                               RETURN 'EVIDENCE' AS type, e.missionId AS missionId, e.agentId AS agentId,
-                                     left(e.description, 120) AS description,
+                                     (coalesce(a2.name, e.agentId) + ': ' + left(e.description, 120)) AS description,
                                      e.updatedAt AS timestamp
                               UNION ALL
                               MATCH (d:Decision)

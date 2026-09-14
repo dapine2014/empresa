@@ -24,9 +24,10 @@ class ChatIntentRouterTest {
     private final MissionMemoryService missionMemory = mock(MissionMemoryService.class);
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
+    private final CompanyMemoryService companyMemory = mock(CompanyMemoryService.class);
 
     private final ChatIntentRouter router = new ChatIntentRouter(
-            missionService, ceoService, missionMemory, opportunityMemory, customerMemory
+            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory
     );
 
     @Test
@@ -96,7 +97,9 @@ class ChatIntentRouterTest {
 
     @Test
     void doesNotRouteToDecisionWhenMessageHasNoExplicitMissionId() {
-        when(ceoService.chat(anyString())).thenReturn("¿A qué misión te referís?");
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(anyString(), anyString(), anyString(), any())).thenReturn("¿A qué misión te referís?");
 
         var response = router.route("Aprueba la misión de la que hablamos ayer.");
 
@@ -121,15 +124,15 @@ class ChatIntentRouterTest {
         // (dijo "9" en vez de 25 misiones reales). La respuesta se arma
         // 100% en Java a partir de los datos reales.
         var statuses = List.of(
-                new AgentStatusResponse("sales", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now()),
-                new AgentStatusResponse("ceo", "IDLE", null, null, null)
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now()),
+                new AgentStatusResponse("ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico", "IDLE", null, null, null)
         );
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
 
         var response = router.route("¿Qué agentes están trabajando ahora?");
 
-        assertTrue(response.contains("sales: WORKING (MISSION-1, MARKET_DISCOVERY)"));
-        assertTrue(response.contains("ceo: IDLE"));
+        assertTrue(response.contains("Sofia (Director of Sales AI): WORKING (MISSION-1, MARKET_DISCOVERY)"));
+        assertTrue(response.contains("Alex (Chief Executive Officer AI): IDLE"));
         verifyNoInteractions(ceoService);
     }
 
@@ -176,11 +179,41 @@ class ChatIntentRouterTest {
 
     @Test
     void fallsBackToGeneralChatWhenNoIntentMatches() {
-        when(ceoService.chat("Hola, ¿cómo estás?")).thenReturn("Todo bien, gracias.");
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), eq("Hola, ¿cómo estás?"), any()))
+                .thenReturn("Todo bien, gracias.");
 
         var response = router.route("Hola, ¿cómo estás?");
 
         assertEquals("Todo bien, gracias.", response);
         verifyNoInteractions(missionService);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void passesCompanyMemoryQueryCallbackThatResolvesAllKnownTopics() {
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+
+        var statuses = List.of(
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+        );
+        when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+        when(opportunityMemory.listRecent(20)).thenReturn(List.of());
+        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{100.0, 40.0});
+
+        router.route("Hola, ¿cómo estás?");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(ceoService).chat(anyString(), anyString(), anyString(), captor.capture());
+        var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
+
+        assertTrue(companyMemoryQuery.apply("AGENT_STATUS").contains("Sofia"));
+        assertTrue(companyMemoryQuery.apply("MISSIONS_NEEDING_ATTENTION").contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
+        assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
+        assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
     }
 }

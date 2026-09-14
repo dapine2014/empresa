@@ -41,6 +41,9 @@ export interface MissionStatusResponse {
 
 export interface AgentStatusResponse {
   agentId: string
+  name: string
+  role: string
+  personality: string
   status: string
   missionId: string | null
   action: string | null

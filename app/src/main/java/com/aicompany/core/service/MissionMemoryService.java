@@ -165,13 +165,17 @@ public class MissionMemoryService {
                             OPTIONAL MATCH (a)-[:ASSIGNED_TASK]->(t:AgentTask)
                             WITH a, t ORDER BY t.updatedAt DESC
                             WITH a, collect(t)[0] AS latest
-                            RETURN a.id AS agentId, latest.status AS status,
+                            RETURN a.id AS agentId, a.name AS name, a.role AS role, a.personality AS personality,
+                                   latest.status AS status,
                                    latest.missionId AS missionId, latest.action AS action,
                                    latest.updatedAt AS updatedAt
                             ORDER BY a.id
                             """)
                     .list(r -> new AgentStatusResponse(
                             r.get("agentId").asString(),
+                            r.get("name").asString(),
+                            r.get("role").asString(),
+                            r.get("personality").asString(),
                             r.get("status").isNull() ? "IDLE" : r.get("status").asString(),
                             r.get("missionId").isNull() ? null : r.get("missionId").asString(),
                             r.get("action").isNull() ? null : r.get("action").asString(),

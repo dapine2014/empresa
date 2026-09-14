@@ -17,6 +17,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 @Service
 public class CeoService {
@@ -57,6 +58,63 @@ public class CeoService {
             )
     );
 
+    /**
+     * Herramienta disponible solo en {@link #chat}: Neo4j es la memoria
+     * operacional y fuente de verdad de la empresa (misiones, agentes,
+     * oportunidades, finanzas reales) — antes de esta herramienta, el chat
+     * del CEO no tenía forma de consultarla y alucinaba cuando le
+     * preguntaban algo que no venía pre-inyectado en el system prompt (p.
+     * ej. "preséntame al equipo" inventó 7 roles genéricos que no existen).
+     * {@code topic} está deliberadamente restringido a un enum fijo, nunca
+     * Cypher libre: mismo criterio de todo el proyecto de no exponerle al
+     * modelo un canal para ejecutar consultas arbitrarias.
+     */
+    private static final List<Map<String, Object>> COMPANY_MEMORY_TOOLS = List.of(
+            Map.of(
+                    "type", "function",
+                    "function", Map.of(
+                            "name", "query_company_memory",
+                            "description",
+                            "Consulta datos reales y actuales de la "
+                                    + "empresa en Neo4j (memoria "
+                                    + "operacional) — nunca inventes estos "
+                                    + "datos, pedí la herramienta si no los "
+                                    + "tenés en este mensaje.",
+                            "parameters", Map.of(
+                                    "type", "object",
+                                    "properties", Map.of(
+                                            "topic", Map.of(
+                                                    "type", "string",
+                                                    "enum", List.of(
+                                                            "AGENT_STATUS",
+                                                            "MISSIONS_NEEDING_ATTENTION",
+                                                            "OPPORTUNITIES",
+                                                            "COMPANY_PROFIT"
+                                                    ),
+                                                    "description",
+                                                    "AGENT_STATUS: qué está "
+                                                            + "haciendo cada "
+                                                            + "agente ahora. "
+                                                            + "MISSIONS_NEEDING_ATTENTION: "
+                                                            + "misiones que "
+                                                            + "esperan tu "
+                                                            + "aprobación o "
+                                                            + "fallaron. "
+                                                            + "OPPORTUNITIES: "
+                                                            + "oportunidades "
+                                                            + "identificadas. "
+                                                            + "COMPANY_PROFIT: "
+                                                            + "ingresos/costos/"
+                                                            + "utilidad reales "
+                                                            + "acumulados."
+                                            )
+                                    ),
+                                    "required", List.of("topic")
+                            )
+                    )
+            )
+    );
+
     private final RestClient ollama;
     private final String ceoModel;
     private final String agentModel;
@@ -83,16 +141,66 @@ public class CeoService {
         this.meterRegistry = meterRegistry;
     }
 
-    public String chat(String message) {
+    /**
+     * {@code companyMemoryQuery} resuelve un {@code topic} real contra
+     * Neo4j (reutiliza los mismos formatters deterministas que ya usa
+     * {@code ChatIntentRouter} para sus intents de consulta por
+     * keyword) — {@code CeoService} no depende de Neo4j directamente, solo
+     * de este callback, para mantener la separación existente ("CeoService
+     * es el único cliente de Ollama").
+     */
+    public String chat(
+            String ceoName,
+            String teamRoster,
+            String message,
+            Function<String, String> companyMemoryQuery) {
 
-        var messages = List.<Map<String, Object>>of(
-                Map.of("role", "system", "content", systemPrompt()),
-                Map.of("role", "user", "content", message)
+        var system = systemPrompt()
+                + "\nTu nombre real es " + ceoName
+                + " — ese es tu nombre, no inventes otro si te preguntan quién sos."
+                + "\nEste es tu equipo real (nombre y rol) — nunca inventes"
+                + " otros integrantes ni cargos genéricos si te piden"
+                + " presentar al equipo:\n" + teamRoster;
+
+        var messages = new ArrayList<Map<String, Object>>();
+        messages.add(Map.of("role", "system", "content", system));
+        messages.add(Map.of("role", "user", "content", message));
+
+        var turn = callModel(
+                "CEO_CHAT", "ceo", ceoModel, messages, null, COMPANY_MEMORY_TOOLS
         );
 
-        return callModel(
+        var topic =
+                !turn.toolCalls().isEmpty()
+                        ? parseCompanyMemoryTopic(turn.toolCalls().get(0))
+                        : detectInlineCompanyMemoryTopic(turn.content());
+
+        if (topic == null) {
+            return turn.content();
+        }
+
+        log.info("CEO_CHAT_TOOL_CALL topic={}", topic);
+
+        var result = companyMemoryQuery.apply(topic);
+
+        messages.add(Map.of(
+                "role", "assistant",
+                "content", "",
+                "tool_calls", List.of(Map.of(
+                        "function", Map.of(
+                                "name", "query_company_memory",
+                                "arguments", Map.of("topic", topic)
+                        )
+                ))
+        ));
+
+        messages.add(Map.of("role", "tool", "content", result));
+
+        var finalTurn = callModel(
                 "CEO_CHAT", "ceo", ceoModel, messages, null, null
-        ).content();
+        );
+
+        return finalTurn.content();
     }
 
     /**
@@ -593,6 +701,66 @@ public class CeoService {
     }
 
     private record ToolCall(String name, String query) {
+    }
+
+    @SuppressWarnings("unchecked")
+    private String parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
+
+        var function = (Map<String, Object>) rawToolCall.get("function");
+
+        if (function == null) {
+            return null;
+        }
+
+        var name = String.valueOf(function.get("name"));
+        var arguments = function.get("arguments");
+
+        String topic = null;
+
+        if (arguments instanceof Map<?, ?> argMap) {
+            var value = argMap.get("topic");
+            topic = value == null ? null : String.valueOf(value);
+        }
+
+        if (!"query_company_memory".equals(name)
+                || topic == null
+                || topic.isBlank()) {
+            return null;
+        }
+
+        return topic;
+    }
+
+    private String detectInlineCompanyMemoryTopic(String content) {
+
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+
+        try {
+
+            var normalized = normalizeJsonResponse(content);
+            var node = jsonMapper.readTree(normalized);
+
+            if (!node.isObject()) {
+                return null;
+            }
+
+            var name = node.path("name").asString(null);
+            var argumentsNode = node.path("arguments");
+
+            if (!"query_company_memory".equals(name)
+                    || !argumentsNode.isObject()) {
+                return null;
+            }
+
+            var topic = argumentsNode.path("topic").asString(null);
+
+            return (topic == null || topic.isBlank()) ? null : topic;
+
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     /**
