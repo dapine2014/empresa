@@ -88,6 +88,7 @@ public class CeoService {
                                                     "enum", List.of(
                                                             "AGENT_STATUS",
                                                             "MISSIONS_NEEDING_ATTENTION",
+                                                            "FAILED_MISSIONS",
                                                             "OPPORTUNITIES",
                                                             "COMPANY_PROFIT"
                                                     ),
@@ -98,7 +99,12 @@ public class CeoService {
                                                             + "MISSIONS_NEEDING_ATTENTION: "
                                                             + "misiones que "
                                                             + "esperan tu "
-                                                            + "aprobación o "
+                                                            + "aprobación "
+                                                            + "(AWAITING_INVESTOR "
+                                                            + "exclusivamente, "
+                                                            + "nunca fallidas). "
+                                                            + "FAILED_MISSIONS: "
+                                                            + "misiones que "
                                                             + "fallaron. "
                                                             + "OPPORTUNITIES: "
                                                             + "oportunidades "

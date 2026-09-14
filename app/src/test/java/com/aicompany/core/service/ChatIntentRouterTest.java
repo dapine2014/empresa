@@ -202,6 +202,10 @@ class ChatIntentRouterTest {
 
     @Test
     void routesMissionsNeedingAttentionQueryFilteredByStatusWithDeterministicCount() {
+        // Deliberadamente estricto: solo AWAITING_INVESTOR -- una misión
+        // FAILED no "necesita aprobación" (mezclarlas bajo esa etiqueta
+        // fue un bug real reportado por el usuario). Las FAILED tienen su
+        // propia consulta, ver routesFailedMissionsQuery... abajo.
         var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, 95, "x", "y", Instant.now());
         var running = new MissionResponse("MISSION-2", MissionStatus.WAITING_AGENT_RESULTS, 30, "x", "y", Instant.now());
         var failed = new MissionResponse("MISSION-3", MissionStatus.FAILED, 100, "x", "y", Instant.now());
@@ -209,10 +213,24 @@ class ChatIntentRouterTest {
 
         var response = router.route("¿Qué misión necesita mi aprobación?");
 
-        assertTrue(response.contains("2 misión"));
+        assertTrue(response.contains("1 misión"));
         assertTrue(response.contains("MISSION-1"));
-        assertTrue(response.contains("MISSION-3"));
         assertFalse(response.contains("MISSION-2"));
+        assertFalse(response.contains("MISSION-3"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesFailedMissionsQueryToItsOwnDeterministicFormatting() {
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, 95, "x", "y", Instant.now());
+        var failed = new MissionResponse("MISSION-3", MissionStatus.FAILED, 100, "x", "z", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(awaiting, failed));
+
+        var response = router.route("¿Qué misiones fallaron?");
+
+        assertTrue(response.contains("1 misión"));
+        assertTrue(response.contains("MISSION-3"));
+        assertFalse(response.contains("MISSION-1"));
         verifyNoInteractions(ceoService);
     }
 
@@ -276,6 +294,7 @@ class ChatIntentRouterTest {
 
         assertTrue(companyMemoryQuery.apply("AGENT_STATUS").contains("Sofia"));
         assertTrue(companyMemoryQuery.apply("MISSIONS_NEEDING_ATTENTION").contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("FAILED_MISSIONS").contains("No hay ninguna misión"));
         assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
         assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));

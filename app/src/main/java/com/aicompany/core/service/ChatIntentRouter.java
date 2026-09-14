@@ -181,6 +181,7 @@ public class ChatIntentRouter {
     private enum QueryIntent {
         AGENT_STATUS,
         MISSIONS_NEEDING_ATTENTION,
+        FAILED_MISSIONS,
         OPPORTUNITIES,
         COMPANY_PROFIT
     }
@@ -205,6 +206,20 @@ public class ChatIntentRouter {
             // que resuelven igual: 100% desde Neo4j, sin pasar por el
             // modelo.
             return QueryIntent.AGENT_STATUS;
+        }
+
+        if (normalized.contains("fallaron")
+                || normalized.contains("fallidas")
+                || normalized.contains("fallida")
+                || normalized.contains("misiones fallo")) {
+            // Chequeo antes que MISSIONS_NEEDING_ATTENTION a propósito:
+            // antes una sola consulta mezclaba AWAITING_INVESTOR y FAILED
+            // bajo "necesitan tu aprobación" -- una misión FAILED no
+            // necesita aprobación, reportado por el usuario ("de las 25,
+            // 15 AWAITING_INVESTOR y 10 FAILED, pero el texto decía que
+            // las 25 necesitaban aprobación"). Consultas separadas, cada
+            // una estricta sobre su propio status real.
+            return QueryIntent.FAILED_MISSIONS;
         }
 
         if (normalized.contains("aprobacion")
@@ -249,6 +264,7 @@ public class ChatIntentRouter {
         return switch (topic) {
             case "AGENT_STATUS" -> formatAgentStatus(missionMemory.latestTaskPerAgent());
             case "MISSIONS_NEEDING_ATTENTION" -> formatMissionsNeedingAttention(missionMemory.findAll(50));
+            case "FAILED_MISSIONS" -> formatFailedMissions(missionMemory.findAll(50));
             case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
             case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
             default -> "Dato no reconocido: " + topic + ".";
@@ -313,23 +329,48 @@ public class ChatIntentRouter {
         return "⚪";
     }
 
+    /**
+     * Estrictamente {@code AWAITING_INVESTOR} — antes también incluía
+     * {@code FAILED} bajo la misma etiqueta "necesitan tu aprobación",
+     * que era engañosa: una misión fallida no está esperando aprobación,
+     * está esperando otra cosa (ver {@link #formatFailedMissions}).
+     * Reportado por el usuario con datos reales (25 misiones, 15
+     * AWAITING_INVESTOR + 10 FAILED, todas presentadas como si
+     * necesitaran aprobación).
+     */
     private String formatMissionsNeedingAttention(List<MissionResponse> missions) {
 
-        var needingAttention = missions.stream()
-                .filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR
-                        || m.status() == MissionStatus.FAILED)
+        var awaitingApproval = missions.stream()
+                .filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
                 .toList();
 
-        if (needingAttention.isEmpty()) {
+        if (awaitingApproval.isEmpty()) {
             return "No hay ninguna misión que necesite tu aprobación en este momento.";
         }
 
-        var lines = needingAttention.stream()
+        var lines = awaitingApproval.stream()
                 .map(m -> m.missionId() + " (" + m.status() + ")")
                 .collect(Collectors.joining(", "));
 
-        return "Tenés " + needingAttention.size()
+        return "Tenés " + awaitingApproval.size()
                 + " misión(es) que necesitan tu aprobación: " + lines + ".";
+    }
+
+    private String formatFailedMissions(List<MissionResponse> missions) {
+
+        var failed = missions.stream()
+                .filter(m -> m.status() == MissionStatus.FAILED)
+                .toList();
+
+        if (failed.isEmpty()) {
+            return "No hay ninguna misión fallida en este momento.";
+        }
+
+        var lines = failed.stream()
+                .map(MissionResponse::missionId)
+                .collect(Collectors.joining(", "));
+
+        return "Tenés " + failed.size() + " misión(es) fallida(s): " + lines + ".";
     }
 
     private String formatOpportunities(List<OpportunitySummary> opportunities) {
