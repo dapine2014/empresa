@@ -36,9 +36,20 @@ cubre la validación de resultados de agentes, el inicio de misiones y el
 enrutamiento del chat del CEO. Las integraciones con Neo4j, Kafka y Ollama se
 mantienen fuera de estas pruebas para que no dependan de Docker.
 
-Healthcheck: `GET http://localhost:8081/actuator/health` (actuator en el classpath; solo se exponen `health` e `info`, con probes de readiness/liveness activadas).
+Healthcheck: `GET http://localhost:8081/actuator/health` (actuator en el classpath; solo se exponen `health`, `info` y `metrics`, con probes de readiness/liveness activadas).
 
-Docker (la imagen construye con Maven en multi-stage):
+**Frontend** (`app/frontend/`, SPA React+Vite+TS — ver "Command Center web" más abajo):
+
+```bash
+cd app/frontend
+npm install
+npm run dev      # dev server en :5173, con proxy a :8081 (vite.config.ts) — no requiere Docker
+npm run build    # compila a dist/, lo que copia el Dockerfile a src/main/resources/static
+```
+
+`mvn spring-boot:run` en local **no** compila ni sirve la SPA (no hay `frontend-maven-plugin`, deliberado — ver "Command Center web"): para probar el backend+frontend juntos como en producción, usar Docker; para desarrollar el frontend, `npm run dev` aparte apuntando al backend real en 8081.
+
+Docker (la imagen construye con Maven **y** con Node en multi-stage — 3 stages: `frontend-build` (Node, compila la SPA) → `build` (Maven, empaqueta el jar con la SPA ya copiada a `src/main/resources/static`) → runtime `jre`):
 
 ```bash
 docker network create ai-company-net   # red externa requerida (una sola vez)
@@ -56,9 +67,10 @@ Servicio REST monolítico (Spring Boot 4.1.1, Java 21) que orquesta agentes LLM.
 
 ### Entradas HTTP
 
-- `CompanyController` (`/api/company`): `GET /agents`, `POST /chat`. En `/chat`, si el mensaje contiene `(ejecuta|inicia) MISSION-<n>` se dispara una misión; si no, es conversación directa con el CEO.
-- `MissionController` (`/api/company/missions`): `POST` para iniciar, `GET /{id}` estado, `GET /{id}/details` estado + tareas.
+- `CompanyController` (`/api/company`): `GET /agents` (identidad estática), `GET /agents/status` (estado real, última `AgentTask` por agente), `GET /activity` (línea de tiempo derivada de Neo4j), `POST /chat` (delega todo en `ChatIntentRouter`, ver "Command Center web" más abajo).
+- `MissionController` (`/api/company/missions`): `POST` para iniciar, `GET` lista misiones recientes, `GET /{id}` estado, `GET /{id}/details` estado + tareas, `POST /{id}/decision` decisión real del inversionista humano.
 - `CustomerController` (`/api/company/missions/{missionId}/...`): `POST /customers`, `POST /transactions`, `GET /net-profit` — ver "Customer Validation" más abajo.
+- `SpaController`: sin API real, solo reenvía un puñado de rutas exactas de la SPA (`/`, `/chat`, `/agents`, `/missions`, `/missions/{id}`, `/activity`) a `index.html` — ver "Command Center web".
 
 ### Flujo de misión (`MissionService` → `MissionExecutor` → `AgentRuntime` → `CeoService`)
 
@@ -70,7 +82,7 @@ Servicio REST monolítico (Spring Boot 4.1.1, Java 21) que orquesta agentes LLM.
 
 Concurrencia: **no se usa el proxy `@Async`** para la orquestación (fue un patch deliberado, ver `README.md`). Se usan executors explícitos inyectados con `@Qualifier` + `CompletableFuture.supplyAsync/runAsync`. No reintroducir `@Async` en estos caminos. `AsyncConfig` todavía lleva `@EnableAsync` y define ambos pools (`missionOrchestratorExecutor`, `agentTaskExecutor`); la anotación es inofensiva pero ningún método `@Async` la usa.
 
-Ante cualquier excepción, `MissionExecutor.safeFail` deja la misión en `FAILED` (progreso 100). Otros valores del enum `MissionStatus` (`RESEARCHING`, `EXECUTING`, `COMPLETED`, `CANCELLED`) están definidos pero el executor todavía no los usa.
+Ante cualquier excepción, `MissionExecutor.safeFail` deja la misión en `FAILED` (progreso 100). `COMPLETED` y `CANCELLED` ya tienen uso real (ver "Decisión del inversionista" más abajo) — `RESEARCHING`/`EXECUTING` del enum `MissionStatus` siguen sin ningún código que los use.
 
 Estados de tarea (`AgentTask`, strings, no enum): `PENDING → RUNNING → COMPLETED` / `FAILED`.
 
@@ -188,9 +200,32 @@ Nota de paquete: `AgentResult.java` vive en `src/main/java/com/aicompany/core/Ag
 
 ### Memoria: Neo4j
 
-Acceso con el driver plano `neo4j-java-driver` (no Spring Data Neo4j); consultas Cypher a mano en `MissionMemoryService` y `CompanyMemoryService`. Modelo de grafo **en uso real** (con propiedades, relaciones y código que lee/escribe): `Company {id:'AI-COMPANY'}`, `Agent` (ceo/sales/product/finance/engineering/qa), `Mission`, `AgentTask`, `Opportunity`, `Evidence`, con relaciones `WORKS_FOR`, `HAS_MISSION`, `LED_BY`, `HAS_TASK`, `ASSIGNED_TASK`, `HAS_EVIDENCE` (`AgentTask`→`Evidence`, ver "Evidence Engine" arriba).
+Acceso con el driver plano `neo4j-java-driver` (no Spring Data Neo4j); consultas Cypher a mano en `MissionMemoryService` y `CompanyMemoryService`. Modelo de grafo **en uso real** (con propiedades, relaciones y código que lee/escribe): `Company {id:'AI-COMPANY'}`, `Agent` (ceo/sales/product/finance/engineering/qa), `Mission`, `AgentTask`, `Opportunity`, `Customer`, `Transaction`, `Evidence`, con relaciones `WORKS_FOR` (Agent→Company), `HAS_CEO` (Company→Agent ceo), `HAS_MISSION`, `LED_BY` (Mission→Agent ceo), `INVOLVES_AGENT` (Mission→cada uno de los 5 agentes delegados, no solo el CEO), `HAS_TASK`, `ASSIGNED_TASK`, `HAS_OPPORTUNITY`, `HAS_CANDIDATE` (Opportunity→Customer LEAD), `HAS_CUSTOMER` (tanto Mission→Customer como, si ya existe la Opportunity de la misión, Opportunity→Customer — ver "Relaciones funcionales" más abajo), `HAS_TRANSACTION`, `FOR_CUSTOMER`, `HAS_EVIDENCE` (`AgentTask`/`Customer`/`Transaction`→`Evidence`, ver "Evidence Engine" arriba).
 
-**Groundwork de memoria ampliada** (`CompanyMemoryService.initializeSchema`, sección separada con comentario): constraints de unicidad `id` para 21 labels más del roadmap de `EMPRESA_AI_TODO.md` §21 / `status.md` §17 — `Role`, `RoleVersion`, `AgentVersion`, `Prediction`, `PredictionOutcome`, `CredibilityScore`, `CapitalAllocation`, `Investment`, `Portfolio`, `GovernanceRule`, `GovernanceAmendment`, `Model`, `ModelAssignment`, `Tool`, `ToolVersion`, `PublicDecision`, `Customer`, `Decision`, `Transaction`, `Lesson`, `Strategy`. **Deliberadamente solo el constraint de identidad** — sin propiedades ni relaciones definidas, porque ningún flujo del código las escribe o las lee todavía (son para features que no existen aún: organización autoevolutiva, mercado de predicción, cartera de capital, gobernanza, gabinete multi-modelo, auto-mejora de herramientas, Customer Validation, transparencia pública). Cuando se implemente cada funcionalidad, ahí se definen las propiedades y relaciones reales según lo que esa funcionalidad concreta necesite — no hay un diseño de grafo ya decidido más allá del label y el `id`. Verificado en vivo con `SHOW CONSTRAINTS` contra el Neo4j real tras `docker compose up`.
+### Relaciones funcionales (auditoría contra el modelo objetivo §23)
+
+`EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` §23 muestra el grafo objetivo como `(:Company)+--(:Mission)+--(:Agent)+--(:Evidence)` y `(:Mission)+--(:Opportunity)+--(:Customer)+--(:Transaction)+--(:Evidence)` — auditar contra esto (alcance acordado con el usuario: solo entidades que ya existen, no los 21 labels especulativos de "autonomía avanzada" como `Role`/`Prediction`/`CapitalAllocation`, que siguen sin ningún código que los escriba o los lea) encontró dos huecos reales, ambos cerrados:
+
+1. **Mission no tenía relación directa con sus agentes delegados** (solo con el CEO vía `LED_BY`) — la única conexión era indirecta, vía `AgentTask`. `MissionMemoryService.createTask` ahora también hace `MERGE (m)-[:INVOLVES_AGENT]->(a)`, así que cada uno de los 5 agentes de una misión queda directamente enlazado a ella, sin tener que atravesar `AgentTask`.
+2. **Los clientes reales (humanos, vía `CustomerController`) colgaban solo de Mission, nunca de Opportunity** — a diferencia de los candidatos LEAD de agentes (que sí cuelgan de Opportunity vía `HAS_CANDIDATE`), rompiendo la cadena `Mission→Opportunity→Customer` del modelo objetivo para el caso real. `CustomerMemoryService.registerCustomer` ahora también intenta `MATCH (o:Opportunity {id:...}), (c:Customer {id:...}) MERGE (o)-[:HAS_CUSTOMER]->(c)` — deliberadamente un `MATCH` normal, no `MERGE` de la Opportunity: si la misión aún no llegó a consolidación (la Opportunity todavía no existe), el `MATCH` simplemente no encuentra nada y no pasa nada — nunca crea una Opportunity vacía como efecto secundario de registrar un cliente. El cliente sigue quedando enlazado directo a Mission igual que antes (no se rompió nada del flujo existente).
+
+Verificado en vivo: (a) una misión real nueva mostró los 5 agentes conectados vía `INVOLVES_AGENT` apenas se crean las tareas; (b) registrar un cliente real contra una misión que ya tenía Opportunity dejó el cliente enlazado por **ambos** caminos (`Mission→Customer` y `Opportunity→Customer`); (c) registrar un cliente real contra una misión sin Opportunity confirmó 0 nodos `Opportunity` creados como efecto secundario, y el cliente igual quedó creado por el camino directo de siempre.
+
+### Decisión del inversionista humano (`MissionController.decide` → `MissionService.recordDecision`)
+
+Primera entidad real del grupo "Company Memory" que antes era solo un constraint de Neo4j sin ningún nodo (`Decision`, ver más abajo). Alcance acordado con el usuario antes de escribir código: de los 5 tipos que agrupaba esta fila del roadmap (`Decision`/`Lesson`/`Strategy`/`Prediction`/`CapitalAllocation`), **solo `Decision` tiene hoy un disparador real y no fabricado** — los otros 4 exigirían inventar juicios de negocio (aprender de ventas que todavía no existen, repartir un capital que hoy no se reparte en portafolio) y quedan pendientes hasta que haya datos reales de negocio de los que partir.
+
+`POST /api/company/missions/{missionId}/decision` (`DecisionCommand{decision: APPROVE|REJECT|REQUEST_MORE_EVIDENCE, reasoning}`): es exactamente el punto de `empresa.md` §5 nivel 🔴 ("decisiones estratégicas importantes") donde antes la misión se quedaba parada para siempre en `AWAITING_INVESTOR` sin ningún lugar donde el fundador humano registrara su decisión real. Solo se acepta sobre una misión en `AWAITING_INVESTOR` o `FAILED` (`IllegalStateException` si no, mismo patrón sin manejo fino de errores HTTP del resto del proyecto → 500); 404 si la misión no existe.
+
+- `APPROVE` → `MissionStatus.COMPLETED` (primer uso real de este valor del enum, antes definido pero sin código que lo asignara).
+- `REJECT` → `MissionStatus.CANCELLED` (ídem, primer uso real).
+- `REQUEST_MORE_EVIDENCE` → no cambia el estado de la misión, solo registra la decisión — no hay todavía un mecanismo de re-ejecución automática para este caso, el fundador decide manualmente qué hacer después.
+
+Una misma misión puede acumular varias decisiones (p. ej. un `REQUEST_MORE_EVIDENCE` seguido de un `APPROVE` final) — `decisionId` incluye un timestamp a propósito, no es idempotente sobre el mismo id como sí lo son los registros de evidencia. `MissionMemoryService.recordDecision` persiste `(:Mission)-[:HAS_DECISION]->(:Decision {decision, reasoning, decidedAt})`. Publica `EMPRESA_MISSION_DECISION_RECORDED` (`agentId="human"`, `data.decision`/`data.reasoning`) siempre, más el `EMPRESA_MISSION_UPDATED` normal cuando sí cambia el estado (`APPROVE`/`REJECT`).
+
+Cubierto por 6 casos en `MissionServiceTest`. Verificado en vivo de punta a punta: `REQUEST_MORE_EVIDENCE` sobre una misión real no cambió su estado; `APPROVE` la dejó en `COMPLETED`; sobre otra misión, `REJECT` la dejó en `CANCELLED`; un intento de decidir de nuevo sobre la misión ya `COMPLETED` fue rechazado (500); los 3 eventos `EMPRESA_MISSION_DECISION_RECORDED` reales aparecieron en `EMPRESA_EVENTS`; y Cypher confirmó las 2 decisiones de la primera misión persistidas en orden con su `reasoning` real.
+
+**Groundwork de memoria ampliada** (`CompanyMemoryService.initializeSchema`, sección separada con comentario): constraints de unicidad `id` para 20 labels más del roadmap de `EMPRESA_AI_TODO.md` §21 / `status.md` §17 — `Role`, `RoleVersion`, `AgentVersion`, `Prediction`, `PredictionOutcome`, `CredibilityScore`, `CapitalAllocation`, `Investment`, `Portfolio`, `GovernanceRule`, `GovernanceAmendment`, `Model`, `ModelAssignment`, `Tool`, `ToolVersion`, `PublicDecision`, `Customer`, `Transaction`, `Lesson`, `Strategy` (`Decision` ya salió de esta lista — ver arriba). **Deliberadamente solo el constraint de identidad** — sin propiedades ni relaciones definidas, porque ningún flujo del código las escribe o las lee todavía (son para features que no existen aún: organización autoevolutiva, mercado de predicción, cartera de capital, gobernanza, gabinete multi-modelo, auto-mejora de herramientas, transparencia pública). Cuando se implemente cada funcionalidad, ahí se definen las propiedades y relaciones reales según lo que esa funcionalidad concreta necesite — no hay un diseño de grafo ya decidido más allá del label y el `id`. Verificado en vivo con `SHOW CONSTRAINTS` contra el Neo4j real tras `docker compose up`.
 
 Este Neo4j es una **instancia compartida** en la máquina de desarrollo (otros proyectos, p. ej. `python/meteoro`, también la usan) — `SHOW CONSTRAINTS` mostrará labels de otros proyectos (`Agente`, `Carrera`, `Vehiculo`) que no tienen relación con `empresa`; ignóralos.
 
@@ -269,6 +304,44 @@ Nota de infraestructura encontrada de paso: no hay `OLLAMA_NUM_PARALLEL` configu
 **Pendiente, no bloqueante**: scoring de evidencia. La verificación semántica léxica (`ClaimRelevanceChecker`) ya está implementada y conectada (ver arriba); lo que sigue pendiente ahí es la extracción/NLP real del dato concreto, no solo del tema. **Evidence Binding** ("buscó pero no citó") también está resuelto — ver esa sección más abajo.
 
 **Hallazgo de infraestructura de paso** (no introducido por este cambio, solo observado): durante la consolidación del CEO (`qwen2.5-coder:14b`) inmediatamente después de una tanda de agentes con `qwen3:8b`, `ollama ps` mostró el modelo de 14B corriendo a `30%/70% CPU/GPU` (VRAM: 7/8 GB usados, GPU al 20% de utilización) — probablemente porque ambos modelos compiten por los mismos 8 GB de VRAM y Ollama no alcanza a descargar `qwen3:8b` antes de que el CEO empiece. La consolidación de esa corrida tardó ~7-8 min en vez de los ~3 min documentados antes. No bloqueante (la misión igual terminó en `AWAITING_INVESTOR`), pero es la explicación más probable si una consolidación se ve inusualmente lenta.
+
+## Command Center web (`app/frontend/`)
+
+Hasta acá la única forma de operar la empresa era `curl`/consola. El usuario pidió una interfaz web como forma **principal** de operar la compañía ("torre de control", no un chatbot en terminal) — la consola queda para debugging (`docker logs`, `docker compose restart`, `curl /actuator/health`). v1 (aprobada explícitamente antes de escribir código, ver plan de esa sesión): **Dashboard + Chat + Agents + Missions + Activity**. Opportunities/Customers/Transactions/Evidence/Decisions (mencionados en el mockup original) quedan fuera de la navegación de v1 — no había endpoints de listado para ellos y se agregaron rondas anteriores; se suman a la SPA en una siguiente ronda si hace falta.
+
+Decisiones de arquitectura acordadas con el usuario antes de implementar:
+- **Frontend SPA React+Vite+TS**, servida como estáticos por `company-core` (un solo despliegue, un solo puerto) — no un frontend separado con su propio dominio/CORS.
+- **Polling simple** para refrescar datos (`@tanstack/react-query`, `refetchInterval` por query) — sin WebSocket ni Server-Sent Events.
+- **Activity derivado de Neo4j, no un `KafkaConsumer` nuevo**: sería el primer consumer de Kafka de este proyecto (hoy 100% productor, `CompanyEventPublisher`); dado que polling simple ya fue la elección para todo lo demás, agregar infraestructura de consumo solo para una lista de actividad reciente no encajaba — `ActivityMemoryService.recent` arma la línea de tiempo con una sola query que UNION-ea `AgentTask`/`Mission`/`Evidence`/`Decision` por sus timestamps ya existentes.
+
+### Endpoints nuevos de solo lectura
+
+- `GET /api/company/missions` (`MissionService.list` → `MissionMemoryService.findAll`): misiones recientes, límite fijo 50 (v1 no pagina).
+- `GET /api/company/agents/status` (`MissionMemoryService.latestTaskPerAgent`): para cada `Agent`, su `AgentTask` más reciente por `updatedAt`, en cualquier misión; `status="IDLE"` (y el resto `null`) si nunca tuvo tarea — traducido en Java, no en la query (`OPTIONAL MATCH` sin match trae `latest=null`, y acceder a una propiedad de `null` en Cypher da `null`, no error).
+- `GET /api/company/activity` (`ActivityMemoryService.recent`): línea de tiempo derivada, ver arriba.
+
+### Chat Intent Router (`ChatIntentRouter`)
+
+El chat no es `POST /chat → LLM → texto`. Antes de tocar Ollama, un router determinista (regex/keywords — mismo criterio que `ClaimRelevanceChecker`/`EvidenceBindingGate`: nunca "el modelo revisándose a sí mismo" para decidir la ruta) clasifica el mensaje:
+
+1. **Inicio de misión** — el regex `(ejecuta|inicia) MISSION-\d+` que antes vivía en `CompanyController` se movió aquí tal cual.
+2. **Decisión** (`aprueba`/`rechaza`/`pide más evidencia` + un `MISSION-<id>` **explícito** en el mensaje) → llama **directo** a `MissionService.recordDecision` — la misma gobernanza que `POST /missions/{id}/decision`, nunca una ruta paralela ni una ejecución "de chat" (así lo pidió el usuario explícitamente). Sin un `MISSION-<id>` explícito no se adivina a qué misión: cae al chat general.
+3. **Consulta** (estado de agentes, misiones que necesitan aprobación, oportunidades, gasto de la compañía) — la respuesta se arma **100% determinísticamente en Java**, sin pasar por Ollama en absoluto.
+4. **General** → `CeoService.chat`, sin cambios.
+
+**Por qué las consultas no pasan por el modelo (cambio de diseño en vivo)**: el diseño original (aprobado en el plan) pasaba los datos reales a un nuevo `CeoService.answerGroundedQuery` para que el CEO los "fraseara" en lenguaje natural — mismo principio anti-alucinación del resto del proyecto (nunca dejar que el modelo invente, solo que redacte sobre datos reales). Verificado en vivo antes de dar el intent por terminado: con una lista corta (2 oportunidades, 6 agentes) funcionó bien; pero con 25 misiones reales en `AWAITING_INVESTOR`/`FAILED`, el modelo **subcontó** — dijo "9" y enumeró solo 9, sin inventar ninguna que no existiera, pero omitiendo 16 reales. No fue el problema de payload gigante que se diagnosticó primero (una versión aún anterior serializaba el `MissionResponse` completo con el `message` libre de la consolidación del CEO, hasta 69 KB — eso también se corrigió, recortando a un resumen de 3 campos), sino algo más simple: contar/enumerar una lista es una tarea puramente determinista, y no hay ninguna razón para dejarle ese trabajo a un LLM cuando Java lo hace sin margen de error. `CeoService.answerGroundedQuery` se eliminó (quedaba sin uso); las 4 consultas ahora se formatean con métodos dedicados (`formatAgentStatus`, `formatMissionsNeedingAttention`, `formatOpportunities`, `formatCompanyProfit`) en `ChatIntentRouter`.
+
+Verificado en vivo de punta a punta (Ollama/Neo4j reales, sin mocks): las 4 consultas dieron cifras exactas (25/25 misiones, no 9); "aprueba la misión MISSION-XXX porque..." escrito en el chat real creó un nodo `Decision` real (`Cypher` lo confirmó) y movió la misión a `COMPLETED`, idéntico a pegarle al endpoint dedicado. Cubierto por `ChatIntentRouterTest` (11 casos).
+
+### Frontend: estructura y fallback de rutas
+
+`app/frontend/src/`: `api/client.ts` + `api/types.ts` (tipos a mano reflejando los records Java — sin generación automática, mantener sincronizados), `components/Layout.tsx` (sidebar + badge de salud vía polling de `/actuator/health`), `pages/{Dashboard,Chat,Agents,Missions,MissionDetail,Activity}Page.tsx`, `statusColor.ts` (mapeo de estados reales a 🟢🟡🔴⚪, un solo lugar).
+
+**`SpaController`** (fallback de rutas, encontrado y corregido en vivo dos veces): react-router hace client-side routing para `/chat`, `/agents`, `/missions`, `/missions/{id}`, `/activity` — rutas que solo existen en el navegador. Sin nada más, cargar o refrescar cualquiera de esas URLs directo devuelve 404 de Spring (el handler de estáticos solo conoce `index.html`). Primer intento: un comodín `"/{path:[^.]*}"` (cualquier segmento sin punto) reenviado a `index.html` — funcionó para las rutas de la SPA, pero **también** atrapaba cualquier `/api/**` mal escrito o inexistente (sin punto en el último segmento) y le devolvía 200+HTML en vez de 404, reproducido en vivo con `/api/company/no-existe`. Arreglado con una **lista explícita** de las rutas reales de la SPA (`/`, `/chat`, `/agents`, `/missions`, `/missions/{missionId}`, `/activity`) en vez de un comodín — hay que mantenerla sincronizada a mano con `App.tsx` si se agregan pantallas. Verificado en vivo: las 6 rutas de la SPA dan 200 con el HTML real (confirmado también con Claude in Chrome, carga directa no solo navegación de cliente), la API real sigue devolviendo JSON, y tanto un `/api/**` inexistente como cualquier otra ruta random siguen dando 404.
+
+### Docker
+
+`app/Dockerfile` pasó a 3 stages: `frontend-build` (`node:22-alpine`, `npm ci` + `npm run build`) → `build` (Maven, copia `frontend-build`'s `dist/` a `src/main/resources/static` **antes** de `mvn package`, así el jar la sirve por el manejo default de estáticos de Spring Boot, sin configurar nada) → runtime `jre` (sin cambios). `app/.dockerignore` nuevo (`target`, `frontend/node_modules`, `frontend/dist`) — necesario porque `node_modules` ya existía localmente (de compilar/probar el frontend antes de tocar Docker) y copiarlo al contexto de build habría sido enorme y, peor, habría pisado el `node_modules` recién instalado dentro del stage con binarios nativos del host. `docker-compose.yml` no cambió (mismo contexto `./app`, mismo puerto).
 
 ## Al implementar
 

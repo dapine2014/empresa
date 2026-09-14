@@ -1,0 +1,292 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0f14;
+  --panel: #121821;
+  --border: #232c38;
+  --text: #e5e9f0;
+  --muted: #8b98a8;
+  --accent: #4f8dfd;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 16px 0;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0 16px 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar nav a {
+  padding: 10px 16px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.sidebar nav a.active,
+.sidebar nav a:hover {
+  color: var(--text);
+  background: rgba(79, 141, 253, 0.12);
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.health-badge {
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.content {
+  padding: 24px;
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85em;
+  text-transform: uppercase;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.error {
+  color: #f66;
+}
+
+.dashboard-cards {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 200px;
+}
+
+.card-title {
+  color: var(--muted);
+  font-size: 0.85em;
+  margin-bottom: 8px;
+}
+
+.card-value {
+  font-size: 1.6em;
+  font-weight: 700;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.agent-chip {
+  font-size: 0.5em;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.activity-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.activity-list li {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9em;
+  flex-wrap: wrap;
+}
+
+.activity-type {
+  color: var(--muted);
+  min-width: 90px;
+}
+
+.activity-mission {
+  color: var(--accent);
+}
+
+.activity-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.chat-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px);
+  max-width: 720px;
+}
+
+.chat-history {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-message {
+  padding: 8px 12px;
+  border-radius: 8px;
+  max-width: 90%;
+}
+
+.chat-you {
+  align-self: flex-end;
+  background: rgba(79, 141, 253, 0.15);
+}
+
+.chat-ceo {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-input {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.decision-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 480px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.decision-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+
+.decision-form select,
+.decision-form textarea,
+button {
+  background: #0e141c;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 10px 16px;
+  align-self: flex-start;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.feedback {
+  color: var(--accent);
+}
+
+.mission-message {
+  white-space: pre-wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 800px;
+}

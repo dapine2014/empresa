@@ -2,7 +2,9 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.evidence.EvidenceDedupKey;
+import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
+import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import org.neo4j.driver.Driver;
@@ -47,13 +49,50 @@ public class MissionMemoryService {
         }
     }
 
+    /**
+     * Decisión real del inversionista humano sobre una misión (nunca
+     * generada por un agente ni por el CEO) — primera entidad real del
+     * grupo "Company Memory funcional" (`EMPRESA_AI_NUEVO_TODO_EVIDENCE.md`
+     * §34, antes solo un constraint sin ningún nodo). Un mismo
+     * {@code missionId} puede tener varias decisiones a lo largo del
+     * tiempo (p. ej. "pide más evidencia" antes de un "aprueba" final);
+     * por eso {@code decisionId} incluye un timestamp, no es
+     * {@code MERGE}-idempotente sobre el mismo id como sí lo son los
+     * registros de evidencia.
+     */
+    public void recordDecision(
+            String missionId,
+            String decisionId,
+            InvestorDecision decision,
+            String reasoning) {
+
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (m:Mission {id:$missionId}) " +
+                                "MERGE (d:Decision {id:$decisionId}) " +
+                                "SET d.missionId=$missionId, d.decision=$decision, " +
+                                "d.reasoning=$reasoning, d.decidedAt=$now " +
+                                "MERGE (m)-[:HAS_DECISION]->(d)",
+                        Map.of(
+                                "missionId", missionId,
+                                "decisionId", decisionId,
+                                "decision", decision.name(),
+                                "reasoning", reasoning,
+                                "now", Instant.now().toString()
+                        ));
+                return null;
+            });
+        }
+    }
+
     public void createTask(String taskId, String missionId, String agentId, String action) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
                 tx.run("MATCH (m:Mission {id:$missionId}), (a:Agent {id:$agentId}) " +
                                 "MERGE (t:AgentTask {id:$taskId}) SET t.missionId=$missionId, t.agentId=$agentId, " +
                                 "t.action=$action, t.status='PENDING', t.updatedAt=$updatedAt " +
-                                "MERGE (m)-[:HAS_TASK]->(t) MERGE (a)-[:ASSIGNED_TASK]->(t)",
+                                "MERGE (m)-[:HAS_TASK]->(t) MERGE (a)-[:ASSIGNED_TASK]->(t) " +
+                                "MERGE (m)-[:INVOLVES_AGENT]->(a)",
                         Map.of("taskId", taskId, "missionId", missionId, "agentId", agentId,
                                 "action", action, "updatedAt", Instant.now().toString()));
                 return null;
@@ -83,6 +122,61 @@ public class MissionMemoryService {
                     r.get("message").asString(),
                     Instant.parse(r.get("updatedAt").asString())
             ));
+        }
+    }
+
+    /**
+     * Misiones más recientes (no filtra por estado) — base del panel
+     * "Missions" del Command Center web. {@code limit} fijo desde el
+     * llamador (v1 no expone paginación).
+     */
+    public List<MissionResponse> findAll(int limit) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (m:Mission) RETURN m.id AS id, m.status AS status, " +
+                                    "m.progress AS progress, m.currentStep AS step, " +
+                                    "m.message AS message, m.updatedAt AS updatedAt " +
+                                    "ORDER BY m.updatedAt DESC LIMIT $limit",
+                            Map.of("limit", limit))
+                    .list(r -> new MissionResponse(
+                            r.get("id").asString(),
+                            MissionStatus.valueOf(r.get("status").asString()),
+                            r.get("progress").asInt(),
+                            r.get("step").asString(),
+                            r.get("message").asString(),
+                            Instant.parse(r.get("updatedAt").asString())
+                    ));
+        }
+    }
+
+    /**
+     * Estado real de cada {@code Agent} (los 6: ceo + los 5 delegados):
+     * su {@code AgentTask} más reciente por {@code updatedAt}, en
+     * cualquier misión — base del panel "Agents" del Command Center web.
+     * Un agente sin ninguna tarea asignada nunca queda {@code IDLE} en
+     * Cypher (la fila de {@code OPTIONAL MATCH} sin match trae
+     * {@code latest = null}); se traduce a {@code "IDLE"} en Java, no en
+     * la query.
+     */
+    public List<AgentStatusResponse> latestTaskPerAgent() {
+        try (var session = driver.session()) {
+            return session.run("""
+                            MATCH (a:Agent)
+                            OPTIONAL MATCH (a)-[:ASSIGNED_TASK]->(t:AgentTask)
+                            WITH a, t ORDER BY t.updatedAt DESC
+                            WITH a, collect(t)[0] AS latest
+                            RETURN a.id AS agentId, latest.status AS status,
+                                   latest.missionId AS missionId, latest.action AS action,
+                                   latest.updatedAt AS updatedAt
+                            ORDER BY a.id
+                            """)
+                    .list(r -> new AgentStatusResponse(
+                            r.get("agentId").asString(),
+                            r.get("status").isNull() ? "IDLE" : r.get("status").asString(),
+                            r.get("missionId").isNull() ? null : r.get("missionId").asString(),
+                            r.get("action").isNull() ? null : r.get("action").asString(),
+                            r.get("updatedAt").isNull() ? null : Instant.parse(r.get("updatedAt").asString())
+                    ));
         }
     }
 

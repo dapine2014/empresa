@@ -59,6 +59,22 @@ public class CustomerMemoryService {
                                 "recordedAt", recordedAt
                         ));
 
+                // Si la misión ya generó su Opportunity (MissionExecutor la
+                // crea al consolidar, ver OpportunityMemoryService), este
+                // cliente real también queda colgado de ella -- no solo de
+                // Mission directamente -- para que el grafo siga el modelo
+                // objetivo Mission->Opportunity->Customer. Si todavía no
+                // existe (p. ej. la misión no ha llegado a consolidación),
+                // el MATCH simplemente no encuentra nada y no pasa nada: no
+                // se crea una Opportunity vacía como efecto secundario de
+                // registrar un cliente.
+                tx.run("MATCH (o:Opportunity {id:$opportunityId}), (c:Customer {id:$customerId}) " +
+                                "MERGE (o)-[:HAS_CUSTOMER]->(c)",
+                        Map.of(
+                                "opportunityId", missionId + "-OPPORTUNITY",
+                                "customerId", customerId
+                        ));
+
                 tx.run("MATCH (c:Customer {id:$customerId}) " +
                                 "MERGE (e:Evidence {id:$evidenceId}) " +
                                 "SET e.missionId=$missionId, e.agentId='human', " +
@@ -159,6 +175,27 @@ public class CustomerMemoryService {
                             "RETURN coalesce(sum(t.revenueUsd), 0.0) AS totalRevenue, " +
                             "coalesce(sum(t.costUsd), 0.0) AS totalCost",
                     Map.of("missionId", missionId)
+            ).single();
+
+            return new double[]{
+                    record.get("totalRevenue").asDouble(),
+                    record.get("totalCost").asDouble()
+            };
+        }
+    }
+
+    /**
+     * Igual que {@link #totalRevenueAndCost} pero sin filtrar por misión —
+     * el "gasto total de la compañía" que responde el Chat Intent Router
+     * (intent "cuánto hemos gastado/ganado") sobre todas las transacciones
+     * reales registradas, de cualquier misión.
+     */
+    public double[] companyWideTotalRevenueAndCost() {
+        try (var session = driver.session()) {
+            var record = session.run(
+                    "MATCH (t:Transaction) " +
+                            "RETURN coalesce(sum(t.revenueUsd), 0.0) AS totalRevenue, " +
+                            "coalesce(sum(t.costUsd), 0.0) AS totalCost"
             ).single();
 
             return new double[]{

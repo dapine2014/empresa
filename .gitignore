@@ -3,3 +3,5 @@ app/target/
 *.class
 .idea/
 *.iml
+app/frontend/node_modules/
+app/frontend/dist/

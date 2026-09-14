@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.model.OpportunitySummary;
 import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
 
@@ -147,6 +148,30 @@ public class OpportunityMemoryService {
             }
 
             recordCandidate(missionId, agentId, i, candidate);
+        }
+    }
+
+    /**
+     * Oportunidades más recientes — usado por el intent de consulta
+     * "qué oportunidades tenemos" del Chat Intent Router (no hay pantalla
+     * dedicada de Opportunities en v1 del Command Center web, pero el dato
+     * ya existe y consultarlo es barato).
+     */
+    public List<OpportunitySummary> listRecent(int limit) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity) RETURN o.id AS id, o.missionId AS missionId, " +
+                                    "o.description AS description, o.status AS status, " +
+                                    "o.createdAt AS createdAt " +
+                                    "ORDER BY o.createdAt DESC LIMIT $limit",
+                            Map.of("limit", limit))
+                    .list(r -> new OpportunitySummary(
+                            r.get("id").asString(),
+                            r.get("missionId").asString(),
+                            r.get("description").asString(),
+                            r.get("status").asString(),
+                            Instant.parse(r.get("createdAt").asString())
+                    ));
         }
     }
 }
