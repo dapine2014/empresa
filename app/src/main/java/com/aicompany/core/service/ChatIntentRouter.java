@@ -189,8 +189,21 @@ public class ChatIntentRouter {
 
         var normalized = normalize(message);
 
-        if (normalized.contains("agente")
-                && (normalized.contains("trabaj") || normalized.contains("estado"))) {
+        if (normalized.contains("equipo")
+                || normalized.contains("agente")
+                || normalized.contains("trabajando")) {
+            // Deliberadamente amplio (antes exigía "agente" Y
+            // "trabaj"/"estado" juntos, lo que dejaba afuera preguntas
+            // reales como "preséntame al equipo", "¿quién está
+            // trabajando ahora?" o "¿qué está haciendo cada agente?" --
+            // ninguna de esas tres contiene ambas palabras a la vez,
+            // reproducido en vivo por el usuario). Caían al chat
+            // general, donde el CEO (LLM) elaboraba por encima del
+            // roster real inyectado en el prompt e incluso agregaba
+            // disclaimers de privacidad contradictorios. Todas son la
+            // misma pregunta de fondo (estado real de los agentes), así
+            // que resuelven igual: 100% desde Neo4j, sin pasar por el
+            // modelo.
             return QueryIntent.AGENT_STATUS;
         }
 
@@ -245,7 +258,7 @@ public class ChatIntentRouter {
     private String formatAgentStatus(List<AgentStatusResponse> statuses) {
 
         var lines = statuses.stream()
-                .map(a -> a.name() + " (" + a.role() + "): " + a.status()
+                .map(a -> statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status()
                         + (a.missionId() == null
                         ? ""
                         : " (" + a.missionId()
@@ -254,6 +267,28 @@ public class ChatIntentRouter {
                 .collect(Collectors.joining("; "));
 
         return "Estado real de los agentes: " + lines + ".";
+    }
+
+    private static final java.util.Set<String> STATUS_GREEN =
+            java.util.Set.of("RUNNING", "WORKING", "ACTIVE", "COMPLETED");
+    private static final java.util.Set<String> STATUS_RED =
+            java.util.Set.of("FAILED", "CANCELLED");
+    private static final java.util.Set<String> STATUS_YELLOW = java.util.Set.of(
+            "PENDING", "WAITING", "AWAITING_INVESTOR", "CONSOLIDATING",
+            "EVALUATING", "WAITING_AGENT_RESULTS", "PLANNING", "DELEGATING", "CREATED"
+    );
+
+    /**
+     * Mismo mapeo semántico que {@code statusColor.ts} del frontend
+     * (misma fuente de verdad para el color/emoji de un estado, no dos
+     * heurísticas distintas que puedan desincronizarse).
+     */
+    private static String statusDot(String status) {
+        var upper = status.toUpperCase(Locale.ROOT);
+        if (STATUS_GREEN.contains(upper)) return "🟢";
+        if (STATUS_RED.contains(upper)) return "🔴";
+        if (STATUS_YELLOW.contains(upper)) return "🟡";
+        return "⚪";
     }
 
     private String formatMissionsNeedingAttention(List<MissionResponse> missions) {

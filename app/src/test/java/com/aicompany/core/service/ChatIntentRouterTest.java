@@ -131,8 +131,52 @@ class ChatIntentRouterTest {
 
         var response = router.route("¿Qué agentes están trabajando ahora?");
 
-        assertTrue(response.contains("Sofia (Director of Sales AI): WORKING (MISSION-1, MARKET_DISCOVERY)"));
-        assertTrue(response.contains("Alex (Chief Executive Officer AI): IDLE"));
+        assertTrue(response.contains("🟢 Sofia (Director of Sales AI): WORKING (MISSION-1, MARKET_DISCOVERY)"));
+        assertTrue(response.contains("⚪ Alex (Chief Executive Officer AI): IDLE"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesTeamPresentationQueryToTheSameDeterministicAgentStatus() {
+        // "preséntame al equipo" no debe caer al chat general -- ahí el
+        // CEO (LLM) elaboraba por encima del roster real inyectado e
+        // incluso agregaba un disclaimer de privacidad contradictorio,
+        // reproducido en vivo por el usuario. Debe resolverse 100% desde
+        // Neo4j, igual que "¿qué agentes están trabajando?".
+        var statuses = List.of(
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+        );
+        when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
+
+        var response = router.route("preséntame al equipo");
+
+        assertTrue(response.contains("Sofia"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesWhoIsWorkingNowToAgentStatusEvenWithoutTheWordAgente() {
+        var statuses = List.of(
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+        );
+        when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
+
+        var response = router.route("¿Quién está trabajando ahora?");
+
+        assertTrue(response.contains("Sofia"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesWhatIsEachAgentDoingToAgentStatusEvenWithoutTrabajOrEstado() {
+        var statuses = List.of(
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", Instant.now())
+        );
+        when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
+
+        var response = router.route("¿Qué está haciendo cada agente?");
+
+        assertTrue(response.contains("Sofia"));
         verifyNoInteractions(ceoService);
     }
 

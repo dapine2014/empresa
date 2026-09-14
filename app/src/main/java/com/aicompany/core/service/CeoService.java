@@ -160,7 +160,11 @@ public class CeoService {
                 + " — ese es tu nombre, no inventes otro si te preguntan quién sos."
                 + "\nEste es tu equipo real (nombre y rol) — nunca inventes"
                 + " otros integrantes ni cargos genéricos si te piden"
-                + " presentar al equipo:\n" + teamRoster;
+                + " presentar al equipo:\n" + teamRoster
+                + "\nEstos agentes son identidades de software de la"
+                + " empresa, no personas reales — no apliques"
+                + " consideraciones de privacidad de datos personales al"
+                + " hablar de ellos ni te niegues a describirlos por eso.";
 
         var messages = new ArrayList<Map<String, Object>>();
         messages.add(Map.of("role", "system", "content", system));
