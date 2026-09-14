@@ -265,13 +265,29 @@ public class ChatIntentRouter {
         var predicate = detectReferencePredicate(normalize(message));
 
         if (predicate == null) {
+            log.info("CHAT_INTENT_REFERENCE predicate=none focusSize={}", focus.get().ids().size());
+            // Sin esta pista, el LLM no tiene forma de saber a qué tipo
+            // de entidad se refiere "esas" -- reproducido en vivo: sin
+            // ella, ignoraba la pregunta y contestaba sobre el equipo en
+            // vez de las misiones (alucinando de nuevo). La pista solo
+            // aclara el TIPO de referencia (dato ya conocido acá, en
+            // Java); el contenido real sigue viniendo exclusivamente de
+            // la herramienta LAST_MENTIONED, nunca de esta nota.
+            var hint = "[Nota: \"esas\"/\"esos\" en este mensaje se refiere a las últimas "
+                    + focus.get().type().toLowerCase(Locale.ROOT) + "(es) mencionadas en esta "
+                    + "conversación. Si necesitás saber cuáles son o algo sobre ellas, "
+                    + "usá la herramienta con topic=LAST_MENTIONED antes de responder — "
+                    + "no asumas ni inventes cuáles son.] ";
+
             return ceoService.chat(
                     companyMemory.agentName("ceo").orElse("CEO"),
                     companyMemory.teamRosterDescription(),
-                    message,
+                    hint + message,
                     this::answerMemoryTopic
             );
         }
+
+        log.info("CHAT_INTENT_REFERENCE predicate={} focusSize={}", predicate, focus.get().ids().size());
 
         var missions = missionMemory.findByIds(focus.get().ids());
 

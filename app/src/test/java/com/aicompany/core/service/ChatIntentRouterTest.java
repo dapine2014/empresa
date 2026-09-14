@@ -391,17 +391,25 @@ class ChatIntentRouterTest {
 
     @Test
     void fallsBackToGeneralChatWithLastMentionedToolWhenPredicateNotRecognized() {
+        // Verificado en vivo: sin ninguna pista de a qué tipo de entidad
+        // se refiere "esas", el LLM no tiene forma de saber que debe
+        // usar la herramienta LAST_MENTIONED -- en una corrida real
+        // ignoró la pregunta y contestó sobre el equipo (alucinando de
+        // nuevo). El mensaje que le llega al chat general debe incluir
+        // una pista sobre el foco real (tipo de entidad, nunca los datos
+        // en sí -- eso sigue viniendo de la herramienta).
         when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
         when(conversationMemory.lastMentioned()).thenReturn(
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-001")))
         );
-        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), eq("contame más sobre esas"), any()))
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), contains("contame más sobre esas"), any()))
                 .thenReturn("Ahí va el detalle.");
 
         var response = router.route("contame más sobre esas");
 
         assertEquals("Ahí va el detalle.", response);
+        verify(ceoService).chat(eq("Alex"), eq("- Sofia (Sales)"), contains("LAST_MENTIONED"), any());
     }
 
     @Test
