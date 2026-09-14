@@ -16,7 +16,7 @@ import static org.mockito.Mockito.*;
 class CustomerServiceTest {
 
     private final EvidenceValidationGate evidenceGate = new EvidenceValidationGate();
-    private final AppProperties appProperties = new AppProperties("AI Company", 50.0, 60);
+    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
 
     @Test
     void registersCustomerWhenMissionExistsAndEvidenceIsValid() {

@@ -486,7 +486,7 @@ public class AgentRuntime {
             String instruction) {
 
         return """
-                Estás trabajando dentro de AI Company como el agente %s.
+                Estás trabajando dentro de Forjai como el agente %s.
                 Esta es una tarea real dentro de una misión empresarial.
 
                 REGLAS:

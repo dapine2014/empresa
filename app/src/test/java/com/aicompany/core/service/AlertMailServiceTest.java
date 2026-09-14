@@ -1,10 +1,15 @@
 package com.aicompany.core.service;
 
+import jakarta.mail.BodyPart;
+import jakarta.mail.Multipart;
+import jakarta.mail.Session;
+import jakarta.mail.internet.MimeMessage;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mail.MailException;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
+
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -18,24 +23,43 @@ class AlertMailServiceTest {
     private final AlertMailService alertMailService = new AlertMailService(mailSender, memory);
 
     @Test
-    void sendsAnEmailFromTheSystemAccountToTheConfiguredAlertAddress() {
+    void sendsAMultipartEmailFromTheSystemAccountToTheConfiguredAlertAddress() throws Exception {
         when(memory.alertEmail()).thenReturn("dapine@gmail.com");
         when(memory.systemEmail()).thenReturn("ai-company@gmail.com");
         when(memory.mailPassword()).thenReturn("app-password-secreta");
+        when(mailSender.createMimeMessage()).thenReturn(newMimeMessage());
 
-        alertMailService.send("Misión MISSION-1 requiere tu decisión", "Cuerpo del correo.");
+        alertMailService.send("Misión MISSION-1 requiere tu decisión", "Cuerpo del correo.", false);
 
         verify(mailSender).setUsername("ai-company@gmail.com");
         verify(mailSender).setPassword("app-password-secreta");
 
-        var captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mailSender).send(captor.capture());
 
         var message = captor.getValue();
-        assertArrayEquals(new String[]{"dapine@gmail.com"}, message.getTo());
-        assertEquals("ai-company@gmail.com", message.getFrom());
+        message.saveChanges();
+        assertEquals("dapine@gmail.com", message.getAllRecipients()[0].toString());
+        assertEquals("ai-company@gmail.com", message.getFrom()[0].toString());
         assertEquals("Misión MISSION-1 requiere tu decisión", message.getSubject());
-        assertEquals("Cuerpo del correo.", message.getText());
+        assertTrue(message.getContentType().startsWith("multipart/"));
+
+        var allText = extractAllText((Multipart) message.getContent());
+        assertTrue(allText.contains("Cuerpo del correo."));
+        assertTrue(allText.contains("FORJAI"));
+    }
+
+    private static String extractAllText(Multipart multipart) throws Exception {
+        var text = new StringBuilder();
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart part = multipart.getBodyPart(i);
+            if (part.getContent() instanceof Multipart nested) {
+                text.append(extractAllText(nested));
+            } else {
+                text.append(part.getContent());
+            }
+        }
+        return text.toString();
     }
 
     @Test
@@ -44,9 +68,9 @@ class AlertMailServiceTest {
         when(memory.systemEmail()).thenReturn("");
         when(memory.mailPassword()).thenReturn("");
 
-        alertMailService.send("asunto", "cuerpo");
+        alertMailService.send("asunto", "cuerpo", false);
 
-        verify(mailSender, never()).send(any(SimpleMailMessage.class));
+        verify(mailSender, never()).send(any(MimeMessage.class));
     }
 
     @Test
@@ -54,9 +78,14 @@ class AlertMailServiceTest {
         when(memory.alertEmail()).thenReturn("dapine@gmail.com");
         when(memory.systemEmail()).thenReturn("ai-company@gmail.com");
         when(memory.mailPassword()).thenReturn("app-password-secreta");
-        doThrow(new MailSendFailure()).when(mailSender).send(any(SimpleMailMessage.class));
+        when(mailSender.createMimeMessage()).thenReturn(newMimeMessage());
+        doThrow(new MailSendFailure()).when(mailSender).send(any(MimeMessage.class));
 
-        assertDoesNotThrow(() -> alertMailService.send("asunto", "cuerpo"));
+        assertDoesNotThrow(() -> alertMailService.send("asunto", "cuerpo", false));
+    }
+
+    private static MimeMessage newMimeMessage() {
+        return new MimeMessage(Session.getInstance(new Properties()));
     }
 
     private static class MailSendFailure extends MailException {

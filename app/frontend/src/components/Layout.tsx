@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import Logo from './Logo'
 
 function HealthBadge() {
   const { data, isError } = useQuery({
@@ -23,7 +24,10 @@ export default function Layout() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">AI COMPANY</div>
+        <div className="brand">
+          <Logo size={22} />
+          FORJAI
+        </div>
         <nav>
           <NavLink to="/" end>
             Dashboard

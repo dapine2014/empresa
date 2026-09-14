@@ -1,4 +1,4 @@
-**AI Company --- Plan Maestro v0.2**  
+**Forjai --- Plan Maestro v0.2**  
 **Versión:** 0.2  
    
  **Estado:** Definición empresarial y funcional  
@@ -7,10 +7,10 @@
    
  **Propósito:** Consolidar la visión, modelo económico, organización,  
    
- autonomía, gobierno, documentación y objetivos del proyecto AI Company.  
+ autonomía, gobierno, documentación y objetivos del proyecto Forjai.  
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANklEQVR4nO3OMQ2AABAAsSNBCkLfFR7wwIgHRiywEZJWQZeZ2ao9AAD+4lyruzq+ngAA8Nr1AOIEBeX8aGZPAAAAAElFTkSuQmCC)  
 **1. Resumen ejecutivo**  
-AI Company será una **empresa real, 100% orientada al mundo real,**  
+Forjai será una **empresa real, 100% orientada al mundo real,**  
  **  
  operada principalmente por agentes de Inteligencia Artificial**.  
 La IA no será el producto principal que la empresa venderá. Los agentes  
@@ -1179,7 +1179,7 @@ Registrada permanentemente.
  rentable.**  
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANUlEQVR4nO3OMQ2AABAAsSPBCUbfEm6YmFDBhAU2QtIq6DIzW7UHAMBfnGt1V8fXEwAAXrse/w8F7pbTa1oAAAAASUVORK5CYII=)  
 **41. Definición final del proyecto**  
-***AI Company es una empresa real operada principalmente por***  
+***Forjai es una empresa real operada principalmente por***  
  ***  
  trabajadores de Inteligencia Artificial, con un inversionista humano***  
  ***  

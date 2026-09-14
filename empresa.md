@@ -1,6 +1,6 @@
 from pathlib import Path
 
-content = """# AI Company — Documento Fundacional
+content = """# Forjai — Documento Fundacional
 
 **Versión:** 0.1  
 **Estado:** Conceptualización / definición del MVP  
@@ -90,7 +90,7 @@ Es una empresa real con una organización virtual basada en agentes.
                  
                  from pathlib import Path
 
-content = """# AI Company Autónoma — Documento de Diseño Inicial
+content = """# Forjai Autónoma — Documento de Diseño Inicial
 
 **Fecha:** 31 de agosto de 2026  
 **Estado:** Diseño / MVP — Ingeniería local 100%
@@ -131,7 +131,7 @@ Ejemplo:
 Alexander propone una idea
         |
         v
-   AI Company
+   Forjai
         |
         +--> Sales analiza mercado
         |
@@ -956,7 +956,7 @@ La visión a largo plazo es:
                          |
                          v
                  +---------------+
-                 |   AI COMPANY  |
+                 |   FORJAI  |
                  +-------+-------+
                          |
               +----------+----------+

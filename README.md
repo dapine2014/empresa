@@ -1,4 +1,4 @@
-# AI Company MVP 0.7 — runtime patch
+# Forjai MVP 0.7 — runtime patch
 
 Este paquete reemplaza cuatro clases para eliminar la dependencia del proxy @Async
 en la orquestación y separar el pool del orquestador del pool de agentes.

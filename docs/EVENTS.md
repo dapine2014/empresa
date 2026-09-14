@@ -1,4 +1,4 @@
-# AI Company — Kafka Event Contract
+# Forjai — Kafka Event Contract
 
 Regla obligatoria: todo `eventType` publicado por la empresa DEBE comenzar con `EMPRESA_`.
 

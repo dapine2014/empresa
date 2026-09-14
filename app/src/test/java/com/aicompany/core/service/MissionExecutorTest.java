@@ -25,7 +25,7 @@ class MissionExecutorTest {
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
     private final ContradictionDetector contradictionDetector = mock(ContradictionDetector.class);
-    private final AppProperties appProperties = new AppProperties("AI Company", 50.0, 60);
+    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final AlertMailService alertMailService = mock(AlertMailService.class);
 
@@ -58,7 +58,7 @@ class MissionExecutorTest {
 
         verify(opportunityMemory).recordOpportunity("MISSION-1", "instrucción");
 
-        verify(alertMailService).send(contains("MISSION-1"), anyString());
+        verify(alertMailService).send(contains("MISSION-1"), anyString(), anyBoolean());
     }
 
     @Test
@@ -213,7 +213,7 @@ class MissionExecutorTest {
         verify(ceoService, never()).executeMission(anyString(), anyString());
         verify(opportunityMemory, never()).recordOpportunity(anyString(), anyString());
 
-        verify(alertMailService).send(contains("MISSION-1"), anyString());
+        verify(alertMailService).send(contains("MISSION-1"), anyString(), anyBoolean());
     }
 
     private void stubAgent(String agentId) {

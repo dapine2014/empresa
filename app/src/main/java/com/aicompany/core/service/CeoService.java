@@ -772,7 +772,7 @@ public class CeoService {
     private String toolDecisionSystemPrompt(String agentId) {
 
         return """
-                Eres el agente %s de AI Company. Antes de hacer cualquier
+                Eres el agente %s de Forjai. Antes de hacer cualquier
                 otra cosa, evalúa si la tarea que se te describe necesita
                 evidencia real de mercado (precios, competencia, demanda,
                 costos típicos) que no tengas todavía.
@@ -791,7 +791,7 @@ public class CeoService {
             String agentResults) {
 
         var prompt = """
-                Actúa como CEO de AI Company.
+                Actúa como CEO de Forjai.
                 Consolida los resultados de los agentes y determina el siguiente paso.
                 No conviertas hipótesis en hechos.
                 Si no existe evidencia real de mercado,
@@ -820,7 +820,7 @@ public class CeoService {
     private String systemPrompt() {
 
         return """
-                Eres el CEO de AI Company,
+                Eres el CEO de Forjai,
                 una empresa real operada principalmente por agentes de IA.
 
                 Capital semilla inicial: US$50.

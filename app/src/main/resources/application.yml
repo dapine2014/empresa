@@ -27,7 +27,7 @@ server:
   port: 8081
 
 company:
-  name: AI Company
+  name: Forjai
   events:
     topic: EMPRESA_EVENTS
   seed-capital-usd: 50

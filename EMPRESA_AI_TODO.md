@@ -1,4 +1,4 @@
-# AI Company — Idea, Estado, Logros y Roadmap
+# Forjai — Idea, Estado, Logros y Roadmap
 
 **Fecha:** 2026-09-12  
 **Horizonte del reto:** máximo 60 días  
@@ -26,7 +26,7 @@ La empresa debe ser capaz de funcionar como una organización real:
                                   │
                                   ▼
                         ┌──────────────────┐
-                        │    AI COMPANY    │
+                        │    FORJAI    │
                         │  CEO + AI Board  │
                         └────────┬─────────┘
                                  │

@@ -87,7 +87,7 @@ public class CompanyMemoryService {
             session.executeWrite(tx -> {
                 tx.run("MERGE (c:Company {id:'AI-COMPANY'}) "
                         + "ON CREATE SET c.alertEmail='dapine@gmail.com', c.systemEmail='', c.mailPassword='' "
-                        + "SET c.name='AI Company', c.status='ACTIVE', c.seedCapitalUsd=50.0, c.challengeDays=60");
+                        + "SET c.name='Forjai', c.status='ACTIVE', c.seedCapitalUsd=50.0, c.challengeDays=60");
                 var agents = List.of(
                         new String[]{"ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico"},
                         new String[]{"sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados"},

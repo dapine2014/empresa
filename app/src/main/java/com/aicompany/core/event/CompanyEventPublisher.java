@@ -40,7 +40,7 @@ public class CompanyEventPublisher {
 
         if (eventType == null || !eventType.startsWith("EMPRESA_")) {
             throw new IllegalArgumentException(
-                    "Todos los eventos de AI Company deben iniciar con EMPRESA_");
+                    "Todos los eventos de Forjai deben iniciar con EMPRESA_");
         }
 
         var event = CompanyEvent.of(

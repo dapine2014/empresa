@@ -1,11 +1,11 @@
-# AI Company — STATUS
+# Forjai — STATUS
 
 **Fecha:** 2026-09-07  
 **Estado:** En pausa — se continúa posteriormente desde la configuración de Kafka.
 
 ## 1. Visión
 
-AI Company es una empresa real operada principalmente por agentes de IA.
+Forjai es una empresa real operada principalmente por agentes de IA.
 
 - Capital semilla inicial: **US$50**.
 - Duración máxima del reto: **60 días**.

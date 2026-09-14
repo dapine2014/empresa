@@ -2,8 +2,8 @@ package com.aicompany.core.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
 /**
@@ -12,7 +12,8 @@ import org.springframework.stereotype.Service;
  * grave). Hoy solo se dispara para los dos casos con señal clara y ya
  * manejada explícitamente por {@code MissionExecutor}: una misión que llega
  * a {@code AWAITING_INVESTOR} (decisión estratégica) y una misión que
- * termina en {@code FAILED} (fallo crítico).
+ * termina en {@code FAILED} (fallo crítico) — {@code critical} distingue
+ * ambos para el color de la plantilla ({@link AlertEmailTemplate}).
  *
  * <p>El remitente (correo propio del sistema + su App Password) es
  * configurable desde el Command Center web y vive en Neo4j
@@ -44,7 +45,7 @@ public class AlertMailService {
         this.memory = memory;
     }
 
-    public synchronized void send(String subject, String body) {
+    public synchronized void send(String subject, String body, boolean critical) {
         try {
             var systemEmail = memory.systemEmail();
             var password = memory.mailPassword();
@@ -63,13 +64,15 @@ public class AlertMailService {
             mailSender.setUsername(systemEmail);
             mailSender.setPassword(password);
 
-            var message = new SimpleMailMessage();
-            message.setFrom(systemEmail);
-            message.setTo(memory.alertEmail());
-            message.setSubject(subject);
-            message.setText(body);
+            var mimeMessage = mailSender.createMimeMessage();
+            var helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
 
-            mailSender.send(message);
+            helper.setFrom(systemEmail);
+            helper.setTo(memory.alertEmail());
+            helper.setSubject(subject);
+            helper.setText(body, AlertEmailTemplate.html(subject, body, critical));
+
+            mailSender.send(mimeMessage);
 
         } catch (Exception ex) {
             log.warn("No se pudo enviar la alerta por correo: {}", ex.getMessage());

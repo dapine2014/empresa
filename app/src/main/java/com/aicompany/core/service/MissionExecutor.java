@@ -728,14 +728,16 @@ public class MissionExecutor {
             alertMailService.send(
                     "Misión " + missionId + " requiere tu decisión",
                     "La misión " + missionId + " llegó a AWAITING_INVESTOR y "
-                            + "necesita tu aprobación.\n\n" + message
+                            + "necesita tu aprobación.\n\n" + message,
+                    false
             );
 
         } else if (status == MissionStatus.FAILED) {
 
             alertMailService.send(
                     "Misión " + missionId + " falló",
-                    "La misión " + missionId + " terminó en FAILED: " + message
+                    "La misión " + missionId + " terminó en FAILED: " + message,
+                    true
             );
         }
     }
