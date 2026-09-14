@@ -90,6 +90,7 @@ public class CeoService {
                                                             "MISSIONS_NEEDING_ATTENTION",
                                                             "FAILED_MISSIONS",
                                                             "TEST_MISSIONS",
+                                                            "LAST_MENTIONED",
                                                             "OPPORTUNITIES",
                                                             "COMPANY_PROFIT"
                                                     ),
@@ -116,6 +117,13 @@ public class CeoService {
                                                             + "cuentan como "
                                                             + "actividad "
                                                             + "empresarial real. "
+                                                            + "LAST_MENTIONED: "
+                                                            + "detalle real de "
+                                                            + "las últimas "
+                                                            + "misiones "
+                                                            + "mencionadas en "
+                                                            + "esta "
+                                                            + "conversación. "
                                                             + "OPPORTUNITIES: "
                                                             + "oportunidades "
                                                             + "identificadas. "
