@@ -4,6 +4,8 @@ import com.aicompany.core.model.ActivityItem;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.ChatResponse;
+import com.aicompany.core.model.SettingsCommand;
+import com.aicompany.core.model.SettingsResponse;
 import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
@@ -69,5 +71,20 @@ public class CompanyController {
     @PostMapping("/chat")
     public ChatResponse chat(@Valid @RequestBody ChatRequest request) {
         return new ChatResponse("CEO", chatIntentRouter.route(request.message()));
+    }
+
+    /**
+     * Correo al que se envían las alertas inmediatas (`empresa.md` §18) —
+     * panel "Settings" del Command Center web.
+     */
+    @GetMapping("/settings")
+    public SettingsResponse settings() {
+        return new SettingsResponse(memoryService.alertEmail());
+    }
+
+    @PutMapping("/settings")
+    public SettingsResponse updateSettings(@Valid @RequestBody SettingsCommand command) {
+        memoryService.setAlertEmail(command.alertEmail());
+        return new SettingsResponse(command.alertEmail());
     }
 }

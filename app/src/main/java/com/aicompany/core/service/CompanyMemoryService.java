@@ -85,7 +85,9 @@ public class CompanyMemoryService {
     private void initializeCompanyAndAgents() {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                tx.run("MERGE (c:Company {id:'AI-COMPANY'}) SET c.name='AI Company', c.status='ACTIVE', c.seedCapitalUsd=50.0, c.challengeDays=60");
+                tx.run("MERGE (c:Company {id:'AI-COMPANY'}) "
+                        + "ON CREATE SET c.alertEmail='dapine@gmail.com' "
+                        + "SET c.name='AI Company', c.status='ACTIVE', c.seedCapitalUsd=50.0, c.challengeDays=60");
                 var agents = List.of(
                         new String[]{"ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico"},
                         new String[]{"sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados"},
@@ -132,6 +134,30 @@ public class CompanyMemoryService {
                     "MATCH (a:Agent) WHERE a.id <> 'ceo' RETURN a.name AS name, a.role AS role ORDER BY a.id")
                     .list(r -> "- " + r.get("name").asString() + " (" + r.get("role").asString() + ")");
             return String.join("\n", lines);
+        }
+    }
+
+    /**
+     * Correo al que se envían las alertas inmediatas (`empresa.md` §18) —
+     * seed inicial `dapine@gmail.com` (`ON CREATE` en
+     * {@link #initializeCompanyAndAgents}, nunca se pisa en arranques
+     * siguientes), editable desde el Command Center web vía
+     * {@code PUT /api/company/settings}.
+     */
+    public String alertEmail() {
+        try (var session = driver.session()) {
+            return session.run(
+                    "MATCH (c:Company {id:'AI-COMPANY'}) RETURN coalesce(c.alertEmail, 'dapine@gmail.com') AS email")
+                    .single().get("email").asString();
+        }
+    }
+
+    public void setAlertEmail(String email) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (c:Company {id:'AI-COMPANY'}) SET c.alertEmail=$email", Map.of("email", email));
+                return null;
+            });
         }
     }
 

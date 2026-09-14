@@ -29,7 +29,8 @@ public class SpaController {
             "/agents",
             "/missions",
             "/missions/{missionId}",
-            "/activity"
+            "/activity",
+            "/settings"
     })
     public String forwardToSpa() {
         return "forward:/index.html";

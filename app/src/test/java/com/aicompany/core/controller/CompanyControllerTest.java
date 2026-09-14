@@ -3,6 +3,7 @@ package com.aicompany.core.controller;
 import com.aicompany.core.model.ActivityItem;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
+import com.aicompany.core.model.SettingsCommand;
 import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
@@ -53,5 +54,20 @@ class CompanyControllerTest {
 
         assertEquals(items, controller.activity(50));
         verify(activityMemory).recent(50);
+    }
+
+    @Test
+    void settingsReturnsTheConfiguredAlertEmail() {
+        when(memory.alertEmail()).thenReturn("dapine@gmail.com");
+
+        assertEquals("dapine@gmail.com", controller.settings().alertEmail());
+    }
+
+    @Test
+    void updateSettingsPersistsTheNewAlertEmail() {
+        var response = controller.updateSettings(new SettingsCommand("nuevo@ejemplo.com"));
+
+        verify(memory).setAlertEmail("nuevo@ejemplo.com");
+        assertEquals("nuevo@ejemplo.com", response.alertEmail());
     }
 }

@@ -54,6 +54,7 @@ public class MissionExecutor {
     private final ContradictionDetector contradictionDetector;
     private final AppProperties appProperties;
     private final OpportunityMemoryService opportunityMemory;
+    private final AlertMailService alertMailService;
 
     public MissionExecutor(
             MissionMemoryService memory,
@@ -65,7 +66,8 @@ public class MissionExecutor {
             JsonMapper jsonMapper,
             ContradictionDetector contradictionDetector,
             AppProperties appProperties,
-            OpportunityMemoryService opportunityMemory) {
+            OpportunityMemoryService opportunityMemory,
+            AlertMailService alertMailService) {
 
         this.memory = memory;
         this.runtime = runtime;
@@ -76,6 +78,7 @@ public class MissionExecutor {
         this.contradictionDetector = contradictionDetector;
         this.appProperties = appProperties;
         this.opportunityMemory = opportunityMemory;
+        this.alertMailService = alertMailService;
     }
 
     public CompletableFuture<Void> executeAsync(
@@ -710,5 +713,30 @@ public class MissionExecutor {
                 currentStep,
                 message
         );
+
+        /*
+         * Alertas inmediatas (`empresa.md` §18): de los 6 tipos que pide el
+         * documento, hoy solo hay señal clara y ya manejada explícitamente
+         * en estas dos transiciones — "decisión estratégica" (la misión
+         * necesita al fundador humano) y "fallo crítico" (todos los
+         * agentes fallaron). El resto (bloqueo, riesgo importante, límite
+         * de presupuesto, incidente grave) no tiene todavía una señal
+         * determinista en el código, así que no se inventa una heurística.
+         */
+        if (status == MissionStatus.AWAITING_INVESTOR) {
+
+            alertMailService.send(
+                    "Misión " + missionId + " requiere tu decisión",
+                    "La misión " + missionId + " llegó a AWAITING_INVESTOR y "
+                            + "necesita tu aprobación.\n\n" + message
+            );
+
+        } else if (status == MissionStatus.FAILED) {
+
+            alertMailService.send(
+                    "Misión " + missionId + " falló",
+                    "La misión " + missionId + " terminó en FAILED: " + message
+            );
+        }
     }
 }

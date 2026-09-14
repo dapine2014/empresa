@@ -6,6 +6,8 @@ import type {
   DecisionResponse,
   MissionResponse,
   MissionStatusResponse,
+  SettingsCommand,
+  SettingsResponse,
 } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -45,5 +47,13 @@ export const api = {
     request<ChatResponse>('/api/company/chat', {
       method: 'POST',
       body: JSON.stringify({ message }),
+    }),
+
+  settings: () => request<SettingsResponse>('/api/company/settings'),
+
+  updateSettings: (command: SettingsCommand) =>
+    request<SettingsResponse>('/api/company/settings', {
+      method: 'PUT',
+      body: JSON.stringify(command),
     }),
 }

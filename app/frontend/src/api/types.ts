@@ -76,3 +76,11 @@ export interface ChatResponse {
   agent: string
   response: string
 }
+
+export interface SettingsResponse {
+  alertEmail: string
+}
+
+export interface SettingsCommand {
+  alertEmail: string
+}

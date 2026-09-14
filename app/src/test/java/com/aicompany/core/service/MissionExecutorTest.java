@@ -27,10 +27,11 @@ class MissionExecutorTest {
     private final ContradictionDetector contradictionDetector = mock(ContradictionDetector.class);
     private final AppProperties appProperties = new AppProperties("AI Company", 50.0, 60);
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
+    private final AlertMailService alertMailService = mock(AlertMailService.class);
 
     private final MissionExecutor executor = new MissionExecutor(
             memory, runtime, ceoService, Runnable::run, events, jsonMapper,
-            contradictionDetector, appProperties, opportunityMemory
+            contradictionDetector, appProperties, opportunityMemory, alertMailService
     );
 
     @Test
@@ -56,6 +57,8 @@ class MissionExecutorTest {
         assertFalse(resultsCaptor.getValue().contains("AGENTES_FALLIDOS"));
 
         verify(opportunityMemory).recordOpportunity("MISSION-1", "instrucción");
+
+        verify(alertMailService).send(contains("MISSION-1"), anyString());
     }
 
     @Test
@@ -209,6 +212,8 @@ class MissionExecutorTest {
                 eq("MISSION-1"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
         verify(ceoService, never()).executeMission(anyString(), anyString());
         verify(opportunityMemory, never()).recordOpportunity(anyString(), anyString());
+
+        verify(alertMailService).send(contains("MISSION-1"), anyString());
     }
 
     private void stubAgent(String agentId) {
