@@ -369,6 +369,76 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void resolvesApprovalCommandAgainstTheFocusAndRecordsRealDecisions() {
+        // "La prueba definitiva" del usuario: preguntar qué necesita
+        // aprobación, y que "las dos están aprobadas" ejecute la MISMA
+        // gobernanza real que POST /missions/{id}/decision -- nunca le
+        // pide al CEO (LLM) que "interprete" qué hacer.
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1", "MISSION-2")))
+        );
+        when(missionService.recordDecision(eq("MISSION-1"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-1-DECISION-1", "MISSION-1", InvestorDecision.APPROVE, Instant.now())));
+        when(missionService.recordDecision(eq("MISSION-2"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-2-DECISION-1", "MISSION-2", InvestorDecision.APPROVE, Instant.now())));
+
+        var response = router.route("las dos misiones están aprobadas");
+
+        assertTrue(response.contains("MISSION-1"));
+        assertTrue(response.contains("MISSION-2"));
+        assertTrue(response.contains("✅"));
+
+        var captor1 = org.mockito.ArgumentCaptor.forClass(DecisionCommand.class);
+        verify(missionService).recordDecision(eq("MISSION-1"), captor1.capture());
+        assertEquals(InvestorDecision.APPROVE, captor1.getValue().decision());
+
+        var captor2 = org.mockito.ArgumentCaptor.forClass(DecisionCommand.class);
+        verify(missionService).recordDecision(eq("MISSION-2"), captor2.capture());
+        assertEquals(InvestorDecision.APPROVE, captor2.getValue().decision());
+
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void reportsPerMissionOutcomeWhenApprovingMultipleMissionsFromFocusWithAPartialFailure() {
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1", "MISSION-2")))
+        );
+        when(missionService.recordDecision(eq("MISSION-1"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-1-DECISION-1", "MISSION-1", InvestorDecision.APPROVE, Instant.now())));
+        when(missionService.recordDecision(eq("MISSION-2"), any(DecisionCommand.class)))
+                .thenThrow(new IllegalStateException("Solo se puede registrar una decisión sobre una misión en AWAITING_INVESTOR o FAILED"));
+
+        var response = router.route("las dos misiones están aprobadas");
+
+        assertTrue(response.contains("✅"));
+        assertTrue(response.contains("MISSION-1"));
+        assertTrue(response.contains("❌"));
+        assertTrue(response.contains("MISSION-2"));
+    }
+
+    @Test
+    void resolvesRejectionCommandAgainstTheFocus() {
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1")))
+        );
+        when(missionService.recordDecision(eq("MISSION-1"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-1-DECISION-1", "MISSION-1", InvestorDecision.REJECT, Instant.now())));
+
+        // Pronombre plural ("esas") aunque el foco tenga un solo id --
+        // el conjunto de pronombres soportados en v1 es deliberadamente
+        // solo plural (ver REFERENCE_PRONOUN), para no arriesgar falsos
+        // positivos con "esta"/"ese" que aparecen todo el tiempo en
+        // oraciones normales sin relación a ninguna referencia.
+        var response = router.route("esas quedan rechazadas");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(DecisionCommand.class);
+        verify(missionService).recordDecision(eq("MISSION-1"), captor.capture());
+        assertEquals(InvestorDecision.REJECT, captor.getValue().decision());
+        assertTrue(response.contains("MISSION-1"));
+    }
+
+    @Test
     void resolvesReferenceToLastMentionedMissionsAgainstRealCurrentData() {
         // El ejemplo real reportado por el usuario: "¿Qué necesita mi
         // aprobación?" lista misiones, "pero esas están en prueba" debe

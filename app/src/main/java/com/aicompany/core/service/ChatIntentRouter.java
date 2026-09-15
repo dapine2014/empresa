@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -85,6 +86,23 @@ public class ChatIntentRouter {
     private static final Pattern REFERENCE_PRONOUN =
             Pattern.compile("(?i)\\b(esas|esos|estas|estos|ellas|ellos)\\b");
 
+    // Cuantificadores sobre el foco que NO son pronombres demostrativos --
+    // "las dos misiones están aprobadas" (la prueba definitiva del
+    // usuario) no contiene ningún pronombre de REFERENCE_PRONOUN, así que
+    // sin este segundo gate el mensaje nunca entraba a handleReference.
+    private static final Pattern FOCUS_QUANTIFIER =
+            Pattern.compile("(?i)\\b(las dos|los dos|ambas|ambos|todas|todos)\\b");
+
+    // Formas adjetivas de la decisión ("aprobada(s)", "rechazada(s)") --
+    // distintas de APPROVE/REJECT de arriba (formas verbales, exigen un
+    // MISSION-<id> explícito en detectDecision). Un comando sobre el foco
+    // conversacional nunca trae un MISSION-<id> en el mensaje.
+    private static final Pattern COMMAND_APPROVE =
+            Pattern.compile("\\b(aprueba|apruebo|aprobar|aprobad[oa]s?)\\b");
+
+    private static final Pattern COMMAND_REJECT =
+            Pattern.compile("\\b(rechaza|rechazo|rechazar|rechazad[oa]s?)\\b");
+
     private final MissionService missionService;
     private final CeoService ceoService;
     private final MissionMemoryService missionMemory;
@@ -155,8 +173,9 @@ public class ChatIntentRouter {
         }
 
         var referenceMatcher = REFERENCE_PRONOUN.matcher(message);
+        var focusQuantifierMatcher = FOCUS_QUANTIFIER.matcher(message);
 
-        if (referenceMatcher.find()) {
+        if (referenceMatcher.find() || focusQuantifierMatcher.find()) {
             return handleReference(message);
         }
 
@@ -304,6 +323,80 @@ public class ChatIntentRouter {
     }
 
     /**
+     * A diferencia de {@link #detectDecision} (que exige un
+     * {@code MISSION-<id>} explícito en el mensaje), esto resuelve un
+     * comando de gobernanza ("las dos misiones están aprobadas", "esas
+     * quedan rechazadas") contra el foco conversacional — la "prueba
+     * definitiva" pedida por el usuario: la Company Chat debe poder
+     * *operar*, no solo responder preguntas. Chequeado antes que
+     * {@link #detectReferencePredicate} dentro de {@link #handleReference}
+     * porque un comando y una consulta nunca son ambiguos entre sí en el
+     * mismo mensaje.
+     */
+    private InvestorDecision detectReferenceCommand(String normalized) {
+
+        if (MORE_EVIDENCE.matcher(normalized).find()) {
+            return InvestorDecision.REQUEST_MORE_EVIDENCE;
+        }
+
+        if (COMMAND_APPROVE.matcher(normalized).find()) {
+            return InvestorDecision.APPROVE;
+        }
+
+        if (COMMAND_REJECT.matcher(normalized).find()) {
+            return InvestorDecision.REJECT;
+        }
+
+        return null;
+    }
+
+    /**
+     * Aplica la MISMA gobernanza real que {@link #handleDecision} /
+     * {@code POST /missions/{id}/decision} — {@link MissionService#recordDecision}
+     * — a cada misión del foco, una por una. Nunca le pide al LLM que
+     * "interprete" el comando: el router ya resolvió qué decisión es y
+     * sobre qué misiones aplica, antes de tocar Ollama. Si una misión
+     * puntual no está en un estado que admita la decisión (p. ej. ya fue
+     * decidida antes), esa falla no debe ocultar el éxito de las demás —
+     * se reporta el resultado real por misión, no un todo-o-nada.
+     */
+    private String handleReferenceCommand(InvestorDecision command, String message, List<String> missionIds) {
+
+        log.info("CHAT_INTENT_REFERENCE_COMMAND decision={} missionIds={}", command, missionIds);
+
+        var lines = new ArrayList<String>();
+        var anySucceeded = false;
+
+        for (var missionId : missionIds) {
+            try {
+                var response = missionService.recordDecision(missionId, new DecisionCommand(command, message));
+
+                if (response.isPresent()) {
+                    lines.add("✅ " + missionId + " " + pastParticipleFor(command) + ".");
+                    anySucceeded = true;
+                } else {
+                    lines.add("❌ " + missionId + " no se encontró.");
+                }
+            } catch (IllegalStateException e) {
+                lines.add("❌ " + missionId + " no se pudo procesar (no está en un estado que admita esta decisión).");
+            }
+        }
+
+        var closing = anySucceeded ? " Las decisiones fueron registradas en Company Memory." : "";
+
+        return String.join(" ", lines) + closing;
+    }
+
+    private String pastParticipleFor(InvestorDecision decision) {
+
+        return switch (decision) {
+            case APPROVE -> "aprobada";
+            case REJECT -> "rechazada";
+            case REQUEST_MORE_EVIDENCE -> "necesita más evidencia";
+        };
+    }
+
+    /**
      * Resuelve un pronombre demostrativo ("esas"/"esos") contra el foco
      * de la conversación — nunca contra el texto de una respuesta
      * anterior, siempre contra el dato real y actual de esas entidades
@@ -319,7 +412,15 @@ public class ChatIntentRouter {
             return "No tengo claro a qué te referís — no mencioné ninguna misión todavía en esta conversación.";
         }
 
-        var predicate = detectReferencePredicate(normalize(message));
+        var normalized = normalize(message);
+
+        var command = detectReferenceCommand(normalized);
+
+        if (command != null) {
+            return handleReferenceCommand(command, message, focus.get().ids());
+        }
+
+        var predicate = detectReferencePredicate(normalized);
 
         if (predicate == null) {
             log.info("CHAT_INTENT_REFERENCE predicate=none focusSize={}", focus.get().ids().size());
