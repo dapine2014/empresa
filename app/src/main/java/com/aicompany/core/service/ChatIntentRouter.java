@@ -103,6 +103,12 @@ public class ChatIntentRouter {
     private static final Pattern COMMAND_REJECT =
             Pattern.compile("\\b(rechaza|rechazo|rechazar|rechazad[oa]s?)\\b");
 
+    // 10 turnos (20 mensajes) -- suficiente para continuidad real de
+    // charla sin dejar crecer el prompt del CEO sin límite (reportado
+    // por el usuario: "no está recordando las charlas que tengo con el
+    // CEO" -- antes CeoService.chat no mandaba ningún turno anterior).
+    private static final int HISTORY_LIMIT = 20;
+
     private final MissionService missionService;
     private final CeoService ceoService;
     private final MissionMemoryService missionMemory;
@@ -188,6 +194,7 @@ public class ChatIntentRouter {
         return ceoService.chat(
                 companyMemory.agentName("ceo").orElse("CEO"),
                 companyMemory.teamRosterDescription(),
+                conversationMemory.recentMessages(HISTORY_LIMIT),
                 message,
                 this::answerMemoryTopic
         );
@@ -440,6 +447,7 @@ public class ChatIntentRouter {
             return ceoService.chat(
                     companyMemory.agentName("ceo").orElse("CEO"),
                     companyMemory.teamRosterDescription(),
+                    conversationMemory.recentMessages(HISTORY_LIMIT),
                     hint + message,
                     this::answerMemoryTopic
             );

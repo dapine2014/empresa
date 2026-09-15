@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.ConversationTurn;
 import com.aicompany.core.model.LastMentioned;
 import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
@@ -63,6 +64,33 @@ public class ConversationMemoryService {
                         ));
                 return null;
             });
+        }
+    }
+
+    /**
+     * Los últimos {@code limit} turnos reales, en orden cronológico
+     * (el más viejo primero) — para darle al chat general continuidad
+     * de charla real (p. ej. "recordá que mi color favorito es el
+     * verde" seguido de "¿cuál es mi color favorito?"), algo que antes
+     * no existía: cada llamada a {@code CeoService.chat} solo mandaba
+     * el mensaje del turno actual. Distinto del "foco" de
+     * {@link #lastMentioned}, que resuelve referencias a misiones, no
+     * continuidad conversacional.
+     */
+    public List<ConversationTurn> recentMessages(int limit) {
+        try (var session = driver.session()) {
+            var records = session.run(
+                    "MATCH (c:Conversation {id:'MAIN'})-[:HAS_MESSAGE]->(m:Message) "
+                            + "RETURN m.role AS role, m.content AS content "
+                            + "ORDER BY m.createdAt DESC LIMIT $limit",
+                    Map.of("limit", limit)
+            ).list();
+
+            var turns = records.stream()
+                    .map(r -> new ConversationTurn(r.get("role").asString(), r.get("content").asString()))
+                    .toList();
+
+            return turns.reversed();
         }
     }
 

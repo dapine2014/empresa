@@ -129,7 +129,7 @@ class ChatIntentRouterTest {
     void doesNotRouteToDecisionWhenMessageHasNoExplicitMissionId() {
         when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
-        when(ceoService.chat(anyString(), anyString(), anyString(), any())).thenReturn("¿A qué misión te referís?");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("¿A qué misión te referís?");
 
         var response = router.route("Aprueba la misión de la que hablamos ayer.");
 
@@ -328,13 +328,36 @@ class ChatIntentRouterTest {
     void fallsBackToGeneralChatWhenNoIntentMatches() {
         when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
-        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), eq("Hola, ¿cómo estás?"), any()))
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), eq("Hola, ¿cómo estás?"), any()))
                 .thenReturn("Todo bien, gracias.");
 
         var response = router.route("Hola, ¿cómo estás?");
 
         assertEquals("Todo bien, gracias.", response);
         verifyNoInteractions(missionService);
+    }
+
+    @Test
+    void passesRealConversationHistoryToGeneralChatSoTheCeoRemembersPriorTurns() {
+        // Reportado por el usuario: "no está recordando las charlas que
+        // tengo con el CEO" -- reproducido en vivo preguntando el color
+        // favorito declarado un turno antes, y el CEO respondía que no
+        // tenía acceso a esa información. Causa: CeoService.chat nunca
+        // recibía los turnos anteriores, solo el mensaje actual.
+        var history = List.of(
+                new com.aicompany.core.model.ConversationTurn("user", "Mi color favorito es el verde."),
+                new com.aicompany.core.model.ConversationTurn("ceo", "Entendido.")
+        );
+
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(conversationMemory.recentMessages(20)).thenReturn(history);
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), eq(history), eq("¿Cuál es mi color favorito?"), any()))
+                .thenReturn("Verde.");
+
+        var response = router.route("¿Cuál es mi color favorito?");
+
+        assertEquals("Verde.", response);
     }
 
     @SuppressWarnings("unchecked")
@@ -355,7 +378,7 @@ class ChatIntentRouterTest {
         router.route("Hola, ¿cómo estás?");
 
         var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
-        verify(ceoService).chat(anyString(), anyString(), anyString(), captor.capture());
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
         var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
 
         assertTrue(companyMemoryQuery.apply("AGENT_STATUS").contains("Sofia"));
@@ -501,13 +524,13 @@ class ChatIntentRouterTest {
         when(conversationMemory.lastMentioned()).thenReturn(
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-001")))
         );
-        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), contains("contame más sobre esas"), any()))
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), contains("contame más sobre esas"), any()))
                 .thenReturn("Ahí va el detalle.");
 
         var response = router.route("contame más sobre esas");
 
         assertEquals("Ahí va el detalle.", response);
-        verify(ceoService).chat(eq("Alex"), eq("- Sofia (Sales)"), contains("LAST_MENTIONED"), any());
+        verify(ceoService).chat(eq("Alex"), eq("- Sofia (Sales)"), any(), contains("LAST_MENTIONED"), any());
     }
 
     @Test

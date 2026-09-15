@@ -4,6 +4,7 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.ConversationTurn;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -176,6 +177,7 @@ public class CeoService {
     public String chat(
             String ceoName,
             String teamRoster,
+            List<ConversationTurn> history,
             String message,
             Function<String, String> companyMemoryQuery) {
 
@@ -192,6 +194,7 @@ public class CeoService {
 
         var messages = new ArrayList<Map<String, Object>>();
         messages.add(Map.of("role", "system", "content", system));
+        messages.addAll(buildHistoryMessages(history));
         messages.add(Map.of("role", "user", "content", message));
 
         var turn = callModel(
@@ -229,6 +232,24 @@ public class CeoService {
         );
 
         return finalTurn.content();
+    }
+
+    /**
+     * Traduce los turnos ya persistidos por {@code ConversationMemoryService}
+     * al formato de mensajes de Ollama, en el mismo orden cronológico en
+     * que se grabaron. {@code role="ceo"} (como lo graba
+     * {@code ChatIntentRouter.route}) se mapea a {@code "assistant"} —
+     * Ollama no conoce el rol {@code "ceo"}; cualquier otro valor se deja
+     * tal cual (hoy nunca ocurre, pero no hay razón para lanzar por esto).
+     */
+    List<Map<String, Object>> buildHistoryMessages(List<ConversationTurn> history) {
+
+        return history.stream()
+                .map(turn -> Map.<String, Object>of(
+                        "role", "ceo".equals(turn.role()) ? "assistant" : turn.role(),
+                        "content", turn.content()
+                ))
+                .toList();
     }
 
     /**
