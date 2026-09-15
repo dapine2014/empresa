@@ -190,6 +190,30 @@ public class CustomerMemoryService {
      * (intent "cuánto hemos gastado/ganado") sobre todas las transacciones
      * reales registradas, de cualquier misión.
      */
+    /**
+     * {@code {clientes reales, prospectos}} — un cliente real
+     * ({@link #registerCustomer}, canal humano) nunca tiene {@code status}
+     * seteado; un prospecto/LEAD ({@code OpportunityMemoryService.recordCandidate})
+     * siempre tiene {@code status='LEAD'}. Usado por el status agregado de
+     * la empresa ({@code QueryIntent.COMPANY_STATUS} en
+     * {@code ChatIntentRouter}) para no confundir un candidato de agente
+     * (hipótesis) con una relación real confirmada.
+     */
+    public long[] countCustomersAndProspects() {
+        try (var session = driver.session()) {
+            var record = session.run(
+                    "MATCH (c:Customer) "
+                            + "RETURN count(CASE WHEN c.status IS NULL THEN 1 END) AS customers, "
+                            + "count(CASE WHEN c.status='LEAD' THEN 1 END) AS prospects"
+            ).single();
+
+            return new long[]{
+                    record.get("customers").asLong(),
+                    record.get("prospects").asLong()
+            };
+        }
+    }
+
     public double[] companyWideTotalRevenueAndCost() {
         try (var session = driver.session()) {
             var record = session.run(

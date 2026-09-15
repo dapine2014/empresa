@@ -157,6 +157,21 @@ public class OpportunityMemoryService {
      * dedicada de Opportunities en v1 del Command Center web, pero el dato
      * ya existe y consultarlo es barato).
      */
+    /**
+     * Total real de oportunidades registradas — usado por el status
+     * agregado de la empresa ({@code QueryIntent.COMPANY_STATUS} en
+     * {@code ChatIntentRouter}), no una lista capada como
+     * {@link #listRecent}.
+     */
+    public long countOpportunities() {
+        try (var session = driver.session()) {
+            return session.run("MATCH (o:Opportunity) RETURN count(o) AS total")
+                    .single()
+                    .get("total")
+                    .asLong();
+        }
+    }
+
     public List<OpportunitySummary> listRecent(int limit) {
         try (var session = driver.session()) {
             return session.run(

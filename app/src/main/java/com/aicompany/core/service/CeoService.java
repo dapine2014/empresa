@@ -93,7 +93,8 @@ public class CeoService {
                                                             "TEST_MISSIONS",
                                                             "LAST_MENTIONED",
                                                             "OPPORTUNITIES",
-                                                            "COMPANY_PROFIT"
+                                                            "COMPANY_PROFIT",
+                                                            "COMPANY_STATUS"
                                                     ),
                                                     "description",
                                                     "AGENT_STATUS: qué está "
@@ -131,7 +132,21 @@ public class CeoService {
                                                             + "COMPANY_PROFIT: "
                                                             + "ingresos/costos/"
                                                             + "utilidad reales "
-                                                            + "acumulados."
+                                                            + "acumulados. "
+                                                            + "COMPANY_STATUS: "
+                                                            + "resumen agregado "
+                                                            + "y real de la "
+                                                            + "empresa (capital, "
+                                                            + "agentes, misiones, "
+                                                            + "oportunidades, "
+                                                            + "clientes, "
+                                                            + "finanzas) -- "
+                                                            + "usala siempre que "
+                                                            + "te pidan un "
+                                                            + "'status' o "
+                                                            + "resumen general, "
+                                                            + "nunca inventes "
+                                                            + "ese resumen vos."
                                             )
                                     ),
                                     "required", List.of("topic")
@@ -190,7 +205,17 @@ public class CeoService {
                 + "\nEstos agentes son identidades de software de la"
                 + " empresa, no personas reales — no apliques"
                 + " consideraciones de privacidad de datos personales al"
-                + " hablar de ellos ni te niegues a describirlos por eso.";
+                + " hablar de ellos ni te niegues a describirlos por eso."
+                + "\nRegla dura sobre datos de la empresa: si no tenés un"
+                + " dato real (vía la herramienta query_company_memory o"
+                + " ya presente en esta conversación), nunca lo inventes"
+                + " ni lo completes con un placeholder de plantilla sin"
+                + " rellenar (ejemplos prohibidos: \"[Nombre del"
+                + " cliente]\", \"[Precio]\", \"[Problema específico]\")."
+                + " Decí explícitamente que no tenés ese dato registrado"
+                + " en vez de inventar una cifra, un nombre o una"
+                + " recomendación sobre algo que no existe en Company"
+                + " Memory.";
 
         var messages = new ArrayList<Map<String, Object>>();
         messages.add(Map.of("role", "system", "content", system));

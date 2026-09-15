@@ -27,9 +27,11 @@ class ChatIntentRouterTest {
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
     private final CompanyMemoryService companyMemory = mock(CompanyMemoryService.class);
     private final ConversationMemoryService conversationMemory = mock(ConversationMemoryService.class);
+    private final com.aicompany.core.config.AppProperties appProperties =
+            new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
 
     private final ChatIntentRouter router = new ChatIntentRouter(
-            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory, conversationMemory
+            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory, conversationMemory, appProperties
     );
 
     @Test
@@ -360,11 +362,54 @@ class ChatIntentRouterTest {
         assertEquals("Verde.", response);
     }
 
+    @Test
+    void routesCompanyStatusQueryToADeterministicAggregateSnapshot() {
+        // Reportado por el usuario: "dame un status" caía al chat general
+        // y el CEO inventaba datos -- literalmente placeholders sin
+        // rellenar como "[Nombre del cliente]" -- porque no existía
+        // ninguna consulta agregada real. Debe resolverse 100% en Java.
+        var missions = List.of(
+                new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "x", Instant.now()),
+                new MissionResponse("MISSION-2", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "x", Instant.now()),
+                new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "x", Instant.now()),
+                new MissionResponse("MISSION-TEST", MissionStatus.FAILED, "TEST", 100, "x", "x", Instant.now())
+        );
+        when(missionMemory.findAll(50)).thenReturn(missions);
+
+        var agentStatuses = List.of(
+                new AgentStatusResponse("sales", "Sofia", "Sales", "x", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now()),
+                new AgentStatusResponse("finance", "Max", "Finance", "x", "IDLE", null, null, null, Instant.now())
+        );
+        when(missionMemory.latestTaskPerAgent()).thenReturn(agentStatuses);
+        when(opportunityMemory.countOpportunities()).thenReturn(4L);
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{2L, 3L});
+        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{150.0, 50.0});
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("US$50.00"));
+        assertTrue(response.contains("1 trabajando"));
+        assertTrue(response.contains("1 inactivo"));
+        assertTrue(response.contains("1 activa"));
+        assertTrue(response.contains("1 esperando tu aprobación"));
+        assertTrue(response.contains("1 fallida"));
+        assertTrue(response.contains("Oportunidades registradas: 4"));
+        assertTrue(response.contains("Prospectos"));
+        assertTrue(response.contains("3"));
+        assertTrue(response.contains("Clientes reales: 2"));
+        assertTrue(response.contains("US$150.00"));
+        assertTrue(response.contains("US$100.00"));
+        verifyNoInteractions(ceoService);
+    }
+
     @SuppressWarnings("unchecked")
     @Test
     void passesCompanyMemoryQueryCallbackThatResolvesAllKnownTopics() {
         when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+
+        when(opportunityMemory.countOpportunities()).thenReturn(0L);
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
 
         var statuses = List.of(
                 new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now())
@@ -388,6 +433,7 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("LAST_MENTIONED").contains("No hay ninguna mención reciente"));
         assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
         assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
+        assertTrue(companyMemoryQuery.apply("COMPANY_STATUS").contains("Estado actual de Forjai"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
     }
 

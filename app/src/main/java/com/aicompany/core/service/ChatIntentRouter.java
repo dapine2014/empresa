@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
@@ -116,6 +117,7 @@ public class ChatIntentRouter {
     private final CustomerMemoryService customerMemory;
     private final CompanyMemoryService companyMemory;
     private final ConversationMemoryService conversationMemory;
+    private final AppProperties appProperties;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -124,7 +126,8 @@ public class ChatIntentRouter {
             OpportunityMemoryService opportunityMemory,
             CustomerMemoryService customerMemory,
             CompanyMemoryService companyMemory,
-            ConversationMemoryService conversationMemory) {
+            ConversationMemoryService conversationMemory,
+            AppProperties appProperties) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -133,6 +136,7 @@ public class ChatIntentRouter {
         this.customerMemory = customerMemory;
         this.companyMemory = companyMemory;
         this.conversationMemory = conversationMemory;
+        this.appProperties = appProperties;
     }
 
     /**
@@ -504,7 +508,8 @@ public class ChatIntentRouter {
         FAILED_MISSIONS,
         TEST_MISSIONS,
         OPPORTUNITIES,
-        COMPANY_PROFIT
+        COMPANY_PROFIT,
+        COMPANY_STATUS
     }
 
     private QueryIntent detectQuery(String message) {
@@ -569,6 +574,22 @@ public class ChatIntentRouter {
             return QueryIntent.COMPANY_PROFIT;
         }
 
+        if (normalized.contains("status")
+                || normalized.contains("estado general")
+                || normalized.contains("estado actual")
+                || normalized.contains("estado de forjai")
+                || normalized.contains("estado de la empresa")) {
+            // Catch-all deliberado, chequeado al final: reportado por el
+            // usuario -- "dame un status" no matcheaba ningún keyword
+            // específico y caía al chat general, donde el CEO inventaba
+            // un resumen completo con placeholders sin rellenar
+            // ("[Nombre del cliente]", "[Precio]") porque no existía
+            // ninguna fuente real de la que sacar esos datos. Un resumen
+            // agregado de la empresa es tan determinista como contar una
+            // lista -- no hay ninguna razón para dejárselo al modelo.
+            return QueryIntent.COMPANY_STATUS;
+        }
+
         return null;
     }
 
@@ -598,8 +619,69 @@ public class ChatIntentRouter {
             case "LAST_MENTIONED" -> formatLastMentioned();
             case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
             case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
+            case "COMPANY_STATUS" -> formatCompanyStatus();
             default -> "Dato no reconocido: " + topic + ".";
         };
+    }
+
+    /**
+     * Snapshot agregado y 100% real de la empresa — reportado por el
+     * usuario: "dame un status" caía al chat general, y sin ninguna
+     * fuente real de la que sacar un resumen completo, el CEO (LLM)
+     * rellenaba una plantilla con placeholders literales sin sustituir
+     * ("[Nombre del cliente]", "[Precio]") y afirmaba recomendaciones
+     * sobre datos que no existían. Cada número acá sale de una consulta
+     * real a Neo4j, nunca del modelo — el CEO solo redacta sobre esto,
+     * nunca lo completa.
+     */
+    private String formatCompanyStatus() {
+
+        var missions = missionMemory.findAll(50).stream()
+                .filter(m -> "PRODUCTION".equals(m.environment()))
+                .toList();
+
+        var active = missions.stream()
+                .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
+                        && m.status() != MissionStatus.FAILED
+                        && m.status() != MissionStatus.COMPLETED
+                        && m.status() != MissionStatus.CANCELLED)
+                .count();
+
+        var awaitingInvestor = missions.stream()
+                .filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
+                .count();
+
+        var failed = missions.stream()
+                .filter(m -> m.status() == MissionStatus.FAILED)
+                .count();
+
+        var agentStatuses = missionMemory.latestTaskPerAgent();
+
+        var working = agentStatuses.stream().filter(a -> "WORKING".equals(a.status())).count();
+        var idle = agentStatuses.stream().filter(a -> "IDLE".equals(a.status())).count();
+
+        var opportunities = opportunityMemory.countOpportunities();
+
+        var customerCounts = customerMemory.countCustomersAndProspects();
+        var customers = customerCounts[0];
+        var prospects = customerCounts[1];
+
+        var totals = customerMemory.companyWideTotalRevenueAndCost();
+        var revenue = totals[0];
+        var netProfit = totals[0] - totals[1];
+
+        return String.format(
+                Locale.ROOT,
+                "Estado actual de Forjai: capital disponible US$%.2f. "
+                        + "Agentes: %d trabajando, %d inactivo(s). "
+                        + "Misiones (producción): %d activa(s), %d esperando tu aprobación, %d fallida(s). "
+                        + "Oportunidades registradas: %d. Prospectos (leads): %d. Clientes reales: %d. "
+                        + "Ingresos: US$%.2f. Beneficio neto: US$%.2f.",
+                appProperties.seedCapitalUsd(), working, idle,
+                active, awaitingInvestor, failed,
+                opportunities, prospects, customers,
+                revenue, netProfit
+        );
     }
 
     private String formatAgentStatus(List<AgentStatusResponse> statuses) {
