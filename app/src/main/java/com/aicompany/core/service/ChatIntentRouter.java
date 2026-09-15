@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
+import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -143,6 +144,10 @@ public class ChatIntentRouter {
                     + "/details para ver el progreso y las tareas.";
         }
 
+        if (detectFreeMissionStart(normalize(message))) {
+            return handleFreeMissionStart(message);
+        }
+
         var decision = detectDecision(message);
 
         if (decision != null) {
@@ -167,6 +172,58 @@ public class ChatIntentRouter {
                 message,
                 this::answerMemoryTopic
         );
+    }
+
+    /**
+     * Una instrucción real de negocio, en lenguaje libre, sin ningún
+     * {@code MISSION-<número>} explícito todavía (por eso no la atrapa
+     * {@link #MISSION_START}) — reportado por el usuario en vivo: su
+     * instrucción real contenía la frase "sin mi aprobación" como
+     * restricción, y el router determinista la interpretaba como una
+     * CONSULTA (por el keyword {@code aprobacion} de
+     * {@code MISSIONS_NEEDING_ATTENTION}) en vez de crear la misión.
+     * Por eso este chequeo corre *antes* que {@code detectDecision}/
+     * {@code detectQuery}.
+     */
+    private boolean detectFreeMissionStart(String normalized) {
+
+        if (!normalized.contains("mision")) {
+            return false;
+        }
+
+        return normalized.contains("inicia")
+                || normalized.contains("iniciar")
+                || normalized.contains("comienza")
+                || normalized.contains("empieza")
+                || normalized.contains("crea")
+                || normalized.contains("lanza")
+                || normalized.contains("arranca");
+    }
+
+    /**
+     * El {@code instruction} es el mensaje completo, tal cual -- el
+     * mismo contrato que ya usa {@code MissionExecutor}/{@code AgentRuntime}
+     * para cualquier misión (texto libre, sin parsear a una estructura
+     * rígida). El id se genera acá porque el fundador no dio uno
+     * explícito -- timestamp, sin heurística de nombres (acordado con el
+     * usuario: simple, sin riesgo de colisión).
+     */
+    private String handleFreeMissionStart(String message) {
+
+        var missionId = "MISSION-" + Instant.now().toEpochMilli();
+
+        log.info("CHAT_INTENT_FREE_MISSION_START missionId={}", missionId);
+
+        // Una misión iniciada por un comando real de chat del fundador
+        // es trabajo real, no una prueba de desarrollo.
+        var response = missionService.start(missionId, message, "PRODUCTION");
+
+        conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+
+        return "Creé la misión " + missionId + " con tu descripción y la mandé a "
+                + "procesar en segundo plano. Estado: " + response.status()
+                + ". Consulta /api/company/missions/" + missionId
+                + "/details para ver el progreso y las tareas.";
     }
 
     private record DetectedDecision(String missionId, InvestorDecision decision) {

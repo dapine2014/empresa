@@ -49,6 +49,34 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void routesFreeFormMissionDescriptionToMissionServiceWithAGeneratedId() {
+        // Reportado por el usuario en vivo: una instrucción libre real
+        // ("inicia una misión para...") contenía la frase "sin mi
+        // aprobación" como restricción -- el router determinista la
+        // interpretaba como una CONSULTA (MISSIONS_NEEDING_ATTENTION,
+        // por el keyword "aprobacion") en vez de crear la misión. No
+        // hay ningún MISSION-<número> explícito, así que el patrón
+        // numerado (MISSION_START) tampoco la reconocía.
+        var instruction = "Inicia una misión para encontrar una oportunidad comercial real en "
+                + "videojuegos. No gastes dinero sin mi aprobación.";
+
+        var mission = new MissionResponse(
+                "MISSION-1789412392452", MissionStatus.CREATED, "PRODUCTION", 0, "Creada", "Misión recibida",
+                Instant.now()
+        );
+        when(missionService.start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION")))
+                .thenReturn(mission);
+
+        var response = router.route(instruction);
+
+        assertTrue(response.contains("MISSION-"));
+        verify(missionService).start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION"));
+        verify(conversationMemory).setLastMentioned(eq("MISSION"), argThat(ids -> ids.size() == 1));
+        verifyNoInteractions(ceoService);
+        verifyNoInteractions(missionMemory);
+    }
+
+    @Test
     void routesApproveWithExplicitMissionIdToRecordDecision() {
         var decisionResponse = new DecisionResponse(
                 "MISSION-7-DECISION-1", "MISSION-7", InvestorDecision.APPROVE, Instant.now()
