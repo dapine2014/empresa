@@ -234,6 +234,16 @@ public class MissionExecutor {
                         .filter(java.util.Objects::nonNull)
                         .toList();
 
+        if (priorResults.isEmpty() && evidenceRound > 0) {
+
+            log.warn(
+                    "MISSION {} - no prior-round results found for evidenceRound {}, "
+                            + "routing investor feedback without prior context",
+                    missionId,
+                    evidenceRound
+            );
+        }
+
         var priorResultsJson =
                 serializeAgentResults(priorResults);
 

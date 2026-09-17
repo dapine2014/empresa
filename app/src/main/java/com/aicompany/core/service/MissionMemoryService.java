@@ -159,15 +159,23 @@ public class MissionMemoryService {
      * Usado por {@code MissionExecutor.reexecuteAsync} para releer los
      * resultados de la ronda anterior y pasárselos al CEO al repartir el
      * feedback del inversionista entre los agentes.
+     *
+     * <p>Para {@code round == 0} también matchea tareas legacy sin sufijo de
+     * ronda (creadas por versiones de {@code MissionExecutor} anteriores a
+     * esta feature, p.ej. {@code MISSION-001-SALES} sin {@code -R0}) — sin
+     * este fallback, una misión real ya en curso al desplegar esto perdería
+     * en silencio el contexto de su ronda 0 al pedir la primera vuelta de
+     * evidencia adicional.
      */
     public List<AgentTask> tasksForRound(String missionId, int round) {
         try (var session = driver.session()) {
             return session.run(
-                            "MATCH (t:AgentTask {missionId:$missionId}) WHERE t.id ENDS WITH $suffix " +
+                            "MATCH (t:AgentTask {missionId:$missionId}) " +
+                                    "WHERE t.id ENDS WITH $suffix OR ($round = 0 AND NOT t.id CONTAINS '-R') " +
                                     "RETURN t.id AS id, t.agentId AS agentId, t.action AS action, " +
                                     "t.status AS status, t.result AS result, t.updatedAt AS updatedAt " +
                                     "ORDER BY t.id",
-                            Map.of("missionId", missionId, "suffix", "-R" + round))
+                            Map.of("missionId", missionId, "suffix", "-R" + round, "round", round))
                     .list(r -> new AgentTask(
                             r.get("id").asString(), missionId,
                             r.get("agentId").asString(), r.get("action").asString(), r.get("status").asString(),
