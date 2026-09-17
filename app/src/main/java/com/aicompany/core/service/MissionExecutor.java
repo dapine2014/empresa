@@ -6,6 +6,7 @@ import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.AgentExecutionOutcome;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.MissionStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -104,7 +105,9 @@ public class MissionExecutor {
             return CompletableFuture.runAsync(
                     () -> executeInternal(
                             missionId,
-                            instruction
+                            instruction,
+                            0,
+                            Map.of()
                     ),
                     orchestratorExecutor
             );
@@ -126,13 +129,179 @@ public class MissionExecutor {
         }
     }
 
-    private void executeInternal(
+    /**
+     * Dispara una vuelta adicional de evidencia tras un
+     * {@code REQUEST_MORE_EVIDENCE} del inversionista
+     * ({@code MissionService.recordDecision}, que ya validó el límite de
+     * vueltas antes de llamar acá). Reentra el mismo camino que
+     * {@code executeInternal} usa siempre — no hay un {@code MissionStatus}
+     * nuevo — pero con {@code taskId} sufijados por ronda para preservar el
+     * historial completo (ver spec, "Historial de tareas").
+     */
+    public CompletableFuture<Void> reexecuteAsync(
             String missionId,
-            String instruction) {
+            String instruction,
+            int evidenceRound,
+            String investorReasoning) {
 
         log.info(
-                "MISSION {} - async execution started",
-                missionId
+                "MISSION {} - submitting evidence round {} orchestration",
+                missionId,
+                evidenceRound
+        );
+
+        events.publish(
+                "EMPRESA_MISSION_EVIDENCE_ROUND_STARTED",
+                missionId,
+                null,
+                "human",
+                Map.of(
+                        "evidenceRound", evidenceRound,
+                        "reasoning", investorReasoning
+                )
+        );
+
+        try {
+
+            return CompletableFuture.runAsync(
+                    () -> {
+
+                        Map<String, String> feedback;
+
+                        try {
+
+                            feedback = buildInvestorFeedback(
+                                    missionId,
+                                    instruction,
+                                    evidenceRound,
+                                    investorReasoning
+                            );
+
+                        } catch (Exception ex) {
+
+                            log.error(
+                                    "MISSION {} - could not build investor feedback for round {}, "
+                                            + "proceeding without it",
+                                    missionId,
+                                    evidenceRound,
+                                    ex
+                            );
+
+                            feedback = Map.of();
+                        }
+
+                        executeInternal(
+                                missionId,
+                                instruction,
+                                evidenceRound,
+                                feedback
+                        );
+                    },
+                    orchestratorExecutor
+            );
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "MISSION {} - could not submit evidence round {} orchestration",
+                    missionId,
+                    evidenceRound,
+                    ex
+            );
+
+            safeFail(
+                    missionId,
+                    ex
+            );
+
+            return CompletableFuture.failedFuture(ex);
+        }
+    }
+
+    private Map<String, String> buildInvestorFeedback(
+            String missionId,
+            String instruction,
+            int evidenceRound,
+            String investorReasoning) {
+
+        var priorTasks =
+                memory.tasksForRound(missionId, evidenceRound - 1);
+
+        var priorResults =
+                priorTasks.stream()
+                        .filter(t -> "COMPLETED".equals(t.status()))
+                        .map(this::parsePersistedResult)
+                        .filter(java.util.Objects::nonNull)
+                        .toList();
+
+        var priorResultsJson =
+                serializeAgentResults(priorResults);
+
+        return ceoService.routeInvestorFeedback(
+                instruction,
+                priorResultsJson,
+                investorReasoning
+        );
+    }
+
+    private AgentResult parsePersistedResult(AgentTask task) {
+
+        try {
+
+            return jsonMapper.readValue(
+                    task.result(),
+                    AgentResult.class
+            );
+
+        } catch (Exception ex) {
+
+            log.warn(
+                    "MISSION {} - could not parse persisted result for task {}, "
+                            + "skipping it when routing investor feedback",
+                    task.missionId(),
+                    task.taskId(),
+                    ex
+            );
+
+            return null;
+        }
+    }
+
+    private String buildAgentInstruction(
+            String instruction,
+            String objective,
+            int evidenceRound,
+            String investorFeedback) {
+
+        var agentInstruction =
+                instruction
+                        + "\nObjetivo específico: "
+                        + objective;
+
+        if (investorFeedback != null && !investorFeedback.isBlank()) {
+
+            agentInstruction += """
+
+
+                    SOLICITUD DEL INVERSIONISTA (ronda %d de evidencia adicional)
+
+                    %s
+                    """.formatted(evidenceRound, investorFeedback);
+        }
+
+        return agentInstruction;
+    }
+
+    private void executeInternal(
+            String missionId,
+            String instruction,
+            int evidenceRound,
+            Map<String, String> investorFeedbackByAgent) {
+
+        log.info(
+                "MISSION {} - async execution started (evidenceRound={})",
+                missionId,
+                evidenceRound
         );
 
         try {
@@ -215,7 +384,9 @@ public class MissionExecutor {
                 var taskId =
                         missionId
                                 + "-"
-                                + agentId.toUpperCase();
+                                + agentId.toUpperCase()
+                                + "-R"
+                                + evidenceRound;
 
                 log.info(
                         "MISSION {} - creating task {} for agent {}",
@@ -246,9 +417,12 @@ public class MissionExecutor {
                                 missionId,
                                 agentId,
                                 action,
-                                instruction
-                                        + "\nObjetivo específico: "
-                                        + objective
+                                buildAgentInstruction(
+                                        instruction,
+                                        objective,
+                                        evidenceRound,
+                                        investorFeedbackByAgent.getOrDefault(agentId, "")
+                                )
                         );
 
                 futuresByAgent.put(agentId, future);
@@ -337,6 +511,8 @@ public class MissionExecutor {
             outcomes = replanFailedAgents(
                     missionId,
                     instruction,
+                    evidenceRound,
+                    investorFeedbackByAgent,
                     definitionsByAgent,
                     outcomes
             );
@@ -516,6 +692,8 @@ public class MissionExecutor {
     private List<AgentExecutionOutcome> replanFailedAgents(
             String missionId,
             String instruction,
+            int evidenceRound,
+            Map<String, String> investorFeedbackByAgent,
             Map<String, AgentDefinition> definitionsByAgent,
             List<AgentExecutionOutcome> outcomes) {
 
@@ -532,7 +710,7 @@ public class MissionExecutor {
 
                 var agentId = current.agentId();
                 var definition = definitionsByAgent.get(agentId);
-                var taskId = missionId + "-" + agentId.toUpperCase();
+                var taskId = missionId + "-" + agentId.toUpperCase() + "-R" + evidenceRound;
 
                 log.warn(
                         "MISSION {} - replanning agent {} (attempt {} of {}) after: {}",
@@ -581,9 +759,12 @@ public class MissionExecutor {
                                 missionId,
                                 agentId,
                                 definition.action(),
-                                instruction
-                                        + "\nObjetivo específico: "
-                                        + definition.objective()
+                                buildAgentInstruction(
+                                        instruction,
+                                        definition.objective(),
+                                        evidenceRound,
+                                        investorFeedbackByAgent.getOrDefault(agentId, "")
+                                )
                         );
 
                 try {
