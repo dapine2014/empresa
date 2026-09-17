@@ -32,6 +32,7 @@ company:
     topic: EMPRESA_EVENTS
   seed-capital-usd: 50
   challenge-days: 60
+  max-evidence-rounds: 2
 
 neo4j:
   uri: ${NEO4J_URI:bolt://localhost:7687}

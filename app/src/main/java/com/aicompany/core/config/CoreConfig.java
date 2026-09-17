@@ -20,7 +20,11 @@ public class CoreConfig {
     }
 
     @Bean
-    AppProperties appProperties(@Value("${company.name}") String name, @Value("${company.seed-capital-usd}") double seedCapitalUsd, @Value("${company.challenge-days}") int challengeDays) {
-        return new AppProperties(name, seedCapitalUsd, challengeDays);
+    AppProperties appProperties(
+            @Value("${company.name}") String name,
+            @Value("${company.seed-capital-usd}") double seedCapitalUsd,
+            @Value("${company.challenge-days}") int challengeDays,
+            @Value("${company.max-evidence-rounds}") int maxEvidenceRounds) {
+        return new AppProperties(name, seedCapitalUsd, challengeDays, maxEvidenceRounds);
     }
 }

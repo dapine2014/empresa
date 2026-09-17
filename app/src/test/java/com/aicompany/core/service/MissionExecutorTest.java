@@ -25,7 +25,7 @@ class MissionExecutorTest {
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
     private final ContradictionDetector contradictionDetector = mock(ContradictionDetector.class);
-    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
+    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60, 2);
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final AlertMailService alertMailService = mock(AlertMailService.class);
 
