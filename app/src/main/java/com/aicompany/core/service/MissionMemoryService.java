@@ -47,7 +47,7 @@ public class MissionMemoryService {
     public void ensureMission(String missionId, String instruction, String environment) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, m.environment=$environment, m.status='CREATED', m.progress=0, m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt",
+                tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, m.environment=$environment, m.status='CREATED', m.progress=0, m.currentStep='Creada', m.message='Misión recibida', m.evidenceRound=0, m.updatedAt=$updatedAt",
                         Map.of("id", missionId,
                                 "name", missionId.equals("MISSION-001") ? "MISSION-001 — Descubrimiento del primer negocio" : missionId,
                                 "instruction", instruction,
@@ -104,6 +104,74 @@ public class MissionMemoryService {
                         ));
                 return null;
             });
+        }
+    }
+
+    /**
+     * Compara y aumenta {@code Mission.evidenceRound} en una sola
+     * operación atómica — evita una condición de carrera entre leer el
+     * valor actual y escribir el incrementado si dos decisiones llegaran
+     * a superponerse. Vacío si la misión ya alcanzó {@code maxRounds}
+     * (el llamador, {@code MissionService.recordDecision}, lo trata como
+     * "límite agotado" y no re-ejecuta nada).
+     */
+    public Optional<Integer> incrementEvidenceRound(String missionId, int maxRounds) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+                var records = tx.run(
+                        "MATCH (m:Mission {id:$id}) " +
+                                "WHERE coalesce(m.evidenceRound, 0) < $max " +
+                                "SET m.evidenceRound = coalesce(m.evidenceRound, 0) + 1 " +
+                                "RETURN m.evidenceRound AS evidenceRound",
+                        Map.of("id", missionId, "max", maxRounds)
+                ).list();
+
+                return records.stream()
+                        .findFirst()
+                        .map(r -> r.get("evidenceRound").asInt());
+            });
+        }
+    }
+
+    /**
+     * Instrucción original de la misión, guardada por {@link #ensureMission}
+     * pero no expuesta por {@link MissionResponse} (evitaría sincronizar
+     * `api/types.ts` en el frontend sin que ninguna pantalla la necesite).
+     * Uso interno de {@code MissionService.recordDecision} para re-ejecutar
+     * una vuelta de evidencia con la misma instrucción original.
+     */
+    public Optional<String> instructionOf(String missionId) {
+        try (var session = driver.session()) {
+            var records = session.run(
+                    "MATCH (m:Mission {id:$id}) RETURN m.instruction AS instruction",
+                    Map.of("id", missionId)
+            ).list();
+
+            return records.stream()
+                    .findFirst()
+                    .map(r -> r.get("instruction").asString());
+        }
+    }
+
+    /**
+     * Tareas de una ronda de evidencia puntual — {@code taskId} termina en
+     * {@code "-R" + round} (ver {@code MissionExecutor}, que arma ese id).
+     * Usado por {@code MissionExecutor.reexecuteAsync} para releer los
+     * resultados de la ronda anterior y pasárselos al CEO al repartir el
+     * feedback del inversionista entre los agentes.
+     */
+    public List<AgentTask> tasksForRound(String missionId, int round) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (t:AgentTask {missionId:$missionId}) WHERE t.id ENDS WITH $suffix " +
+                                    "RETURN t.id AS id, t.agentId AS agentId, t.action AS action, " +
+                                    "t.status AS status, t.result AS result, t.updatedAt AS updatedAt " +
+                                    "ORDER BY t.id",
+                            Map.of("missionId", missionId, "suffix", "-R" + round))
+                    .list(r -> new AgentTask(
+                            r.get("id").asString(), missionId,
+                            r.get("agentId").asString(), r.get("action").asString(), r.get("status").asString(),
+                            r.get("result").asString(""), Instant.parse(r.get("updatedAt").asString())));
         }
     }
 
