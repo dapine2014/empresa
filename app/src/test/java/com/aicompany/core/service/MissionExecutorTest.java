@@ -5,12 +5,15 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.MissionStatus;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,7 +28,7 @@ class MissionExecutorTest {
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
     private final ContradictionDetector contradictionDetector = mock(ContradictionDetector.class);
-    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
+    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60, 2);
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final AlertMailService alertMailService = mock(AlertMailService.class);
 
@@ -214,6 +217,141 @@ class MissionExecutorTest {
         verify(opportunityMemory, never()).recordOpportunity(anyString(), anyString());
 
         verify(alertMailService).send(contains("MISSION-1"), anyString(), anyBoolean());
+    }
+
+    @Test
+    void reexecuteAsyncCreatesTasksWithRoundSuffixAndReachesAwaitingInvestorAgain() throws Exception {
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        when(memory.tasksForRound(eq("MISSION-1"), eq(0))).thenReturn(List.of());
+        when(ceoService.routeInvestorFeedback(anyString(), anyString(), anyString()))
+                .thenReturn(Map.of(
+                        "sales", "", "product", "", "finance", "", "engineering", "", "qa", ""));
+        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString())).thenReturn("consolidado ronda 1");
+
+        var taskIdCaptor = ArgumentCaptor.forClass(String.class);
+
+        executor.reexecuteAsync("MISSION-1", "instrucción", 1, "falta validar precios reales").get();
+
+        verify(runtime, times(5)).execute(
+                taskIdCaptor.capture(), eq("MISSION-1"), anyString(), anyString(), anyString());
+
+        assertTrue(taskIdCaptor.getAllValues().stream()
+                .allMatch(taskId -> taskId.endsWith("-R1")));
+
+        verify(memory).updateMission(
+                eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
+
+        @SuppressWarnings("unchecked")
+        var eventDataCaptor = ArgumentCaptor.forClass(Map.class);
+
+        verify(events).publish(
+                eq("EMPRESA_MISSION_EVIDENCE_ROUND_STARTED"), eq("MISSION-1"), any(), eq("human"),
+                eventDataCaptor.capture());
+
+        assertEquals(
+                Map.of("evidenceRound", 1, "reasoning", "falta validar precios reales"),
+                eventDataCaptor.getValue());
+    }
+
+    @Test
+    void reexecuteAsyncIncludesRealPriorRoundResultsInInvestorFeedbackPrompt() throws Exception {
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        var priorResult = new AgentResult(
+                "sales", "ACTION", "NOT_VALIDATED",
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                "recomendación previa de sales sobre precios reales", 0.5
+        );
+
+        var priorResultJson = jsonMapper.writeValueAsString(priorResult);
+
+        var priorTask = new AgentTask(
+                "MISSION-1-SALES-R0", "MISSION-1", "sales", "ACTION", "COMPLETED",
+                priorResultJson, Instant.now()
+        );
+
+        when(memory.tasksForRound(eq("MISSION-1"), eq(0))).thenReturn(List.of(priorTask));
+
+        var feedbackPromptCaptor = ArgumentCaptor.forClass(String.class);
+
+        when(ceoService.routeInvestorFeedback(
+                        anyString(), feedbackPromptCaptor.capture(), anyString()))
+                .thenReturn(Map.of(
+                        "sales", "", "product", "", "finance", "", "engineering", "", "qa", ""));
+        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString())).thenReturn("consolidado ronda 1");
+
+        executor.reexecuteAsync("MISSION-1", "instrucción", 1, "falta validar precios reales").get();
+
+        var priorAgentResultsJson = feedbackPromptCaptor.getValue();
+
+        assertNotEquals("[]", priorAgentResultsJson);
+        assertTrue(priorAgentResultsJson.contains("recomendación previa de sales sobre precios reales"));
+    }
+
+    @Test
+    void reexecuteAsyncAppendsInvestorFeedbackOnlyForAgentsThatReceivedIt() throws Exception {
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        when(memory.tasksForRound(eq("MISSION-1"), eq(1))).thenReturn(List.of());
+        when(ceoService.routeInvestorFeedback(anyString(), anyString(), eq("falta validar precios reales")))
+                .thenReturn(Map.of(
+                        "sales", "Confirmá precios reales de al menos 3 competidores.",
+                        "product", "", "finance", "", "engineering", "", "qa", ""));
+        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString())).thenReturn("consolidado ronda 2");
+
+        var salesInstructionCaptor = ArgumentCaptor.forClass(String.class);
+        var productInstructionCaptor = ArgumentCaptor.forClass(String.class);
+
+        executor.reexecuteAsync("MISSION-1", "instrucción", 2, "falta validar precios reales").get();
+
+        verify(runtime).execute(
+                anyString(), eq("MISSION-1"), eq("sales"), anyString(), salesInstructionCaptor.capture());
+        verify(runtime).execute(
+                anyString(), eq("MISSION-1"), eq("product"), anyString(), productInstructionCaptor.capture());
+
+        assertTrue(salesInstructionCaptor.getValue().contains("SOLICITUD DEL INVERSIONISTA"));
+        assertTrue(salesInstructionCaptor.getValue().contains("Confirmá precios reales"));
+        assertFalse(productInstructionCaptor.getValue().contains("SOLICITUD DEL INVERSIONISTA"));
+    }
+
+    @Test
+    void initialExecutionUsesRoundZeroTaskIdsAndEmptyFeedback() throws Exception {
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString())).thenReturn("consolidado");
+
+        var taskIdCaptor = ArgumentCaptor.forClass(String.class);
+
+        executor.executeAsync("MISSION-1", "instrucción").get();
+
+        verify(runtime, times(5)).execute(
+                taskIdCaptor.capture(), eq("MISSION-1"), anyString(), anyString(), anyString());
+
+        assertTrue(taskIdCaptor.getAllValues().stream()
+                .allMatch(taskId -> taskId.endsWith("-R0")));
+
+        verify(ceoService, never()).routeInvestorFeedback(anyString(), anyString(), anyString());
     }
 
     private void stubAgent(String agentId) {
