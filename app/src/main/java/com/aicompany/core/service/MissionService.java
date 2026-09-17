@@ -1,8 +1,10 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
+import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.MissionStatusResponse;
@@ -24,11 +26,17 @@ public class MissionService {
     private final MissionMemoryService memory;
     private final MissionExecutor executor;
     private final CompanyEventPublisher events;
+    private final AppProperties appProperties;
 
-    public MissionService(MissionMemoryService memory, MissionExecutor executor, CompanyEventPublisher events) {
+    public MissionService(
+            MissionMemoryService memory,
+            MissionExecutor executor,
+            CompanyEventPublisher events,
+            AppProperties appProperties) {
         this.memory = memory;
         this.executor = executor;
         this.events = events;
+        this.appProperties = appProperties;
     }
 
     public MissionResponse start(String missionId, String instruction, String environment) {
@@ -103,6 +111,28 @@ public class MissionService {
             );
         }
 
+        Integer newEvidenceRound = null;
+
+        if (command.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE) {
+
+            var incremented =
+                    memory.incrementEvidenceRound(
+                            missionId,
+                            appProperties.maxEvidenceRounds()
+                    );
+
+            if (incremented.isEmpty()) {
+
+                throw new IllegalStateException(
+                        "La misión " + missionId + " ya alcanzó el límite de "
+                                + appProperties.maxEvidenceRounds()
+                                + " vueltas de evidencia adicional; usa APPROVE o REJECT."
+                );
+            }
+
+            newEvidenceRound = incremented.get();
+        }
+
         var decisionId = missionId + "-DECISION-" + Instant.now().toEpochMilli();
 
         memory.recordDecision(
@@ -136,6 +166,19 @@ public class MissionService {
                     "Decisión del inversionista",
                     command.reasoning()
             );
+
+        } else {
+
+            var instruction = memory.instructionOf(missionId).orElseThrow();
+
+            executor.reexecuteAsync(missionId, instruction, newEvidenceRound, command.reasoning())
+                    .whenComplete((ignored, error) -> {
+                        if (error != null) {
+                            log.error("MISSION {} - evidence round async future failed", missionId, error);
+                        } else {
+                            log.info("MISSION {} - evidence round orchestration finished", missionId);
+                        }
+                    });
         }
 
         events.publish(
