@@ -891,6 +891,108 @@ public class CeoService {
         ).content();
     }
 
+    private static final Map<String, Object> INVESTOR_FEEDBACK_SCHEMA = Map.of(
+            "type", "object",
+            "properties", Map.of(
+                    "sales", Map.of("type", "string"),
+                    "product", Map.of("type", "string"),
+                    "finance", Map.of("type", "string"),
+                    "engineering", Map.of("type", "string"),
+                    "qa", Map.of("type", "string")
+            ),
+            "required", List.of("sales", "product", "finance", "engineering", "qa")
+    );
+
+    private record InvestorFeedbackByAgent(
+            String sales,
+            String product,
+            String finance,
+            String engineering,
+            String qa) {
+    }
+
+    /**
+     * Reparte el `reasoning` de una decisión `REQUEST_MORE_EVIDENCE` entre
+     * los 5 agentes antes de una nueva ronda — el CEO decide qué parte del
+     * pedido le corresponde a cada rol (desviación deliberada de "nunca el
+     * modelo decidiendo el flujo": acá decide contenido de un prompt, no
+     * una transición de estado; ver `docs/superpowers/specs/2026-09-16-
+     * evidence-rounds-design.md`). Nunca lanza: si Ollama no devuelve algo
+     * parseable, se loguea y se re-ejecuta la ronda sin bloque adicional
+     * para ningún agente (mejor una ronda sin ese contexto extra que
+     * bloquear la re-ejecución entera por esta llamada auxiliar).
+     */
+    public Map<String, String> routeInvestorFeedback(
+            String instruction,
+            String priorAgentResultsJson,
+            String investorReasoning) {
+
+        var prompt = """
+                Actúa como CEO de Forjai.
+                El inversionista humano pidió más evidencia sobre esta
+                misión antes de decidir. Reparte su pedido entre los
+                agentes que corresponda -- cada agente solo debe recibir
+                la parte que le aplica a su rol. Si un agente no necesita
+                nada, devolvé un string vacío para él. No inventes pedidos
+                que el inversionista no hizo.
+
+                INSTRUCCIÓN ORIGINAL DE LA MISIÓN:
+                %s
+
+                RESULTADOS DE AGENTES DE LA VUELTA ANTERIOR:
+                %s
+
+                PEDIDO DEL INVERSIONISTA:
+                %s
+                """.formatted(instruction, priorAgentResultsJson, investorReasoning);
+
+        var messages = List.<Map<String, Object>>of(
+                Map.of("role", "system", "content", systemPrompt()),
+                Map.of("role", "user", "content", prompt)
+        );
+
+        var response = callModel(
+                "INVESTOR_FEEDBACK_ROUTING", "ceo", ceoModel, messages,
+                INVESTOR_FEEDBACK_SCHEMA, null, false
+        ).content();
+
+        try {
+
+            return parseInvestorFeedback(response);
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "No se pudo repartir el feedback del inversionista entre "
+                            + "los agentes; se re-ejecuta la ronda sin bloque "
+                            + "adicional para ningún agente",
+                    ex
+            );
+
+            return Map.of();
+        }
+    }
+
+    Map<String, String> parseInvestorFeedback(String rawResponse) {
+
+        var normalized = normalizeJsonResponse(rawResponse);
+
+        var parsed = jsonMapper.readValue(normalized, InvestorFeedbackByAgent.class);
+
+        var feedback = new java.util.LinkedHashMap<String, String>();
+        feedback.put("sales", orEmpty(parsed.sales()));
+        feedback.put("product", orEmpty(parsed.product()));
+        feedback.put("finance", orEmpty(parsed.finance()));
+        feedback.put("engineering", orEmpty(parsed.engineering()));
+        feedback.put("qa", orEmpty(parsed.qa()));
+
+        return feedback;
+    }
+
+    private String orEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
     private String systemPrompt() {
 
         return """
