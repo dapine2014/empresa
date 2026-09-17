@@ -917,10 +917,12 @@ public class CeoService {
      * pedido le corresponde a cada rol (desviación deliberada de "nunca el
      * modelo decidiendo el flujo": acá decide contenido de un prompt, no
      * una transición de estado; ver `docs/superpowers/specs/2026-09-16-
-     * evidence-rounds-design.md`). Nunca lanza: si Ollama no devuelve algo
-     * parseable, se loguea y se re-ejecuta la ronda sin bloque adicional
-     * para ningún agente (mejor una ronda sin ese contexto extra que
-     * bloquear la re-ejecución entera por esta llamada auxiliar).
+     * evidence-rounds-design.md`). Solo atrapa fallos de *parseo* de la
+     * respuesta (si Ollama no devuelve algo parseable, se loguea y se
+     * retorna un mapa vacío); un fallo de transporte/modelo en
+     * {@code callModel} todavía se propaga sin atrapar — quien absorbe ese
+     * caso es el try/catch de {@code MissionExecutor.reexecuteAsync}
+     * alrededor de {@code buildInvestorFeedback}.
      */
     public Map<String, String> routeInvestorFeedback(
             String instruction,
@@ -953,7 +955,7 @@ public class CeoService {
 
         var response = callModel(
                 "INVESTOR_FEEDBACK_ROUTING", "ceo", ceoModel, messages,
-                INVESTOR_FEEDBACK_SCHEMA, null, false
+                INVESTOR_FEEDBACK_SCHEMA, null
         ).content();
 
         try {

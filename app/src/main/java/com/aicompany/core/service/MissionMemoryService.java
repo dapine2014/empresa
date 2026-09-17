@@ -149,7 +149,8 @@ public class MissionMemoryService {
 
             return records.stream()
                     .findFirst()
-                    .map(r -> r.get("instruction").asString());
+                    .map(r -> r.get("instruction").asString(null))
+                    .filter(java.util.Objects::nonNull);
         }
     }
 

@@ -5,11 +5,13 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.MissionStatus;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -245,8 +247,56 @@ class MissionExecutorTest {
         verify(memory).updateMission(
                 eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
 
+        @SuppressWarnings("unchecked")
+        var eventDataCaptor = ArgumentCaptor.forClass(Map.class);
+
         verify(events).publish(
-                eq("EMPRESA_MISSION_EVIDENCE_ROUND_STARTED"), eq("MISSION-1"), any(), eq("human"), any());
+                eq("EMPRESA_MISSION_EVIDENCE_ROUND_STARTED"), eq("MISSION-1"), any(), eq("human"),
+                eventDataCaptor.capture());
+
+        assertEquals(
+                Map.of("evidenceRound", 1, "reasoning", "falta validar precios reales"),
+                eventDataCaptor.getValue());
+    }
+
+    @Test
+    void reexecuteAsyncIncludesRealPriorRoundResultsInInvestorFeedbackPrompt() throws Exception {
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        var priorResult = new AgentResult(
+                "sales", "ACTION", "NOT_VALIDATED",
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                "recomendación previa de sales sobre precios reales", 0.5
+        );
+
+        var priorResultJson = jsonMapper.writeValueAsString(priorResult);
+
+        var priorTask = new AgentTask(
+                "MISSION-1-SALES-R0", "MISSION-1", "sales", "ACTION", "COMPLETED",
+                priorResultJson, Instant.now()
+        );
+
+        when(memory.tasksForRound(eq("MISSION-1"), eq(0))).thenReturn(List.of(priorTask));
+
+        var feedbackPromptCaptor = ArgumentCaptor.forClass(String.class);
+
+        when(ceoService.routeInvestorFeedback(
+                        anyString(), feedbackPromptCaptor.capture(), anyString()))
+                .thenReturn(Map.of(
+                        "sales", "", "product", "", "finance", "", "engineering", "", "qa", ""));
+        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString())).thenReturn("consolidado ronda 1");
+
+        executor.reexecuteAsync("MISSION-1", "instrucción", 1, "falta validar precios reales").get();
+
+        var priorAgentResultsJson = feedbackPromptCaptor.getValue();
+
+        assertNotEquals("[]", priorAgentResultsJson);
+        assertTrue(priorAgentResultsJson.contains("recomendación previa de sales sobre precios reales"));
     }
 
     @Test

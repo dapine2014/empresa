@@ -157,7 +157,7 @@ public class MissionExecutor {
                 "human",
                 Map.of(
                         "evidenceRound", evidenceRound,
-                        "reasoning", investorReasoning
+                        "reasoning", investorReasoning == null ? "" : investorReasoning
                 )
         );
 
@@ -234,7 +234,7 @@ public class MissionExecutor {
                         .filter(java.util.Objects::nonNull)
                         .toList();
 
-        if (priorResults.isEmpty() && evidenceRound > 0) {
+        if (priorResults.isEmpty()) {
 
             log.warn(
                     "MISSION {} - no prior-round results found for evidenceRound {}, "
@@ -391,12 +391,7 @@ public class MissionExecutor {
                 var action = definition.action();
                 var objective = definition.objective();
 
-                var taskId =
-                        missionId
-                                + "-"
-                                + agentId.toUpperCase()
-                                + "-R"
-                                + evidenceRound;
+                var taskId = taskIdFor(missionId, agentId, evidenceRound);
 
                 log.info(
                         "MISSION {} - creating task {} for agent {}",
@@ -720,7 +715,7 @@ public class MissionExecutor {
 
                 var agentId = current.agentId();
                 var definition = definitionsByAgent.get(agentId);
-                var taskId = missionId + "-" + agentId.toUpperCase() + "-R" + evidenceRound;
+                var taskId = taskIdFor(missionId, agentId, evidenceRound);
 
                 log.warn(
                         "MISSION {} - replanning agent {} (attempt {} of {}) after: {}",
@@ -835,6 +830,20 @@ public class MissionExecutor {
         return ex.getMessage() == null || ex.getMessage().isBlank()
                 ? defaultMessage
                 : ex.getMessage();
+    }
+
+    /**
+     * Formato de {@code taskId} por ronda de evidencia, compartido por el
+     * loop de creación inicial de tareas y {@code replanFailedAgents} —
+     * ahora es load-bearing (lo parsea {@code MissionMemoryService.
+     * tasksForRound}), así que un solo lugar evita que ambos sitios diverjan.
+     */
+    private static String taskIdFor(
+            String missionId,
+            String agentId,
+            int evidenceRound) {
+
+        return missionId + "-" + agentId.toUpperCase() + "-R" + evidenceRound;
     }
 
     private void safeFail(
