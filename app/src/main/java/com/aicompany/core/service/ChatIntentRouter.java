@@ -197,6 +197,12 @@ public class ChatIntentRouter {
             return handleMissionDetailsQuery(missionDetailsId.get());
         }
 
+        var customerFocusIds = resolveCustomerReference(message);
+
+        if (customerFocusIds.isPresent()) {
+            return handleCustomerReference(customerFocusIds.get(), message);
+        }
+
         var referenceMatcher = REFERENCE_PRONOUN.matcher(message);
         var focusQuantifierMatcher = FOCUS_QUANTIFIER.matcher(message);
 
@@ -465,6 +471,86 @@ public class ChatIntentRouter {
 
         return header + " Prospectos reales identificados (" + candidates.size()
                 + "), ordenados por probabilidad: " + lines;
+    }
+
+    /**
+     * "contactalo"/"el contacto de X" caía al chat general, que
+     * respondía que no tenía acceso a datos personales — técnicamente
+     * cierto (nadie se los dio), pero el chat nunca intentó buscarlos
+     * en Neo4j, donde sí existen como {@code Customer{status:'LEAD'}}
+     * (reportado por el usuario). Mismo criterio que
+     * {@link #handleReference} (foco {@code type="MISSION"}), pero para
+     * el foco {@code type="CUSTOMER"} que arma
+     * {@link #handleOpportunityForMissionQuery}. Sin un foco
+     * {@code CUSTOMER} vigente no hay nada que resolver — nunca se
+     * adivina, cae al chat general.
+     */
+    private Optional<List<String>> resolveCustomerReference(String message) {
+
+        var normalized = normalize(message);
+
+        if (!normalized.contains("contact")) {
+            return Optional.empty();
+        }
+
+        return conversationMemory.lastMentioned()
+                .filter(focus -> "CUSTOMER".equals(focus.type()) && !focus.ids().isEmpty())
+                .map(focus -> focus.ids());
+    }
+
+    /**
+     * Nunca inventa un teléfono/email: esta ronda es puramente
+     * informativa (no hay integración de telefonía/email construida
+     * todavía) — solo muestra lo que existe de verdad y aclara
+     * explícitamente cuando no hay dato de contacto directo.
+     */
+    private String handleCustomerReference(List<String> focusIds, String message) {
+
+        log.info("CHAT_INTENT_CUSTOMER_REFERENCE focusSize={}", focusIds.size());
+
+        var candidates = opportunityMemory.findCandidatesByIds(focusIds);
+
+        if (candidates.isEmpty()) {
+            return "No tengo datos registrados de esos prospectos en Company Memory.";
+        }
+
+        var normalizedMessage = normalize(message);
+
+        var mentioned = candidates.stream()
+                .filter(c -> !c.name().isBlank() && normalizedMessage.contains(normalize(c.name())))
+                .findFirst();
+
+        if (mentioned.isPresent()) {
+            return formatCustomerReferenceAnswer(mentioned.get(), false);
+        }
+
+        if (candidates.size() == 1) {
+            return formatCustomerReferenceAnswer(candidates.get(0), false);
+        }
+
+        var topId = focusIds.get(0);
+
+        var top = candidates.stream()
+                .filter(c -> c.id().equals(topId))
+                .findFirst()
+                .orElse(candidates.get(0));
+
+        return formatCustomerReferenceAnswer(top, true);
+    }
+
+    private String formatCustomerReferenceAnswer(LeadResponse candidate, boolean clarifyTopChoice) {
+
+        var intro = clarifyTopChoice ? "Te muestro el de mayor probabilidad: " : "";
+
+        var clarifyNote = clarifyTopChoice ? " Avisame si te referías a otro." : "";
+
+        var contactNote = " No tengo un dato de contacto directo (teléfono/email) registrado para "
+                + "este prospecto, solo la fuente donde se identificó.";
+
+        return intro + candidate.name() + " (confidence="
+                + String.format(Locale.ROOT, "%.2f", candidate.confidence())
+                + ", fuente: " + candidate.source() + "): " + candidate.description()
+                + "." + contactNote + clarifyNote;
     }
 
     private enum ReferencePredicate {

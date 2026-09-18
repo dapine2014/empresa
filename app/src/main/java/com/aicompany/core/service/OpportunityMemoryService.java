@@ -349,6 +349,44 @@ public class OpportunityMemoryService {
         }
     }
 
+    /**
+     * Prospectos puntuales por id — usado para resolver una referencia
+     * conversacional contra el foco {@code type="CUSTOMER"} (ver
+     * {@code ChatIntentRouter.handleCustomerReference}), siempre contra
+     * el dato real y actual en Neo4j, nunca contra el texto de una
+     * respuesta anterior.
+     */
+    public List<LeadResponse> findCandidatesByIds(List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity)-[:HAS_CANDIDATE]->(c:Customer) WHERE c.id IN $ids " +
+                                    "OPTIONAL MATCH (c)-[:HAS_EVIDENCE]->(e:Evidence) " +
+                                    "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
+                                    "o.id AS opportunityId, c.createdAt AS createdAt, " +
+                                    "e.description AS description, e.source AS source, " +
+                                    "e.sourceType AS sourceType, c.status AS status, " +
+                                    "coalesce(c.confidence, 0.0) AS confidence",
+                            Map.of("ids", ids))
+                    .list(r -> new LeadResponse(
+                            r.get("id").asString(),
+                            r.get("name").asString(""),
+                            r.get("description").asString(""),
+                            r.get("source").asString(""),
+                            r.get("sourceType").asString(""),
+                            r.get("missionId").asString(),
+                            r.get("opportunityId").asString(),
+                            Instant.parse(r.get("createdAt").asString()),
+                            r.get("status").asString(""),
+                            null,
+                            null,
+                            r.get("confidence").asDouble(0.0)
+                    ));
+        }
+    }
+
     public List<OpportunitySummary> listRecent(int limit) {
         try (var session = driver.session()) {
             return session.run(

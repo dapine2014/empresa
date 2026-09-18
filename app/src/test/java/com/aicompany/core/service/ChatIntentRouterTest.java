@@ -422,6 +422,97 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void customerReferenceResolvesToTheSingleProspectInFocus() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0"))).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        var response = router.route("Contactalo por favor.");
+
+        assertTrue(response.contains("Panadería El Sol"));
+        assertFalse(response.contains("Avisame"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceResolvesToTheHighestConfidenceProspectWhenSeveralAndNoneMentioned() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1")))
+                .thenReturn(List.of(
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                                "Identificada en estudio de mercado", "https://example.com", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.8
+                        ),
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-1", "Estudio PixelCraft",
+                                "Identificado en artículo de tendencias", "https://example.com/2", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.3
+                        )
+                ));
+
+        var response = router.route("Contactalo.");
+
+        assertTrue(response.contains("Panadería El Sol"));
+        assertTrue(response.contains("Avisame"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceResolvesToTheExplicitlyNamedProspectAmongSeveral() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1")))
+                .thenReturn(List.of(
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                                "Identificada en estudio de mercado", "https://example.com", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.8
+                        ),
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-1", "Estudio PixelCraft",
+                                "Identificado en artículo de tendencias", "https://example.com/2", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.3
+                        )
+                ));
+
+        var response = router.route("Contacta a Estudio PixelCraft.");
+
+        assertTrue(response.contains("Estudio PixelCraft"));
+        assertFalse(response.contains("Panadería El Sol"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceFallsBackToGeneralChatWhenNoCustomerFocus() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn("respuesta general");
+
+        var response = router.route("Contactalo por favor.");
+
+        assertEquals("respuesta general", response);
+        verify(opportunityMemory, never()).findCandidatesByIds(any());
+    }
+
+    @Test
     void routesLeadsQueryWithDeterministicFormatting() {
         when(opportunityMemory.listLeads()).thenReturn(List.of(
                 new LeadResponse(
