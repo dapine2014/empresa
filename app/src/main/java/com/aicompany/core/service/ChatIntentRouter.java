@@ -1,14 +1,10 @@
 package com.aicompany.core.service;
 
-import com.aicompany.core.config.AppProperties;
-import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.LeadResponse;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
-import com.aicompany.core.model.MissionStatusResponse;
-import com.aicompany.core.model.OpportunitySummary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -131,29 +127,26 @@ public class ChatIntentRouter {
     private final CeoService ceoService;
     private final MissionMemoryService missionMemory;
     private final OpportunityMemoryService opportunityMemory;
-    private final CustomerMemoryService customerMemory;
     private final CompanyMemoryService companyMemory;
     private final ConversationMemoryService conversationMemory;
-    private final AppProperties appProperties;
+    private final CompanyTools companyTools;
 
     public ChatIntentRouter(
             MissionService missionService,
             CeoService ceoService,
             MissionMemoryService missionMemory,
             OpportunityMemoryService opportunityMemory,
-            CustomerMemoryService customerMemory,
             CompanyMemoryService companyMemory,
             ConversationMemoryService conversationMemory,
-            AppProperties appProperties) {
+            CompanyTools companyTools) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
         this.missionMemory = missionMemory;
         this.opportunityMemory = opportunityMemory;
-        this.customerMemory = customerMemory;
         this.companyMemory = companyMemory;
         this.conversationMemory = conversationMemory;
-        this.appProperties = appProperties;
+        this.companyTools = companyTools;
     }
 
     /**
@@ -390,31 +383,7 @@ public class ChatIntentRouter {
                 missionId
         );
 
-        var details = missionService.details(missionId);
-
-        if (details.isEmpty()) {
-            return "No encontré la misión " + missionId + ".";
-        }
-
-        conversationMemory.setLastMentioned("MISSION", List.of(missionId));
-
-        return formatMissionDetails(details.get());
-    }
-
-    private String formatMissionDetails(MissionStatusResponse details) {
-
-        var mission = details.mission();
-
-        var tasksSummary = details.tasks().isEmpty()
-                ? "sin tareas registradas todavía"
-                : details.tasks().stream()
-                        .map(t -> t.agentId() + ": " + t.status())
-                        .collect(Collectors.joining(", "));
-
-        return "La misión " + mission.missionId() + " está en " + mission.status()
-                + " (" + mission.progress() + "% completado, paso actual: "
-                + mission.currentStep() + "). " + mission.message()
-                + ". Tareas de agentes: " + tasksSummary + ".";
+        return companyTools.getMission(missionId);
     }
 
     /**
@@ -450,66 +419,7 @@ public class ChatIntentRouter {
 
         log.info("CHAT_INTENT_OPPORTUNITY_DETAILS missionId={}", missionId);
 
-        var opportunity = opportunityMemory.findByMissionId(missionId);
-
-        if (opportunity.isEmpty()) {
-            return "No encontré ninguna oportunidad para " + missionId + ".";
-        }
-
-        var candidates = opportunityMemory.listCandidatesForMission(missionId);
-
-        // Solo pisa el foco cuando hay algo real que enfocar -- una
-        // oportunidad sin prospectos todavía no debe borrar un foco
-        // previo (posiblemente todavía útil) con una lista vacía.
-        if (!candidates.isEmpty()) {
-            conversationMemory.setLastMentioned(
-                    "CUSTOMER",
-                    candidates.stream().map(LeadResponse::id).toList()
-            );
-        }
-
-        return formatOpportunityWithCandidates(opportunity.get(), candidates);
-    }
-
-    private String formatOpportunityWithCandidates(
-            OpportunitySummary opportunity,
-            List<LeadResponse> candidates) {
-
-        var header = "Oportunidad " + opportunity.id() + " (misión " + opportunity.missionId()
-                + ", estado " + opportunity.status() + "): " + opportunity.description();
-
-        if (candidates.isEmpty()) {
-            return header + " Todavía no hay ningún prospecto real identificado para esta oportunidad.";
-        }
-
-        var lines = candidates.stream()
-                .map(this::formatCandidateCore)
-                .collect(Collectors.joining(" | "));
-
-        return header + " Prospectos reales identificados (" + candidates.size()
-                + "), ordenados por probabilidad: " + lines;
-    }
-
-    /**
-     * Fragmento de formato compartido por {@link #formatOpportunityWithCandidates},
-     * {@link #formatCustomerReferenceAnswer} y la rama {@code CUSTOMER} de
-     * {@link #formatLastMentioned} — antes duplicado entre los dos primeros.
-     * Antepone el {@code status} real cuando ya no es {@code LEAD} (p. ej.
-     * {@code DESCARTADO}/{@code CONVERTIDO}): {@link OpportunityMemoryService#findCandidatesByIds}
-     * deliberadamente no filtra por status, así que sin esta marca un lead
-     * ya descartado o convertido se presentaría como si siguiera activo.
-     */
-    private String formatCandidateCore(LeadResponse c) {
-
-        var status = c.status();
-
-        var statusPrefix = (status != null && !status.isBlank() && !"LEAD".equals(status))
-                ? "(" + status + ") "
-                : "";
-
-        return statusPrefix + c.name() + " (confidence="
-                + String.format(Locale.ROOT, "%.2f", c.confidence())
-                + ", fuente: " + c.source() + "): " + c.description();
+        return companyTools.getOpportunity(missionId);
     }
 
     /**
@@ -586,7 +496,7 @@ public class ChatIntentRouter {
         var contactNote = " No tengo un dato de contacto directo (teléfono/email) registrado para "
                 + "este prospecto, solo la fuente donde se identificó.";
 
-        return intro + formatCandidateCore(candidate) + "." + contactNote + clarifyNote;
+        return intro + companyTools.formatCandidate(candidate) + "." + contactNote + clarifyNote;
     }
 
     private enum ReferencePredicate {
@@ -904,327 +814,25 @@ public class ChatIntentRouter {
     }
 
     /**
-     * Resuelve un {@code topic} real contra Neo4j reusando los mismos
-     * formatters deterministas de arriba — llamado tanto por el atajo de
-     * keywords ({@link #handleQuery}, sin pasar por Ollama) como por la
-     * herramienta {@code query_company_memory} que {@link CeoService#chat}
-     * puede pedir para el chat general (ver {@code CeoService} para el
-     * porqué: antes de esa herramienta, el CEO alucinaba estos datos en
-     * cualquier frase que no matcheara exactamente un keyword).
+     * Resuelve un {@code topic} real delegando a {@link CompanyTools} —
+     * llamado tanto por el atajo de keywords ({@link #handleQuery}, sin
+     * pasar por Ollama) como por la herramienta {@code query_company_memory}
+     * que {@link CeoService#chat} puede pedir para el chat general.
      */
     String answerMemoryTopic(String topic) {
 
         return switch (topic) {
-            case "AGENT_STATUS" -> formatAgentStatus(missionMemory.latestTaskPerAgent());
-            case "MISSIONS_NEEDING_ATTENTION" -> formatMissionsNeedingAttention(missionMemory.findAll(50));
-            case "FAILED_MISSIONS" -> formatFailedMissions(missionMemory.findAll(50));
-            case "TEST_MISSIONS" -> formatTestMissions(missionMemory.findAll(50));
-            case "LAST_MENTIONED" -> formatLastMentioned();
-            case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
-            case "LEADS" -> formatLeads(opportunityMemory.listLeads());
-            case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
-            case "COMPANY_STATUS" -> formatCompanyStatus();
+            case "AGENT_STATUS" -> companyTools.getAgentStatus();
+            case "MISSIONS_NEEDING_ATTENTION" -> companyTools.getPendingApprovals();
+            case "FAILED_MISSIONS" -> companyTools.getFailedMissions();
+            case "TEST_MISSIONS" -> companyTools.getTestMissions();
+            case "LAST_MENTIONED" -> companyTools.getLastMentioned();
+            case "OPPORTUNITIES" -> companyTools.getOpportunities();
+            case "LEADS" -> companyTools.getProspects();
+            case "COMPANY_PROFIT" -> companyTools.getFinancialStatus();
+            case "COMPANY_STATUS" -> companyTools.getCompanyStatus();
             default -> "Dato no reconocido: " + topic + ".";
         };
-    }
-
-    /**
-     * Snapshot agregado y 100% real de la empresa — reportado por el
-     * usuario: "dame un status" caía al chat general, y sin ninguna
-     * fuente real de la que sacar un resumen completo, el CEO (LLM)
-     * rellenaba una plantilla con placeholders literales sin sustituir
-     * ("[Nombre del cliente]", "[Precio]") y afirmaba recomendaciones
-     * sobre datos que no existían. Cada número acá sale de una consulta
-     * real a Neo4j, nunca del modelo — el CEO solo redacta sobre esto,
-     * nunca lo completa.
-     */
-    private String formatCompanyStatus() {
-
-        var missions = missionMemory.findAll(50).stream()
-                .filter(m -> "PRODUCTION".equals(m.environment()))
-                .toList();
-
-        var active = missions.stream()
-                .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
-                        && m.status() != MissionStatus.FAILED
-                        && m.status() != MissionStatus.COMPLETED
-                        && m.status() != MissionStatus.CANCELLED)
-                .count();
-
-        var awaitingInvestor = missions.stream()
-                .filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
-                .count();
-
-        var failed = missions.stream()
-                .filter(m -> m.status() == MissionStatus.FAILED)
-                .count();
-
-        var agentStatuses = missionMemory.latestTaskPerAgent();
-
-        var working = agentStatuses.stream().filter(a -> "WORKING".equals(a.status())).count();
-        var idle = agentStatuses.stream().filter(a -> "IDLE".equals(a.status())).count();
-
-        var opportunities = opportunityMemory.countOpportunities();
-
-        var customerCounts = customerMemory.countCustomersAndProspects();
-        var customers = customerCounts[0];
-        var prospects = customerCounts[1];
-
-        var totals = customerMemory.companyWideTotalRevenueAndCost();
-        var revenue = totals[0];
-        var netProfit = totals[0] - totals[1];
-
-        return String.format(
-                Locale.ROOT,
-                "Estado actual de Forjai: capital disponible US$%.2f. "
-                        + "Agentes: %d trabajando, %d inactivo(s). "
-                        + "Misiones (producción): %d activa(s), %d esperando tu aprobación, %d fallida(s). "
-                        + "Oportunidades registradas: %d. Prospectos (leads): %d. Clientes reales: %d. "
-                        + "Ingresos: US$%.2f. Beneficio neto: US$%.2f.",
-                appProperties.seedCapitalUsd(), working, idle,
-                active, awaitingInvestor, failed,
-                opportunities, prospects, customers,
-                revenue, netProfit
-        );
-    }
-
-    private String formatAgentStatus(List<AgentStatusResponse> statuses) {
-
-        var lines = statuses.stream()
-                .map(this::formatOneAgentStatus)
-                .collect(Collectors.joining("; "));
-
-        return "Estado real de los agentes: " + lines + ".";
-    }
-
-    /**
-     * {@code a.status()} (WORKING/IDLE) es el estado propio del agente,
-     * distinto de {@code a.taskStatus()} (el status de su última
-     * AgentTask) — ver {@code AgentStatusResponse}. Un agente
-     * {@code WORKING} muestra la tarea en curso; uno {@code IDLE} con
-     * historial muestra qué hizo por última vez y cómo terminó, sin
-     * confundir ninguna de las dos cosas con "lo que el agente está
-     * haciendo ahora".
-     */
-    private String formatOneAgentStatus(AgentStatusResponse a) {
-
-        var base = statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status();
-
-        if (a.missionId() == null) {
-            return base;
-        }
-
-        if ("WORKING".equals(a.status())) {
-            return base + " (" + a.missionId()
-                    + (a.action() == null ? "" : ", " + a.action())
-                    + ")";
-        }
-
-        return base + " — última tarea: " + a.action() + " (" + a.missionId()
-                + "), resultado: " + a.taskStatus();
-    }
-
-    private static final java.util.Set<String> STATUS_GREEN =
-            java.util.Set.of("RUNNING", "WORKING", "ACTIVE", "COMPLETED");
-    private static final java.util.Set<String> STATUS_RED =
-            java.util.Set.of("FAILED", "CANCELLED");
-    private static final java.util.Set<String> STATUS_YELLOW = java.util.Set.of(
-            "PENDING", "WAITING", "AWAITING_INVESTOR", "CONSOLIDATING",
-            "EVALUATING", "WAITING_AGENT_RESULTS", "PLANNING", "DELEGATING", "CREATED"
-    );
-
-    /**
-     * Mismo mapeo semántico que {@code statusColor.ts} del frontend
-     * (misma fuente de verdad para el color/emoji de un estado, no dos
-     * heurísticas distintas que puedan desincronizarse).
-     */
-    private static String statusDot(String status) {
-        var upper = status.toUpperCase(Locale.ROOT);
-        if (STATUS_GREEN.contains(upper)) return "🟢";
-        if (STATUS_RED.contains(upper)) return "🔴";
-        if (STATUS_YELLOW.contains(upper)) return "🟡";
-        return "⚪";
-    }
-
-    /**
-     * Estrictamente {@code AWAITING_INVESTOR} — antes también incluía
-     * {@code FAILED} bajo la misma etiqueta "necesitan tu aprobación",
-     * que era engañosa: una misión fallida no está esperando aprobación,
-     * está esperando otra cosa (ver {@link #formatFailedMissions}).
-     * Reportado por el usuario con datos reales (25 misiones, 15
-     * AWAITING_INVESTOR + 10 FAILED, todas presentadas como si
-     * necesitaran aprobación).
-     */
-    private String formatMissionsNeedingAttention(List<MissionResponse> missions) {
-
-        var awaitingApproval = missions.stream()
-                .filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
-                .filter(m -> "PRODUCTION".equals(m.environment()))
-                .toList();
-
-        conversationMemory.setLastMentioned(
-                "MISSION",
-                awaitingApproval.stream().map(MissionResponse::missionId).toList()
-        );
-
-        if (awaitingApproval.isEmpty()) {
-            return "No hay ninguna misión que necesite tu aprobación en este momento.";
-        }
-
-        var lines = awaitingApproval.stream()
-                .map(m -> m.missionId() + " (" + m.status() + ")")
-                .collect(Collectors.joining(", "));
-
-        return "Tenés " + awaitingApproval.size()
-                + " misión(es) que necesitan tu aprobación: " + lines + ".";
-    }
-
-    private String formatFailedMissions(List<MissionResponse> missions) {
-
-        var failed = missions.stream()
-                .filter(m -> m.status() == MissionStatus.FAILED)
-                .filter(m -> "PRODUCTION".equals(m.environment()))
-                .toList();
-
-        conversationMemory.setLastMentioned(
-                "MISSION",
-                failed.stream().map(MissionResponse::missionId).toList()
-        );
-
-        if (failed.isEmpty()) {
-            return "No hay ninguna misión fallida en este momento.";
-        }
-
-        var lines = failed.stream()
-                .map(MissionResponse::missionId)
-                .collect(Collectors.joining(", "));
-
-        return "Tenés " + failed.size() + " misión(es) fallida(s): " + lines + ".";
-    }
-
-    /**
-     * {@code environment == "TEST"}, cualquier status — el histórico de
-     * misiones de desarrollo (~25 al momento de escribir esto:
-     * {@code MISSION-STRUCTURED-*}, {@code MVP-*}, {@code MISSION-DEBUG-*},
-     * etc.) que antes contaminaba toda consulta de negocio real. No es
-     * una lista completa de ids (sería larga y poco útil) — desglose por
-     * status, mismo estilo que el mockup del usuario.
-     */
-    private String formatTestMissions(List<MissionResponse> missions) {
-
-        var test = missions.stream()
-                .filter(m -> "TEST".equals(m.environment()))
-                .toList();
-
-        conversationMemory.setLastMentioned(
-                "MISSION",
-                test.stream().map(MissionResponse::missionId).toList()
-        );
-
-        if (test.isEmpty()) {
-            return "No hay ninguna misión en entorno de prueba en este momento.";
-        }
-
-        var lines = test.stream()
-                .map(m -> m.missionId() + " (" + m.status() + ")")
-                .collect(Collectors.joining(", "));
-
-        return "Tenés " + test.size() + " misión(es) en entorno de prueba: " + lines + ".";
-    }
-
-    /**
-     * Detalle real del foco actual de la conversación — usado por
-     * {@link #handleReference} cuando el predicado no matchea nada
-     * reconocido (fallback grounded al chat general) y por la
-     * herramienta {@code query_company_memory} del LLM.
-     */
-    private String formatLastMentioned() {
-
-        var focus = conversationMemory.lastMentioned();
-
-        if (focus.isEmpty()) {
-            return "No hay ninguna mención reciente de misiones ni prospectos en esta conversación.";
-        }
-
-        if ("CUSTOMER".equals(focus.get().type())) {
-            return formatLastMentionedCustomers(focus.get().ids());
-        }
-
-        var missions = missionMemory.findByIds(focus.get().ids());
-
-        var lines = missions.stream()
-                .map(m -> m.missionId() + " (environment=" + m.environment() + ", status=" + m.status() + ")")
-                .collect(Collectors.joining(", "));
-
-        return "Las últimas misiones mencionadas fueron: " + lines + ".";
-    }
-
-    /**
-     * Rama {@code CUSTOMER} de {@link #formatLastMentioned} -- antes de
-     * este fix, un foco {@code CUSTOMER} caía en la rama de misiones (que
-     * asume ciegamente que cualquier foco trae ids de misión), produciendo
-     * "Las últimas misiones mencionadas fueron: ." (vacío, porque
-     * {@code missionMemory.findByIds} nunca encuentra ids de prospecto) y
-     * ese texto vacío se le presentaba al CEO como si fuera el resultado
-     * real y confiable de la herramienta {@code LAST_MENTIONED}.
-     */
-    private String formatLastMentionedCustomers(List<String> ids) {
-
-        var candidates = opportunityMemory.findCandidatesByIds(ids);
-
-        if (candidates.isEmpty()) {
-            return "No hay datos reales registrados para los prospectos mencionados recientemente.";
-        }
-
-        var lines = candidates.stream()
-                .map(this::formatCandidateCore)
-                .collect(Collectors.joining(" | "));
-
-        return "Los últimos prospectos mencionados fueron: " + lines + ".";
-    }
-
-    private String formatOpportunities(List<OpportunitySummary> opportunities) {
-
-        if (opportunities.isEmpty()) {
-            return "Todavía no hay ninguna oportunidad identificada.";
-        }
-
-        var lines = opportunities.stream()
-                .map(o -> o.id() + " (misión " + o.missionId() + ", estado "
-                        + o.status() + "): " + o.description())
-                .collect(Collectors.joining(" | "));
-
-        return "Tenés " + opportunities.size()
-                + " oportunidad(es) identificada(s): " + lines;
-    }
-
-    private String formatLeads(List<LeadResponse> leads) {
-
-        if (leads.isEmpty()) {
-            return "No hay ningún lead activo para contactar.";
-        }
-
-        var lines = leads.stream()
-                .map(l -> l.id() + " (misión " + l.missionId() + "): "
-                        + l.name() + " — " + l.description())
-                .collect(Collectors.joining(" | "));
-
-        return "Tenés " + leads.size()
-                + " lead(s) activo(s) para contactar: " + lines;
-    }
-
-    private String formatCompanyProfit(double[] totals) {
-
-        var revenue = totals[0];
-        var cost = totals[1];
-        var netProfit = revenue - cost;
-
-        return String.format(
-                Locale.ROOT,
-                "Ingresos totales reales: US$%.2f. Costos totales reales: "
-                        + "US$%.2f. Utilidad neta real: US$%.2f.",
-                revenue, cost, netProfit
-        );
     }
 
     private static String normalize(String text) {
