@@ -30,11 +30,13 @@ String getTestMissions();          // environment=TEST, cualquier status
 String getOpportunities();         // lista global, sin id — sin cambios
 String getOpportunity(String missionId);   // NUEVO soporte de parámetro real
 String getProspects();             // leads globales — sin cambios
-String getProspect(String candidateId);    // NUEVO: un prospecto puntual por id
 String getFinancialStatus();
 String getMission(String missionId);       // NUEVO soporte de parámetro real
 String getLastMentioned();
+String formatCandidate(LeadResponse candidate);  // helper compartido, ver nota abajo
 ```
+
+**Nota sobre `getProspect(candidateId)` (drift detectado en la revisión final de rama)**: esta sección originalmente listaba `getProspect(String candidateId)` como método nuevo. El plan de implementación lo reemplazó por `formatCandidate(LeadResponse)`, un helper de formateo compartido — la razón es que `ChatIntentRouter.handleCustomerReference` (la lógica de "contactalo") necesita los objetos `LeadResponse` crudos de **todo** el foco para desambiguar (coincidencia de nombre, mayor confidence), no el texto ya formateado de un id puntual que ya se conoce de antemano; un `getProspect(id)` que devuelve `String` no le sirve a ese flujo. `formatCandidate` sí se reutiliza en 3 sitios reales (`CompanyTools.getOpportunity`, `CompanyTools.getLastMentioned` en su rama `CUSTOMER`, y `ChatIntentRouter.formatCustomerReferenceAnswer`). Decisión correcta, documentada acá para que la próxima ronda parta de la imagen real.
 
 **Efectos secundarios se quedan dentro de los métodos, no se mueven al llamador**: `getPendingApprovals`/`getFailedMissions`/`getTestMissions`/`getOpportunity` ya setean el foco conversacional (`conversationMemory.setLastMentioned(...)`) como parte de su lógica actual — esto se conserva tal cual dentro de `CompanyTools`, para que el foco quede consistente sin importar si la pregunta se resolvió por el atajo de keywords o por la herramienta del CEO (ya funciona así hoy, porque ambos caminos llaman al mismo método; con esta refactorización se preserva esa garantía, no se relaja).
 
