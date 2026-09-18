@@ -233,6 +233,78 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void routesMissionDetailsQueryWithExplicitMissionId() {
+        // Reportado por el usuario: "¿Cómo va MISSION-X?" caía al chat
+        // general y el CEO respondía "no tengo acceso" -- pese a que
+        // MissionService.details ya existe y tiene el dato real.
+        var mission = new MissionResponse(
+                "MISSION-1789701859658", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION",
+                35, "Esperando resultados", "Los agentes están trabajando en paralelo.", Instant.now()
+        );
+        var tasks = List.of(
+                new com.aicompany.core.model.AgentTask(
+                        "MISSION-1789701859658-SALES", "MISSION-1789701859658", "sales",
+                        "MARKET_DISCOVERY", "RUNNING", "", Instant.now()
+                )
+        );
+        when(missionService.details("MISSION-1789701859658"))
+                .thenReturn(Optional.of(new com.aicompany.core.model.MissionStatusResponse(mission, tasks)));
+
+        var response = router.route("¿Cómo va la misión MISSION-1789701859658?");
+
+        assertTrue(response.contains("MISSION-1789701859658"));
+        assertTrue(response.contains("WAITING_AGENT_RESULTS"));
+        assertTrue(response.contains("35"));
+        assertTrue(response.contains("sales"));
+        verifyNoInteractions(ceoService);
+        verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-1789701859658"));
+    }
+
+    @Test
+    void routesMissionDetailsQueryUsingConversationalFocusWhenNoIdGiven() {
+        when(conversationMemory.lastMentioned())
+                .thenReturn(Optional.of(new LastMentioned("MISSION", List.of("MISSION-42"))));
+        var mission = new MissionResponse(
+                "MISSION-42", MissionStatus.AWAITING_INVESTOR, "PRODUCTION",
+                95, "Recomendación", "informe final", Instant.now()
+        );
+        when(missionService.details("MISSION-42"))
+                .thenReturn(Optional.of(new com.aicompany.core.model.MissionStatusResponse(mission, List.of())));
+
+        var response = router.route("¿Cómo va la misión?");
+
+        assertTrue(response.contains("MISSION-42"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void missionDetailsQueryReportsNotFoundForUnknownMission() {
+        when(missionService.details("MISSION-404")).thenReturn(Optional.empty());
+
+        var response = router.route("Dame los avances de MISSION-404");
+
+        assertTrue(response.contains("No encontré la misión MISSION-404"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void missionDetailsQueryFallsBackToGeneralChatWhenNoIdAndNoFocus() {
+        // Sin MISSION-<id> explícito y sin foco previo no hay a qué
+        // misión responder -- nunca se adivina, mismo criterio que
+        // detectDecision.
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), eq("¿Cómo va la misión?"), any()))
+                .thenReturn("No tengo una misión en foco todavía.");
+
+        var response = router.route("¿Cómo va la misión?");
+
+        assertEquals("No tengo una misión en foco todavía.", response);
+        verify(missionService, never()).details(any());
+    }
+
+    @Test
     void routesMissionsNeedingAttentionQueryFilteredByStatusWithDeterministicCount() {
         // Deliberadamente estricto: solo AWAITING_INVESTOR -- una misión
         // FAILED no "necesita aprobación" (mezclarlas bajo esa etiqueta

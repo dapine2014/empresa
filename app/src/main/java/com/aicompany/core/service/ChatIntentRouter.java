@@ -6,6 +6,7 @@ import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.MissionStatusResponse;
 import com.aicompany.core.model.OpportunitySummary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -182,6 +184,12 @@ public class ChatIntentRouter {
             return handleDecision(decision, message);
         }
 
+        var missionDetailsId = resolveMissionDetailsQuery(message);
+
+        if (missionDetailsId.isPresent()) {
+            return handleMissionDetailsQuery(missionDetailsId.get());
+        }
+
         var referenceMatcher = REFERENCE_PRONOUN.matcher(message);
         var focusQuantifierMatcher = FOCUS_QUANTIFIER.matcher(message);
 
@@ -306,6 +314,80 @@ public class ChatIntentRouter {
         return "Decisión registrada: " + decision.decision()
                 + " sobre " + decision.missionId()
                 + ". Quedó guardada como Decision real, no fue una ejecución directa de chat.";
+    }
+
+    /**
+     * "¿Cómo va MISSION-X?" caía al chat general y el CEO respondía "no
+     * tengo acceso" pese a que {@code MissionService.details} ya existe
+     * y tiene el dato real (reportado por el usuario). Mismo criterio
+     * que {@link #detectDecision}: sin un {@code MISSION-<id>} explícito
+     * y sin foco previo de una sola misión, no hay a qué misión
+     * responder — nunca se adivina, cae al chat general.
+     */
+    private Optional<String> resolveMissionDetailsQuery(String message) {
+
+        var normalized = normalize(message);
+
+        var hasKeyword = normalized.contains("como va")
+                || normalized.contains("como vamos")
+                || normalized.contains("avance")
+                || normalized.contains("progreso")
+                || normalized.contains("detalles")
+                || normalized.contains("que esta haciendo");
+
+        if (!hasKeyword) {
+            return Optional.empty();
+        }
+
+        var missionIdMatcher = MISSION_ID.matcher(message);
+
+        if (missionIdMatcher.find()) {
+            return Optional.of(missionIdMatcher.group(1).toUpperCase(Locale.ROOT));
+        }
+
+        if (!normalized.contains("mision")) {
+            // "¿qué está haciendo cada agente?" matchea el keyword pero
+            // no menciona ninguna misión -- es AGENT_STATUS, no esto.
+            return Optional.empty();
+        }
+
+        return conversationMemory.lastMentioned()
+                .filter(focus -> "MISSION".equals(focus.type()) && focus.ids().size() == 1)
+                .map(focus -> focus.ids().get(0));
+    }
+
+    private String handleMissionDetailsQuery(String missionId) {
+
+        log.info(
+                "CHAT_INTENT_MISSION_DETAILS missionId={}",
+                missionId
+        );
+
+        var details = missionService.details(missionId);
+
+        if (details.isEmpty()) {
+            return "No encontré la misión " + missionId + ".";
+        }
+
+        conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+
+        return formatMissionDetails(details.get());
+    }
+
+    private String formatMissionDetails(MissionStatusResponse details) {
+
+        var mission = details.mission();
+
+        var tasksSummary = details.tasks().isEmpty()
+                ? "sin tareas registradas todavía"
+                : details.tasks().stream()
+                        .map(t -> t.agentId() + ": " + t.status())
+                        .collect(Collectors.joining(", "));
+
+        return "La misión " + mission.missionId() + " está en " + mission.status()
+                + " (" + mission.progress() + "% completado, paso actual: "
+                + mission.currentStep() + "). " + mission.message()
+                + ". Tareas de agentes: " + tasksSummary + ".";
     }
 
     private enum ReferencePredicate {
