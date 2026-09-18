@@ -97,7 +97,8 @@ public class OpportunityMemoryService {
                                 "MERGE (c:Customer {id:$candidateId}) " +
                                 "ON CREATE SET c.missionId=$missionId, " +
                                 "c.name=$name, c.status='LEAD', " +
-                                "c.identifiedByAgent=$agentId, c.createdAt=$now " +
+                                "c.identifiedByAgent=$agentId, c.createdAt=$now, " +
+                                "c.confidence=$confidence " +
                                 "SET c.updatedAt=$now " +
                                 "MERGE (o)-[:HAS_CANDIDATE]->(c)",
                         Map.of(
@@ -106,6 +107,7 @@ public class OpportunityMemoryService {
                                 "missionId", missionId,
                                 "name", candidate.name() == null ? "" : candidate.name(),
                                 "agentId", agentId,
+                                "confidence", candidate.confidence(),
                                 "now", now
                         ));
 
@@ -169,7 +171,8 @@ public class OpportunityMemoryService {
                                     "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
                                     "o.id AS opportunityId, c.createdAt AS createdAt, " +
                                     "e.description AS description, e.source AS source, " +
-                                    "e.sourceType AS sourceType, c.status AS status " +
+                                    "e.sourceType AS sourceType, c.status AS status, " +
+                                    "coalesce(c.confidence, 0.0) AS confidence " +
                                     "ORDER BY c.createdAt DESC")
                     .list(r -> new LeadResponse(
                             r.get("id").asString(),
@@ -182,7 +185,8 @@ public class OpportunityMemoryService {
                             Instant.parse(r.get("createdAt").asString()),
                             r.get("status").asString("LEAD"),
                             null,
-                            null
+                            null,
+                            r.get("confidence").asDouble(0.0)
                     ));
         }
     }
@@ -212,7 +216,8 @@ public class OpportunityMemoryService {
                                 "o.id AS opportunityId, c.createdAt AS createdAt, " +
                                 "e.description AS description, e.source AS source, " +
                                 "e.sourceType AS sourceType, c.status AS status, " +
-                                "c.discardReason AS discardReason, c.discardedAt AS discardedAt",
+                                "c.discardReason AS discardReason, c.discardedAt AS discardedAt, " +
+                                "coalesce(c.confidence, 0.0) AS confidence",
                         Map.of(
                                 "id", leadId,
                                 "reason", reason == null ? "" : reason,
@@ -231,7 +236,8 @@ public class OpportunityMemoryService {
                         Instant.parse(r.get("createdAt").asString()),
                         r.get("status").asString("DESCARTADO"),
                         r.get("discardReason").asString(""),
-                        Instant.parse(r.get("discardedAt").asString())
+                        Instant.parse(r.get("discardedAt").asString()),
+                        r.get("confidence").asDouble(0.0)
                 ));
             });
         }

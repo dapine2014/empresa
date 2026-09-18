@@ -26,7 +26,7 @@ class LeadControllerTest {
                 "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
                 "Identificada en estudio de mercado", "https://example.com", "WEB",
                 "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
-                "LEAD", null, null
+                "LEAD", null, null, 0.8
         ));
         when(opportunityMemory.listLeads()).thenReturn(leads);
 
@@ -39,7 +39,7 @@ class LeadControllerTest {
                 "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
                 "Identificada en estudio de mercado", "https://example.com", "WEB",
                 "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
-                "DESCARTADO", "No responde", Instant.now()
+                "DESCARTADO", "No responde", Instant.now(), 0.8
         );
         when(opportunityMemory.discardLead("MISSION-1-CANDIDATE-SALES-0", "No responde"))
                 .thenReturn(Optional.of(updated));

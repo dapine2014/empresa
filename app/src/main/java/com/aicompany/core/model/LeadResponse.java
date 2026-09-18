@@ -13,6 +13,7 @@ public record LeadResponse(
         Instant createdAt,
         String status,
         String discardReason,
-        Instant discardedAt
+        Instant discardedAt,
+        double confidence
 ) {
 }
