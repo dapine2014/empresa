@@ -519,6 +519,13 @@ public class AgentRuntime {
                   general") — nunca un cliente real ni contactado, eso
                   solo lo registra un humano. Si no identificaste ninguno,
                   déjalo como lista vacía; no inventes uno para llenarlo.
+                - confidence de cada customerCandidate: alto (mayor
+                  a 0.7) solo si es una empresa nombrada, real y
+                  verificable con una fuente específica de esa
+                  empresa; bajo (menor a 0.4) si en realidad es un
+                  segmento de mercado genérico. Nunca reportes
+                  confidence alto solo porque el nombre suena a
+                  empresa real.
                 - Responde ÚNICAMENTE con JSON válido.
                 - No utilices Markdown.
                 - No agregues texto antes o después del JSON.
@@ -572,7 +579,8 @@ public class AgentRuntime {
                   "name": "",
                   "description": "",
                   "source": "",
-                  "sourceType": "WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE"
+                  "sourceType": "WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE",
+                  "confidence": 0.0
                 }
 
                 ACCIÓN:
