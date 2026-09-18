@@ -33,15 +33,18 @@ public class CustomerService {
     private final CustomerMemoryService memory;
     private final EvidenceValidationGate evidenceGate;
     private final AppProperties appProperties;
+    private final OpportunityMemoryService opportunityMemory;
 
     public CustomerService(
             CustomerMemoryService memory,
             EvidenceValidationGate evidenceGate,
-            AppProperties appProperties) {
+            AppProperties appProperties,
+            OpportunityMemoryService opportunityMemory) {
 
         this.memory = memory;
         this.evidenceGate = evidenceGate;
         this.appProperties = appProperties;
+        this.opportunityMemory = opportunityMemory;
     }
 
     public CustomerResponse registerCustomer(
@@ -53,6 +56,19 @@ public class CustomerService {
             throw new IllegalArgumentException(
                     "No existe la misión " + missionId
             );
+        }
+
+        if (command.leadId() != null && !command.leadId().isBlank()) {
+
+            var converted = opportunityMemory.markConverted(command.leadId());
+
+            if (!converted) {
+
+                throw new IllegalStateException(
+                        "El lead " + command.leadId()
+                                + " no existe o ya no está en estado LEAD"
+                );
+            }
         }
 
         var evidence = new AgentResult.Evidence(
@@ -78,6 +94,7 @@ public class CustomerService {
                 command.customerId(),
                 command.name(),
                 command.contact(),
+                command.leadId(),
                 evidence
         );
 

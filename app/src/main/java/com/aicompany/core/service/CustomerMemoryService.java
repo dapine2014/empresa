@@ -39,6 +39,7 @@ public class CustomerMemoryService {
             String customerId,
             String name,
             String contact,
+            String leadId,
             AgentResult.Evidence evidence) {
 
         try (var session = driver.session()) {
@@ -92,6 +93,22 @@ public class CustomerMemoryService {
                                 "verified", evidence.verified(),
                                 "updatedAt", recordedAt
                         ));
+
+                // Solo si el cliente real viene de un LEAD que ya se marcó
+                // CONVERTIDO (CustomerService llama a
+                // OpportunityMemoryService.markConverted antes que esto) --
+                // enlaza el cliente real nuevo al LEAD del que salió, sin
+                // fusionar los nodos ni tocar el LEAD más allá de su
+                // status (ver spec, decisión 2).
+                if (leadId != null && !leadId.isBlank()) {
+
+                    tx.run("MATCH (c:Customer {id:$customerId}), (lead:Customer {id:$leadId}) " +
+                                    "MERGE (c)-[:CONVERTED_FROM]->(lead)",
+                            Map.of(
+                                    "customerId", customerId,
+                                    "leadId", leadId
+                            ));
+                }
 
                 return null;
             });
