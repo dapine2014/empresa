@@ -264,6 +264,8 @@ public class CompanyTools {
      */
     public String getOpportunity(String missionId) {
 
+        missionId = missionId.trim().toUpperCase(Locale.ROOT);
+
         var opportunity = opportunityMemory.findByMissionId(missionId);
 
         if (opportunity.isEmpty()) {
@@ -333,6 +335,8 @@ public class CompanyTools {
      * herramienta (esa limitación se cierra en la Task 3 de este plan).
      */
     public String getMission(String missionId) {
+
+        missionId = missionId.trim().toUpperCase(Locale.ROOT);
 
         var details = missionService.details(missionId);
 

@@ -239,6 +239,39 @@ class CompanyToolsTest {
     }
 
     @Test
+    void getMissionNormalizesCasingAndWhitespaceBeforeQuerying() {
+        // El camino de la herramienta query_company_memory pasa el id del
+        // modelo sin normalizar (a diferencia del atajo de keywords, que
+        // ya uppercasea antes de llamar acá) -- sin esto, "mission-x"
+        // (minúsculas) o " MISSION-X" (espacio) reportarían "no encontré"
+        // aunque la misión real exista con el id en mayúsculas.
+        var mission = new MissionResponse(
+                "MISSION-1789701859658", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION",
+                35, "Esperando resultados", "Los agentes están trabajando en paralelo.", Instant.now()
+        );
+        when(missionService.details("MISSION-1789701859658"))
+                .thenReturn(Optional.of(new MissionStatusResponse(mission, List.of())));
+
+        var response = tools.getMission(" mission-1789701859658 ".trim().toLowerCase());
+
+        assertFalse(response.contains("No encontré"));
+        assertTrue(response.contains("MISSION-1789701859658"));
+    }
+
+    @Test
+    void getOpportunityNormalizesCasingAndWhitespaceBeforeQuerying() {
+        when(opportunityMemory.findByMissionId("MISSION-1")).thenReturn(Optional.of(
+                new OpportunitySummary("MISSION-1-OPPORTUNITY", "MISSION-1", "asesoría a microempresas", "IDENTIFIED", Instant.now())
+        ));
+        when(opportunityMemory.listCandidatesForMission("MISSION-1")).thenReturn(List.of());
+
+        var response = tools.getOpportunity("mission-1");
+
+        assertFalse(response.contains("No encontré"));
+        assertTrue(response.contains("asesoría a microempresas"));
+    }
+
+    @Test
     void getMissionReportsNotFound() {
         when(missionService.details("MISSION-404")).thenReturn(Optional.empty());
 

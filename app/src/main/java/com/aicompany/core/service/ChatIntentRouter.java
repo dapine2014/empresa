@@ -833,8 +833,12 @@ public class ChatIntentRouter {
             case "LEADS" -> companyTools.getProspects();
             case "COMPANY_PROFIT" -> companyTools.getFinancialStatus();
             case "COMPANY_STATUS" -> companyTools.getCompanyStatus();
-            case "MISSION_DETAILS" -> companyTools.getMission(id);
-            case "OPPORTUNITY_DETAILS" -> companyTools.getOpportunity(id);
+            case "MISSION_DETAILS" -> (id == null || id.isBlank())
+                    ? "Para consultar el detalle de una misión necesito el MISSION-<id> exacto."
+                    : companyTools.getMission(id);
+            case "OPPORTUNITY_DETAILS" -> (id == null || id.isBlank())
+                    ? "Para consultar los prospectos de una oportunidad necesito el MISSION-<id> exacto."
+                    : companyTools.getOpportunity(id);
             default -> "Dato no reconocido: " + topic + ".";
         };
     }

@@ -725,6 +725,52 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE", null).contains("Dato no reconocido"));
     }
 
+    @SuppressWarnings("unchecked")
+    @Test
+    void companyMemoryQueryGuardsMissingIdForMissionDetailsInsteadOfCrashing() {
+        // El único camino que llega a MISSION_DETAILS/OPPORTUNITY_DETAILS
+        // con un id controlado por el modelo (no extraído por regex) es
+        // la herramienta query_company_memory -- su JSON Schema
+        // deliberadamente no marca "id" como required, así que un
+        // tool-call real puede omitirlo. Sin este guard,
+        // CompanyTools.getMission(null) -> MissionService.details(null)
+        // -> Map.of("id", null) lanza NullPointerException, que se
+        // propaga sin manejo hasta POST /api/company/chat (500 crudo).
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ignored");
+
+        router.route("Hola, ¿cómo estás?");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.BiFunction.class);
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
+        var companyMemoryQuery = (java.util.function.BiFunction<String, String, String>) captor.getValue();
+
+        var response = companyMemoryQuery.apply("MISSION_DETAILS", null);
+
+        assertTrue(response.contains("necesito el MISSION-<id>"));
+        verify(missionService, never()).details(any());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void companyMemoryQueryGuardsMissingIdForOpportunityDetailsInsteadOfCrashing() {
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ignored");
+
+        router.route("Hola, ¿cómo estás?");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.BiFunction.class);
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
+        var companyMemoryQuery = (java.util.function.BiFunction<String, String, String>) captor.getValue();
+
+        var response = companyMemoryQuery.apply("OPPORTUNITY_DETAILS", null);
+
+        assertTrue(response.contains("necesito el MISSION-<id>"));
+        verify(opportunityMemory, never()).findByMissionId(any());
+    }
+
     @Test
     void resolvesApprovalCommandAgainstTheFocusAndRecordsRealDecisions() {
         // "La prueba definitiva" del usuario: preguntar qué necesita
