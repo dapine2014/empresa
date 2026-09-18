@@ -125,6 +125,46 @@ class CustomerServiceTest {
     }
 
     @Test
+    void rejectsConversionWhenEvidenceIsInvalidWithoutConsumingTheLead() {
+        var memory = mock(CustomerMemoryService.class);
+        when(memory.missionExists("MISSION-001")).thenReturn(true);
+
+        var service = new CustomerService(memory, evidenceGate, appProperties, opportunityMemory);
+
+        // verified=true con sourceType=NONE: contradicción semántica.
+        var command = new CustomerCommand(
+                "CUST-1", "Panadería El Sol", "panaderia@example.com",
+                "MISSION-001-CANDIDATE-SALES-0",
+                "El negocio existe", null, "NONE", true
+        );
+
+        assertThrows(IllegalStateException.class,
+                () -> service.registerCustomer("MISSION-001", command));
+
+        verify(opportunityMemory, never()).markConverted(any());
+        verify(memory, never()).registerCustomer(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void rejectsWhenCustomerIdEqualsLeadId() {
+        var memory = mock(CustomerMemoryService.class);
+        when(memory.missionExists("MISSION-001")).thenReturn(true);
+
+        var service = new CustomerService(memory, evidenceGate, appProperties, opportunityMemory);
+
+        var command = new CustomerCommand(
+                "MISSION-001-CANDIDATE-SALES-0", "Panadería El Sol", "panaderia@example.com",
+                "MISSION-001-CANDIDATE-SALES-0",
+                "Pedido confirmado por WhatsApp", "chat con el dueño", "CUSTOMER", true
+        );
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.registerCustomer("MISSION-001", command));
+
+        verify(opportunityMemory, never()).markConverted(any());
+    }
+
+    @Test
     void registersTransactionAndComputesNetProfit() {
         var memory = mock(CustomerMemoryService.class);
         when(memory.registerTransaction(

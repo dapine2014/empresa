@@ -169,7 +169,7 @@ public class OpportunityMemoryService {
                                     "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
                                     "o.id AS opportunityId, c.createdAt AS createdAt, " +
                                     "e.description AS description, e.source AS source, " +
-                                    "e.sourceType AS sourceType " +
+                                    "e.sourceType AS sourceType, c.status AS status " +
                                     "ORDER BY c.createdAt DESC")
                     .list(r -> new LeadResponse(
                             r.get("id").asString(),
@@ -179,19 +179,25 @@ public class OpportunityMemoryService {
                             r.get("sourceType").asString(""),
                             r.get("missionId").asString(),
                             r.get("opportunityId").asString(),
-                            Instant.parse(r.get("createdAt").asString())
+                            Instant.parse(r.get("createdAt").asString()),
+                            r.get("status").asString("LEAD"),
+                            null,
+                            null
                     ));
         }
     }
 
     /**
-     * Compara-y-actualiza atómicamente, mismo patrón que
-     * {@code MissionMemoryService.incrementEvidenceRound}: el {@code WHERE}
-     * implícito del `MATCH` (`status:'LEAD'`) hace de guarda — si el lead
-     * no existe o ya no está en `LEAD` (ya `CONVERTIDO` o `DESCARTADO`),
-     * la consulta no devuelve filas y este método retorna vacío en vez de
-     * lanzar. Es el llamador ({@code LeadController}) quien decide qué
-     * excepción corresponde.
+     * Compara-y-actualiza en una sola sentencia Cypher (el {@code MATCH}
+     * con {@code status:'LEAD'} hace de guarda): si el lead no existe o ya
+     * cambió de estado (ya `CONVERTIDO` o `DESCARTADO`), la consulta no
+     * devuelve filas y este método retorna vacío en vez de lanzar — es el
+     * llamador ({@code LeadController}) quien decide qué excepción
+     * corresponde. Guarda por `status` dentro de una única sentencia
+     * Cypher — no hay lock explícito entre transacciones concurrentes;
+     * para un solo fundador operando desde el Command Center el riesgo
+     * práctico es despreciable, pero no es una garantía dura de exclusión
+     * mutua.
      */
     public Optional<LeadResponse> discardLead(String leadId, String reason) {
         try (var session = driver.session()) {
@@ -205,7 +211,8 @@ public class OpportunityMemoryService {
                                 "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
                                 "o.id AS opportunityId, c.createdAt AS createdAt, " +
                                 "e.description AS description, e.source AS source, " +
-                                "e.sourceType AS sourceType",
+                                "e.sourceType AS sourceType, c.status AS status, " +
+                                "c.discardReason AS discardReason, c.discardedAt AS discardedAt",
                         Map.of(
                                 "id", leadId,
                                 "reason", reason == null ? "" : reason,
@@ -221,7 +228,10 @@ public class OpportunityMemoryService {
                         r.get("sourceType").asString(""),
                         r.get("missionId").asString(),
                         r.get("opportunityId").asString(),
-                        Instant.parse(r.get("createdAt").asString())
+                        Instant.parse(r.get("createdAt").asString()),
+                        r.get("status").asString("DESCARTADO"),
+                        r.get("discardReason").asString(""),
+                        Instant.parse(r.get("discardedAt").asString())
                 ));
             });
         }

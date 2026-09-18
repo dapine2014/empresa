@@ -10,6 +10,9 @@ public record LeadResponse(
         String sourceType,
         String missionId,
         String opportunityId,
-        Instant createdAt
+        Instant createdAt,
+        String status,
+        String discardReason,
+        Instant discardedAt
 ) {
 }

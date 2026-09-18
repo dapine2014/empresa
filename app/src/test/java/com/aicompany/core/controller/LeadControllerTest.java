@@ -25,7 +25,8 @@ class LeadControllerTest {
         var leads = List.of(new LeadResponse(
                 "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
                 "Identificada en estudio de mercado", "https://example.com", "WEB",
-                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now()
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                "LEAD", null, null
         ));
         when(opportunityMemory.listLeads()).thenReturn(leads);
 
@@ -37,7 +38,8 @@ class LeadControllerTest {
         var updated = new LeadResponse(
                 "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
                 "Identificada en estudio de mercado", "https://example.com", "WEB",
-                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now()
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                "DESCARTADO", "No responde", Instant.now()
         );
         when(opportunityMemory.discardLead("MISSION-1-CANDIDATE-SALES-0", "No responde"))
                 .thenReturn(Optional.of(updated));

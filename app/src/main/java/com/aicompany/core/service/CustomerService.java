@@ -58,19 +58,6 @@ public class CustomerService {
             );
         }
 
-        if (command.leadId() != null && !command.leadId().isBlank()) {
-
-            var converted = opportunityMemory.markConverted(command.leadId());
-
-            if (!converted) {
-
-                throw new IllegalStateException(
-                        "El lead " + command.leadId()
-                                + " no existe o ya no está en estado LEAD"
-                );
-            }
-        }
-
         var evidence = new AgentResult.Evidence(
                 command.evidenceDescription(),
                 command.evidenceSource(),
@@ -87,6 +74,27 @@ public class CustomerService {
                     "Evidencia inválida: "
                             + String.join("; ", validation.errors())
             );
+        }
+
+        if (command.leadId() != null && !command.leadId().isBlank()) {
+
+            if (command.customerId().equals(command.leadId())) {
+
+                throw new IllegalArgumentException(
+                        "El cliente real debe ser un nodo nuevo, distinto del lead "
+                                + command.leadId()
+                );
+            }
+
+            var converted = opportunityMemory.markConverted(command.leadId());
+
+            if (!converted) {
+
+                throw new IllegalStateException(
+                        "El lead " + command.leadId()
+                                + " no existe o ya no está en estado LEAD"
+                );
+            }
         }
 
         memory.registerCustomer(

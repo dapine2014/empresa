@@ -321,7 +321,8 @@ class ChatIntentRouterTest {
                 new LeadResponse(
                         "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
                         "Identificada en estudio de mercado", "https://example.com", "WEB",
-                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now()
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null
                 )
         ));
 
