@@ -412,6 +412,23 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void opportunityForMissionQueryReportsWhenThereAreNoCandidatesYet() {
+        // Fix 6/7: una oportunidad sin prospectos todavía no debe pisar
+        // el foco conversacional con una lista vacía, y la respuesta debe
+        // decirlo explícitamente en vez de una lista en blanco.
+        when(opportunityMemory.findByMissionId("MISSION-5")).thenReturn(Optional.of(
+                new OpportunitySummary("MISSION-5-OPPORTUNITY", "MISSION-5", "consultoría fiscal", "IDENTIFIED", Instant.now())
+        ));
+        when(opportunityMemory.listCandidatesForMission("MISSION-5")).thenReturn(List.of());
+
+        var response = router.route("¿Qué oportunidad tenemos en la misión MISSION-5?");
+
+        assertTrue(response.contains("Todavía no hay ningún prospecto real identificado"));
+        verify(conversationMemory, never()).setLastMentioned(eq("CUSTOMER"), any());
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
     void routesOpportunitiesQueryWithMissionIdThatHasNoOpportunityYet() {
         when(opportunityMemory.findByMissionId("MISSION-404")).thenReturn(Optional.empty());
 
@@ -495,6 +512,23 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("Estudio PixelCraft"));
         assertFalse(response.contains("Panadería El Sol"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceReportsWhenFocusedProspectsNoLongerExist() {
+        // Fix 7: foco CUSTOMER vigente pero los prospectos ya no existen
+        // (findCandidatesByIds vacío) -- debe decirlo explícitamente, no
+        // caer en un NPE ni en una respuesta vacía.
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0")))
+                .thenReturn(List.of());
+
+        var response = router.route("Contactalo por favor.");
+
+        assertTrue(response.contains("No tengo datos registrados de esos prospectos"));
         verifyNoInteractions(ceoService);
     }
 

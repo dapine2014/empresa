@@ -21,6 +21,13 @@ class AgentResultSchemaTest {
         var required = (List<String>) customerCandidateItem.get("required");
 
         assertTrue(required.contains("confidence"));
-        assertEquals(Map.of("type", "number"), itemProperties.get("confidence"));
+        // minimum/maximum agregados: la restricción de gramática de Ollama
+        // sola no es garantía suficiente (ver AgentResultValidator, que
+        // valida el rango de nuevo de forma determinista) pero es barata y
+        // complementaria.
+        assertEquals(
+                Map.of("type", "number", "minimum", 0, "maximum", 1),
+                itemProperties.get("confidence")
+        );
     }
 }

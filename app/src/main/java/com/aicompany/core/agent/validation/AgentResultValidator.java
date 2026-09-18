@@ -27,6 +27,7 @@ public class AgentResultValidator {
         validateConfidence(result, errors);
         validateCalculations(result, errors);
         validateEvidence(result, errors);
+        validateCustomerCandidates(result, errors);
         validateVerificationStatus(result, errors);
 
         if (!errors.isEmpty()) {
@@ -209,6 +210,41 @@ public class AgentResultValidator {
 
                 errors.add(
                         "Una evidencia verificada debe tener source"
+                );
+            }
+        }
+    }
+
+    /**
+     * {@code AgentResultSchema.CUSTOMER_CANDIDATE_ITEM_SCHEMA} ya declara
+     * {@code confidence} con {@code minimum}/{@code maximum}, pero eso
+     * solo restringe la gramática de generación de Ollama -- no es una
+     * garantía dura (mismo criterio que ya motivó {@link #validateConfidence}
+     * para el {@code confidence} de nivel superior, ver el incidente real
+     * documentado en {@code CLAUDE.md}: "confidence=75" fuera de [0,1]
+     * colado por el modelo pese a la restricción del schema).
+     */
+    private void validateCustomerCandidates(
+            AgentResult result,
+            List<String> errors) {
+
+        if (result.customerCandidates() == null) {
+            return;
+        }
+
+        for (var candidate : result.customerCandidates()) {
+
+            if (candidate == null) {
+                errors.add("Existe un customerCandidate null");
+                continue;
+            }
+
+            if (candidate.confidence() < 0.0
+                    || candidate.confidence() > 1.0) {
+
+                errors.add(
+                        "customerCandidate confidence debe estar entre 0 y 1: "
+                                + candidate.name()
                 );
             }
         }

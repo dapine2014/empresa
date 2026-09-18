@@ -330,7 +330,7 @@ public class OpportunityMemoryService {
                                     "e.description AS description, e.source AS source, " +
                                     "e.sourceType AS sourceType, c.status AS status, " +
                                     "coalesce(c.confidence, 0.0) AS confidence " +
-                                    "ORDER BY c.confidence DESC",
+                                    "ORDER BY coalesce(c.confidence, 0.0) DESC",
                             Map.of("missionId", missionId))
                     .list(r -> new LeadResponse(
                             r.get("id").asString(),

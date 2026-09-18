@@ -458,10 +458,15 @@ public class ChatIntentRouter {
 
         var candidates = opportunityMemory.listCandidatesForMission(missionId);
 
-        conversationMemory.setLastMentioned(
-                "CUSTOMER",
-                candidates.stream().map(LeadResponse::id).toList()
-        );
+        // Solo pisa el foco cuando hay algo real que enfocar -- una
+        // oportunidad sin prospectos todavía no debe borrar un foco
+        // previo (posiblemente todavía útil) con una lista vacía.
+        if (!candidates.isEmpty()) {
+            conversationMemory.setLastMentioned(
+                    "CUSTOMER",
+                    candidates.stream().map(LeadResponse::id).toList()
+            );
+        }
 
         return formatOpportunityWithCandidates(opportunity.get(), candidates);
     }
@@ -478,13 +483,33 @@ public class ChatIntentRouter {
         }
 
         var lines = candidates.stream()
-                .map(c -> c.name() + " (confidence="
-                        + String.format(Locale.ROOT, "%.2f", c.confidence())
-                        + ", fuente: " + c.source() + "): " + c.description())
+                .map(this::formatCandidateCore)
                 .collect(Collectors.joining(" | "));
 
         return header + " Prospectos reales identificados (" + candidates.size()
                 + "), ordenados por probabilidad: " + lines;
+    }
+
+    /**
+     * Fragmento de formato compartido por {@link #formatOpportunityWithCandidates},
+     * {@link #formatCustomerReferenceAnswer} y la rama {@code CUSTOMER} de
+     * {@link #formatLastMentioned} — antes duplicado entre los dos primeros.
+     * Antepone el {@code status} real cuando ya no es {@code LEAD} (p. ej.
+     * {@code DESCARTADO}/{@code CONVERTIDO}): {@link OpportunityMemoryService#findCandidatesByIds}
+     * deliberadamente no filtra por status, así que sin esta marca un lead
+     * ya descartado o convertido se presentaría como si siguiera activo.
+     */
+    private String formatCandidateCore(LeadResponse c) {
+
+        var status = c.status();
+
+        var statusPrefix = (status != null && !status.isBlank() && !"LEAD".equals(status))
+                ? "(" + status + ") "
+                : "";
+
+        return statusPrefix + c.name() + " (confidence="
+                + String.format(Locale.ROOT, "%.2f", c.confidence())
+                + ", fuente: " + c.source() + "): " + c.description();
     }
 
     /**
@@ -561,10 +586,7 @@ public class ChatIntentRouter {
         var contactNote = " No tengo un dato de contacto directo (teléfono/email) registrado para "
                 + "este prospecto, solo la fuente donde se identificó.";
 
-        return intro + candidate.name() + " (confidence="
-                + String.format(Locale.ROOT, "%.2f", candidate.confidence())
-                + ", fuente: " + candidate.source() + "): " + candidate.description()
-                + "." + contactNote + clarifyNote;
+        return intro + formatCandidateCore(candidate) + "." + contactNote + clarifyNote;
     }
 
     private enum ReferencePredicate {
@@ -679,48 +701,63 @@ public class ChatIntentRouter {
         var focus = conversationMemory.lastMentioned();
 
         if (focus.isEmpty()) {
-            return "No tengo claro a qué te referís — no mencioné ninguna misión todavía en esta conversación.";
+            // Genérico a propósito: sin foco de NINGÚN tipo todavía, no
+            // hay razón para asumir que el usuario hablaba de una misión
+            // en particular (el foco también puede ser CUSTOMER).
+            return "No tengo claro a qué te referís — no mencioné ninguna misión ni prospecto "
+                    + "todavía en esta conversación.";
         }
 
         var normalized = normalize(message);
 
-        var command = detectReferenceCommand(normalized);
+        // Comando/predicado (detectReferenceCommand/detectReferencePredicate/
+        // formatReferenceAnswer) son específicos de misiones -- un foco
+        // CUSTOMER (p. ej. de handleOpportunityForMissionQuery) no tiene
+        // nada que "aprobar"/"rechazar" ni un status de entorno que
+        // consultar así. Con un foco que no es MISSION, esta resolución
+        // no aplica y cae directo al mismo fallback grounded de abajo.
+        if ("MISSION".equals(focus.get().type())) {
 
-        if (command != null) {
-            return handleReferenceCommand(command, message, focus.get().ids());
+            var command = detectReferenceCommand(normalized);
+
+            if (command != null) {
+                return handleReferenceCommand(command, message, focus.get().ids());
+            }
+
+            var predicate = detectReferencePredicate(normalized);
+
+            if (predicate != null) {
+                log.info("CHAT_INTENT_REFERENCE predicate={} focusSize={}", predicate, focus.get().ids().size());
+
+                var missions = missionMemory.findByIds(focus.get().ids());
+
+                return formatReferenceAnswer(predicate, missions);
+            }
         }
 
-        var predicate = detectReferencePredicate(normalized);
+        log.info("CHAT_INTENT_REFERENCE predicate=none focusSize={}", focus.get().ids().size());
+        // Sin esta pista, el LLM no tiene forma de saber a qué tipo
+        // de entidad se refiere "esas" -- reproducido en vivo: sin
+        // ella, ignoraba la pregunta y contestaba sobre el equipo en
+        // vez de las misiones (alucinando de nuevo). La pista solo
+        // aclara el TIPO de referencia (dato ya conocido acá, en
+        // Java); el contenido real sigue viniendo exclusivamente de
+        // la herramienta LAST_MENTIONED, nunca de esta nota. Mismo
+        // fallback tanto para un predicado MISSION no reconocido como
+        // para cualquier otro tipo de foco (p. ej. CUSTOMER).
+        var hint = "[Nota: \"esas\"/\"esos\" en este mensaje se refiere a las últimas "
+                + focus.get().type().toLowerCase(Locale.ROOT) + "(es) mencionadas en esta "
+                + "conversación. Si necesitás saber cuáles son o algo sobre ellas, "
+                + "usá la herramienta con topic=LAST_MENTIONED antes de responder — "
+                + "no asumas ni inventes cuáles son.] ";
 
-        if (predicate == null) {
-            log.info("CHAT_INTENT_REFERENCE predicate=none focusSize={}", focus.get().ids().size());
-            // Sin esta pista, el LLM no tiene forma de saber a qué tipo
-            // de entidad se refiere "esas" -- reproducido en vivo: sin
-            // ella, ignoraba la pregunta y contestaba sobre el equipo en
-            // vez de las misiones (alucinando de nuevo). La pista solo
-            // aclara el TIPO de referencia (dato ya conocido acá, en
-            // Java); el contenido real sigue viniendo exclusivamente de
-            // la herramienta LAST_MENTIONED, nunca de esta nota.
-            var hint = "[Nota: \"esas\"/\"esos\" en este mensaje se refiere a las últimas "
-                    + focus.get().type().toLowerCase(Locale.ROOT) + "(es) mencionadas en esta "
-                    + "conversación. Si necesitás saber cuáles son o algo sobre ellas, "
-                    + "usá la herramienta con topic=LAST_MENTIONED antes de responder — "
-                    + "no asumas ni inventes cuáles son.] ";
-
-            return ceoService.chat(
-                    companyMemory.agentName("ceo").orElse("CEO"),
-                    companyMemory.teamRosterDescription(),
-                    conversationMemory.recentMessages(HISTORY_LIMIT),
-                    hint + message,
-                    this::answerMemoryTopic
-            );
-        }
-
-        log.info("CHAT_INTENT_REFERENCE predicate={} focusSize={}", predicate, focus.get().ids().size());
-
-        var missions = missionMemory.findByIds(focus.get().ids());
-
-        return formatReferenceAnswer(predicate, missions);
+        return ceoService.chat(
+                companyMemory.agentName("ceo").orElse("CEO"),
+                companyMemory.teamRosterDescription(),
+                conversationMemory.recentMessages(HISTORY_LIMIT),
+                hint + message,
+                this::answerMemoryTopic
+        );
     }
 
     private String formatReferenceAnswer(ReferencePredicate predicate, List<MissionResponse> missions) {
@@ -1106,7 +1143,11 @@ public class ChatIntentRouter {
         var focus = conversationMemory.lastMentioned();
 
         if (focus.isEmpty()) {
-            return "No hay ninguna mención reciente de misiones en esta conversación.";
+            return "No hay ninguna mención reciente de misiones ni prospectos en esta conversación.";
+        }
+
+        if ("CUSTOMER".equals(focus.get().type())) {
+            return formatLastMentionedCustomers(focus.get().ids());
         }
 
         var missions = missionMemory.findByIds(focus.get().ids());
@@ -1116,6 +1157,30 @@ public class ChatIntentRouter {
                 .collect(Collectors.joining(", "));
 
         return "Las últimas misiones mencionadas fueron: " + lines + ".";
+    }
+
+    /**
+     * Rama {@code CUSTOMER} de {@link #formatLastMentioned} -- antes de
+     * este fix, un foco {@code CUSTOMER} caía en la rama de misiones (que
+     * asume ciegamente que cualquier foco trae ids de misión), produciendo
+     * "Las últimas misiones mencionadas fueron: ." (vacío, porque
+     * {@code missionMemory.findByIds} nunca encuentra ids de prospecto) y
+     * ese texto vacío se le presentaba al CEO como si fuera el resultado
+     * real y confiable de la herramienta {@code LAST_MENTIONED}.
+     */
+    private String formatLastMentionedCustomers(List<String> ids) {
+
+        var candidates = opportunityMemory.findCandidatesByIds(ids);
+
+        if (candidates.isEmpty()) {
+            return "No hay datos reales registrados para los prospectos mencionados recientemente.";
+        }
+
+        var lines = candidates.stream()
+                .map(this::formatCandidateCore)
+                .collect(Collectors.joining(" | "));
+
+        return "Los últimos prospectos mencionados fueron: " + lines + ".";
     }
 
     private String formatOpportunities(List<OpportunitySummary> opportunities) {
