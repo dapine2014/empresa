@@ -810,16 +810,18 @@ public class ChatIntentRouter {
 
         log.info("CHAT_INTENT_QUERY intent={}", intent);
 
-        return answerMemoryTopic(intent.name());
+        return answerMemoryTopic(intent.name(), null);
     }
 
     /**
      * Resuelve un {@code topic} real delegando a {@link CompanyTools} —
      * llamado tanto por el atajo de keywords ({@link #handleQuery}, sin
-     * pasar por Ollama) como por la herramienta {@code query_company_memory}
-     * que {@link CeoService#chat} puede pedir para el chat general.
+     * pasar por Ollama, siempre con {@code id=null}) como por la
+     * herramienta {@code query_company_memory} que {@link CeoService#chat}
+     * puede pedir para el chat general ({@code id} solo es necesario para
+     * {@code MISSION_DETAILS}/{@code OPPORTUNITY_DETAILS}).
      */
-    String answerMemoryTopic(String topic) {
+    String answerMemoryTopic(String topic, String id) {
 
         return switch (topic) {
             case "AGENT_STATUS" -> companyTools.getAgentStatus();
@@ -831,6 +833,8 @@ public class ChatIntentRouter {
             case "LEADS" -> companyTools.getProspects();
             case "COMPANY_PROFIT" -> companyTools.getFinancialStatus();
             case "COMPANY_STATUS" -> companyTools.getCompanyStatus();
+            case "MISSION_DETAILS" -> companyTools.getMission(id);
+            case "OPPORTUNITY_DETAILS" -> companyTools.getOpportunity(id);
             default -> "Dato no reconocido: " + topic + ".";
         };
     }

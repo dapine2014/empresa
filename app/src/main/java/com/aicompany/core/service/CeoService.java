@@ -18,7 +18,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 @Service
 public class CeoService {
@@ -95,7 +95,9 @@ public class CeoService {
                                                             "OPPORTUNITIES",
                                                             "LEADS",
                                                             "COMPANY_PROFIT",
-                                                            "COMPANY_STATUS"
+                                                            "COMPANY_STATUS",
+                                                            "MISSION_DETAILS",
+                                                            "OPPORTUNITY_DETAILS"
                                                     ),
                                                     "description",
                                                     "AGENT_STATUS: qué está "
@@ -123,13 +125,16 @@ public class CeoService {
                                                             + "LAST_MENTIONED: "
                                                             + "detalle real de "
                                                             + "las últimas "
-                                                            + "misiones "
-                                                            + "mencionadas en "
+                                                            + "misiones o "
+                                                            + "prospectos "
+                                                            + "mencionados en "
                                                             + "esta "
                                                             + "conversación. "
                                                             + "OPPORTUNITIES: "
                                                             + "oportunidades "
-                                                            + "identificadas. "
+                                                            + "identificadas "
+                                                            + "(lista global, "
+                                                            + "sin prospectos). "
                                                             + "LEADS: "
                                                             + "candidatos de "
                                                             + "cliente (LEAD) "
@@ -155,7 +160,45 @@ public class CeoService {
                                                             + "'status' o "
                                                             + "resumen general, "
                                                             + "nunca inventes "
-                                                            + "ese resumen vos."
+                                                            + "ese resumen vos. "
+                                                            + "MISSION_DETAILS: "
+                                                            + "estado, progreso "
+                                                            + "y tareas reales "
+                                                            + "de UNA misión "
+                                                            + "puntual -- "
+                                                            + "requiere el "
+                                                            + "parámetro id "
+                                                            + "con el "
+                                                            + "MISSION-<numero> "
+                                                            + "exacto. "
+                                                            + "OPPORTUNITY_DETAILS: "
+                                                            + "la oportunidad "
+                                                            + "real y sus "
+                                                            + "prospectos "
+                                                            + "reales de UNA "
+                                                            + "misión puntual "
+                                                            + "-- requiere el "
+                                                            + "parámetro id "
+                                                            + "con el "
+                                                            + "MISSION-<numero> "
+                                                            + "exacto (el id "
+                                                            + "de la misión, "
+                                                            + "nunca el id "
+                                                            + "interno de la "
+                                                            + "Opportunity)."
+                                            ),
+                                            "id", Map.of(
+                                                    "type", "string",
+                                                    "description",
+                                                    "El MISSION-<numero> "
+                                                            + "exacto -- solo "
+                                                            + "necesario para "
+                                                            + "MISSION_DETAILS "
+                                                            + "y "
+                                                            + "OPPORTUNITY_DETAILS. "
+                                                            + "Omitilo para "
+                                                            + "cualquier otro "
+                                                            + "topic."
                                             )
                                     ),
                                     "required", List.of("topic")
@@ -203,7 +246,7 @@ public class CeoService {
             String teamRoster,
             List<ConversationTurn> history,
             String message,
-            Function<String, String> companyMemoryQuery) {
+            BiFunction<String, String, String> companyMemoryQuery) {
 
         var system = systemPrompt()
                 + "\nTu nombre real es " + ceoName
@@ -235,18 +278,22 @@ public class CeoService {
                 "CEO_CHAT", "ceo", ceoModel, messages, null, COMPANY_MEMORY_TOOLS
         );
 
-        var topic =
+        var query =
                 !turn.toolCalls().isEmpty()
                         ? parseCompanyMemoryTopic(turn.toolCalls().get(0))
                         : detectInlineCompanyMemoryTopic(turn.content());
 
-        if (topic == null) {
+        if (query == null) {
             return turn.content();
         }
 
-        log.info("CEO_CHAT_TOOL_CALL topic={}", topic);
+        log.info("CEO_CHAT_TOOL_CALL topic={} id={}", query.topic(), query.id());
 
-        var result = companyMemoryQuery.apply(topic);
+        var result = companyMemoryQuery.apply(query.topic(), query.id());
+
+        var toolCallArguments = query.id() == null
+                ? Map.of("topic", query.topic())
+                : Map.of("topic", query.topic(), "id", query.id());
 
         messages.add(Map.of(
                 "role", "assistant",
@@ -254,7 +301,7 @@ public class CeoService {
                 "tool_calls", List.of(Map.of(
                         "function", Map.of(
                                 "name", "query_company_memory",
-                                "arguments", Map.of("topic", topic)
+                                "arguments", toolCallArguments
                         )
                 ))
         ));
@@ -786,8 +833,11 @@ public class CeoService {
     private record ToolCall(String name, String query) {
     }
 
+    record CompanyMemoryQuery(String topic, String id) {
+    }
+
     @SuppressWarnings("unchecked")
-    private String parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
+    CompanyMemoryQuery parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
 
         var function = (Map<String, Object>) rawToolCall.get("function");
 
@@ -799,10 +849,13 @@ public class CeoService {
         var arguments = function.get("arguments");
 
         String topic = null;
+        String id = null;
 
         if (arguments instanceof Map<?, ?> argMap) {
-            var value = argMap.get("topic");
-            topic = value == null ? null : String.valueOf(value);
+            var topicValue = argMap.get("topic");
+            topic = topicValue == null ? null : String.valueOf(topicValue);
+            var idValue = argMap.get("id");
+            id = idValue == null ? null : String.valueOf(idValue);
         }
 
         if (!"query_company_memory".equals(name)
@@ -811,10 +864,10 @@ public class CeoService {
             return null;
         }
 
-        return topic;
+        return new CompanyMemoryQuery(topic, id);
     }
 
-    private String detectInlineCompanyMemoryTopic(String content) {
+    CompanyMemoryQuery detectInlineCompanyMemoryTopic(String content) {
 
         if (content == null || content.isBlank()) {
             return null;
@@ -839,7 +892,13 @@ public class CeoService {
 
             var topic = argumentsNode.path("topic").asString(null);
 
-            return (topic == null || topic.isBlank()) ? null : topic;
+            if (topic == null || topic.isBlank()) {
+                return null;
+            }
+
+            var id = argumentsNode.path("id").asString(null);
+
+            return new CompanyMemoryQuery(topic, id);
 
         } catch (Exception ex) {
             return null;

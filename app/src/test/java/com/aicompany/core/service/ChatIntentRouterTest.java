@@ -694,22 +694,35 @@ class ChatIntentRouterTest {
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{100.0, 40.0});
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
 
+        var mission = new MissionResponse(
+                "MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now()
+        );
+        when(missionService.details("MISSION-1")).thenReturn(
+                Optional.of(new com.aicompany.core.model.MissionStatusResponse(mission, List.of()))
+        );
+        when(opportunityMemory.findByMissionId("MISSION-1")).thenReturn(
+                Optional.of(new OpportunitySummary("MISSION-1-OPPORTUNITY", "MISSION-1", "desc", "IDENTIFIED", Instant.now()))
+        );
+        when(opportunityMemory.listCandidatesForMission("MISSION-1")).thenReturn(List.of());
+
         router.route("Hola, ¿cómo estás?");
 
-        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.BiFunction.class);
         verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
-        var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
+        var companyMemoryQuery = (java.util.function.BiFunction<String, String, String>) captor.getValue();
 
-        assertTrue(companyMemoryQuery.apply("AGENT_STATUS").contains("Sofia"));
-        assertTrue(companyMemoryQuery.apply("MISSIONS_NEEDING_ATTENTION").contains("No hay ninguna misión"));
-        assertTrue(companyMemoryQuery.apply("FAILED_MISSIONS").contains("No hay ninguna misión"));
-        assertTrue(companyMemoryQuery.apply("TEST_MISSIONS").contains("No hay ninguna misión"));
-        assertTrue(companyMemoryQuery.apply("LAST_MENTIONED").contains("No hay ninguna mención reciente"));
-        assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
-        assertTrue(companyMemoryQuery.apply("LEADS").contains("No hay ningún lead"));
-        assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
-        assertTrue(companyMemoryQuery.apply("COMPANY_STATUS").contains("Estado actual de Forjai"));
-        assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
+        assertTrue(companyMemoryQuery.apply("AGENT_STATUS", null).contains("Sofia"));
+        assertTrue(companyMemoryQuery.apply("MISSIONS_NEEDING_ATTENTION", null).contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("FAILED_MISSIONS", null).contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("TEST_MISSIONS", null).contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("LAST_MENTIONED", null).contains("No hay ninguna mención reciente"));
+        assertTrue(companyMemoryQuery.apply("OPPORTUNITIES", null).contains("Todavía no hay ninguna oportunidad"));
+        assertTrue(companyMemoryQuery.apply("LEADS", null).contains("No hay ningún lead"));
+        assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT", null).contains("60.00"));
+        assertTrue(companyMemoryQuery.apply("COMPANY_STATUS", null).contains("Estado actual de Forjai"));
+        assertTrue(companyMemoryQuery.apply("MISSION_DETAILS", "MISSION-1").contains("AWAITING_INVESTOR"));
+        assertTrue(companyMemoryQuery.apply("OPPORTUNITY_DETAILS", "MISSION-1").contains("Todavía no hay ningún prospecto"));
+        assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE", null).contains("Dato no reconocido"));
     }
 
     @Test
