@@ -513,6 +513,26 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void customerReferenceGateDoesNotInterceptTheGenericLeadsQueryEvenWithAnActiveCustomerFocus() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"))
+        ));
+        when(opportunityMemory.listLeads()).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        var response = router.route("¿Qué leads tengo para contactar?");
+
+        assertTrue(response.contains("1 lead"));
+        verify(opportunityMemory, never()).findCandidatesByIds(any());
+    }
+
+    @Test
     void routesLeadsQueryWithDeterministicFormatting() {
         when(opportunityMemory.listLeads()).thenReturn(List.of(
                 new LeadResponse(

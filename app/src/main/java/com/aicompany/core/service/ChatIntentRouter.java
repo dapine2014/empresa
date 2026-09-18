@@ -107,6 +107,20 @@ public class ChatIntentRouter {
     private static final Pattern COMMAND_REJECT =
             Pattern.compile("\\b(rechaza|rechazo|rechazar|rechazad[oa]s?)\\b");
 
+    // Gate de resolveCustomerReference. Un bare "contains(\"contact\")" es
+    // demasiado amplio: la consulta LEADS preexistente ("¿qué leads tengo
+    // para contactar?") contiene la substring "contact" vía "contactar" --
+    // con un foco CUSTOMER activo (p. ej. de una consulta de oportunidades
+    // de una misión puntual), esa pregunta genérica quedaba interceptada
+    // como si fuera una referencia a un solo prospecto en foco, en vez de
+    // devolver el listado completo de LEADs (encontrado en code review).
+    // Matchea formas imperativas ("contacta"/"contactalo"/"contactame"/...)
+    // y la frase "contacto de" -- deliberadamente NO matchea el infinitivo
+    // "contactar" (la frase LEADS existente) ni "contacto"/"contactos"
+    // como sustantivo suelto sin "de".
+    private static final Pattern CONTACT_REFERENCE =
+            Pattern.compile("(?i)\\bcontacta(lo|la|me|los|las)?\\b|\\bcontacto de\\b");
+
     // 10 turnos (20 mensajes) -- suficiente para continuidad real de
     // charla sin dejar crecer el prompt del CEO sin límite (reportado
     // por el usuario: "no está recordando las charlas que tengo con el
@@ -489,7 +503,7 @@ public class ChatIntentRouter {
 
         var normalized = normalize(message);
 
-        if (!normalized.contains("contact")) {
+        if (!CONTACT_REFERENCE.matcher(normalized).find()) {
             return Optional.empty();
         }
 
