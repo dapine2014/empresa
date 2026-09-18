@@ -185,6 +185,12 @@ public class ChatIntentRouter {
             return handleDecision(decision, message);
         }
 
+        var opportunityForMissionId = resolveOpportunityForMissionQuery(message);
+
+        if (opportunityForMissionId.isPresent()) {
+            return handleOpportunityForMissionQuery(opportunityForMissionId.get());
+        }
+
         var missionDetailsId = resolveMissionDetailsQuery(message);
 
         if (missionDetailsId.isPresent()) {
@@ -389,6 +395,76 @@ public class ChatIntentRouter {
                 + " (" + mission.progress() + "% completado, paso actual: "
                 + mission.currentStep() + "). " + mission.message()
                 + ". Tareas de agentes: " + tasksSummary + ".";
+    }
+
+    /**
+     * "¿qué oportunidades concretas tenemos en la misión MISSION-X y qué
+     * prospectos reales están asociados?" caía en la consulta global
+     * {@code OPPORTUNITIES} (ignorando el {@code MISSION-<id>} del
+     * mensaje) y nunca mostraba los prospectos reales, pese a que sí
+     * existen como {@code Customer{status:'LEAD'}} enlazados vía
+     * {@code HAS_CANDIDATE} (reportado por el usuario). Mismo criterio
+     * que {@link #resolveMissionDetailsQuery}: solo actúa con un
+     * {@code MISSION-<id>} explícito en el mensaje — sin uno, el
+     * comportamiento global de {@code OPPORTUNITIES} (lista de las 20
+     * más recientes, sin prospectos) no cambia.
+     */
+    private Optional<String> resolveOpportunityForMissionQuery(String message) {
+
+        var normalized = normalize(message);
+
+        if (!normalized.contains("oportunidad")) {
+            return Optional.empty();
+        }
+
+        var missionIdMatcher = MISSION_ID.matcher(message);
+
+        if (!missionIdMatcher.find()) {
+            return Optional.empty();
+        }
+
+        return Optional.of(missionIdMatcher.group(1).toUpperCase(Locale.ROOT));
+    }
+
+    private String handleOpportunityForMissionQuery(String missionId) {
+
+        log.info("CHAT_INTENT_OPPORTUNITY_DETAILS missionId={}", missionId);
+
+        var opportunity = opportunityMemory.findByMissionId(missionId);
+
+        if (opportunity.isEmpty()) {
+            return "No encontré ninguna oportunidad para " + missionId + ".";
+        }
+
+        var candidates = opportunityMemory.listCandidatesForMission(missionId);
+
+        conversationMemory.setLastMentioned(
+                "CUSTOMER",
+                candidates.stream().map(LeadResponse::id).toList()
+        );
+
+        return formatOpportunityWithCandidates(opportunity.get(), candidates);
+    }
+
+    private String formatOpportunityWithCandidates(
+            OpportunitySummary opportunity,
+            List<LeadResponse> candidates) {
+
+        var header = "Oportunidad " + opportunity.id() + " (misión " + opportunity.missionId()
+                + ", estado " + opportunity.status() + "): " + opportunity.description();
+
+        if (candidates.isEmpty()) {
+            return header + " Todavía no hay ningún prospecto real identificado para esta oportunidad.";
+        }
+
+        var lines = candidates.stream()
+                .map(c -> c.name() + " (confidence="
+                        + String.format(Locale.ROOT, "%.2f", c.confidence())
+                        + ", fuente: " + c.source() + "): " + c.description())
+                .collect(Collectors.joining(" | "));
+
+        return header + " Prospectos reales identificados (" + candidates.size()
+                + "), ordenados por probabilidad: " + lines;
     }
 
     private enum ReferencePredicate {

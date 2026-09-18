@@ -388,6 +388,40 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void routesOpportunitiesQueryWithMissionIdBringsCandidatesOrderedByConfidence() {
+        when(opportunityMemory.findByMissionId("MISSION-1")).thenReturn(Optional.of(
+                new OpportunitySummary("MISSION-1-OPPORTUNITY", "MISSION-1", "asesoría a microempresas", "IDENTIFIED", Instant.now())
+        ));
+        when(opportunityMemory.listCandidatesForMission("MISSION-1")).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        var response = router.route(
+                "¿Qué oportunidades concretas tenemos en la misión MISSION-1 y qué prospectos reales están asociados?");
+
+        assertTrue(response.contains("asesoría a microempresas"));
+        assertTrue(response.contains("Panadería El Sol"));
+        assertTrue(response.contains("0.80"));
+        verify(conversationMemory).setLastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesOpportunitiesQueryWithMissionIdThatHasNoOpportunityYet() {
+        when(opportunityMemory.findByMissionId("MISSION-404")).thenReturn(Optional.empty());
+
+        var response = router.route("¿Qué oportunidades tenemos en la misión MISSION-404?");
+
+        assertTrue(response.contains("No encontré ninguna oportunidad"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
     void routesLeadsQueryWithDeterministicFormatting() {
         when(opportunityMemory.listLeads()).thenReturn(List.of(
                 new LeadResponse(

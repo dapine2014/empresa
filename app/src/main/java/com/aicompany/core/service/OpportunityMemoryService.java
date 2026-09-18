@@ -288,6 +288,67 @@ public class OpportunityMemoryService {
         }
     }
 
+    /**
+     * La Opportunity real de una misión puntual — a diferencia de
+     * {@link #listRecent}, que trae una lista global sin filtrar. Usada
+     * por el chat cuando el usuario menciona un {@code MISSION-<id>}
+     * explícito junto con la palabra "oportunidad".
+     */
+    public Optional<OpportunitySummary> findByMissionId(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity {missionId:$missionId}) " +
+                                    "RETURN o.id AS id, o.missionId AS missionId, " +
+                                    "o.description AS description, o.status AS status, " +
+                                    "o.createdAt AS createdAt",
+                            Map.of("missionId", missionId))
+                    .list(r -> new OpportunitySummary(
+                            r.get("id").asString(),
+                            r.get("missionId").asString(),
+                            r.get("description").asString(),
+                            r.get("status").asString(),
+                            Instant.parse(r.get("createdAt").asString())
+                    ))
+                    .stream()
+                    .findFirst();
+        }
+    }
+
+    /**
+     * Prospectos reales ({@code Customer{status:'LEAD'}}) de la
+     * Opportunity de una misión puntual, ordenados por {@code confidence}
+     * descendente — el agente que los identificó autoreporta ese valor
+     * (ver {@link #recordCandidate}).
+     */
+    public List<LeadResponse> listCandidatesForMission(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity {missionId:$missionId})-[:HAS_CANDIDATE]->(c:Customer {status:'LEAD'}) " +
+                                    "OPTIONAL MATCH (c)-[:HAS_EVIDENCE]->(e:Evidence) " +
+                                    "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
+                                    "o.id AS opportunityId, c.createdAt AS createdAt, " +
+                                    "e.description AS description, e.source AS source, " +
+                                    "e.sourceType AS sourceType, c.status AS status, " +
+                                    "coalesce(c.confidence, 0.0) AS confidence " +
+                                    "ORDER BY c.confidence DESC",
+                            Map.of("missionId", missionId))
+                    .list(r -> new LeadResponse(
+                            r.get("id").asString(),
+                            r.get("name").asString(""),
+                            r.get("description").asString(""),
+                            r.get("source").asString(""),
+                            r.get("sourceType").asString(""),
+                            r.get("missionId").asString(),
+                            r.get("opportunityId").asString(),
+                            Instant.parse(r.get("createdAt").asString()),
+                            r.get("status").asString("LEAD"),
+                            null,
+                            null,
+                            r.get("confidence").asDouble(0.0)
+                    ));
+        }
+    }
+
     public List<OpportunitySummary> listRecent(int limit) {
         try (var session = driver.session()) {
             return session.run(
