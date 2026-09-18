@@ -5,6 +5,7 @@ import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.LastMentioned;
+import com.aicompany.core.model.LeadResponse;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
@@ -315,6 +316,23 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void routesLeadsQueryWithDeterministicFormatting() {
+        when(opportunityMemory.listLeads()).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now()
+                )
+        ));
+
+        var response = router.route("¿Qué leads tengo para contactar?");
+
+        assertTrue(response.contains("1 lead"));
+        assertTrue(response.contains("Panadería El Sol"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
     void routesCompanyProfitQueryWithDeterministicAggregation() {
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{120.0, 40.0});
 
@@ -417,6 +435,7 @@ class ChatIntentRouterTest {
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
         when(missionMemory.findAll(50)).thenReturn(List.of());
         when(opportunityMemory.listRecent(20)).thenReturn(List.of());
+        when(opportunityMemory.listLeads()).thenReturn(List.of());
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{100.0, 40.0});
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
 
@@ -432,6 +451,7 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("TEST_MISSIONS").contains("No hay ninguna misión"));
         assertTrue(companyMemoryQuery.apply("LAST_MENTIONED").contains("No hay ninguna mención reciente"));
         assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
+        assertTrue(companyMemoryQuery.apply("LEADS").contains("No hay ningún lead"));
         assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
         assertTrue(companyMemoryQuery.apply("COMPANY_STATUS").contains("Estado actual de Forjai"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));

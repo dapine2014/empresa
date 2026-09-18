@@ -93,6 +93,7 @@ public class CeoService {
                                                             "TEST_MISSIONS",
                                                             "LAST_MENTIONED",
                                                             "OPPORTUNITIES",
+                                                            "LEADS",
                                                             "COMPANY_PROFIT",
                                                             "COMPANY_STATUS"
                                                     ),
@@ -129,6 +130,14 @@ public class CeoService {
                                                             + "OPPORTUNITIES: "
                                                             + "oportunidades "
                                                             + "identificadas. "
+                                                            + "LEADS: "
+                                                            + "candidatos de "
+                                                            + "cliente (LEAD) "
+                                                            + "que un agente "
+                                                            + "identificó y "
+                                                            + "todavía no se "
+                                                            + "contactaron ni "
+                                                            + "convirtieron. "
                                                             + "COMPANY_PROFIT: "
                                                             + "ingresos/costos/"
                                                             + "utilidad reales "

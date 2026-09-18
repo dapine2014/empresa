@@ -4,6 +4,7 @@ import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
+import com.aicompany.core.model.LeadResponse;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
@@ -508,6 +509,7 @@ public class ChatIntentRouter {
         FAILED_MISSIONS,
         TEST_MISSIONS,
         OPPORTUNITIES,
+        LEADS,
         COMPANY_PROFIT,
         COMPANY_STATUS
     }
@@ -566,6 +568,12 @@ public class ChatIntentRouter {
             return QueryIntent.OPPORTUNITIES;
         }
 
+        if (normalized.contains("lead")
+                || normalized.contains("prospecto")
+                || normalized.contains("a quien contacto")) {
+            return QueryIntent.LEADS;
+        }
+
         if (normalized.contains("gastado")
                 || normalized.contains("gasto")
                 || normalized.contains("dinero")
@@ -618,6 +626,7 @@ public class ChatIntentRouter {
             case "TEST_MISSIONS" -> formatTestMissions(missionMemory.findAll(50));
             case "LAST_MENTIONED" -> formatLastMentioned();
             case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
+            case "LEADS" -> formatLeads(opportunityMemory.listLeads());
             case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
             case "COMPANY_STATUS" -> formatCompanyStatus();
             default -> "Dato no reconocido: " + topic + ".";
@@ -864,6 +873,21 @@ public class ChatIntentRouter {
 
         return "Tenés " + opportunities.size()
                 + " oportunidad(es) identificada(s): " + lines;
+    }
+
+    private String formatLeads(List<LeadResponse> leads) {
+
+        if (leads.isEmpty()) {
+            return "No hay ningún lead activo para contactar.";
+        }
+
+        var lines = leads.stream()
+                .map(l -> l.id() + " (misión " + l.missionId() + "): "
+                        + l.name() + " — " + l.description())
+                .collect(Collectors.joining(" | "));
+
+        return "Tenés " + leads.size()
+                + " lead(s) activo(s) para contactar: " + lines;
     }
 
     private String formatCompanyProfit(double[] totals) {
