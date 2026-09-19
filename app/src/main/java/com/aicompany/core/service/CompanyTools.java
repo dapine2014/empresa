@@ -35,6 +35,7 @@ public class CompanyTools {
     private final OpportunityMemoryService opportunityMemory;
     private final CustomerMemoryService customerMemory;
     private final ConversationMemoryService conversationMemory;
+    private final ActivityMemoryService activityMemory;
     private final AppProperties appProperties;
 
     public CompanyTools(
@@ -43,6 +44,7 @@ public class CompanyTools {
             OpportunityMemoryService opportunityMemory,
             CustomerMemoryService customerMemory,
             ConversationMemoryService conversationMemory,
+            ActivityMemoryService activityMemory,
             AppProperties appProperties) {
 
         this.missionService = missionService;
@@ -50,6 +52,7 @@ public class CompanyTools {
         this.opportunityMemory = opportunityMemory;
         this.customerMemory = customerMemory;
         this.conversationMemory = conversationMemory;
+        this.activityMemory = activityMemory;
         this.appProperties = appProperties;
     }
 
@@ -399,6 +402,79 @@ public class CompanyTools {
                 .collect(Collectors.joining(" | "));
 
         return "Los últimos prospectos mencionados fueron: " + lines + ".";
+    }
+
+    /**
+     * Línea de tiempo real de la empresa (misiones, tareas, evidencia,
+     * decisiones) — reusa {@link ActivityMemoryService#recent}, la misma
+     * fuente que ya alimenta la pantalla Activity del Command Center.
+     */
+    public String getRecentActivity() {
+
+        var items = activityMemory.recent(20);
+
+        if (items.isEmpty()) {
+            return "Todavía no hay actividad registrada.";
+        }
+
+        var lines = items.stream()
+                .map(i -> "[" + i.type() + "] " + i.description())
+                .collect(Collectors.joining(" | "));
+
+        return "Actividad reciente (" + items.size() + " evento(s)): " + lines;
+    }
+
+    /**
+     * Decisiones reales del inversionista humano, sin filtrar por
+     * misión puntual (para eso está {@link #getMission(String)}).
+     */
+    public String getRecentDecisions() {
+
+        var decisions = missionMemory.recentDecisions(10);
+
+        if (decisions.isEmpty()) {
+            return "Todavía no se registró ninguna decisión real.";
+        }
+
+        var lines = decisions.stream()
+                .map(d -> d.missionId() + ": " + d.decision() + " — " + d.reasoning())
+                .collect(Collectors.joining(" | "));
+
+        return "Últimas " + decisions.size() + " decisión(es) real(es): " + lines;
+    }
+
+    /**
+     * Misiones activas (ni {@code AWAITING_INVESTOR}, {@code FAILED},
+     * {@code COMPLETED} ni {@code CANCELLED}) con su id y status real —
+     * mismo criterio de "activa" que ya usa {@link #getCompanyStatus()}
+     * para el conteo agregado, acá como listado. Setea el foco
+     * conversacional {@code type="MISSION"}, mismo criterio que
+     * {@link #getPendingApprovals()}/{@link #getFailedMissions()}.
+     */
+    public String getActiveMissions() {
+
+        var active = missionMemory.findAll(50).stream()
+                .filter(m -> "PRODUCTION".equals(m.environment()))
+                .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
+                        && m.status() != MissionStatus.FAILED
+                        && m.status() != MissionStatus.COMPLETED
+                        && m.status() != MissionStatus.CANCELLED)
+                .toList();
+
+        conversationMemory.setLastMentioned(
+                "MISSION",
+                active.stream().map(MissionResponse::missionId).toList()
+        );
+
+        if (active.isEmpty()) {
+            return "No hay ninguna misión activa en este momento.";
+        }
+
+        var lines = active.stream()
+                .map(m -> m.missionId() + " (" + m.status() + ", " + m.progress() + "%)")
+                .collect(Collectors.joining(", "));
+
+        return "Tenés " + active.size() + " misión(es) activa(s): " + lines + ".";
     }
 
     /**

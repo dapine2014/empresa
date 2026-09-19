@@ -31,10 +31,11 @@ class CompanyToolsTest {
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
     private final ConversationMemoryService conversationMemory = mock(ConversationMemoryService.class);
+    private final ActivityMemoryService activityMemory = mock(ActivityMemoryService.class);
     private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
 
     private final CompanyTools tools = new CompanyTools(
-            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, appProperties
+            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties
     );
 
     @Test
@@ -347,5 +348,68 @@ class CompanyToolsTest {
         var formatted = tools.formatCandidate(active);
 
         assertTrue(formatted.startsWith("Panadería El Sol"));
+    }
+
+    @Test
+    void getRecentActivityFormatsRealTimelineItems() {
+        when(activityMemory.recent(20)).thenReturn(List.of(
+                new com.aicompany.core.model.ActivityItem(
+                        "MISSION", "MISSION-1", null, "Trabajo paralelo: WAITING_AGENT_RESULTS", Instant.now()
+                )
+        ));
+
+        var response = tools.getRecentActivity();
+
+        assertTrue(response.contains("[MISSION]"));
+        assertTrue(response.contains("WAITING_AGENT_RESULTS"));
+    }
+
+    @Test
+    void getRecentActivityReturnsDeterministicEmptyMessage() {
+        when(activityMemory.recent(20)).thenReturn(List.of());
+
+        var response = tools.getRecentActivity();
+
+        assertEquals("Todavía no hay actividad registrada.", response);
+    }
+
+    @Test
+    void getRecentDecisionsFormatsRealDecisions() {
+        when(missionMemory.recentDecisions(10)).thenReturn(List.of(
+                new com.aicompany.core.model.DecisionActivity(
+                        "MISSION-1-DECISION-1", "MISSION-1", "APPROVE", "Se ve bien", Instant.now()
+                )
+        ));
+
+        var response = tools.getRecentDecisions();
+
+        assertTrue(response.contains("MISSION-1"));
+        assertTrue(response.contains("APPROVE"));
+        assertTrue(response.contains("Se ve bien"));
+    }
+
+    @Test
+    void getRecentDecisionsReturnsDeterministicEmptyMessage() {
+        when(missionMemory.recentDecisions(10)).thenReturn(List.of());
+
+        var response = tools.getRecentDecisions();
+
+        assertEquals("Todavía no se registró ninguna decisión real.", response);
+    }
+
+    @Test
+    void getActiveMissionsFiltersByTheSameCriterionAsCompanyStatusAndSetsFocus() {
+        var active = new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "y", Instant.now());
+        var awaiting = new MissionResponse("MISSION-2", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        var testActive = new MissionResponse("MISSION-T", MissionStatus.WAITING_AGENT_RESULTS, "TEST", 30, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(active, awaiting, testActive));
+
+        var response = tools.getActiveMissions();
+
+        assertTrue(response.contains("1 misión"));
+        assertTrue(response.contains("MISSION-1"));
+        assertFalse(response.contains("MISSION-2"));
+        assertFalse(response.contains("MISSION-T"));
+        verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-1"));
     }
 }

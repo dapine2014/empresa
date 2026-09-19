@@ -28,10 +28,11 @@ class ChatIntentRouterTest {
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
     private final CompanyMemoryService companyMemory = mock(CompanyMemoryService.class);
     private final ConversationMemoryService conversationMemory = mock(ConversationMemoryService.class);
+    private final ActivityMemoryService activityMemory = mock(ActivityMemoryService.class);
     private final com.aicompany.core.config.AppProperties appProperties =
             new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
     private final CompanyTools companyTools = new CompanyTools(
-            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, appProperties
+            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties
     );
 
     private final ChatIntentRouter router = new ChatIntentRouter(
