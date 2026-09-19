@@ -32,6 +32,7 @@ company:
     topic: EMPRESA_EVENTS
   seed-capital-usd: 50
   challenge-days: 60
+  nvidia-daily-call-limit: ${NVIDIA_DAILY_CALL_LIMIT:20}
 
 neo4j:
   uri: ${NEO4J_URI:bolt://localhost:7687}
@@ -42,6 +43,15 @@ ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
   ceo-model: ${OLLAMA_CEO_MODEL:qwen2.5-coder:14b}
   agent-model: ${OLLAMA_AGENT_MODEL:qwen3:8b}
+
+llm:
+  ceo-provider: ${LLM_CEO_PROVIDER:ollama}
+
+nvidia:
+  api-key: ${NVIDIA_API_KEY:}
+  base-url: ${NVIDIA_BASE_URL:https://integrate.api.nvidia.com/v1}
+  ceo-model: ${NVIDIA_CEO_MODEL:openai/gpt-oss-20b}
+  max-tokens: ${NVIDIA_MAX_TOKENS:8192}
 
 evidence:
   web-search:

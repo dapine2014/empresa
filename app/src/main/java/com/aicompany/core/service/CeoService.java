@@ -4,13 +4,17 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.llm.LlmProvider;
 import com.aicompany.core.llm.LlmResponse;
+import com.aicompany.core.llm.NvidiaNimLlmProvider;
+import com.aicompany.core.llm.OllamaLlmProvider;
 import com.aicompany.core.model.ConversationTurn;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -235,29 +239,35 @@ public class CeoService {
     );
 
     private final RestClient ollama;
-    private final String ceoModel;
     private final String agentModel;
     private final JsonMapper jsonMapper;
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
     private final MeterRegistry meterRegistry;
+    private final LlmProvider ceoProvider;
+    private final OllamaLlmProvider ollamaFallbackProvider;
+    private final AiBudgetService aiBudgetService;
 
     public CeoService(
             RestClient ollama,
-            @Value("${ollama.ceo-model}") String ceoModel,
             @Value("${ollama.agent-model}") String agentModel,
             JsonMapper jsonMapper,
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            @Qualifier("ceoProvider") LlmProvider ceoProvider,
+            OllamaLlmProvider ollamaFallbackProvider,
+            AiBudgetService aiBudgetService) {
 
         this.ollama = ollama;
-        this.ceoModel = ceoModel;
         this.agentModel = agentModel;
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
         this.events = events;
         this.meterRegistry = meterRegistry;
+        this.ceoProvider = ceoProvider;
+        this.ollamaFallbackProvider = ollamaFallbackProvider;
+        this.aiBudgetService = aiBudgetService;
     }
 
     /**
@@ -301,9 +311,7 @@ public class CeoService {
         messages.addAll(buildHistoryMessages(history));
         messages.add(Map.of("role", "user", "content", message));
 
-        var turn = callModel(
-                "CEO_CHAT", "ceo", ceoModel, messages, null, COMPANY_MEMORY_TOOLS
-        );
+        var turn = callCeo("CEO_CHAT", messages, COMPANY_MEMORY_TOOLS);
 
         var query =
                 !turn.toolCalls().isEmpty()
@@ -335,9 +343,7 @@ public class CeoService {
 
         messages.add(Map.of("role", "tool", "content", result));
 
-        var finalTurn = callModel(
-                "CEO_CHAT", "ceo", ceoModel, messages, null, null
-        );
+        var finalTurn = callCeo("CEO_CHAT", messages, null);
 
         return finalTurn.content();
     }
@@ -981,9 +987,78 @@ public class CeoService {
                 Map.of("role", "user", "content", prompt)
         );
 
-        return callModel(
-                "MISSION_CONSOLIDATION", "ceo", ceoModel, messages, null, null
-        ).content();
+        return callCeo("MISSION_CONSOLIDATION", messages, null).content();
+    }
+
+    /**
+     * Único punto por el que pasan las dos llamadas del CEO ({@code chat}
+     * y {@code executeMission}) al proveedor configurado — aplica el
+     * presupuesto diario y el fallback a Ollama descritos en
+     * `docs/superpowers/specs/2026-09-18-nvidia-ceo-provider-design.md`.
+     * {@code executeAgentTask} no pasa por acá: sigue llamando a
+     * {@link #callModel} (Ollama directo) sin cambios.
+     *
+     * <p>Un {@code content} nulo/vacío SIN {@code tool_calls} cuenta como
+     * fallo (el truncamiento real observado en el spike con
+     * `gpt-oss-20b`); un {@code content} vacío CON {@code tool_calls} es
+     * un turno de herramienta normal, no un fallo.
+     */
+    private LlmResponse callCeo(
+            String operation,
+            List<Map<String, Object>> messages,
+            List<Map<String, Object>> tools) {
+
+        var usingNvidia = ceoProvider instanceof NvidiaNimLlmProvider;
+
+        if (usingNvidia && aiBudgetService.isExhausted()) {
+
+            log.info("CEO_PROVIDER_FALLBACK operation={} reason=BUDGET_EXHAUSTED", operation);
+
+            events.publish(
+                    "EMPRESA_CEO_PROVIDER_FALLBACK",
+                    null, null, "ceo",
+                    Map.of("operation", operation, "reason", "BUDGET_EXHAUSTED")
+            );
+
+            return ollamaFallbackProvider.chat(operation, messages, tools);
+        }
+
+        try {
+
+            var response = ceoProvider.chat(operation, messages, tools);
+
+            var noContentNoToolCalls =
+                    (response.content() == null || response.content().isBlank())
+                            && (response.toolCalls() == null || response.toolCalls().isEmpty());
+
+            if (noContentNoToolCalls) {
+                throw new IllegalStateException(
+                        "Respuesta vacía del proveedor CEO (sin contenido ni tool_calls)."
+                );
+            }
+
+            if (usingNvidia) {
+                aiBudgetService.recordCall();
+            }
+
+            return response;
+
+        } catch (Exception ex) {
+
+            if (!usingNvidia) {
+                throw ex;
+            }
+
+            log.warn("CEO_PROVIDER_FALLBACK operation={} reason=RATE_LIMIT_OR_ERROR", operation, ex);
+
+            events.publish(
+                    "EMPRESA_CEO_PROVIDER_FALLBACK",
+                    null, null, "ceo",
+                    Map.of("operation", operation, "reason", "RATE_LIMIT_OR_ERROR")
+            );
+
+            return ollamaFallbackProvider.chat(operation, messages, tools);
+        }
     }
 
     private String systemPrompt() {
