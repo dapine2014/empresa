@@ -7,6 +7,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
 
+import java.time.Clock;
+
 @Configuration
 public class CoreConfig {
     @Bean
@@ -22,5 +24,10 @@ public class CoreConfig {
     @Bean
     AppProperties appProperties(@Value("${company.name}") String name, @Value("${company.seed-capital-usd}") double seedCapitalUsd, @Value("${company.challenge-days}") int challengeDays) {
         return new AppProperties(name, seedCapitalUsd, challengeDays);
+    }
+
+    @Bean
+    Clock systemClock() {
+        return Clock.systemDefaultZone();
     }
 }
