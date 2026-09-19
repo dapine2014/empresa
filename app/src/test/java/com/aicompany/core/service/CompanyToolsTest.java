@@ -434,4 +434,73 @@ class CompanyToolsTest {
         assertFalse(response.contains("MISSION-T"));
         verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-1"));
     }
+
+    @Test
+    void getChatHistoryFormatsRealTranscriptForThatDate() {
+        when(conversationMemory.chatHistoryForDate("2026-09-19")).thenReturn(List.of(
+                new com.aicompany.core.model.ConversationTurn("user", "hola"),
+                new com.aicompany.core.model.ConversationTurn("ceo", "hola, en qué te ayudo")
+        ));
+
+        var response = tools.getChatHistory("2026-09-19");
+
+        assertTrue(response.contains("2026-09-19"));
+        assertTrue(response.contains("user: hola"));
+        assertTrue(response.contains("ceo: hola, en qué te ayudo"));
+    }
+
+    @Test
+    void getChatHistoryReturnsDeterministicMessageWhenNoChatThatDay() {
+        when(conversationMemory.chatHistoryForDate("2020-01-01")).thenReturn(List.of());
+
+        var response = tools.getChatHistory("2020-01-01");
+
+        assertEquals("No hubo conversación registrada ese día.", response);
+    }
+
+    @Test
+    void getDaysMentioningFormatsRealDates() {
+        when(conversationMemory.daysMentioning("MISSION-5")).thenReturn(
+                List.of("2026-09-10", "2026-09-12")
+        );
+
+        var response = tools.getDaysMentioning("MISSION-5");
+
+        assertTrue(response.contains("MISSION-5"));
+        assertTrue(response.contains("2026-09-10"));
+        assertTrue(response.contains("2026-09-12"));
+    }
+
+    @Test
+    void getDaysMentioningReturnsDeterministicMessageWhenNeverMentioned() {
+        when(conversationMemory.daysMentioning("MISSION-999")).thenReturn(List.of());
+
+        var response = tools.getDaysMentioning("MISSION-999");
+
+        assertEquals("No encontré menciones de MISSION-999 en el historial de chat.", response);
+    }
+
+    @Test
+    void getPendingApprovalsAlsoRecordsChatMention() {
+        var mission = new MissionResponse(
+                "MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 0, "x", "y", Instant.now()
+        );
+        when(missionMemory.findAll(50)).thenReturn(List.of(mission));
+
+        tools.getPendingApprovals();
+
+        verify(conversationMemory).recordChatMention("MISSION", List.of("MISSION-1"));
+    }
+
+    @Test
+    void getActiveMissionsAlsoRecordsChatMention() {
+        var mission = new MissionResponse(
+                "MISSION-2", MissionStatus.DELEGATING, "PRODUCTION", 40, "x", "y", Instant.now()
+        );
+        when(missionMemory.findAll(50)).thenReturn(List.of(mission));
+
+        tools.getActiveMissions();
+
+        verify(conversationMemory).recordChatMention("MISSION", List.of("MISSION-2"));
+    }
 }

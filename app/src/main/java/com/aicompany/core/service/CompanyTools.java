@@ -176,10 +176,9 @@ public class CompanyTools {
                 .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
 
-        conversationMemory.setLastMentioned(
-                "MISSION",
-                awaitingApproval.stream().map(MissionResponse::missionId).toList()
-        );
+        var awaitingApprovalIds = awaitingApproval.stream().map(MissionResponse::missionId).toList();
+        conversationMemory.setLastMentioned("MISSION", awaitingApprovalIds);
+        conversationMemory.recordChatMention("MISSION", awaitingApprovalIds);
 
         if (awaitingApproval.isEmpty()) {
             return "No hay ninguna misión que necesite tu aprobación en este momento.";
@@ -200,10 +199,9 @@ public class CompanyTools {
                 .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
 
-        conversationMemory.setLastMentioned(
-                "MISSION",
-                failed.stream().map(MissionResponse::missionId).toList()
-        );
+        var failedIds = failed.stream().map(MissionResponse::missionId).toList();
+        conversationMemory.setLastMentioned("MISSION", failedIds);
+        conversationMemory.recordChatMention("MISSION", failedIds);
 
         if (failed.isEmpty()) {
             return "No hay ninguna misión fallida en este momento.";
@@ -225,10 +223,9 @@ public class CompanyTools {
                 .filter(m -> "TEST".equals(m.environment()))
                 .toList();
 
-        conversationMemory.setLastMentioned(
-                "MISSION",
-                test.stream().map(MissionResponse::missionId).toList()
-        );
+        var testIds = test.stream().map(MissionResponse::missionId).toList();
+        conversationMemory.setLastMentioned("MISSION", testIds);
+        conversationMemory.recordChatMention("MISSION", testIds);
 
         if (test.isEmpty()) {
             return "No hay ninguna misión en entorno de prueba en este momento.";
@@ -280,10 +277,9 @@ public class CompanyTools {
         var candidates = opportunityMemory.listCandidatesForMission(missionId);
 
         if (!candidates.isEmpty()) {
-            conversationMemory.setLastMentioned(
-                    "CUSTOMER",
-                    candidates.stream().map(LeadResponse::id).toList()
-            );
+            var candidateIds = candidates.stream().map(LeadResponse::id).toList();
+            conversationMemory.setLastMentioned("CUSTOMER", candidateIds);
+            conversationMemory.recordChatMention("CUSTOMER", candidateIds);
         }
 
         var header = "Oportunidad " + opportunity.get().id() + " (misión " + opportunity.get().missionId()
@@ -350,6 +346,7 @@ public class CompanyTools {
         }
 
         conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+        conversationMemory.recordChatMention("MISSION", List.of(missionId));
 
         var mission = details.get().mission();
 
@@ -471,10 +468,9 @@ public class CompanyTools {
                 .filter(CompanyTools::isActiveMission)
                 .toList();
 
-        conversationMemory.setLastMentioned(
-                "MISSION",
-                active.stream().map(MissionResponse::missionId).toList()
-        );
+        var activeIds = active.stream().map(MissionResponse::missionId).toList();
+        conversationMemory.setLastMentioned("MISSION", activeIds);
+        conversationMemory.recordChatMention("MISSION", activeIds);
 
         if (active.isEmpty()) {
             return "No hay ninguna misión activa en este momento.";
@@ -501,6 +497,47 @@ public class CompanyTools {
                 && m.status() != MissionStatus.FAILED
                 && m.status() != MissionStatus.COMPLETED
                 && m.status() != MissionStatus.CANCELLED;
+    }
+
+    /**
+     * Transcript real de un día calendario puntual (formato
+     * {@code YYYY-MM-DD}) — la respuesta a "¿qué hablamos el [día]?".
+     * Nunca inventa contenido: si ese día no tiene ningún {@code Chat}
+     * registrado, lo dice explícitamente.
+     */
+    public String getChatHistory(String date) {
+
+        var messages = conversationMemory.chatHistoryForDate(date);
+
+        if (messages.isEmpty()) {
+            return "No hubo conversación registrada ese día.";
+        }
+
+        var lines = messages.stream()
+                .map(m -> m.role() + ": " + m.content())
+                .collect(Collectors.joining(" | "));
+
+        return "Charla del " + date + " (" + messages.size() + " mensaje(s)): " + lines;
+    }
+
+    /**
+     * Los días reales en los que se mencionó esta entidad en el chat —
+     * la respuesta a "¿en qué días hablamos de MISSION-X?". Acepta
+     * cualquier id real (misión u otra entidad), no solo
+     * {@code MISSION-<n>} — el atajo determinista de keywords en
+     * {@code ChatIntentRouter} solo lo dispara con un
+     * {@code MISSION-<id>} explícito, pero el chat general del CEO
+     * puede pedirlo con cualquier id real vía la herramienta.
+     */
+    public String getDaysMentioning(String id) {
+
+        var dates = conversationMemory.daysMentioning(id);
+
+        if (dates.isEmpty()) {
+            return "No encontré menciones de " + id + " en el historial de chat.";
+        }
+
+        return "Hablamos de " + id + " en " + dates.size() + " día(s): " + String.join(", ", dates) + ".";
     }
 
     /**
