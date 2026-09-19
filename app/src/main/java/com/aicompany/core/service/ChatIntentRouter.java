@@ -716,7 +716,10 @@ public class ChatIntentRouter {
         OPPORTUNITIES,
         LEADS,
         COMPANY_PROFIT,
-        COMPANY_STATUS
+        COMPANY_STATUS,
+        RECENT_ACTIVITY,
+        RECENT_DECISIONS,
+        ACTIVE_MISSIONS
     }
 
     private QueryIntent detectQuery(String message) {
@@ -761,6 +764,20 @@ public class ChatIntentRouter {
             // misiones de desarrollo (MISSION-STRUCTURED-*, MVP-*, etc.)
             // contaminaban toda pregunta de negocio real.
             return QueryIntent.TEST_MISSIONS;
+        }
+
+        if (normalized.contains("actividad")) {
+            return QueryIntent.RECENT_ACTIVITY;
+        }
+
+        if (normalized.contains("decision")) {
+            return QueryIntent.RECENT_DECISIONS;
+        }
+
+        if (normalized.contains("mision") && normalized.contains("activa")) {
+            // Exige las dos palabras juntas -- "activa" sola aparece en
+            // frases sin relación ninguna a misiones.
+            return QueryIntent.ACTIVE_MISSIONS;
         }
 
         if (normalized.contains("aprobacion")
@@ -833,6 +850,9 @@ public class ChatIntentRouter {
             case "LEADS" -> companyTools.getProspects();
             case "COMPANY_PROFIT" -> companyTools.getFinancialStatus();
             case "COMPANY_STATUS" -> companyTools.getCompanyStatus();
+            case "RECENT_ACTIVITY" -> companyTools.getRecentActivity();
+            case "RECENT_DECISIONS" -> companyTools.getRecentDecisions();
+            case "ACTIVE_MISSIONS" -> companyTools.getActiveMissions();
             case "MISSION_DETAILS" -> (id == null || id.isBlank())
                     ? "Para consultar el detalle de una misión necesito el MISSION-<id> exacto."
                     : companyTools.getMission(id);

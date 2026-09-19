@@ -935,4 +935,43 @@ class ChatIntentRouterTest {
 
         verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-DEBUG-007"));
     }
+
+    @Test
+    void routesRecentActivityQueryWithDeterministicFormatting() {
+        when(activityMemory.recent(20)).thenReturn(List.of(
+                new com.aicompany.core.model.ActivityItem(
+                        "MISSION", "MISSION-1", null, "Trabajo paralelo: WAITING_AGENT_RESULTS", Instant.now()
+                )
+        ));
+
+        var response = router.route("¿Qué actividad reciente hay?");
+
+        assertTrue(response.contains("[MISSION]"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesRecentDecisionsQueryWithDeterministicFormatting() {
+        when(missionMemory.recentDecisions(10)).thenReturn(List.of(
+                new com.aicompany.core.model.DecisionActivity(
+                        "MISSION-1-DECISION-1", "MISSION-1", "APPROVE", "Se ve bien", Instant.now()
+                )
+        ));
+
+        var response = router.route("¿Qué decisiones tomé hasta ahora?");
+
+        assertTrue(response.contains("APPROVE"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesActiveMissionsQueryWithDeterministicFormatting() {
+        var active = new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(active));
+
+        var response = router.route("¿Qué misiones están activas?");
+
+        assertTrue(response.contains("MISSION-1"));
+        verifyNoInteractions(ceoService);
+    }
 }
