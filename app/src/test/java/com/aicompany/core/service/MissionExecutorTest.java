@@ -72,7 +72,8 @@ class MissionExecutorTest {
                 "Microempresas de logística en Medellín",
                 "Identificadas en estudios de mercado citados por el agente",
                 "https://example.com/estudio-logistica",
-                "WEB"
+                "WEB",
+                0.4
         );
 
         var salesResult = new AgentResult(

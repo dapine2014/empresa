@@ -5,6 +5,7 @@ import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.LastMentioned;
+import com.aicompany.core.model.LeadResponse;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
@@ -27,11 +28,15 @@ class ChatIntentRouterTest {
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
     private final CompanyMemoryService companyMemory = mock(CompanyMemoryService.class);
     private final ConversationMemoryService conversationMemory = mock(ConversationMemoryService.class);
+    private final ActivityMemoryService activityMemory = mock(ActivityMemoryService.class);
     private final com.aicompany.core.config.AppProperties appProperties =
             new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
+    private final CompanyTools companyTools = new CompanyTools(
+            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties
+    );
 
     private final ChatIntentRouter router = new ChatIntentRouter(
-            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory, conversationMemory, appProperties
+            missionService, ceoService, missionMemory, opportunityMemory, companyMemory, conversationMemory, companyTools
     );
 
     @Test
@@ -233,6 +238,78 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void routesMissionDetailsQueryWithExplicitMissionId() {
+        // Reportado por el usuario: "¿Cómo va MISSION-X?" caía al chat
+        // general y el CEO respondía "no tengo acceso" -- pese a que
+        // MissionService.details ya existe y tiene el dato real.
+        var mission = new MissionResponse(
+                "MISSION-1789701859658", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION",
+                35, "Esperando resultados", "Los agentes están trabajando en paralelo.", Instant.now()
+        );
+        var tasks = List.of(
+                new com.aicompany.core.model.AgentTask(
+                        "MISSION-1789701859658-SALES", "MISSION-1789701859658", "sales",
+                        "MARKET_DISCOVERY", "RUNNING", "", Instant.now()
+                )
+        );
+        when(missionService.details("MISSION-1789701859658"))
+                .thenReturn(Optional.of(new com.aicompany.core.model.MissionStatusResponse(mission, tasks)));
+
+        var response = router.route("¿Cómo va la misión MISSION-1789701859658?");
+
+        assertTrue(response.contains("MISSION-1789701859658"));
+        assertTrue(response.contains("WAITING_AGENT_RESULTS"));
+        assertTrue(response.contains("35"));
+        assertTrue(response.contains("sales"));
+        verifyNoInteractions(ceoService);
+        verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-1789701859658"));
+    }
+
+    @Test
+    void routesMissionDetailsQueryUsingConversationalFocusWhenNoIdGiven() {
+        when(conversationMemory.lastMentioned())
+                .thenReturn(Optional.of(new LastMentioned("MISSION", List.of("MISSION-42"))));
+        var mission = new MissionResponse(
+                "MISSION-42", MissionStatus.AWAITING_INVESTOR, "PRODUCTION",
+                95, "Recomendación", "informe final", Instant.now()
+        );
+        when(missionService.details("MISSION-42"))
+                .thenReturn(Optional.of(new com.aicompany.core.model.MissionStatusResponse(mission, List.of())));
+
+        var response = router.route("¿Cómo va la misión?");
+
+        assertTrue(response.contains("MISSION-42"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void missionDetailsQueryReportsNotFoundForUnknownMission() {
+        when(missionService.details("MISSION-404")).thenReturn(Optional.empty());
+
+        var response = router.route("Dame los avances de MISSION-404");
+
+        assertTrue(response.contains("No encontré la misión MISSION-404"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void missionDetailsQueryFallsBackToGeneralChatWhenNoIdAndNoFocus() {
+        // Sin MISSION-<id> explícito y sin foco previo no hay a qué
+        // misión responder -- nunca se adivina, mismo criterio que
+        // detectDecision.
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), eq("¿Cómo va la misión?"), any()))
+                .thenReturn("No tengo una misión en foco todavía.");
+
+        var response = router.route("¿Cómo va la misión?");
+
+        assertEquals("No tengo una misión en foco todavía.", response);
+        verify(missionService, never()).details(any());
+    }
+
+    @Test
     void routesMissionsNeedingAttentionQueryFilteredByStatusWithDeterministicCount() {
         // Deliberadamente estricto: solo AWAITING_INVESTOR -- una misión
         // FAILED no "necesita aprobación" (mezclarlas bajo esa etiqueta
@@ -311,6 +388,203 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("1 oportunidad"));
         assertTrue(response.contains("asesoría a microempresas"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesOpportunitiesQueryWithMissionIdBringsCandidatesOrderedByConfidence() {
+        when(opportunityMemory.findByMissionId("MISSION-1")).thenReturn(Optional.of(
+                new OpportunitySummary("MISSION-1-OPPORTUNITY", "MISSION-1", "asesoría a microempresas", "IDENTIFIED", Instant.now())
+        ));
+        when(opportunityMemory.listCandidatesForMission("MISSION-1")).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        var response = router.route(
+                "¿Qué oportunidades concretas tenemos en la misión MISSION-1 y qué prospectos reales están asociados?");
+
+        assertTrue(response.contains("asesoría a microempresas"));
+        assertTrue(response.contains("Panadería El Sol"));
+        assertTrue(response.contains("0.80"));
+        verify(conversationMemory).setLastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void opportunityForMissionQueryReportsWhenThereAreNoCandidatesYet() {
+        // Fix 6/7: una oportunidad sin prospectos todavía no debe pisar
+        // el foco conversacional con una lista vacía, y la respuesta debe
+        // decirlo explícitamente en vez de una lista en blanco.
+        when(opportunityMemory.findByMissionId("MISSION-5")).thenReturn(Optional.of(
+                new OpportunitySummary("MISSION-5-OPPORTUNITY", "MISSION-5", "consultoría fiscal", "IDENTIFIED", Instant.now())
+        ));
+        when(opportunityMemory.listCandidatesForMission("MISSION-5")).thenReturn(List.of());
+
+        var response = router.route("¿Qué oportunidad tenemos en la misión MISSION-5?");
+
+        assertTrue(response.contains("Todavía no hay ningún prospecto real identificado"));
+        verify(conversationMemory, never()).setLastMentioned(eq("CUSTOMER"), any());
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesOpportunitiesQueryWithMissionIdThatHasNoOpportunityYet() {
+        when(opportunityMemory.findByMissionId("MISSION-404")).thenReturn(Optional.empty());
+
+        var response = router.route("¿Qué oportunidades tenemos en la misión MISSION-404?");
+
+        assertTrue(response.contains("No encontré ninguna oportunidad"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceResolvesToTheSingleProspectInFocus() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0"))).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        var response = router.route("Contactalo por favor.");
+
+        assertTrue(response.contains("Panadería El Sol"));
+        assertFalse(response.contains("Avisame"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceResolvesToTheHighestConfidenceProspectWhenSeveralAndNoneMentioned() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1")))
+                .thenReturn(List.of(
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                                "Identificada en estudio de mercado", "https://example.com", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.8
+                        ),
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-1", "Estudio PixelCraft",
+                                "Identificado en artículo de tendencias", "https://example.com/2", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.3
+                        )
+                ));
+
+        var response = router.route("Contactalo.");
+
+        assertTrue(response.contains("Panadería El Sol"));
+        assertTrue(response.contains("Avisame"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceResolvesToTheExplicitlyNamedProspectAmongSeveral() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0", "MISSION-1-CANDIDATE-SALES-1")))
+                .thenReturn(List.of(
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                                "Identificada en estudio de mercado", "https://example.com", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.8
+                        ),
+                        new LeadResponse(
+                                "MISSION-1-CANDIDATE-SALES-1", "Estudio PixelCraft",
+                                "Identificado en artículo de tendencias", "https://example.com/2", "WEB",
+                                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                                "LEAD", null, null, 0.3
+                        )
+                ));
+
+        var response = router.route("Contacta a Estudio PixelCraft.");
+
+        assertTrue(response.contains("Estudio PixelCraft"));
+        assertFalse(response.contains("Panadería El Sol"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceReportsWhenFocusedProspectsNoLongerExist() {
+        // Fix 7: foco CUSTOMER vigente pero los prospectos ya no existen
+        // (findCandidatesByIds vacío) -- debe decirlo explícitamente, no
+        // caer en un NPE ni en una respuesta vacía.
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"))
+        ));
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0")))
+                .thenReturn(List.of());
+
+        var response = router.route("Contactalo por favor.");
+
+        assertTrue(response.contains("No tengo datos registrados de esos prospectos"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void customerReferenceFallsBackToGeneralChatWhenNoCustomerFocus() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn("respuesta general");
+
+        var response = router.route("Contactalo por favor.");
+
+        assertEquals("respuesta general", response);
+        verify(opportunityMemory, never()).findCandidatesByIds(any());
+    }
+
+    @Test
+    void customerReferenceGateDoesNotInterceptTheGenericLeadsQueryEvenWithAnActiveCustomerFocus() {
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.of(
+                new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"))
+        ));
+        when(opportunityMemory.listLeads()).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        var response = router.route("¿Qué leads tengo para contactar?");
+
+        assertTrue(response.contains("1 lead"));
+        verify(opportunityMemory, never()).findCandidatesByIds(any());
+    }
+
+    @Test
+    void routesLeadsQueryWithDeterministicFormatting() {
+        when(opportunityMemory.listLeads()).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        var response = router.route("¿Qué leads tengo para contactar?");
+
+        assertTrue(response.contains("1 lead"));
+        assertTrue(response.contains("Panadería El Sol"));
         verifyNoInteractions(ceoService);
     }
 
@@ -417,24 +691,90 @@ class ChatIntentRouterTest {
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
         when(missionMemory.findAll(50)).thenReturn(List.of());
         when(opportunityMemory.listRecent(20)).thenReturn(List.of());
+        when(opportunityMemory.listLeads()).thenReturn(List.of());
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{100.0, 40.0});
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
 
+        var mission = new MissionResponse(
+                "MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now()
+        );
+        when(missionService.details("MISSION-1")).thenReturn(
+                Optional.of(new com.aicompany.core.model.MissionStatusResponse(mission, List.of()))
+        );
+        when(opportunityMemory.findByMissionId("MISSION-1")).thenReturn(
+                Optional.of(new OpportunitySummary("MISSION-1-OPPORTUNITY", "MISSION-1", "desc", "IDENTIFIED", Instant.now()))
+        );
+        when(opportunityMemory.listCandidatesForMission("MISSION-1")).thenReturn(List.of());
+        when(activityMemory.recent(20)).thenReturn(List.of());
+        when(missionMemory.recentDecisions(10)).thenReturn(List.of());
+
         router.route("Hola, ¿cómo estás?");
 
-        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.BiFunction.class);
         verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
-        var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
+        var companyMemoryQuery = (java.util.function.BiFunction<String, String, String>) captor.getValue();
 
-        assertTrue(companyMemoryQuery.apply("AGENT_STATUS").contains("Sofia"));
-        assertTrue(companyMemoryQuery.apply("MISSIONS_NEEDING_ATTENTION").contains("No hay ninguna misión"));
-        assertTrue(companyMemoryQuery.apply("FAILED_MISSIONS").contains("No hay ninguna misión"));
-        assertTrue(companyMemoryQuery.apply("TEST_MISSIONS").contains("No hay ninguna misión"));
-        assertTrue(companyMemoryQuery.apply("LAST_MENTIONED").contains("No hay ninguna mención reciente"));
-        assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
-        assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
-        assertTrue(companyMemoryQuery.apply("COMPANY_STATUS").contains("Estado actual de Forjai"));
-        assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
+        assertTrue(companyMemoryQuery.apply("AGENT_STATUS", null).contains("Sofia"));
+        assertTrue(companyMemoryQuery.apply("MISSIONS_NEEDING_ATTENTION", null).contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("FAILED_MISSIONS", null).contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("TEST_MISSIONS", null).contains("No hay ninguna misión"));
+        assertTrue(companyMemoryQuery.apply("LAST_MENTIONED", null).contains("No hay ninguna mención reciente"));
+        assertTrue(companyMemoryQuery.apply("OPPORTUNITIES", null).contains("Todavía no hay ninguna oportunidad"));
+        assertTrue(companyMemoryQuery.apply("LEADS", null).contains("No hay ningún lead"));
+        assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT", null).contains("60.00"));
+        assertTrue(companyMemoryQuery.apply("COMPANY_STATUS", null).contains("Estado actual de Forjai"));
+        assertTrue(companyMemoryQuery.apply("MISSION_DETAILS", "MISSION-1").contains("AWAITING_INVESTOR"));
+        assertTrue(companyMemoryQuery.apply("OPPORTUNITY_DETAILS", "MISSION-1").contains("Todavía no hay ningún prospecto"));
+        assertTrue(companyMemoryQuery.apply("RECENT_ACTIVITY", null).contains("Todavía no hay actividad"));
+        assertTrue(companyMemoryQuery.apply("RECENT_DECISIONS", null).contains("Todavía no se registró"));
+        assertTrue(companyMemoryQuery.apply("ACTIVE_MISSIONS", null).contains("No hay ninguna misión activa"));
+        assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE", null).contains("Dato no reconocido"));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void companyMemoryQueryGuardsMissingIdForMissionDetailsInsteadOfCrashing() {
+        // El único camino que llega a MISSION_DETAILS/OPPORTUNITY_DETAILS
+        // con un id controlado por el modelo (no extraído por regex) es
+        // la herramienta query_company_memory -- su JSON Schema
+        // deliberadamente no marca "id" como required, así que un
+        // tool-call real puede omitirlo. Sin este guard,
+        // CompanyTools.getMission(null) -> MissionService.details(null)
+        // -> Map.of("id", null) lanza NullPointerException, que se
+        // propaga sin manejo hasta POST /api/company/chat (500 crudo).
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ignored");
+
+        router.route("Hola, ¿cómo estás?");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.BiFunction.class);
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
+        var companyMemoryQuery = (java.util.function.BiFunction<String, String, String>) captor.getValue();
+
+        var response = companyMemoryQuery.apply("MISSION_DETAILS", null);
+
+        assertTrue(response.contains("necesito el MISSION-<id>"));
+        verify(missionService, never()).details(any());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void companyMemoryQueryGuardsMissingIdForOpportunityDetailsInsteadOfCrashing() {
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ignored");
+
+        router.route("Hola, ¿cómo estás?");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.BiFunction.class);
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
+        var companyMemoryQuery = (java.util.function.BiFunction<String, String, String>) captor.getValue();
+
+        var response = companyMemoryQuery.apply("OPPORTUNITY_DETAILS", null);
+
+        assertTrue(response.contains("necesito el MISSION-<id>"));
+        verify(opportunityMemory, never()).findByMissionId(any());
     }
 
     @Test
@@ -599,5 +939,65 @@ class ChatIntentRouterTest {
         router.route("¿Qué misiones están en prueba?");
 
         verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-DEBUG-007"));
+    }
+
+    @Test
+    void routesRecentActivityQueryWithDeterministicFormatting() {
+        when(activityMemory.recent(20)).thenReturn(List.of(
+                new com.aicompany.core.model.ActivityItem(
+                        "MISSION", "MISSION-1", null, "Trabajo paralelo: WAITING_AGENT_RESULTS", Instant.now()
+                )
+        ));
+
+        var response = router.route("¿Qué actividad reciente hay?");
+
+        assertTrue(response.contains("[MISSION]"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesRecentDecisionsQueryWithDeterministicFormatting() {
+        when(missionMemory.recentDecisions(10)).thenReturn(List.of(
+                new com.aicompany.core.model.DecisionActivity(
+                        "MISSION-1-DECISION-1", "MISSION-1", "APPROVE", "Se ve bien", Instant.now()
+                )
+        ));
+
+        var response = router.route("¿Qué decisiones tomé hasta ahora?");
+
+        assertTrue(response.contains("APPROVE"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void needsDecisionPhraseRoutesToPendingApprovalsNotRecentDecisions() {
+        // Fix real de revisión: "decisión" normaliza (sin tilde) a
+        // "decision" -- "¿Qué misiones necesitan una decisión mía?"
+        // contiene tanto "necesita" (MISSIONS_NEEDING_ATTENTION) como
+        // "decision" (RECENT_DECISIONS). Antes del fix, RECENT_DECISIONS
+        // se chequeaba primero y ganaba, devolviendo el historial de
+        // decisiones ya tomadas en vez de la lista de aprobación
+        // pendiente que el usuario realmente pidió.
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(awaiting));
+
+        var response = router.route("¿Qué misiones necesitan una decisión mía?");
+
+        assertTrue(response.contains("1 misión"));
+        assertTrue(response.contains("MISSION-1"));
+        assertTrue(response.contains("aprobación"));
+        verify(missionMemory, never()).recentDecisions(anyInt());
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesActiveMissionsQueryWithDeterministicFormatting() {
+        var active = new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(active));
+
+        var response = router.route("¿Qué misiones están activas?");
+
+        assertTrue(response.contains("MISSION-1"));
+        verifyNoInteractions(ceoService);
     }
 }

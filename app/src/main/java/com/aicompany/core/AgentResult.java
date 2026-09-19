@@ -87,7 +87,8 @@ public record AgentResult(
             String name,
             String description,
             String source,
-            String sourceType
+            String sourceType,
+            double confidence
     ) {
     }
 

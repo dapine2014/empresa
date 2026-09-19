@@ -75,13 +75,15 @@ public final class AgentResultSchema {
                     "sourceType", Map.of(
                             "type", "string",
                             "enum", EVIDENCE_SOURCE_TYPES
-                    )
+                    ),
+                    "confidence", Map.of("type", "number", "minimum", 0, "maximum", 1)
             ),
             "required", List.of(
                     "name",
                     "description",
                     "source",
-                    "sourceType"
+                    "sourceType",
+                    "confidence"
             ),
             "additionalProperties", false
     );

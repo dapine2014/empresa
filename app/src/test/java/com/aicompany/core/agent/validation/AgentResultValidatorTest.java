@@ -70,6 +70,38 @@ class AgentResultValidatorTest {
                 .anyMatch(error -> error.contains("evidencia verificada debe tener source")));
     }
 
+    @Test
+    void rejectsCustomerCandidateWithConfidenceOutOfRange() {
+        var candidate = new AgentResult.CustomerCandidate(
+                "Panadería El Sol",
+                "Identificada en estudio de mercado",
+                "https://example.com",
+                "WEB",
+                1.5
+        );
+
+        var validation = validator.validate(resultWithCandidates(List.of(candidate)));
+
+        assertFalse(validation.valid());
+        assertTrue(validation.errors().stream()
+                .anyMatch(error -> error.contains("customerCandidate confidence")));
+    }
+
+    @Test
+    void acceptsCustomerCandidateWithConfidenceInRange() {
+        var candidate = new AgentResult.CustomerCandidate(
+                "Panadería El Sol",
+                "Identificada en estudio de mercado",
+                "https://example.com",
+                "WEB",
+                0.42
+        );
+
+        var validation = validator.validate(resultWithCandidates(List.of(candidate)));
+
+        assertTrue(validation.valid(), () -> String.join(", ", validation.errors()));
+    }
+
     private AgentResult result(
             String verificationStatus,
             List<AgentResult.Evidence> evidence,
@@ -88,6 +120,25 @@ class AgentResultValidatorTest {
                 List.of(),
                 "Validar antes de invertir.",
                 0.7
+        );
+    }
+
+    private AgentResult resultWithCandidates(List<AgentResult.CustomerCandidate> candidates) {
+
+        return new AgentResult(
+                "finance",
+                "UNIT_ECONOMICS",
+                "NOT_VALIDATED",
+                List.of(),
+                List.of("Se debe validar la demanda."),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                "Validar antes de invertir.",
+                0.7,
+                candidates
         );
     }
 }

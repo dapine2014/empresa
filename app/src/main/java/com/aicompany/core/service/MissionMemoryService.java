@@ -4,6 +4,7 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.evidence.EvidenceDedupKey;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
+import com.aicompany.core.model.DecisionActivity;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
@@ -341,6 +342,42 @@ public class MissionMemoryService {
                             r.get("id").asString(), missionId,
                             r.get("agentId").asString(), r.get("action").asString(), r.get("status").asString(),
                             r.get("result").asString(""), Instant.parse(r.get("updatedAt").asString())));
+        }
+    }
+
+    /**
+     * Últimas decisiones reales del inversionista humano, sin importar
+     * la misión — usado por el chat cuando se pregunta "¿qué decisiones
+     * tomé?" en general, no por una misión puntual (para eso ya está
+     * {@code MissionStatusResponse}/{@code recordDecision}).
+     *
+     * <p>{@code WHERE d.decidedAt IS NOT NULL} filtra un {@code Decision}
+     * malformado (sin esa propiedad, posible en esta instancia de Neo4j
+     * compartida y a veces editada a mano) directo en la query — el
+     * driver de Neo4j devuelve el literal {@code "null"} para una
+     * propiedad ausente vía {@code asString()} (no lanza ahí), así que
+     * {@code Instant.parse("null")} explotaría en el row-mapper sin este
+     * guard, y sin fecha ese nodo además ordena como el más reciente
+     * ({@code ORDER BY ... DESC} trata {@code null} como el mayor valor),
+     * envenenando el {@code LIMIT} para todos. Mismo criterio que el
+     * resto del proyecto: filtrar datos inutilizables en Cypher, no
+     * parchearlo en el mapeo Java.
+     */
+    public List<DecisionActivity> recentDecisions(int limit) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (d:Decision) WHERE d.decidedAt IS NOT NULL " +
+                                    "RETURN d.id AS id, d.missionId AS missionId, d.decision AS decision, " +
+                                    "d.reasoning AS reasoning, d.decidedAt AS decidedAt " +
+                                    "ORDER BY d.decidedAt DESC LIMIT $limit",
+                            Map.of("limit", limit))
+                    .list(r -> new DecisionActivity(
+                            r.get("id").asString(),
+                            r.get("missionId").asString(),
+                            r.get("decision").asString(),
+                            r.get("reasoning").asString(""),
+                            Instant.parse(r.get("decidedAt").asString())
+                    ));
         }
     }
 }
