@@ -4,6 +4,7 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.llm.LlmResponse;
 import com.aicompany.core.model.ConversationTurn;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -1121,7 +1122,7 @@ public class CeoService {
     }
 
     @SuppressWarnings("unchecked")
-    private ModelMessage callModel(
+    private LlmResponse callModel(
             String operation,
             String actor,
             String model,
@@ -1146,7 +1147,7 @@ public class CeoService {
      *              el default del modelo (para operaciones que no usan
      *              modelos con pensamiento, como el CEO).
      */
-    private ModelMessage callModel(
+    private LlmResponse callModel(
             String operation,
             String actor,
             String model,
@@ -1219,7 +1220,7 @@ public class CeoService {
                     localDurationMs
             );
 
-            return new ModelMessage("Sin respuesta del modelo.", List.of());
+            return new LlmResponse("Sin respuesta del modelo.", List.of());
         }
 
         logMetrics(
@@ -1234,7 +1235,7 @@ public class CeoService {
                 (Map<String, Object>) response.get("message");
 
         if (msg == null) {
-            return new ModelMessage("Sin respuesta del modelo.", List.of());
+            return new LlmResponse("Sin respuesta del modelo.", List.of());
         }
 
         var content = String.valueOf(msg.get("content"));
@@ -1252,13 +1253,7 @@ public class CeoService {
             }
         }
 
-        return new ModelMessage(content, toolCalls);
-    }
-
-    private record ModelMessage(
-            String content,
-            List<Map<String, Object>> toolCalls
-    ) {
+        return new LlmResponse(content, toolCalls);
     }
 
     private void logMetrics(
