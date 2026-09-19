@@ -705,6 +705,8 @@ class ChatIntentRouterTest {
                 Optional.of(new OpportunitySummary("MISSION-1-OPPORTUNITY", "MISSION-1", "desc", "IDENTIFIED", Instant.now()))
         );
         when(opportunityMemory.listCandidatesForMission("MISSION-1")).thenReturn(List.of());
+        when(activityMemory.recent(20)).thenReturn(List.of());
+        when(missionMemory.recentDecisions(10)).thenReturn(List.of());
 
         router.route("Hola, ¿cómo estás?");
 
@@ -723,6 +725,9 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("COMPANY_STATUS", null).contains("Estado actual de Forjai"));
         assertTrue(companyMemoryQuery.apply("MISSION_DETAILS", "MISSION-1").contains("AWAITING_INVESTOR"));
         assertTrue(companyMemoryQuery.apply("OPPORTUNITY_DETAILS", "MISSION-1").contains("Todavía no hay ningún prospecto"));
+        assertTrue(companyMemoryQuery.apply("RECENT_ACTIVITY", null).contains("Todavía no hay actividad"));
+        assertTrue(companyMemoryQuery.apply("RECENT_DECISIONS", null).contains("Todavía no se registró"));
+        assertTrue(companyMemoryQuery.apply("ACTIVE_MISSIONS", null).contains("No hay ninguna misión activa"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE", null).contains("Dato no reconocido"));
     }
 

@@ -97,7 +97,10 @@ public class CeoService {
                                                             "COMPANY_PROFIT",
                                                             "COMPANY_STATUS",
                                                             "MISSION_DETAILS",
-                                                            "OPPORTUNITY_DETAILS"
+                                                            "OPPORTUNITY_DETAILS",
+                                                            "RECENT_ACTIVITY",
+                                                            "RECENT_DECISIONS",
+                                                            "ACTIVE_MISSIONS"
                                                     ),
                                                     "description",
                                                     "AGENT_STATUS: qué está "
@@ -185,7 +188,30 @@ public class CeoService {
                                                             + "de la misión, "
                                                             + "nunca el id "
                                                             + "interno de la "
-                                                            + "Opportunity)."
+                                                            + "Opportunity). "
+                                                            + "RECENT_ACTIVITY: "
+                                                            + "línea de tiempo "
+                                                            + "reciente de la "
+                                                            + "empresa (misiones, "
+                                                            + "tareas, evidencia, "
+                                                            + "decisiones). "
+                                                            + "RECENT_DECISIONS: "
+                                                            + "últimas decisiones "
+                                                            + "reales del "
+                                                            + "inversionista "
+                                                            + "humano, sin "
+                                                            + "filtrar por "
+                                                            + "misión puntual. "
+                                                            + "ACTIVE_MISSIONS: "
+                                                            + "misiones reales "
+                                                            + "en curso (ni "
+                                                            + "esperando "
+                                                            + "aprobación, ni "
+                                                            + "fallidas, ni "
+                                                            + "completadas, ni "
+                                                            + "canceladas) con "
+                                                            + "su status y "
+                                                            + "progreso real."
                                             ),
                                             "id", Map.of(
                                                     "type", "string",
