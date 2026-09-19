@@ -375,9 +375,10 @@ class CompanyToolsTest {
 
     @Test
     void getRecentDecisionsFormatsRealDecisions() {
+        var decidedAt = Instant.parse("2026-09-18T12:00:00Z");
         when(missionMemory.recentDecisions(10)).thenReturn(List.of(
                 new com.aicompany.core.model.DecisionActivity(
-                        "MISSION-1-DECISION-1", "MISSION-1", "APPROVE", "Se ve bien", Instant.now()
+                        "MISSION-1-DECISION-1", "MISSION-1", "APPROVE", "Se ve bien", decidedAt
                 )
         ));
 
@@ -386,6 +387,27 @@ class CompanyToolsTest {
         assertTrue(response.contains("MISSION-1"));
         assertTrue(response.contains("APPROVE"));
         assertTrue(response.contains("Se ve bien"));
+        assertTrue(response.contains(decidedAt.toString()));
+    }
+
+    @Test
+    void getRecentDecisionsTruncatesLongReasoning() {
+        // El reasoning de una Decision puede ser una instrucción de
+        // misión completa en texto libre (~500 caracteres) -- diez de
+        // esas juntas producirían una sola línea de chat gigantesca, y
+        // por el camino del tool-call de la herramienta, todo eso
+        // entraría al prompt del CEO.
+        var longReasoning = "x".repeat(150);
+        when(missionMemory.recentDecisions(10)).thenReturn(List.of(
+                new com.aicompany.core.model.DecisionActivity(
+                        "MISSION-1-DECISION-1", "MISSION-1", "APPROVE", longReasoning, Instant.now()
+                )
+        ));
+
+        var response = tools.getRecentDecisions();
+
+        assertFalse(response.contains(longReasoning));
+        assertTrue(response.contains("x".repeat(100) + "..."));
     }
 
     @Test

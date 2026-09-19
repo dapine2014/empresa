@@ -970,6 +970,27 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void needsDecisionPhraseRoutesToPendingApprovalsNotRecentDecisions() {
+        // Fix real de revisión: "decisión" normaliza (sin tilde) a
+        // "decision" -- "¿Qué misiones necesitan una decisión mía?"
+        // contiene tanto "necesita" (MISSIONS_NEEDING_ATTENTION) como
+        // "decision" (RECENT_DECISIONS). Antes del fix, RECENT_DECISIONS
+        // se chequeaba primero y ganaba, devolviendo el historial de
+        // decisiones ya tomadas en vez de la lista de aprobación
+        // pendiente que el usuario realmente pidió.
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(awaiting));
+
+        var response = router.route("¿Qué misiones necesitan una decisión mía?");
+
+        assertTrue(response.contains("1 misión"));
+        assertTrue(response.contains("MISSION-1"));
+        assertTrue(response.contains("aprobación"));
+        verify(missionMemory, never()).recentDecisions(anyInt());
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
     void routesActiveMissionsQueryWithDeterministicFormatting() {
         var active = new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "y", Instant.now());
         when(missionMemory.findAll(50)).thenReturn(List.of(active));

@@ -30,6 +30,11 @@ import java.util.stream.Collectors;
 @Service
 public class CompanyTools {
 
+    // Límites fijos de las consultas "recent*" -- antes literales bare
+    // repetidos en el call-site, sin nombre que explique de dónde salen.
+    private static final int RECENT_ACTIVITY_LIMIT = 20;
+    private static final int RECENT_DECISIONS_LIMIT = 10;
+
     private final MissionService missionService;
     private final MissionMemoryService missionMemory;
     private final OpportunityMemoryService opportunityMemory;
@@ -67,10 +72,7 @@ public class CompanyTools {
                 .toList();
 
         var active = missions.stream()
-                .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
-                        && m.status() != MissionStatus.FAILED
-                        && m.status() != MissionStatus.COMPLETED
-                        && m.status() != MissionStatus.CANCELLED)
+                .filter(CompanyTools::isActiveMission)
                 .count();
 
         var awaitingInvestor = missions.stream()
@@ -411,7 +413,7 @@ public class CompanyTools {
      */
     public String getRecentActivity() {
 
-        var items = activityMemory.recent(20);
+        var items = activityMemory.recent(RECENT_ACTIVITY_LIMIT);
 
         if (items.isEmpty()) {
             return "Todavía no hay actividad registrada.";
@@ -426,18 +428,30 @@ public class CompanyTools {
 
     /**
      * Decisiones reales del inversionista humano, sin filtrar por
-     * misión puntual (para eso está {@link #getMission(String)}).
+     * misión puntual (para eso está {@link #getMission(String)}). Incluye
+     * {@code decidedAt} (una misma misión puede acumular varias
+     * decisiones a lo largo del tiempo, p. ej. un
+     * {@code REQUEST_MORE_EVIDENCE} seguido de un {@code APPROVE} —
+     * sin fecha, dos líneas así son casi indistinguibles) y trunca
+     * {@code reasoning} a 100 caracteres (puede ser una instrucción de
+     * misión completa en texto libre, ~500 caracteres — mismo criterio
+     * de truncado que ya usa {@code ActivityMemoryService}).
      */
     public String getRecentDecisions() {
 
-        var decisions = missionMemory.recentDecisions(10);
+        var decisions = missionMemory.recentDecisions(RECENT_DECISIONS_LIMIT);
 
         if (decisions.isEmpty()) {
             return "Todavía no se registró ninguna decisión real.";
         }
 
         var lines = decisions.stream()
-                .map(d -> d.missionId() + ": " + d.decision() + " — " + d.reasoning())
+                .map(d -> {
+                    var reasoning = d.reasoning().length() > 100
+                            ? d.reasoning().substring(0, 100) + "..."
+                            : d.reasoning();
+                    return d.missionId() + " (" + d.decidedAt() + "): " + d.decision() + " — " + reasoning;
+                })
                 .collect(Collectors.joining(" | "));
 
         return "Últimas " + decisions.size() + " decisión(es) real(es): " + lines;
@@ -454,11 +468,7 @@ public class CompanyTools {
     public String getActiveMissions() {
 
         var active = missionMemory.findAll(50).stream()
-                .filter(m -> "PRODUCTION".equals(m.environment()))
-                .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
-                        && m.status() != MissionStatus.FAILED
-                        && m.status() != MissionStatus.COMPLETED
-                        && m.status() != MissionStatus.CANCELLED)
+                .filter(CompanyTools::isActiveMission)
                 .toList();
 
         conversationMemory.setLastMentioned(
@@ -475,6 +485,22 @@ public class CompanyTools {
                 .collect(Collectors.joining(", "));
 
         return "Tenés " + active.size() + " misión(es) activa(s): " + lines + ".";
+    }
+
+    /**
+     * Predicado compartido de "misión activa" — extraído para que
+     * {@link #getCompanyStatus()} y {@link #getActiveMissions()} no
+     * puedan silenciosamente divergir si algún día se agrega un nuevo
+     * {@link MissionStatus} terminal (antes cada método tenía su propia
+     * cadena de lambdas inline, idéntica solo por convención de código
+     * review, no por el compilador).
+     */
+    private static boolean isActiveMission(MissionResponse m) {
+        return "PRODUCTION".equals(m.environment())
+                && m.status() != MissionStatus.AWAITING_INVESTOR
+                && m.status() != MissionStatus.FAILED
+                && m.status() != MissionStatus.COMPLETED
+                && m.status() != MissionStatus.CANCELLED;
     }
 
     /**

@@ -117,6 +117,21 @@ public class ChatIntentRouter {
     private static final Pattern CONTACT_REFERENCE =
             Pattern.compile("(?i)\\bcontacta(lo|la|me|los|las)?\\b|\\bcontacto de\\b");
 
+    // "decisión" normaliza (sin tilde) a "decision", una substring bare
+    // demasiado amplia: "¿Qué misiones necesitan una decisión mía?"
+    // contiene tanto "necesita" (MISSIONS_NEEDING_ATTENTION) como
+    // "decision" -- sin este ajuste, RECENT_DECISIONS ganaba y devolvía
+    // el historial en vez de la lista de aprobación pendiente que el
+    // usuario pidió (mismo patrón de bug ya visto 3 veces en este
+    // proyecto: \bprueba dentro de aprueba, "sin mi aprobación" dentro
+    // de una instrucción libre, "contact" dentro de "contactar" -- la
+    // solución siempre fue reordenar + acotar, nunca ensanchar). Exige
+    // el plural retrospectivo ("decisiones") o "decisión" seguida de un
+    // verbo en pasado ("tomé"/"tomamos"/"tomaste"), nunca la palabra
+    // suelta apareciendo incidentalmente en otra pregunta.
+    private static final Pattern RECENT_DECISIONS_QUERY =
+            Pattern.compile("(?i)\\bdecisiones\\b|\\bdecision(es)?\\s+tom");
+
     // 10 turnos (20 mensajes) -- suficiente para continuidad real de
     // charla sin dejar crecer el prompt del CEO sin límite (reportado
     // por el usuario: "no está recordando las charlas que tengo con el
@@ -770,10 +785,6 @@ public class ChatIntentRouter {
             return QueryIntent.RECENT_ACTIVITY;
         }
 
-        if (normalized.contains("decision")) {
-            return QueryIntent.RECENT_DECISIONS;
-        }
-
         if (normalized.contains("mision") && normalized.contains("activa")) {
             // Exige las dos palabras juntas -- "activa" sola aparece en
             // frases sin relación ninguna a misiones.
@@ -783,7 +794,15 @@ public class ChatIntentRouter {
         if (normalized.contains("aprobacion")
                 || normalized.contains("bloquead")
                 || normalized.contains("necesita")) {
+            // Chequeado ANTES que RECENT_DECISIONS_QUERY a propósito: ver
+            // el comentario de RECENT_DECISIONS_QUERY -- "¿qué misiones
+            // necesitan una decisión mía?" debe ganar acá, no como
+            // historial de decisiones ya tomadas.
             return QueryIntent.MISSIONS_NEEDING_ATTENTION;
+        }
+
+        if (RECENT_DECISIONS_QUERY.matcher(normalized).find()) {
+            return QueryIntent.RECENT_DECISIONS;
         }
 
         if (normalized.contains("oportunidad")) {

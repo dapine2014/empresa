@@ -350,11 +350,23 @@ public class MissionMemoryService {
      * la misión — usado por el chat cuando se pregunta "¿qué decisiones
      * tomé?" en general, no por una misión puntual (para eso ya está
      * {@code MissionStatusResponse}/{@code recordDecision}).
+     *
+     * <p>{@code WHERE d.decidedAt IS NOT NULL} filtra un {@code Decision}
+     * malformado (sin esa propiedad, posible en esta instancia de Neo4j
+     * compartida y a veces editada a mano) directo en la query — el
+     * driver de Neo4j devuelve el literal {@code "null"} para una
+     * propiedad ausente vía {@code asString()} (no lanza ahí), así que
+     * {@code Instant.parse("null")} explotaría en el row-mapper sin este
+     * guard, y sin fecha ese nodo además ordena como el más reciente
+     * ({@code ORDER BY ... DESC} trata {@code null} como el mayor valor),
+     * envenenando el {@code LIMIT} para todos. Mismo criterio que el
+     * resto del proyecto: filtrar datos inutilizables en Cypher, no
+     * parchearlo en el mapeo Java.
      */
     public List<DecisionActivity> recentDecisions(int limit) {
         try (var session = driver.session()) {
             return session.run(
-                            "MATCH (d:Decision) " +
+                            "MATCH (d:Decision) WHERE d.decidedAt IS NOT NULL " +
                                     "RETURN d.id AS id, d.missionId AS missionId, d.decision AS decision, " +
                                     "d.reasoning AS reasoning, d.decidedAt AS decidedAt " +
                                     "ORDER BY d.decidedAt DESC LIMIT $limit",
