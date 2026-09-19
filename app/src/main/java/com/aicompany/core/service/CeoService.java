@@ -105,7 +105,9 @@ public class CeoService {
                                                             "OPPORTUNITY_DETAILS",
                                                             "RECENT_ACTIVITY",
                                                             "RECENT_DECISIONS",
-                                                            "ACTIVE_MISSIONS"
+                                                            "ACTIVE_MISSIONS",
+                                                            "CHAT_HISTORY",
+                                                            "MENTIONED_DATES"
                                                     ),
                                                     "description",
                                                     "AGENT_STATUS: qué está "
@@ -216,7 +218,28 @@ public class CeoService {
                                                             + "completadas, ni "
                                                             + "canceladas) con "
                                                             + "su status y "
-                                                            + "progreso real."
+                                                            + "progreso real. "
+                                                            + "CHAT_HISTORY: "
+                                                            + "transcript real "
+                                                            + "de la charla de "
+                                                            + "un día puntual -- "
+                                                            + "requiere el "
+                                                            + "parámetro id con "
+                                                            + "la fecha exacta "
+                                                            + "en formato "
+                                                            + "YYYY-MM-DD. "
+                                                            + "MENTIONED_DATES: "
+                                                            + "los días reales "
+                                                            + "en los que se "
+                                                            + "mencionó una "
+                                                            + "entidad puntual "
+                                                            + "en el chat -- "
+                                                            + "requiere el "
+                                                            + "parámetro id con "
+                                                            + "el id real de "
+                                                            + "esa entidad "
+                                                            + "(p. ej. un "
+                                                            + "MISSION-<numero>)."
                                             ),
                                             "id", Map.of(
                                                     "type", "string",
