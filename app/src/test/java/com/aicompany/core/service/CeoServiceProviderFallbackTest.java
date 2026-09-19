@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -134,5 +135,58 @@ class CeoServiceProviderFallbackTest {
         assertEquals("respuesta real de Ollama", result);
         verifyNoInteractions(budget);
         verifyNoInteractions(ollamaFallback);
+    }
+
+    /**
+     * Hallazgo 3 de la revisión final de rama: antes de este fix, una
+     * respuesta vacía de Ollama (el proveedor por default, 100% del
+     * tráfico real) se trataba igual que una respuesta vacía de NVIDIA —
+     * lanzaba `IllegalStateException`, que en `executeMission` termina en
+     * `MissionExecutor.safeFail` marcando TODA la misión `FAILED`,
+     * descartando el trabajo real de los 5 agentes. El chequeo de
+     * "respuesta vacía" solo debe aplicar cuando el proveedor es NVIDIA.
+     */
+    @Test
+    void returnsEmptyOllamaResponseWithoutThrowingOrFallingBack() {
+
+        var ollamaAsCeoProvider = mock(OllamaLlmProvider.class);
+        when(ollamaAsCeoProvider.chat(anyString(), any(), any()))
+                .thenReturn(new LlmResponse("", List.of()));
+
+        var result = ceoService(ollamaAsCeoProvider).executeMission("instruccion", "resultados");
+
+        assertEquals("", result);
+        verifyNoInteractions(budget);
+        verifyNoInteractions(ollamaFallback);
+    }
+
+    /**
+     * Hallazgo 4: la forma real de cualquier turno de tool-calling de
+     * NVIDIA es `content=null` + `tool_calls` no vacío — eso es éxito, no
+     * el caso de "respuesta vacía" que dispara el fallback.
+     */
+    @Test
+    void treatsNvidiaToolCallResponseAsSuccessEvenWithBlankContent() {
+
+        when(budget.isExhausted()).thenReturn(false);
+
+        var toolCall = Map.<String, Object>of(
+                "id", "call_0",
+                "type", "function",
+                "function", Map.of(
+                        "name", "query_company_memory",
+                        "arguments", Map.of("topic", "COMPANY_STATUS")
+                )
+        );
+
+        when(nvidiaProvider.chat(anyString(), any(), any()))
+                .thenReturn(new LlmResponse(null, List.of(toolCall)));
+
+        var result = ceoService(nvidiaProvider).executeMission("instruccion", "resultados");
+
+        assertNull(result);
+        verify(budget).recordCall();
+        verifyNoInteractions(ollamaFallback);
+        verifyNoInteractions(events);
     }
 }

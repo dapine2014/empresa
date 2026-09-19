@@ -256,7 +256,7 @@ public class CeoService {
             CompanyEventPublisher events,
             MeterRegistry meterRegistry,
             @Qualifier("ceoProvider") LlmProvider ceoProvider,
-            OllamaLlmProvider ollamaFallbackProvider,
+            @Qualifier("ollamaLlmProvider") OllamaLlmProvider ollamaFallbackProvider,
             AiBudgetService aiBudgetService) {
 
         this.ollama = ollama;
@@ -1000,8 +1000,15 @@ public class CeoService {
      *
      * <p>Un {@code content} nulo/vacío SIN {@code tool_calls} cuenta como
      * fallo (el truncamiento real observado en el spike con
-     * `gpt-oss-20b`); un {@code content} vacío CON {@code tool_calls} es
-     * un turno de herramienta normal, no un fallo.
+     * `gpt-oss-20b`) SOLO cuando el proveedor configurado es NVIDIA — con
+     * Ollama (hoy el 100% del tráfico real) nunca se validó esto antes de
+     * este plan, y hacerlo incondicional propagaría una respuesta vacía
+     * real de Ollama como excepción, tumbando el turno de chat (perdiendo
+     * el registro en el historial) o, peor, toda la misión completa vía
+     * `MissionExecutor.safeFail` — contradiciendo "Agent failure != Mission
+     * failure" (`CLAUDE.md`). Un {@code content} vacío CON {@code
+     * tool_calls} es un turno de herramienta normal, no un fallo, para
+     * cualquier proveedor.
      */
     private LlmResponse callCeo(
             String operation,
@@ -1031,7 +1038,7 @@ public class CeoService {
                     (response.content() == null || response.content().isBlank())
                             && (response.toolCalls() == null || response.toolCalls().isEmpty());
 
-            if (noContentNoToolCalls) {
+            if (noContentNoToolCalls && usingNvidia) {
                 throw new IllegalStateException(
                         "Respuesta vacía del proveedor CEO (sin contenido ni tool_calls)."
                 );
@@ -1040,6 +1047,14 @@ public class CeoService {
             if (usingNvidia) {
                 aiBudgetService.recordCall();
             }
+
+            if (noContentNoToolCalls) {
+                log.warn("CEO_EMPTY_RESPONSE operation={} provider={}",
+                        operation, ceoProvider.getClass().getSimpleName());
+            }
+
+            log.info("CEO_PROVIDER_CALL operation={} provider={}",
+                    operation, ceoProvider.getClass().getSimpleName());
 
             return response;
 

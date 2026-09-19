@@ -1,5 +1,7 @@
 package com.aicompany.core.llm;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -35,6 +37,8 @@ import java.util.Map;
  */
 public class NvidiaNimLlmProvider implements LlmProvider {
 
+    private static final Logger log = LoggerFactory.getLogger(NvidiaNimLlmProvider.class);
+
     private final RestClient client;
     private final String apiKey;
     private final String model;
@@ -68,25 +72,33 @@ public class NvidiaNimLlmProvider implements LlmProvider {
             throw new IllegalStateException("NVIDIA_API_KEY no está configurada");
         }
 
-        var body = new LinkedHashMap<String, Object>();
-        body.put("model", model);
-        body.put("stream", false);
-        body.put("max_tokens", maxTokens);
-        body.put("messages", normalizeOutgoingMessages(messages));
+        try {
 
-        if (tools != null && !tools.isEmpty()) {
-            body.put("tools", tools);
+            var body = new LinkedHashMap<String, Object>();
+            body.put("model", model);
+            body.put("stream", false);
+            body.put("max_tokens", maxTokens);
+            body.put("messages", normalizeOutgoingMessages(messages));
+
+            if (tools != null && !tools.isEmpty()) {
+                body.put("tools", tools);
+            }
+
+            var raw = client
+                    .post()
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .body(body)
+                    .retrieve()
+                    .body(String.class);
+
+            return parseResponse(raw);
+
+        } catch (Exception ex) {
+
+            log.error("NVIDIA_ERROR operation={} model={}", operation, model, ex);
+            throw ex;
         }
-
-        var raw = client
-                .post()
-                .uri("/chat/completions")
-                .header("Authorization", "Bearer " + apiKey)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-
-        return parseResponse(raw);
     }
 
     /**
@@ -99,21 +111,64 @@ public class NvidiaNimLlmProvider implements LlmProvider {
 
         var normalized = new ArrayList<Map<String, Object>>();
 
+        // Ver `docs/superpowers/plans/2026-09-18-nvidia-ceo-provider.md`
+        // (hallazgo 1+9+10): la API OpenAI-compatible de NVIDIA exige que
+        // todo `tool_calls[]` traiga `id`/`type`, y que el `role:"tool"`
+        // que le sigue traiga el `tool_call_id` correspondiente —
+        // `CeoService.chat()` construye ambos mensajes sin ninguno de los
+        // dos (Ollama no lo exige). Esta app solo manda un tool_call por
+        // turno (confirmado en `CeoService.chat`/`executeAgentTask`), así
+        // que una sola variable de "id pendiente" alcanza para propagarlo
+        // del mensaje "assistant" al siguiente mensaje "tool".
+        String pendingToolCallId = null;
+
         for (var message : messages) {
 
             var rawToolCalls = message.get("tool_calls");
 
             if (!(rawToolCalls instanceof List<?> toolCallsList) || toolCallsList.isEmpty()) {
-                normalized.add(message);
+
+                if ("tool".equals(message.get("role"))
+                        && pendingToolCallId != null
+                        && !message.containsKey("tool_call_id")) {
+
+                    var normalizedMessage = new LinkedHashMap<>(message);
+                    normalizedMessage.put("tool_call_id", pendingToolCallId);
+                    normalized.add(normalizedMessage);
+
+                } else {
+                    normalized.add(message);
+                }
+
+                // Nunca propagar un id viejo más allá del mensaje
+                // inmediatamente siguiente al "assistant" que lo generó.
+                pendingToolCallId = null;
                 continue;
             }
 
             var normalizedToolCalls = new ArrayList<Map<String, Object>>();
+            String firstToolCallId = null;
 
-            for (var item : toolCallsList) {
+            for (int i = 0; i < toolCallsList.size(); i++) {
+
+                var item = toolCallsList.get(i);
 
                 if (!(item instanceof Map<?, ?> toolCall)) {
                     continue;
+                }
+
+                var normalizedToolCall = new LinkedHashMap<String, Object>((Map<String, Object>) toolCall);
+
+                var existingId = normalizedToolCall.get("id");
+                var toolCallId = existingId instanceof String s && !s.isBlank()
+                        ? s
+                        : "call_" + i;
+
+                normalizedToolCall.putIfAbsent("id", toolCallId);
+                normalizedToolCall.putIfAbsent("type", "function");
+
+                if (firstToolCallId == null) {
+                    firstToolCallId = String.valueOf(normalizedToolCall.get("id"));
                 }
 
                 var function = (Map<String, Object>) toolCall.get("function");
@@ -123,20 +178,17 @@ public class NvidiaNimLlmProvider implements LlmProvider {
 
                     var normalizedFunction = new LinkedHashMap<>(function);
                     normalizedFunction.put("arguments", jsonMapper.writeValueAsString(arguments));
-
-                    var normalizedToolCall = new LinkedHashMap<String, Object>((Map<String, Object>) toolCall);
                     normalizedToolCall.put("function", normalizedFunction);
-
-                    normalizedToolCalls.add(normalizedToolCall);
-
-                } else {
-                    normalizedToolCalls.add((Map<String, Object>) toolCall);
                 }
+
+                normalizedToolCalls.add(normalizedToolCall);
             }
 
             var normalizedMessage = new LinkedHashMap<>(message);
             normalizedMessage.put("tool_calls", normalizedToolCalls);
             normalized.add(normalizedMessage);
+
+            pendingToolCallId = firstToolCallId;
         }
 
         return normalized;
@@ -176,6 +228,12 @@ public class NvidiaNimLlmProvider implements LlmProvider {
 
             for (var toolCallNode : toolCallsNode) {
 
+                var toolCallId = toolCallNode.path("id").asString(null);
+                var typeNode = toolCallNode.path("type");
+                var toolCallType = typeNode.isMissingNode() || typeNode.isNull()
+                        ? "function"
+                        : typeNode.asString("function");
+
                 var functionNode = toolCallNode.path("function");
                 var name = functionNode.path("name").asString(null);
                 var argumentsRaw = functionNode.path("arguments").asString(null);
@@ -190,12 +248,15 @@ public class NvidiaNimLlmProvider implements LlmProvider {
                     arguments = Map.of();
                 }
 
-                toolCalls.add(Map.of(
-                        "function", Map.of(
-                                "name", name == null ? "" : name,
-                                "arguments", arguments
-                        )
+                var toolCall = new LinkedHashMap<String, Object>();
+                toolCall.put("id", toolCallId);
+                toolCall.put("type", toolCallType);
+                toolCall.put("function", Map.of(
+                        "name", name == null ? "" : name,
+                        "arguments", arguments
                 ));
+
+                toolCalls.add(toolCall);
             }
         }
 

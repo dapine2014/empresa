@@ -83,10 +83,23 @@ class AiBudgetServiceTest {
     }
 
     @Test
-    void neverExhaustedWhenLimitIsZeroOrLessIsNotAssumed_startsAtZeroCalls() {
+    void startsUnexhaustedWithZeroCalls() {
         var clock = new MutableClock(Instant.parse("2026-09-19T10:00:00Z"));
         var budget = new AiBudgetService(clock, 5);
 
         assertFalse(budget.isExhausted());
+    }
+
+    /**
+     * `dailyLimit=0` es un kill-switch real y útil (`NVIDIA_DAILY_CALL_LIMIT=0`
+     * fuerza siempre el fallback a Ollama) — sin ninguna llamada registrada
+     * todavía, `0 >= 0` ya cuenta como agotado.
+     */
+    @Test
+    void isExhaustedImmediatelyWhenDailyLimitIsZero() {
+        var clock = new MutableClock(Instant.parse("2026-09-19T10:00:00Z"));
+        var budget = new AiBudgetService(clock, 0);
+
+        assertTrue(budget.isExhausted());
     }
 }
