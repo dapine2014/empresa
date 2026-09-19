@@ -10,7 +10,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
+import java.time.Clock;
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -132,6 +135,12 @@ public class ChatIntentRouter {
     private static final Pattern RECENT_DECISIONS_QUERY =
             Pattern.compile("(?i)\\bdecisiones\\b|\\bdecision(es)?\\s+tom");
 
+    // Fecha explícita DD/MM o DD/MM/YYYY -- deliberadamente acotado, ver
+    // el spec: nada de nombres de día de la semana ni expresiones
+    // relativas más complejas ("la semana pasada").
+    private static final Pattern EXPLICIT_DATE =
+            Pattern.compile("\\b(\\d{1,2})/(\\d{1,2})(?:/(\\d{4}))?\\b");
+
     // 10 turnos (20 mensajes) -- suficiente para continuidad real de
     // charla sin dejar crecer el prompt del CEO sin límite (reportado
     // por el usuario: "no está recordando las charlas que tengo con el
@@ -145,6 +154,7 @@ public class ChatIntentRouter {
     private final CompanyMemoryService companyMemory;
     private final ConversationMemoryService conversationMemory;
     private final CompanyTools companyTools;
+    private final Clock clock;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -153,7 +163,8 @@ public class ChatIntentRouter {
             OpportunityMemoryService opportunityMemory,
             CompanyMemoryService companyMemory,
             ConversationMemoryService conversationMemory,
-            CompanyTools companyTools) {
+            CompanyTools companyTools,
+            Clock clock) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -162,6 +173,7 @@ public class ChatIntentRouter {
         this.companyMemory = companyMemory;
         this.conversationMemory = conversationMemory;
         this.companyTools = companyTools;
+        this.clock = clock;
     }
 
     /**
@@ -213,10 +225,22 @@ public class ChatIntentRouter {
             return handleOpportunityForMissionQuery(opportunityForMissionId.get());
         }
 
+        var mentionedDatesId = resolveMentionedDatesQuery(message);
+
+        if (mentionedDatesId.isPresent()) {
+            return handleMentionedDatesQuery(mentionedDatesId.get());
+        }
+
         var missionDetailsId = resolveMissionDetailsQuery(message);
 
         if (missionDetailsId.isPresent()) {
             return handleMissionDetailsQuery(missionDetailsId.get());
+        }
+
+        var chatHistoryDate = resolveChatHistoryQuery(message);
+
+        if (chatHistoryDate.isPresent()) {
+            return handleChatHistoryQuery(chatHistoryDate.get());
         }
 
         var customerFocusIds = resolveCustomerReference(message);
@@ -402,6 +426,76 @@ public class ChatIntentRouter {
     }
 
     /**
+     * "¿qué hablamos el [día]?" — memoria histórica real por día
+     * calendario (ver {@code ConversationMemoryService.chatHistoryForDate}),
+     * distinta de la ventana de continuidad inmediata
+     * ({@code recentMessages}). Exige tanto una palabra de "charla
+     * pasada" (para no disparar con cualquier mención suelta de "hoy"/
+     * "ayer") como una referencia de día reconocida.
+     *
+     * También exige que el mensaje sea una pregunta ({@code "?"}) --
+     * encontrado en la verificación de esta tarea: un test ya existente
+     * ("Aprueba la misión de la que hablamos ayer.", sin MISSION-<id>
+     * explícito) contiene tanto "hablamos" como "ayer" pero es una
+     * instrucción de decisión, no una consulta de historial -- mismo
+     * patrón de colisión de keywords ya visto varias veces en este router
+     * (\bprueba/aprueba, decision/decisiones, contact/contactar), resuelto
+     * siempre acotando el gate en vez de ensancharlo.
+     */
+    private Optional<String> resolveChatHistoryQuery(String message) {
+
+        if (!message.contains("?")) {
+            return Optional.empty();
+        }
+
+        var normalized = normalize(message);
+
+        var talksAboutHistory = normalized.contains("hablamos")
+                || normalized.contains("hablaste")
+                || normalized.contains("charlamos")
+                || normalized.contains("conversamos")
+                || normalized.contains("dijimos");
+
+        if (!talksAboutHistory) {
+            return Optional.empty();
+        }
+
+        var explicitDateMatcher = EXPLICIT_DATE.matcher(message);
+
+        if (explicitDateMatcher.find()) {
+
+            var day = Integer.parseInt(explicitDateMatcher.group(1));
+            var month = Integer.parseInt(explicitDateMatcher.group(2));
+            var year = explicitDateMatcher.group(3) != null
+                    ? Integer.parseInt(explicitDateMatcher.group(3))
+                    : LocalDate.now(clock).getYear();
+
+            try {
+                return Optional.of(LocalDate.of(year, month, day).toString());
+            } catch (DateTimeException ex) {
+                return Optional.empty();
+            }
+        }
+
+        if (normalized.contains("ayer")) {
+            return Optional.of(LocalDate.now(clock).minusDays(1).toString());
+        }
+
+        if (normalized.contains("hoy")) {
+            return Optional.of(LocalDate.now(clock).toString());
+        }
+
+        return Optional.empty();
+    }
+
+    private String handleChatHistoryQuery(String date) {
+
+        log.info("CHAT_INTENT_CHAT_HISTORY date={}", date);
+
+        return companyTools.getChatHistory(date);
+    }
+
+    /**
      * "¿qué oportunidades concretas tenemos en la misión MISSION-X y qué
      * prospectos reales están asociados?" caía en la consulta global
      * {@code OPPORTUNITIES} (ignorando el {@code MISSION-<id>} del
@@ -435,6 +529,38 @@ public class ChatIntentRouter {
         log.info("CHAT_INTENT_OPPORTUNITY_DETAILS missionId={}", missionId);
 
         return companyTools.getOpportunity(missionId);
+    }
+
+    /**
+     * "¿en qué días hablamos de MISSION-X?" — mismo criterio que
+     * {@link #resolveOpportunityForMissionQuery}: solo actúa con un
+     * {@code MISSION-<id>} explícito en el mensaje.
+     */
+    private Optional<String> resolveMentionedDatesQuery(String message) {
+
+        var normalized = normalize(message);
+
+        var hasKeyword = normalized.contains("dias")
+                && (normalized.contains("hablamos") || normalized.contains("mencion"));
+
+        if (!hasKeyword) {
+            return Optional.empty();
+        }
+
+        var missionIdMatcher = MISSION_ID.matcher(message);
+
+        if (!missionIdMatcher.find()) {
+            return Optional.empty();
+        }
+
+        return Optional.of(missionIdMatcher.group(1).toUpperCase(Locale.ROOT));
+    }
+
+    private String handleMentionedDatesQuery(String id) {
+
+        log.info("CHAT_INTENT_MENTIONED_DATES id={}", id);
+
+        return companyTools.getDaysMentioning(id);
     }
 
     /**
@@ -878,6 +1004,12 @@ public class ChatIntentRouter {
             case "OPPORTUNITY_DETAILS" -> (id == null || id.isBlank())
                     ? "Para consultar los prospectos de una oportunidad necesito el MISSION-<id> exacto."
                     : companyTools.getOpportunity(id);
+            case "CHAT_HISTORY" -> (id == null || id.isBlank())
+                    ? "Para consultar la charla de un día necesito la fecha (por ejemplo 2026-09-19)."
+                    : companyTools.getChatHistory(id);
+            case "MENTIONED_DATES" -> (id == null || id.isBlank())
+                    ? "Para consultar en qué días hablamos de algo necesito su id exacto."
+                    : companyTools.getDaysMentioning(id);
             default -> "Dato no reconocido: " + topic + ".";
         };
     }

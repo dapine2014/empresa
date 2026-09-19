@@ -11,7 +11,9 @@ import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,8 +37,10 @@ class ChatIntentRouterTest {
             missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties
     );
 
+    private final Clock clock = Clock.fixed(Instant.parse("2026-09-19T15:00:00Z"), ZoneOffset.UTC);
+
     private final ChatIntentRouter router = new ChatIntentRouter(
-            missionService, ceoService, missionMemory, opportunityMemory, companyMemory, conversationMemory, companyTools
+            missionService, ceoService, missionMemory, opportunityMemory, companyMemory, conversationMemory, companyTools, clock
     );
 
     @Test
@@ -728,6 +732,10 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("RECENT_ACTIVITY", null).contains("Todavía no hay actividad"));
         assertTrue(companyMemoryQuery.apply("RECENT_DECISIONS", null).contains("Todavía no se registró"));
         assertTrue(companyMemoryQuery.apply("ACTIVE_MISSIONS", null).contains("No hay ninguna misión activa"));
+        when(conversationMemory.chatHistoryForDate("2026-09-19")).thenReturn(List.of());
+        when(conversationMemory.daysMentioning("MISSION-1")).thenReturn(List.of());
+        assertTrue(companyMemoryQuery.apply("CHAT_HISTORY", "2026-09-19").contains("No hubo conversación"));
+        assertTrue(companyMemoryQuery.apply("MENTIONED_DATES", "MISSION-1").contains("No encontré menciones"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE", null).contains("Dato no reconocido"));
     }
 
@@ -999,5 +1007,59 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("MISSION-1"));
         verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesChatHistoryQueryForToday() {
+        when(conversationMemory.chatHistoryForDate("2026-09-19")).thenReturn(List.of(
+                new com.aicompany.core.model.ConversationTurn("user", "hola")
+        ));
+
+        var response = router.route("¿qué hablamos hoy?");
+
+        assertTrue(response.contains("2026-09-19"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesChatHistoryQueryForYesterday() {
+        when(conversationMemory.chatHistoryForDate("2026-09-18")).thenReturn(List.of());
+
+        var response = router.route("¿de qué hablamos ayer?");
+
+        assertEquals("No hubo conversación registrada ese día.", response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesChatHistoryQueryForExplicitDate() {
+        when(conversationMemory.chatHistoryForDate("2026-01-15")).thenReturn(List.of());
+
+        router.route("¿qué hablamos el 15/01/2026?");
+
+        verify(conversationMemory).chatHistoryForDate("2026-01-15");
+    }
+
+    @Test
+    void routesMentionedDatesQueryWithExplicitMissionId() {
+        when(conversationMemory.daysMentioning("MISSION-5")).thenReturn(List.of("2026-09-10"));
+
+        var response = router.route("¿en qué días hablamos de MISSION-5?");
+
+        assertTrue(response.contains("2026-09-10"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void doesNotRouteToChatHistoryWithoutADayReference() {
+        // "hablamos" solo, sin "hoy"/"ayer"/fecha explícita, no alcanza --
+        // cae al chat general (nunca se adivina qué día).
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ignored");
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+
+        router.route("¿de qué hablamos la última vez?");
+
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), any());
     }
 }
