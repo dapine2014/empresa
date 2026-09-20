@@ -30,10 +30,16 @@ class ProspectOutreachEmailTemplateTest {
         var subject = ProspectOutreachEmailTemplate.subject(candidate);
         var body = ProspectOutreachEmailTemplate.body(candidate);
 
-        assertTrue(subject.length() > 0);
+        assertTrue(subject.contains("Panadería El Sol"));
         assertTrue(body.contains("Panadería El Sol"));
-        assertTrue(body.contains("Panadería artesanal con presencia en 3 barrios de Bogotá"));
         assertTrue(body.contains("https://panaderiaelsol.com"));
+    }
+
+    @Test
+    void neverQuotesTheAgentsInternalDescriptionVerbatimToTheProspect() {
+        var body = ProspectOutreachEmailTemplate.body(candidate);
+
+        assertFalse(body.contains("Panadería artesanal con presencia en 3 barrios de Bogotá"));
     }
 
     @Test

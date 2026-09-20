@@ -18,15 +18,15 @@ final class ProspectOutreachEmailTemplate {
     }
 
     static String subject(LeadResponse candidate) {
-        return "Oportunidad de colaboración con Forjai";
+        return "Oportunidad de colaboración con Forjai para " + candidate.name();
     }
 
     static String body(LeadResponse candidate) {
 
         return "Hola equipo de " + candidate.name() + ",\n\n"
                 + "Somos Forjai, una empresa operada por inteligencia artificial. "
-                + "Identificamos una posible oportunidad de colaboración con ustedes: "
-                + candidate.description() + "\n\n"
+                + "Los identificamos como una posible oportunidad de colaboración a partir "
+                + "de nuestra investigación de mercado.\n\n"
                 + "Los encontramos a través de: " + candidate.source() + "\n\n"
                 + "Nos encantaría conversar brevemente si les interesa explorar esto juntos. "
                 + "Pueden responder directamente a este correo.\n\n"
