@@ -119,6 +119,7 @@ public class CompanyTools {
         var customerCounts = customerMemory.countCustomersAndProspects();
         var customers = customerCounts[0];
         var prospects = customerCounts[1];
+        var contacted = customerCounts[2];
 
         var totals = customerMemory.companyWideTotalRevenueAndCost();
         var revenue = totals[0];
@@ -129,11 +130,11 @@ public class CompanyTools {
                 "Estado actual de Forjai: capital disponible US$%.2f. "
                         + "Agentes: %d trabajando, %d inactivo(s). "
                         + "Misiones (producción): %d activa(s), %d esperando tu aprobación, %d fallida(s). "
-                        + "Oportunidades registradas: %d. Prospectos (leads): %d. Clientes reales: %d. "
+                        + "Oportunidades registradas: %d. Prospectos (leads): %d. Contactados: %d. Clientes reales: %d. "
                         + "Ingresos: US$%.2f. Beneficio neto: US$%.2f.",
                 appProperties.seedCapitalUsd(), working, idle,
                 active, awaitingInvestor, failed,
-                opportunities, prospects, customers,
+                opportunities, prospects, contacted, customers,
                 revenue, netProfit
         );
     }

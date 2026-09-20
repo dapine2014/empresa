@@ -61,7 +61,7 @@ class CompanyToolsTest {
                 new AgentStatusResponse("finance", "Max", "Finance", "x", "IDLE", null, null, null, Instant.now())
         ));
         when(opportunityMemory.countOpportunities()).thenReturn(4L);
-        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{2L, 3L});
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{2L, 3L, 1L});
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{150.0, 50.0});
 
         var response = tools.getCompanyStatus();
@@ -73,6 +73,7 @@ class CompanyToolsTest {
         assertTrue(response.contains("1 esperando tu aprobación"));
         assertTrue(response.contains("1 fallida"));
         assertTrue(response.contains("Oportunidades registradas: 4"));
+        assertTrue(response.contains("Contactados: 1"));
         assertTrue(response.contains("Clientes reales: 2"));
         assertTrue(response.contains("US$150.00"));
         assertTrue(response.contains("US$100.00"));

@@ -749,7 +749,7 @@ class ChatIntentRouterTest {
         );
         when(missionMemory.latestTaskPerAgent()).thenReturn(agentStatuses);
         when(opportunityMemory.countOpportunities()).thenReturn(4L);
-        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{2L, 3L});
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{2L, 3L, 0L});
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{150.0, 50.0});
 
         var response = router.route("dame un status");
@@ -776,7 +776,7 @@ class ChatIntentRouterTest {
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
 
         when(opportunityMemory.countOpportunities()).thenReturn(0L);
-        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L, 0L});
 
         var statuses = List.of(
                 new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now())
