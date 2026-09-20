@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -695,5 +696,48 @@ class CompanyToolsTest {
                         "reason", "smtp no configurado"
                 ))
         );
+    }
+
+    @Test
+    void contactProspectStillReportsSuccessWhenPostSendBookkeepingThrows() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc",
+                "https://panaderiaelsol.com", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.5,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(opportunityMemory.claimForContact("MISSION-1-CANDIDATE-SALES-0")).thenReturn(true);
+        when(opportunityMemory.recordContactAttempt(any(), any(), any(), any(), any()))
+                .thenReturn("MISSION-1-CANDIDATE-SALES-0-CONTACT-123");
+        when(alertMailService.sendToExternal(any(), any(), any()))
+                .thenReturn(new AlertMailService.ExternalMailResult(true, null));
+        doThrow(new RuntimeException("neo4j caído")).when(opportunityMemory)
+                .markContactSent(any(), any());
+
+        var response = tools.contactProspect(candidate);
+
+        assertTrue(response.contains("ventas@panaderiaelsol.com"));
+        assertTrue(response.contains("MISSION-1-CANDIDATE-SALES-0-CONTACT-123"));
+    }
+
+    @Test
+    void contactProspectStillReportsFailureWhenPostFailureBookkeepingThrows() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc",
+                "https://panaderiaelsol.com", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.5,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(opportunityMemory.claimForContact("MISSION-1-CANDIDATE-SALES-0")).thenReturn(true);
+        when(opportunityMemory.recordContactAttempt(any(), any(), any(), any(), any()))
+                .thenReturn("MISSION-1-CANDIDATE-SALES-0-CONTACT-123");
+        when(alertMailService.sendToExternal(any(), any(), any()))
+                .thenReturn(new AlertMailService.ExternalMailResult(false, "smtp no configurado"));
+        doThrow(new RuntimeException("neo4j caído")).when(opportunityMemory)
+                .markContactFailed(any(), any(), any());
+
+        var response = tools.contactProspect(candidate);
+
+        assertTrue(response.contains("smtp no configurado"));
     }
 }

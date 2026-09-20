@@ -6,6 +6,8 @@ import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.LeadResponse;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -31,6 +33,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class CompanyTools {
+
+    private static final Logger log = LoggerFactory.getLogger(CompanyTools.class);
 
     // Límites fijos de las consultas "recent*" -- antes literales bare
     // repetidos en el call-site, sin nombre que explique de dónde salen.
@@ -607,25 +611,35 @@ public class CompanyTools {
 
         if (!result.accepted()) {
 
-            opportunityMemory.markContactFailed(attemptId, candidate.id(), result.errorMessage());
+            try {
+                opportunityMemory.markContactFailed(attemptId, candidate.id(), result.errorMessage());
 
-            events.publish(
-                    "EMPRESA_PROSPECT_CONTACT_FAILED",
-                    candidate.missionId(), null, "ceo",
-                    Map.of("leadId", candidate.id(), "attemptId", attemptId, "reason", result.errorMessage())
-            );
+                events.publish(
+                        "EMPRESA_PROSPECT_CONTACT_FAILED",
+                        candidate.missionId(), null, "ceo",
+                        Map.of("leadId", candidate.id(), "attemptId", attemptId, "reason", result.errorMessage())
+                );
+            } catch (Exception ex) {
+                log.warn("No se pudo registrar el fallo de contacto para {} (attempt {}): {}",
+                        candidate.id(), attemptId, ex.getMessage());
+            }
 
             return "Intenté enviar el correo, pero no se pudo (" + result.errorMessage() + "). "
                     + "El intento quedó registrado y el prospecto sigue disponible para reintentar.";
         }
 
-        opportunityMemory.markContactSent(attemptId, candidate.id());
+        try {
+            opportunityMemory.markContactSent(attemptId, candidate.id());
 
-        events.publish(
-                "EMPRESA_PROSPECT_CONTACTED",
-                candidate.missionId(), null, "ceo",
-                Map.of("leadId", candidate.id(), "attemptId", attemptId, "recipientEmail", candidate.contactEmail())
-        );
+            events.publish(
+                    "EMPRESA_PROSPECT_CONTACTED",
+                    candidate.missionId(), null, "ceo",
+                    Map.of("leadId", candidate.id(), "attemptId", attemptId, "recipientEmail", candidate.contactEmail())
+            );
+        } catch (Exception ex) {
+            log.warn("Correo real enviado a {} pero no se pudo actualizar el registro (attempt {}): {}",
+                    candidate.contactEmail(), attemptId, ex.getMessage());
+        }
 
         return "Listo, le mandé un correo real a " + candidate.contactEmail()
                 + ". (ContactAttempt " + attemptId + ", estado: SENT)";
