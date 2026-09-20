@@ -207,7 +207,10 @@ public class ChatIntentRouter {
 
         var missionStatusId = detectMissionStatusQuery(message);
 
-        if (missionStatusId != null && detectReferenceCommand(normalize(message)) == null) {
+        var isFocusGovernanceCommand = detectReferenceCommand(normalize(message)) != null
+                && (REFERENCE_PRONOUN.matcher(message).find() || FOCUS_QUANTIFIER.matcher(message).find());
+
+        if (missionStatusId != null && !isFocusGovernanceCommand) {
             return handleMissionStatusQuery(missionStatusId);
         }
 

@@ -570,6 +570,33 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void explicitMissionIdWithAdjectivalDecisionWordButNoPronounStillGetsDeterministicStatus() {
+        // Regresión encontrada en la re-revisión del fix anterior: el guard
+        // que defiere a handleReference cuando el mensaje "parece" un
+        // comando de gobernanza (detectReferenceCommand no-null) era
+        // demasiado amplio -- sin un REFERENCE_PRONOUN/FOCUS_QUANTIFIER
+        // real, el mensaje nunca llega a handleReference tampoco, y caía
+        // al chat general sin ningún grounding. Este mensaje tiene un id
+        // explícito y una palabra adjetiva de decisión ("aprobada") pero
+        // ningún pronombre/cuantificador plural -- debe seguir resolviendo
+        // por la rama determinista, no por el chat general.
+        var mission = new MissionResponse(
+                "MISSION-3", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 90,
+                "x", "y", Instant.now()
+        );
+        when(missionMemory.find("MISSION-3")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-3")).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-3")).thenReturn(ProductStatus.DISCOVERY);
+
+        var response = router.route("MISSION-3 ya fue aprobada, ¿cierto?");
+
+        assertTrue(response.contains("workflowStatus=AWAITING_INVESTOR"));
+        verifyNoInteractions(ceoService);
+        verify(missionService, never()).recordDecision(anyString(), any());
+    }
+
+    @Test
     void reportsPerMissionOutcomeWhenApprovingMultipleMissionsFromFocusWithAPartialFailure() {
         when(conversationMemory.lastMentioned()).thenReturn(
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-1", "MISSION-2")))
