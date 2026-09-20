@@ -93,4 +93,52 @@ class AlertMailServiceTest {
             super("smtp no configurado");
         }
     }
+
+    @Test
+    void sendToExternalSendsToTheGivenRecipientNotTheAlertEmail() throws Exception {
+        when(memory.alertEmail()).thenReturn("dapine@gmail.com");
+        when(memory.systemEmail()).thenReturn("ai-company@gmail.com");
+        when(memory.mailPassword()).thenReturn("app-password-secreta");
+        when(mailSender.createMimeMessage()).thenReturn(newMimeMessage());
+
+        var result = alertMailService.sendToExternal(
+                "ventas@panaderiaelsol.com", "Oportunidad de colaboración", "Cuerpo real."
+        );
+
+        assertTrue(result.accepted());
+
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mailSender).send(captor.capture());
+
+        var message = captor.getValue();
+        message.saveChanges();
+        assertEquals("ventas@panaderiaelsol.com", message.getAllRecipients()[0].toString());
+        assertEquals("ai-company@gmail.com", message.getFrom()[0].toString());
+    }
+
+    @Test
+    void sendToExternalReturnsNotAcceptedWhenTheSystemAccountIsNotConfigured() {
+        when(memory.systemEmail()).thenReturn("");
+        when(memory.mailPassword()).thenReturn("");
+
+        var result = alertMailService.sendToExternal("ventas@panaderiaelsol.com", "asunto", "cuerpo");
+
+        assertFalse(result.accepted());
+        assertNotNull(result.errorMessage());
+        verify(mailSender, never()).send(any(MimeMessage.class));
+    }
+
+    @Test
+    void sendToExternalNeverThrowsWhenTheMailSenderFails() {
+        when(memory.systemEmail()).thenReturn("ai-company@gmail.com");
+        when(memory.mailPassword()).thenReturn("app-password-secreta");
+        when(mailSender.createMimeMessage()).thenReturn(newMimeMessage());
+        doThrow(new MailSendFailure()).when(mailSender).send(any(MimeMessage.class));
+
+        var result = assertDoesNotThrow(() ->
+                alertMailService.sendToExternal("ventas@panaderiaelsol.com", "asunto", "cuerpo"));
+
+        assertFalse(result.accepted());
+        assertNotNull(result.errorMessage());
+    }
 }
