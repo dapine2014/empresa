@@ -410,16 +410,31 @@ public class OpportunityMemoryService {
      * envío: dos "contactalo" casi simultáneos no pueden ganar ambos
      * este CAS -- el segundo (o cualquiera contra un lead ya
      * convertido/descartado/contactado) recibe {@code false}.
+     *
+     * <p>CAS real de "reclamar" un lead para contacto: LEAD -> CONTACT_IN_PROGRESS. El
+     * SET incondicional de c.contactLock ANTES del WHERE fuerza a Neo4j a tomar el
+     * write-lock del nodo de inmediato -- Neo4j es read-committed y solo bloquea en
+     * el SET, no en el MATCH, así que un MATCH{status:'LEAD'}...SET simple deja una
+     * ventana real donde dos transacciones solapadas pueden leer 'LEAD' antes de que
+     * cualquiera de las dos comitee (lost update), encontrado en la revisión final
+     * de rama. Con el lock tomado primero, la segunda transacción solo re-evalúa
+     * status DESPUÉS de que la primera ya comiteó, y ve el valor real. contactLock
+     * es una propiedad dedicada (no updatedAt) para que un intento de claim fallido
+     * nunca se vea como si el registro hubiera cambiado de verdad.
      */
     public boolean claimForContact(String leadId) {
         try (var session = driver.session()) {
             return session.executeWrite(tx -> {
 
+                var now = Instant.now().toString();
+
                 var records = tx.run(
-                        "MATCH (c:Customer {id:$id, status:'LEAD'}) " +
+                        "MATCH (c:Customer {id:$id}) " +
+                                "SET c.contactLock=$now " +
+                                "WITH c WHERE c.status='LEAD' " +
                                 "SET c.status='CONTACT_IN_PROGRESS', c.updatedAt=$now " +
                                 "RETURN c.id AS id",
-                        Map.of("id", leadId, "now", Instant.now().toString())
+                        Map.of("id", leadId, "now", now)
                 ).list();
 
                 return !records.isEmpty();
@@ -444,13 +459,15 @@ public class OpportunityMemoryService {
         var attemptId = leadId + "-CONTACT-" + Instant.now().toEpochMilli();
 
         try (var session = driver.session()) {
-            session.executeWrite(tx -> {
-                tx.run("MATCH (c:Customer {id:$leadId}) " +
+            var created = session.executeWrite(tx -> {
+
+                var result = tx.run("MATCH (c:Customer {id:$leadId}) " +
                                 "CREATE (a:ContactAttempt {id:$attemptId, prospectId:$leadId, " +
                                 "missionId:$missionId, opportunityId:$opportunityId, " +
                                 "channel:'EMAIL', destination:$destination, subject:$subject, " +
                                 "status:'PENDING', requestedBy:'human', initiatedAt:$now}) " +
-                                "MERGE (c)-[:HAS_CONTACT_ATTEMPT]->(a)",
+                                "MERGE (c)-[:HAS_CONTACT_ATTEMPT]->(a) " +
+                                "RETURN a.id AS id",
                         Map.of(
                                 "leadId", leadId,
                                 "attemptId", attemptId,
@@ -460,8 +477,14 @@ public class OpportunityMemoryService {
                                 "subject", subject,
                                 "now", Instant.now().toString()
                         ));
-                return null;
+
+                return !result.list().isEmpty();
             });
+
+            if (!created) {
+                throw new IllegalStateException(
+                        "No se pudo registrar el intento de contacto: el lead " + leadId + " no existe.");
+            }
         }
 
         return attemptId;
