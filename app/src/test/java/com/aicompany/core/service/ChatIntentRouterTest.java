@@ -88,6 +88,32 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void routesFreeFormMissionDescriptionAlsoRecordsChatMention() {
+        // Finding 2 de la revisión final de rama: el spec (sección 4)
+        // lista este call-site de inicio de misión como uno de los que
+        // debe grabar una mención de chat, junto a los 6 de CompanyTools
+        // -- se cayó de la implementación. Sin esto, preguntar "¿en qué
+        // días hablamos de MISSION-<la nueva>?" el mismo día que se creó
+        // por chat respondía "No encontré menciones...", justo el día y
+        // la charla en la que se creó.
+        var instruction = "Inicia una misión para encontrar una oportunidad comercial real.";
+
+        var mission = new MissionResponse(
+                "MISSION-1789412392452", MissionStatus.CREATED, "PRODUCTION", 0, "Creada", "Misión recibida",
+                Instant.now()
+        );
+        when(missionService.start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION")))
+                .thenReturn(mission);
+
+        router.route(instruction);
+
+        verify(conversationMemory).recordChatMention(
+                eq("MISSION"),
+                argThat(ids -> ids.size() == 1 && ids.get(0).startsWith("MISSION-"))
+        );
+    }
+
+    @Test
     void routesApproveWithExplicitMissionIdToRecordDecision() {
         var decisionResponse = new DecisionResponse(
                 "MISSION-7-DECISION-1", "MISSION-7", InvestorDecision.APPROVE, Instant.now()
@@ -1048,6 +1074,23 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("2026-09-10"));
         verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void fallsBackToGeneralChatWhenExplicitDateIsInvalid() {
+        // Finding 7 de la revisión final de rama: el código ya captura
+        // DateTimeException (p. ej. "31/02", que no existe en ningún
+        // año) y devuelve Optional.empty(), cayendo al chat general --
+        // pero nada lo probaba. Confirma que nunca lanza (nunca un 500)
+        // y nunca llama a chatHistoryForDate con una fecha basura.
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ignored");
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+
+        router.route("¿qué hablamos el 31/02?");
+
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), any());
+        verify(conversationMemory, never()).chatHistoryForDate(anyString());
     }
 
     @Test

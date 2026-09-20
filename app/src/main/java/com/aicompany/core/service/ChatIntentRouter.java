@@ -141,6 +141,24 @@ public class ChatIntentRouter {
     private static final Pattern EXPLICIT_DATE =
             Pattern.compile("\\b(\\d{1,2})/(\\d{1,2})(?:/(\\d{4}))?\\b");
 
+    // Mismo patrón de bug ya visto 4 veces en este router (\bprueba
+    // dentro de aprueba, \bdecisiones\b dentro de decision,
+    // \bcontacta...\b dentro de contactar): un bare .contains() sobre
+    // una palabra corta también matchea dentro de una palabra ajena no
+    // relacionada -- "dias" (sin tilde, ya normalizado) también aparece
+    // dentro de "guardias"/"estadías". \b explícito en vez de ensanchar.
+    private static final Pattern TALKS_ABOUT_HISTORY =
+            Pattern.compile("\\b(hablamos|hablaste|charlamos|conversamos|dijimos)\\b");
+
+    private static final Pattern DIAS_WORD =
+            Pattern.compile("\\bdias\\b");
+
+    // Deliberadamente sin \b final en "mencion": tiene que matchear
+    // también "mencionamos"/"mencionaste"/"mención"/"mencionó" (ya sin
+    // tilde tras normalize()), no solo la palabra suelta.
+    private static final Pattern MENTIONED_KEYWORD =
+            Pattern.compile("\\bhablamos\\b|\\bmencion");
+
     // 10 turnos (20 mensajes) -- suficiente para continuidad real de
     // charla sin dejar crecer el prompt del CEO sin límite (reportado
     // por el usuario: "no está recordando las charlas que tengo con el
@@ -316,6 +334,7 @@ public class ChatIntentRouter {
         var response = missionService.start(missionId, message, "PRODUCTION");
 
         conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+        conversationMemory.recordChatMention("MISSION", List.of(missionId));
 
         return "Creé la misión " + missionId + " con tu descripción y la mandé a "
                 + "procesar en segundo plano. Estado: " + response.status()
@@ -441,6 +460,19 @@ public class ChatIntentRouter {
      * patrón de colisión de keywords ya visto varias veces en este router
      * (\bprueba/aprueba, decision/decisiones, contact/contactar), resuelto
      * siempre acotando el gate en vez de ensancharlo.
+     *
+     * <p>Este gate de {@code "?"} acota la mayoría de falsos positivos,
+     * pero no es del todo inofensivo: un mensaje compuesto que combine
+     * una cláusula de aprobación con una pregunta final todavía puede
+     * enrutarse mal acá — ejemplo concreto encontrado en la revisión
+     * final de rama: {@code "Aprueba la misión de la que hablamos ayer.
+     * ¿Podés confirmar?"} contiene {@code "?"}, "hablamos" y "ayer", no
+     * trae ningún {@code MISSION-<id>} explícito (así que
+     * {@link #detectDecision} no lo intercepta), y termina devolviendo
+     * un transcript de {@code CHAT_HISTORY} en vez de caer al chat
+     * general. Sigue siendo una falla acotada y segura (devuelve un
+     * transcript, nunca aprueba la misión equivocada) — documentado acá,
+     * no corregido, porque el modo de falla se mantiene inofensivo.
      */
     private Optional<String> resolveChatHistoryQuery(String message) {
 
@@ -450,13 +482,7 @@ public class ChatIntentRouter {
 
         var normalized = normalize(message);
 
-        var talksAboutHistory = normalized.contains("hablamos")
-                || normalized.contains("hablaste")
-                || normalized.contains("charlamos")
-                || normalized.contains("conversamos")
-                || normalized.contains("dijimos");
-
-        if (!talksAboutHistory) {
+        if (!TALKS_ABOUT_HISTORY.matcher(normalized).find()) {
             return Optional.empty();
         }
 
@@ -540,8 +566,8 @@ public class ChatIntentRouter {
 
         var normalized = normalize(message);
 
-        var hasKeyword = normalized.contains("dias")
-                && (normalized.contains("hablamos") || normalized.contains("mencion"));
+        var hasKeyword = DIAS_WORD.matcher(normalized).find()
+                && MENTIONED_KEYWORD.matcher(normalized).find();
 
         if (!hasKeyword) {
             return Optional.empty();

@@ -202,12 +202,38 @@ public class ConversationMemoryService {
      * arranque vía {@code CompanyMemoryInitializer}; un {@code Message}
      * que ya cuelga de un {@code Chat} no matchea el patrón
      * ({@code (:Conversation)-[:HAS_MESSAGE]->(:Message)} directo) y se
-     * ignora.
+     * ignora. Excluye explícitamente cualquier {@code Message} con
+     * {@code createdAt} nulo ({@code WHERE m.createdAt IS NOT NULL}) —
+     * sin este guard, {@code left(null, 10)} devuelve {@code null} y el
+     * siguiente {@code MERGE (chat:Chat {date:null})} lanza
+     * {@code "Cannot merge node using null property value"}, lo que
+     * tumbaría el arranque de la aplicación (corre desde un listener de
+     * {@code ApplicationReadyEvent}) — mismo patrón defensivo ya
+     * establecido para {@code MissionMemoryService.recentDecisions}
+     * ({@code WHERE d.decidedAt IS NOT NULL}).
+     *
+     * <p><b>Límite conocido, no resuelto</b> (mismo criterio que el DNS
+     * rebinding de {@code WebPageFetcher}): esta migración agrupa por
+     * fecha <b>UTC</b> (los primeros 10 caracteres del {@code Instant}
+     * ISO-8601 de {@code createdAt}, que siempre se genera en UTC vía
+     * {@code Instant.now().toString()}), mientras que las escrituras en
+     * vivo ({@link #recordMessage}/{@link #recordChatMention}) agrupan
+     * por {@code LocalDate.now(clock)} usando la zona horaria
+     * <b>local</b> del servidor (el {@code Clock} inyectado, por
+     * default {@code Clock.systemDefaultZone()}). En un entorno que no
+     * esté en UTC, un mensaje cercano a la medianoche local podría
+     * quedar bajo un día calendario distinto según si pasó por
+     * {@link #recordMessage} directamente o si fue migrado. El
+     * despliegue actual de Docker no fija {@code TZ}, así que la zona
+     * local del contenedor ya es UTC y esto no se manifiesta hoy en
+     * producción — documentado por si cambia, no corregido en este
+     * cambio.
      */
     public void migrateMessagesToChats() {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
                 tx.run("MATCH (c:Conversation {id:'MAIN'})-[r:HAS_MESSAGE]->(m:Message) "
+                                + "WHERE m.createdAt IS NOT NULL "
                                 + "WITH c, r, m, left(m.createdAt, 10) AS date "
                                 + "MERGE (c)-[:HAS_CHAT]->(chat:Chat {date:date}) "
                                 + "MERGE (chat)-[:HAS_MESSAGE]->(m) "

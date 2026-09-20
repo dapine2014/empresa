@@ -35,6 +35,20 @@ public class CompanyTools {
     private static final int RECENT_ACTIVITY_LIMIT = 20;
     private static final int RECENT_DECISIONS_LIMIT = 10;
 
+    // getChatHistory: mismo criterio de truncado que ya usa
+    // getRecentDecisions (reasoning a 100 caracteres), pero acá hace
+    // falta un límite doble -- cantidad de mensajes Y longitud de cada
+    // uno. Encontrado en la revisión final de rama: un día con muchos
+    // mensajes, sin cap, arma una sola línea de chat gigantesca; y
+    // route() graba esa misma respuesta como el turno "ceo" de HOY --
+    // preguntar "¿qué hablamos hoy?" repetidas veces sobre el mismo día
+    // duplicaba aproximadamente el tamaño del transcript grabado en
+    // cada vuelta (cada respuesta contiene la respuesta anterior
+    // completa), el mismo problema de payload gigante ya documentado en
+    // CLAUDE.md ("dijo 9, enumeró 9 de 25").
+    private static final int CHAT_HISTORY_MAX_MESSAGES = 30;
+    private static final int CHAT_HISTORY_MESSAGE_MAX_CHARS = 200;
+
     private final MissionService missionService;
     private final MissionMemoryService missionMemory;
     private final OpportunityMemoryService opportunityMemory;
@@ -513,11 +527,26 @@ public class CompanyTools {
             return "No hubo conversación registrada ese día.";
         }
 
-        var lines = messages.stream()
-                .map(m -> m.role() + ": " + m.content())
+        var totalCount = messages.size();
+        var shown = totalCount > CHAT_HISTORY_MAX_MESSAGES
+                ? messages.subList(0, CHAT_HISTORY_MAX_MESSAGES)
+                : messages;
+
+        var lines = shown.stream()
+                .map(m -> m.role() + ": " + truncateChatMessage(m.content()))
                 .collect(Collectors.joining(" | "));
 
-        return "Charla del " + date + " (" + messages.size() + " mensaje(s)): " + lines;
+        var omittedNote = totalCount > CHAT_HISTORY_MAX_MESSAGES
+                ? " (+" + (totalCount - CHAT_HISTORY_MAX_MESSAGES) + " mensaje(s) más, no mostrados)"
+                : "";
+
+        return "Charla del " + date + " (" + totalCount + " mensaje(s)): " + lines + omittedNote;
+    }
+
+    private static String truncateChatMessage(String content) {
+        return content.length() > CHAT_HISTORY_MESSAGE_MAX_CHARS
+                ? content.substring(0, CHAT_HISTORY_MESSAGE_MAX_CHARS) + "..."
+                : content;
     }
 
     /**

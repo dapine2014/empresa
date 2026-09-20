@@ -450,6 +450,94 @@ class CompanyToolsTest {
     }
 
     @Test
+    void getChatHistoryCapsRenderedMessagesButKeepsRealTotalCount() {
+        // Encontrado en la revisión final de rama: sin cap, un día con
+        // muchos mensajes arma una sola línea de chat gigantesca, y esa
+        // misma respuesta se vuelve a grabar como el turno "ceo" de HOY
+        // -- preguntar "¿qué hablamos hoy?" repetidas veces duplicaría
+        // aproximadamente el tamaño del transcript en cada vuelta.
+        var messages = new java.util.ArrayList<com.aicompany.core.model.ConversationTurn>();
+        for (int i = 0; i < 35; i++) {
+            messages.add(new com.aicompany.core.model.ConversationTurn("user", "mensaje " + i));
+        }
+        when(conversationMemory.chatHistoryForDate("2026-09-19")).thenReturn(messages);
+
+        var response = tools.getChatHistory("2026-09-19");
+
+        assertTrue(response.contains("(35 mensaje(s))"));
+        assertTrue(response.contains("mensaje 0"));
+        assertTrue(response.contains("mensaje 29"));
+        assertFalse(response.contains("mensaje 30"));
+        assertTrue(response.contains("(+5 mensaje(s) más, no mostrados)"));
+    }
+
+    @Test
+    void getChatHistoryTruncatesLongIndividualMessages() {
+        var longMessage = "x".repeat(250);
+        when(conversationMemory.chatHistoryForDate("2026-09-19")).thenReturn(List.of(
+                new com.aicompany.core.model.ConversationTurn("user", longMessage)
+        ));
+
+        var response = tools.getChatHistory("2026-09-19");
+
+        assertFalse(response.contains(longMessage));
+        assertTrue(response.contains("x".repeat(200) + "..."));
+    }
+
+    @Test
+    void getFailedMissionsAlsoRecordsChatMention() {
+        var failed = new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(failed));
+
+        tools.getFailedMissions();
+
+        verify(conversationMemory).recordChatMention("MISSION", List.of("MISSION-3"));
+    }
+
+    @Test
+    void getTestMissionsAlsoRecordsChatMention() {
+        var test = new MissionResponse("MISSION-DEBUG-007", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(test));
+
+        tools.getTestMissions();
+
+        verify(conversationMemory).recordChatMention("MISSION", List.of("MISSION-DEBUG-007"));
+    }
+
+    @Test
+    void getOpportunityAlsoRecordsChatMention() {
+        when(opportunityMemory.findByMissionId("MISSION-1")).thenReturn(Optional.of(
+                new OpportunitySummary("MISSION-1-OPPORTUNITY", "MISSION-1", "asesoría a microempresas", "IDENTIFIED", Instant.now())
+        ));
+        when(opportunityMemory.listCandidatesForMission("MISSION-1")).thenReturn(List.of(
+                new LeadResponse(
+                        "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol",
+                        "Identificada en estudio de mercado", "https://example.com", "WEB",
+                        "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(),
+                        "LEAD", null, null, 0.8
+                )
+        ));
+
+        tools.getOpportunity("MISSION-1");
+
+        verify(conversationMemory).recordChatMention("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0"));
+    }
+
+    @Test
+    void getMissionAlsoRecordsChatMention() {
+        var mission = new MissionResponse(
+                "MISSION-1789701859658", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION",
+                35, "Esperando resultados", "Los agentes están trabajando en paralelo.", Instant.now()
+        );
+        when(missionService.details("MISSION-1789701859658"))
+                .thenReturn(Optional.of(new MissionStatusResponse(mission, List.of())));
+
+        tools.getMission("MISSION-1789701859658");
+
+        verify(conversationMemory).recordChatMention("MISSION", List.of("MISSION-1789701859658"));
+    }
+
+    @Test
     void getChatHistoryReturnsDeterministicMessageWhenNoChatThatDay() {
         when(conversationMemory.chatHistoryForDate("2020-01-01")).thenReturn(List.of());
 
