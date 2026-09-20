@@ -115,6 +115,21 @@ public class ChatIntentRouter {
     private static final Pattern PRODUCT_STATUS_PREDICATE =
             Pattern.compile("\\b(desarroll\\w*|mvp|publicad\\w*|lanzad\\w*)\\b");
 
+    // Dos disclaimers distintos a propósito (singular vs. plural) -- ver
+    // formatMissionStatus/formatProductStatusAnswer. No unificar la
+    // redacción: forzar un solo texto sería un cambio más grande y más
+    // riesgoso que simplemente nombrarlos.
+    private static final String NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_SINGLE =
+            " No tengo registro de ninguna AgentTask de desarrollo real, evento de "
+                    + "desarrollo iniciado, ni artefacto/repositorio/build para esta "
+                    + "misión — no puedo afirmar que el desarrollo haya comenzado.";
+
+    private static final String NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_MULTI =
+            " Ninguna de estas misiones tiene evidencia real de desarrollo (AgentTask de "
+                    + "desarrollo, evento de desarrollo iniciado o artefacto/repositorio/build) "
+                    + "salvo que se indique lo contrario arriba — no asumas que el desarrollo "
+                    + "comenzó solo porque el workflow de análisis haya terminado.";
+
     private final MissionService missionService;
     private final CeoService ceoService;
     private final MissionMemoryService missionMemory;
@@ -192,7 +207,7 @@ public class ChatIntentRouter {
 
         var missionStatusId = detectMissionStatusQuery(message);
 
-        if (missionStatusId != null) {
+        if (missionStatusId != null && detectReferenceCommand(normalize(message)) == null) {
             return handleMissionStatusQuery(missionStatusId);
         }
 
@@ -344,6 +359,8 @@ public class ChatIntentRouter {
      */
     private String handleMissionStatusQuery(String missionId) {
 
+        log.info("CHAT_INTENT_MISSION_STATUS missionId={}", missionId);
+
         var mission = missionMemory.find(missionId);
 
         if (mission.isEmpty()) {
@@ -379,9 +396,7 @@ public class ChatIntentRouter {
                 .collect(Collectors.joining(", "));
 
         var closing = productStatus.ordinal() < ProductStatus.DEVELOPMENT.ordinal()
-                ? " No tengo registro de ninguna AgentTask de desarrollo real, evento de "
-                        + "desarrollo iniciado, ni artefacto/repositorio/build para esta "
-                        + "misión — no puedo afirmar que el desarrollo haya comenzado."
+                ? NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_SINGLE
                 : "";
 
         return mission.missionId() + ": workflowStatus=" + mission.status()
@@ -616,10 +631,7 @@ public class ChatIntentRouter {
                 .anyMatch(s -> s.ordinal() < ProductStatus.DEVELOPMENT.ordinal());
 
         var closing = anyBeforeDevelopment
-                ? " Ninguna de estas misiones tiene evidencia real de desarrollo (AgentTask de "
-                        + "desarrollo, evento de desarrollo iniciado o artefacto/repositorio/build) "
-                        + "salvo que se indique lo contrario arriba — no asumas que el desarrollo "
-                        + "comenzó solo porque el workflow de análisis haya terminado."
+                ? NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_MULTI
                 : "";
 
         return "Estado de producto real: " + lines + "." + closing;

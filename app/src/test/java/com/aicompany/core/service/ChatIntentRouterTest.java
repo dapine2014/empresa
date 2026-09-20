@@ -546,6 +546,30 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void governanceCommandOverFocusStillAppliesWhenMessageAlsoNamesExplicitMissionIds() {
+        // Regresión encontrada en la revisión final: la rama de estado de
+        // misión puntual (MISSION-<id> explícito) se insertaba ANTES del
+        // chequeo de REFERENCE_PRONOUN/FOCUS_QUANTIFIER, así que un comando
+        // de gobernanza que además nombra los ids de las misiones ("Las
+        // dos, MISSION-1 y MISSION-2, están aprobadas.") quedaba
+        // interceptado por la rama de solo-lectura y la aprobación se
+        // perdía en silencio.
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1", "MISSION-2")))
+        );
+        when(missionService.recordDecision(eq("MISSION-1"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-1-DECISION-1", "MISSION-1", InvestorDecision.APPROVE, Instant.now())));
+        when(missionService.recordDecision(eq("MISSION-2"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-2-DECISION-1", "MISSION-2", InvestorDecision.APPROVE, Instant.now())));
+
+        var response = router.route("Las dos, MISSION-1 y MISSION-2, están aprobadas.");
+
+        assertTrue(response.contains("✅"));
+        verify(missionService).recordDecision(eq("MISSION-1"), any(DecisionCommand.class));
+        verify(missionService).recordDecision(eq("MISSION-2"), any(DecisionCommand.class));
+    }
+
+    @Test
     void reportsPerMissionOutcomeWhenApprovingMultipleMissionsFromFocusWithAPartialFailure() {
         when(conversationMemory.lastMentioned()).thenReturn(
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-1", "MISSION-2")))

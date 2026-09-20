@@ -88,8 +88,22 @@ class ProductStatusServiceTest {
     void movesToBusinessSuccessWhenNetProfitExceedsSeedCapital() {
         when(missionMemory.tasks("MISSION-1")).thenReturn(List.of());
         when(customerMemory.totalRevenueAndCost("MISSION-1")).thenReturn(new double[]{200.0, 50.0});
-        when(customerMemory.transactionCount("MISSION-1")).thenReturn(1L);
+        // isBusinessSuccess short-circuita resolve() antes de que
+        // isMonetizing (que llama transactionCount) se evalúe -- no hace
+        // falta stubear transactionCount para este caso.
 
         assertEquals(ProductStatus.BUSINESS_SUCCESS, service.resolve("MISSION-1"));
+    }
+
+    @Test
+    void doesNotReachBusinessSuccessWhenNetProfitExactlyEqualsSeedCapital() {
+        // Boundary del pedido original: la regla real es netProfit >
+        // seedCapital (estrictamente mayor), no >=. Capital semilla es
+        // 50.0 en el fixture de AppProperties de esta clase de test.
+        when(missionMemory.tasks("MISSION-1")).thenReturn(List.of());
+        when(customerMemory.totalRevenueAndCost("MISSION-1")).thenReturn(new double[]{50.0, 0.0});
+        when(customerMemory.transactionCount("MISSION-1")).thenReturn(0L);
+
+        assertEquals(ProductStatus.DISCOVERY, service.resolve("MISSION-1"));
     }
 }
