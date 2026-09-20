@@ -102,6 +102,57 @@ class AgentResultValidatorTest {
         assertTrue(validation.valid(), () -> String.join(", ", validation.errors()));
     }
 
+    @Test
+    void rejectsCustomerCandidateWithContactEmailButNoSource() {
+        var candidate = new AgentResult.CustomerCandidate(
+                "Panadería El Sol",
+                "Identificada en estudio de mercado",
+                "https://example.com",
+                "WEB",
+                0.6,
+                "ventas@panaderiaelsol.com",
+                null
+        );
+
+        var validation = validator.validate(resultWithCandidates(List.of(candidate)));
+
+        assertFalse(validation.valid());
+        assertTrue(validation.errors().stream()
+                .anyMatch(error -> error.contains("contactEmail") && error.contains("contactEmailSource")));
+    }
+
+    @Test
+    void acceptsCustomerCandidateWithContactEmailAndSource() {
+        var candidate = new AgentResult.CustomerCandidate(
+                "Panadería El Sol",
+                "Identificada en estudio de mercado",
+                "https://example.com",
+                "WEB",
+                0.6,
+                "ventas@panaderiaelsol.com",
+                "https://panaderiaelsol.com/contacto"
+        );
+
+        var validation = validator.validate(resultWithCandidates(List.of(candidate)));
+
+        assertTrue(validation.valid(), () -> String.join(", ", validation.errors()));
+    }
+
+    @Test
+    void acceptsCustomerCandidateWithoutAnyContactEmail() {
+        var candidate = new AgentResult.CustomerCandidate(
+                "Panadería El Sol",
+                "Identificada en estudio de mercado",
+                "https://example.com",
+                "WEB",
+                0.6
+        );
+
+        var validation = validator.validate(resultWithCandidates(List.of(candidate)));
+
+        assertTrue(validation.valid(), () -> String.join(", ", validation.errors()));
+    }
+
     private AgentResult result(
             String verificationStatus,
             List<AgentResult.Evidence> evidence,

@@ -88,8 +88,26 @@ public record AgentResult(
             String description,
             String source,
             String sourceType,
-            double confidence
+            double confidence,
+            String contactEmail,
+            String contactEmailSource
     ) {
+
+        /**
+         * Constructor de compatibilidad sin datos de contacto (ambos
+         * quedan {@code null}) -- evita tocar los `new
+         * AgentResult.CustomerCandidate(...)` de 5 args ya existentes en
+         * {@code AgentResultValidatorTest}/{@code MissionExecutorTest}.
+         */
+        public CustomerCandidate(
+                String name,
+                String description,
+                String source,
+                String sourceType,
+                double confidence) {
+
+            this(name, description, source, sourceType, confidence, null, null);
+        }
     }
 
     public static AgentResult empty(String agent, String action) {

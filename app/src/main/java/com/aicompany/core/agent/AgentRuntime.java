@@ -532,6 +532,21 @@ public class AgentRuntime {
                   en realidad es más un segmento de mercado que una
                   empresa puntual verificable. Nunca reportes alto
                   solo porque el nombre suena a empresa real.
+                - contactEmail (opcional) es para un canal de
+                  contacto público REAL de esa empresa puntual —
+                  tanto un email general/de ventas de la empresa
+                  ("info@", "ventas@", "sales@", "contacto@", visto
+                  en su sitio o pie de página) como el de una
+                  persona puntual son igual de válidos, no hace
+                  falta que sea de un individuo nombrado.
+                  contactEmailSource es OBLIGATORIO si reportás
+                  contactEmail: debe ser la página exacta donde lo
+                  viste publicado. Nunca fabriques un email a partir
+                  del dominio o el nombre de la empresa (ej.
+                  "nombre@empresa.com" sin haberlo visto realmente
+                  publicado en ningún lado). Si no encontraste
+                  ningún canal público real, dejá ambos campos
+                  vacíos.
                 - Responde ÚNICAMENTE con JSON válido.
                 - No utilices Markdown.
                 - No agregues texto antes o después del JSON.

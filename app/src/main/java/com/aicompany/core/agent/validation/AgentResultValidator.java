@@ -247,6 +247,17 @@ public class AgentResultValidator {
                                 + candidate.name()
                 );
             }
+
+            if (candidate.contactEmail() != null
+                    && !candidate.contactEmail().isBlank()
+                    && (candidate.contactEmailSource() == null
+                            || candidate.contactEmailSource().isBlank())) {
+
+                errors.add(
+                        "customerCandidate con contactEmail necesita contactEmailSource: "
+                                + candidate.name()
+                );
+            }
         }
     }
 
