@@ -5,20 +5,19 @@
 
 ## Contexto y objetivo
 
-Última pieza del orden aprobado para "Company Chat completo" (A → B → E → C → D). Decisiones ya tomadas por el usuario al principio de esta sesión, antes de este spec: **"Contacta al primer prospecto"** debe ejecutar de verdad (opción "Ejecutar de verdad (enviar)", no una simulación), y el canal es **email, reusando `AlertMailService`**.
+Última pieza del orden aprobado para "Company Chat completo" (A → B → E → C → D). Decisiones ya tomadas por el usuario al principio de esta sesión: **"Contacta al primer prospecto"** debe ejecutar de verdad (opción "Ejecutar de verdad (enviar)"), y el canal es **email, reusando `AlertMailService`**.
 
-Auditando el código real antes de diseñar: hoy no existe ningún dato de contacto real en ningún lado del modelo. `AgentResult.CustomerCandidate` (lo que reporta un agente sobre un prospecto) solo tiene `name`/`description`/`source`/`sourceType`/`confidence` — `source` es la URL donde se identificó la empresa, nunca un email. Y `AlertMailService.send(subject, body, critical)` manda siempre al `alertEmail` del fundador (alertas internas) — no hay forma de mandarle un correo a un destinatario externo arbitrario. `ChatIntentRouter.formatCustomerReferenceAnswer` ("contactalo") hoy siempre responde "No tengo un dato de contacto directo... registrado".
+Este documento pasó por 2 rondas: un diseño inicial simple (flag de status + boolean de éxito), y una versión "v2" mucho más ambiciosa que el usuario pegó después (entidad `ContactAttempt` de primera clase, idempotencia por hash, `providerMessageId`, un módulo de "Governance", secret manager, rate limiting, métricas de observabilidad, feed de actividad). Auditando esa v2 contra el código real se encontraron 3 problemas concretos:
 
-Alcance acordado con el usuario en brainstorming (3 preguntas explícitas):
-1. **El email real lo busca y reporta el agente** — se agrega un campo opcional `contactEmail` a `CustomerCandidate`, poblado si el agente lo encuentra públicamente durante su investigación (nunca inventado). Sin ese dato, el prospecto simplemente no es contactable todavía — no se agrega un paso separado de registro manual ni se le pide el email al fundador en el chat.
-2. **"contactalo" ejecuta el envío real de inmediato**, sin paso de confirmación intermedio — el comando del fundador ES la aprobación, mismo criterio ya usado para "las dos misiones están aprobadas".
-3. **El contenido del email es una plantilla determinista en Java**, con los datos reales insertados — nunca redactado por el CEO. Mismo criterio anti-alucinación de todo el proyecto, evitando el riesgo (distinto al de una respuesta interna de chat) de que el CEO invente algo hacia un desconocido externo real.
+1. **"Governance" (`mission.contactAllowed == true`) no existe** en ningún lado del código — sería una pieza nueva grande, no parte natural de esta ronda.
+2. **La v2 exige "credenciales solo en secret manager, nunca en Neo4j"** — pero `AlertMailService` guarda `mailPassword` en Neo4j a propósito, una decisión de MVP ya tomada y documentada en `CLAUDE.md` ("Alertas por correo"). La v2 contradice una decisión de arquitectura ya aceptada, no la extiende.
+3. **`providerMessageId`** asume un proveedor de email tipo API (SendGrid/Mailgun/etc.) que confirma la entrega con un identificador — pero `AlertMailService` manda por SMTP genérico (`spring-boot-starter-mail`/`JavaMailSenderImpl`, típicamente Gmail), que no da ese dato de forma confiable; `mailSender.send(...)` es `void`.
 
-**Ajuste posterior del usuario**: no siempre hay un email visible de una persona/contacto puntual en una empresa — un email general/de ventas de la compañía (`info@`, `ventas@`, `sales@`, `contacto@`, etc.) es un dato de contacto igual de válido. El agente no debe descartar un candidato solo por no encontrar el email de una persona con nombre.
+**Decisión del usuario**: recortar la v2 a su núcleo real para esta ronda — mantener la idea de `ContactAttempt` como entidad real (en vez de solo un flag de status, que era la limitación real que la v2 señalaba correctamente) y la reclamación por comparar-y-actualizar (CAS) para evitar doble envío, pero **sin** Governance, **sin** secret manager, **sin** `providerMessageId`/rate limiting/métricas de observabilidad/feed de actividad — todo eso documentado como fuera de alcance, no descartado, mismo criterio que cada ronda anterior de esta sesión.
 
 ## Decisiones de diseño
 
-### 1. `AgentResult.CustomerCandidate` gana `contactEmail` (opcional)
+### 1. `AgentResult.CustomerCandidate` gana `contactEmail` + `contactEmailSource` (ambos opcionales, pero acoplados)
 
 ```java
 public record CustomerCandidate(
@@ -27,61 +26,75 @@ public record CustomerCandidate(
         String source,
         String sourceType,
         double confidence,
-        String contactEmail
+        String contactEmail,
+        String contactEmailSource
 ) {
-    // Constructor de compatibilidad de 5 args (sin contactEmail, queda null)
-    // -- evita tocar los 3 `new AgentResult.CustomerCandidate(...)` ya
+    // Constructor de compatibilidad de 5 args (sin datos de contacto) --
+    // evita tocar los 3 `new AgentResult.CustomerCandidate(...)` ya
     // existentes en AgentResultValidatorTest/MissionExecutorTest.
     public CustomerCandidate(String name, String description, String source, String sourceType, double confidence) {
-        this(name, description, source, sourceType, confidence, null);
+        this(name, description, source, sourceType, confidence, null, null);
     }
 }
 ```
 
-`AgentResultSchema.CUSTOMER_CANDIDATE_ITEM_SCHEMA` gana `"contactEmail", Map.of("type", "string")` en `properties` — **sin** `minLength` (puede venir vacío) y **sin** agregarlo a `required` (a diferencia de `name`/`description`/`source`/`sourceType`/`confidence`, que sí lo están): un agente puede legítimamente no encontrar ningún email público.
+`AgentRuntime.buildPrompt` (el bloque de reglas para `customerCandidates`, ya existente) gana una instrucción nueva: buscar un canal de contacto público real junto con cada candidato — **explícitamente válido tanto un email general/de ventas de la empresa** (`info@`/`ventas@`/`sales@`/`contacto@`, encontrado en la página de contacto o el pie de página del sitio) **como el de una persona puntual** si lo hay. `contactEmailSource` debe citar la página exacta donde se encontró (nunca deducido del dominio de la empresa — ej. inventar `nombre@empresa.com` sin haberlo visto publicado es justo el caso que se prohíbe). Si no encontró ninguno, dejar ambos campos vacíos.
 
-`AgentRuntime.buildPrompt` (el bloque de reglas para `customerCandidates`, ya existente) gana una instrucción nueva: buscar, junto con cada candidato, un email de contacto público real y reportarlo en `contactEmail` — **explícitamente válido tanto un email general/de ventas de la empresa** (`info@`/`ventas@`/`sales@`/`contacto@`, encontrado en la página de contacto, el pie de página del sitio, o su perfil) **como el de una persona puntual** si lo hay — no hace falta que sea de un individuo nombrado. Nunca inventado; si no encontró ninguno de los dos, dejar el campo vacío, nunca inventar uno con formato plausible.
+`AgentResultValidator.validateCustomerCandidates` (ya existente, valida `confidence` en rango) gana una regla nueva: si `contactEmail` viene no vacío, `contactEmailSource` también debe venir no vacío — un email sin de dónde salió no es un dato real, es exactamente el "parece válido" que la v2 correctamente prohibía. Rechaza la tarea igual que cualquier otro error de validación, con reintento (mismo mecanismo ya existente).
 
-### 2. Persistencia: `Customer.contactEmail` + nuevo status `CONTACTADO`
+### 2. Persistencia: `Customer.contactEmail`/`contactEmailSource`, y `ContactAttempt` como entidad real
 
-`OpportunityMemoryService.recordCandidate` persiste `c.contactEmail` en el `ON CREATE SET` del nodo `Customer` (junto a `name`/`status`/`confidence`, ya existentes). Los 4 métodos de lectura que ya devuelven `LeadResponse` (`listLeads`, `discardLead`, `listCandidatesForMission`, `findCandidatesByIds`) agregan `c.contactEmail AS contactEmail` a su `RETURN` y lo pasan al constructor.
+`OpportunityMemoryService.recordCandidate` persiste `c.contactEmail`/`c.contactEmailSource` en el `ON CREATE SET` del nodo `Customer`. Los 4 métodos de lectura que devuelven `LeadResponse` (`listLeads`, `discardLead`, `listCandidatesForMission`, `findCandidatesByIds`) agregan ambos campos a su `RETURN`.
 
-`LeadResponse` gana el campo `contactEmail` (13º campo), con un constructor de compatibilidad de 12 args (sin `contactEmail`, queda `null`) para no tocar los ~14 call-sites de test que ya lo construyen con la firma actual.
+`LeadResponse` gana `contactEmail`/`contactEmailSource` (14 campos), con un constructor de compatibilidad de 12 args (ambos quedan `null`) para no tocar los ~14 call-sites de test que ya lo construyen con la firma actual.
 
-Nuevo `OpportunityMemoryService.markContacted(String leadId)` — mismo patrón compare-and-swap de `markConverted` (`MATCH (c:Customer {id:$id, status:'LEAD'}) SET c.status='CONTACTADO'`). Al pasar a `CONTACTADO`, el prospecto sale automáticamente de `listLeads()`/`listCandidatesForMission` (ambos ya filtran estrictamente `status='LEAD'`, mismo criterio que ya excluye `CONVERTIDO`/`DESCARTADO`) — evita contactar dos veces por accidente sin necesitar ninguna guarda nueva.
+**`ContactAttempt`, nodo nuevo** (la mejora real que rescata la v2 sobre solo cambiar `Customer.status`): un registro de auditoría de cada intento real de contacto, independiente del estado actual del prospecto.
+
+```
+(:Customer)-[:HAS_CONTACT_ATTEMPT]->(:ContactAttempt {
+    id, prospectId, missionId, opportunityId,
+    channel: "EMAIL", destination, subject,
+    status: "PENDING" | "SENT" | "FAILED",
+    requestedBy: "human",
+    initiatedAt, sentAt, errorMessage
+})
+```
+
+Nuevos métodos en `OpportunityMemoryService`:
+
+- `boolean claimForContact(String leadId)` — CAS: `MATCH (c:Customer {id:$id, status:'LEAD'}) SET c.status='CONTACT_IN_PROGRESS' RETURN c.id`. Si no hay filas (el lead ya fue reclamado, contactado, convertido o descartado por otra operación concurrente o un "contactalo" repetido), devuelve `false` — **este es el mecanismo real de "no enviar dos veces"**, más fuerte que solo sacar el lead de `listLeads()` después: dos comandos "contactalo" casi simultáneos no pueden ganar ambos el CAS.
+- `String recordContactAttempt(String leadId, String missionId, String opportunityId, String destination, String subject)` — crea el `ContactAttempt {status:'PENDING'}`, devuelve su id.
+- `void markContactSent(String attemptId, String leadId)` — `ContactAttempt.status='SENT'` + `Customer.status='CONTACTADO'`.
+- `void markContactFailed(String attemptId, String leadId, String errorMessage)` — `ContactAttempt.status='FAILED'` + **revierte `Customer.status='LEAD'`** (un envío que falló debe poder reintentarse después, no quedar atascado en `CONTACT_IN_PROGRESS` para siempre).
+
+`CONTACTADO`/`CONTACT_IN_PROGRESS` salen de `listLeads()`/`listCandidatesForMission` automáticamente (ambos ya filtran estrictamente `status='LEAD'`).
 
 ### 3. `AlertMailService.sendToExternal` — envío real a un destinatario arbitrario
 
 ```java
-public synchronized boolean sendToExternal(String to, String subject, String body) {
+public record ExternalMailResult(boolean accepted, String errorMessage) {}
+
+public synchronized ExternalMailResult sendToExternal(String to, String subject, String body) {
     // mismo bloque systemEmail/mailPassword que send(), pero:
     // - helper.setTo(to) en vez de memory.alertEmail()
-    // - devuelve boolean (true = enviado, false = no se pudo) en vez de
-    //   nunca lanzar y nunca informar el resultado -- una alerta interna
-    //   fallida no debe tumbar nada (por eso send() nunca lanza), pero acá
-    //   el chat le tiene que decir la verdad al fundador sobre si el
-    //   correo a un prospecto real salió o no.
+    // - devuelve ExternalMailResult (accepted + motivo real de fallo) en
+    //   vez de nunca lanzar y nunca informar el resultado -- una alerta
+    //   interna fallida no debe tumbar nada (por eso send() sigue como
+    //   está), pero acá el chat le tiene que decir la verdad al fundador.
+    // Sin providerMessageId: JavaMailSenderImpl.send(...) es void, SMTP
+    // genérico no lo da -- no se inventa un dato que no existe.
 }
 ```
 
-Reusa `AlertEmailTemplate.html(subject, body, critical=false)` para el HTML (documentado en `CLAUDE.md`: ese template ya se diseñó pensando en "a futuro escribirle a un cliente real").
+Reusa `AlertEmailTemplate.html(subject, body, critical=false)` para el HTML. `send()` (alertas internas al fundador) no se toca.
 
 ### 4. Contenido determinista: `ProspectOutreachEmailTemplate`
 
-Clase nueva, package-private, mismo patrón que `AlertEmailTemplate` (función pura, testeable sin JavaMail):
-
-```java
-final class ProspectOutreachEmailTemplate {
-    static String subject(LeadResponse candidate) { ... } // fijo, ej. "Oportunidad de colaboración con Forjai"
-    static String body(LeadResponse candidate) { ... }     // texto fijo con candidate.name()/description()/source() insertados
-}
-```
-
-Redactado de forma genérica a propósito (nunca asume que se dirige a una persona con nombre — funciona igual de bien si el destinatario real es un buzón general de ventas): saludo neutro ("Hola equipo de {empresa}", no "Estimado/a {nombre}"). Nunca pasa por el CEO — se arma 100% en Java con datos ya reales del `LeadResponse` (el mismo objeto que ya usa `formatCandidate`).
+Sin cambios respecto al diseño previo: clase nueva, package-private, mismo patrón que `AlertEmailTemplate` (función pura, testeable sin JavaMail). Saludo genérico ("Hola equipo de {empresa}", nunca asume un nombre de persona — funciona igual si el destinatario real es un buzón general de ventas). Nunca pasa por el CEO.
 
 ### 5. Disparo: `CompanyTools.contactProspect(LeadResponse candidate)`
 
-Nuevo método en `CompanyTools` (no en `ChatIntentRouter` — mismo criterio ya documentado en `CLAUDE.md`: la desambiguación de "contactalo" contra el foco conversacional se queda en `ChatIntentRouter` porque necesita objetos crudos, pero la acción real con efecto secundario es del tipo que ya vive en `CompanyTools`). `CompanyTools` gana dos dependencias nuevas de constructor: `AlertMailService`, `CompanyEventPublisher`.
+`CompanyTools` gana dos dependencias nuevas de constructor: `AlertMailService`, `CompanyEventPublisher`.
 
 ```java
 public String contactProspect(LeadResponse candidate) {
@@ -91,48 +104,63 @@ public String contactProspect(LeadResponse candidate) {
                 + "este prospecto, solo la fuente donde se identificó.";
     }
 
-    var sent = alertMailService.sendToExternal(
-            candidate.contactEmail(),
-            ProspectOutreachEmailTemplate.subject(candidate),
-            ProspectOutreachEmailTemplate.body(candidate)
-    );
-
-    if (!sent) {
-        return "Intenté contactar a " + candidate.contactEmail() + " pero no se pudo enviar "
-                + "el correo real (revisá la configuración de correo del sistema en Settings).";
+    if (!opportunityMemory.claimForContact(candidate.id())) {
+        return "Este prospecto ya tiene un contacto en progreso o ya fue contactado.";
     }
 
-    opportunityMemory.markContacted(candidate.id());
+    var subject = ProspectOutreachEmailTemplate.subject(candidate);
+    var body = ProspectOutreachEmailTemplate.body(candidate);
 
-    events.publish(
-            "EMPRESA_PROSPECT_CONTACTED",
-            candidate.missionId(), null, "ceo",
-            Map.of("leadId", candidate.id(), "recipientEmail", candidate.contactEmail())
+    var attemptId = opportunityMemory.recordContactAttempt(
+            candidate.id(), candidate.missionId(), candidate.opportunityId(),
+            candidate.contactEmail(), subject
     );
 
-    return "Listo, le mandé un correo real a " + candidate.contactEmail() + ".";
+    var result = alertMailService.sendToExternal(candidate.contactEmail(), subject, body);
+
+    if (!result.accepted()) {
+        opportunityMemory.markContactFailed(attemptId, candidate.id(), result.errorMessage());
+        events.publish("EMPRESA_PROSPECT_CONTACT_FAILED", candidate.missionId(), null, "ceo",
+                Map.of("leadId", candidate.id(), "attemptId", attemptId, "reason", result.errorMessage()));
+        return "Intenté enviar el correo, pero no se pudo (" + result.errorMessage() + "). "
+                + "El intento quedó registrado y el prospecto sigue disponible para reintentar.";
+    }
+
+    opportunityMemory.markContactSent(attemptId, candidate.id());
+    events.publish("EMPRESA_PROSPECT_CONTACTED", candidate.missionId(), null, "ceo",
+            Map.of("leadId", candidate.id(), "attemptId", attemptId, "recipientEmail", candidate.contactEmail()));
+
+    return "Listo, le mandé un correo real a " + candidate.contactEmail() + ". (ContactAttempt " + attemptId + ", estado: SENT)";
 }
 ```
 
-`ChatIntentRouter.formatCustomerReferenceAnswer` (que hoy siempre devuelve el texto fijo de "no tengo contacto") pasa a delegar en `companyTools.contactProspect(candidate)` para armar esa parte de la respuesta — la desambiguación (cuál candidato, si aclarar "te muestro el de mayor probabilidad") no cambia.
+`ChatIntentRouter.formatCustomerReferenceAnswer` (hoy siempre devuelve el texto fijo de "no tengo contacto") delega en `companyTools.contactProspect(candidate)` para armar esa parte de la respuesta — la desambiguación (cuál candidato, si aclarar "te muestro el de mayor probabilidad") no cambia.
 
-### 6. Auditoría: evento Kafka nuevo
+### 6. Auditoría: 2 eventos Kafka nuevos
 
-`EMPRESA_PROSPECT_CONTACTED` (`data: {leadId, recipientEmail}`, `missionId` en el envelope) — se agrega a `docs/EVENTS.md` con el mismo formato que los demás eventos del catálogo.
+`EMPRESA_PROSPECT_CONTACTED` (`data: {leadId, attemptId, recipientEmail}`) y `EMPRESA_PROSPECT_CONTACT_FAILED` (`data: {leadId, attemptId, reason}`), `missionId` en el envelope — se agregan a `docs/EVENTS.md`. Deliberadamente **no** `EMPRESA_PROSPECT_CONTACT_STARTED` (toda la operación es síncrona, dura milisegundos dentro del mismo turno de chat — un evento de "empezó" no aporta valor de auditoría que `CONTACTED`/`CONTACT_FAILED` no den ya).
 
 ## Testing
 
-- `AgentResultValidatorTest`/`MissionExecutorTest`: sin cambios (sus `new CustomerCandidate(...)` de 5 args siguen compilando con el constructor de compatibilidad).
-- Tests nuevos en `AlertMailServiceTest` para `sendToExternal`: envía al destinatario dado (no a `alertEmail`), devuelve `true` en éxito, devuelve `false` (no lanza) si la cuenta del sistema no está configurada, devuelve `false` si `mailSender.send` falla — mismo patrón de mocking que los 3 tests ya existentes de `send`.
-- Tests nuevos en `CompanyToolsTest` para `contactProspect`: candidato sin `contactEmail` → mensaje determinista de "no tengo contacto", nunca llama a `alertMailService`; candidato con `contactEmail` (probado tanto con un email de persona como con uno genérico tipo `ventas@empresa.com`, para confirmar que el código no distingue entre ambos) y envío exitoso → llama a `sendToExternal` con el destinatario/asunto/cuerpo reales, llama a `markContacted`, publica el evento, devuelve el mensaje de éxito; envío fallido → mensaje de fallo, **no** llama a `markContacted` ni publica el evento (un email que no salió no debe marcarse como contactado).
-- Test nuevo en `ChatIntentRouterTest`: "contactalo" contra un foco `CUSTOMER` cuyo candidato SÍ tiene `contactEmail` real llama a `companyTools.contactProspect(...)` (verificado con `verify`, sin necesidad de re-probar la lógica interna de `contactProspect`, ya cubierta en `CompanyToolsTest`).
-- `ProspectOutreachEmailTemplateTest` nuevo (función pura, mismo patrón que `AlertEmailTemplateTest`): el asunto/cuerpo contienen los datos reales del candidato (nombre, descripción, fuente), nunca placeholders, y el saludo es genérico (no asume un nombre de persona).
-- Sin test directo para `OpportunityMemoryService.recordCandidate`/`markContacted`/las 4 lecturas actualizadas (integración Neo4j pura, mismo criterio ya establecido para el resto de los `*MemoryService`) — verificado en vivo.
+- `AgentResultValidatorTest`: caso nuevo, `contactEmail` presente sin `contactEmailSource` → inválido (mismo mecanismo de rechazo que el resto de las reglas de este validador).
+- `AlertMailServiceTest`: tests nuevos para `sendToExternal` — envía al destinatario dado (no a `alertEmail`), `accepted=true` en éxito, `accepted=false` con `errorMessage` real si la cuenta del sistema no está configurada o si `mailSender.send` falla (nunca lanza).
+- `CompanyToolsTest` para `contactProspect`: sin `contactEmail` → mensaje determinista, nunca toca `alertMailService`/`opportunityMemory.claimForContact`; `claimForContact` devuelve `false` (ya reclamado/contactado) → mensaje determinista de "ya tiene un contacto en progreso", nunca llama a `sendToExternal`; envío exitoso → `recordContactAttempt` + `sendToExternal` + `markContactSent` + evento `EMPRESA_PROSPECT_CONTACTED`, en ese orden; envío fallido → `markContactFailed` (revierte a `LEAD`) + evento `EMPRESA_PROSPECT_CONTACT_FAILED`, **nunca** `markContactSent`.
+- `ChatIntentRouterTest`: "contactalo" contra un foco `CUSTOMER` cuyo candidato tiene `contactEmail` real llama a `companyTools.contactProspect(...)`.
+- `ProspectOutreachEmailTemplateTest`: asunto/cuerpo con datos reales del candidato, saludo genérico, sin placeholders.
+- Sin test directo para los métodos nuevos de `OpportunityMemoryService` (integración Neo4j pura, mismo criterio ya establecido) — verificado en vivo, incluyendo el caso de dos "contactalo" seguidos contra el mismo prospecto (el segundo debe fallar el CAS).
 
 ## Fuera de alcance de esta ronda (documentado, no descartado)
 
-- Registrar/editar manualmente el email de un prospecto desde el chat o el Command Center web — si el agente no lo encontró, el prospecto no es contactable en esta ronda.
-- Mostrar el `contactEmail` en `getProspects()`/`formatCandidate` (el fundador no necesita verlo, solo que "contactalo" funcione cuando existe).
-- Seguimiento automático (recordatorio, segundo email si no hay respuesta) — un solo envío por "contactalo".
-- Canales de contacto distintos a email (teléfono, formularios web, redes sociales).
-- Paso de confirmación/preview antes de enviar — decidido explícitamente en contra (ver decisión 2 más arriba).
+- **Governance / `mission.contactAllowed`**: no existe ningún módulo de gobernanza de misiones hoy; agregar uno es una iniciativa propia, no parte de esta ronda.
+- **Secret manager para credenciales SMTP**: contradice la decisión de MVP ya tomada (`mailPassword` en Neo4j) — se mantiene como está.
+- **`providerMessageId`, reconciliación de envíos a mitad de caída**: requiere un proveedor de email tipo API, no SMTP genérico.
+- **Idempotency key por hash SHA-256**: el CAS sobre `Customer.status` ya resuelve el caso real (dos "contactalo" casi simultáneos) sin necesitar una clave adicional.
+- **Rate limiting por misión/prospecto/destinatario**.
+- **Métricas de observabilidad** (prospects contactados, latencia, tasa de rebote) — el proyecto ya tiene precedente de métricas Micrometer (`evidence.*`), se puede agregar cuando haya un pedido concreto.
+- **Feed de actividad** (`ActivityMemoryService`) mostrando los intentos de contacto — extensión natural futura, no esencial para que "contactalo" funcione de verdad.
+- **Pipeline de estados extendido** (`PROSPECT`, `RESPONDED`, `INTERESTED`, `NOT_INTERESTED`, `BOUNCED`) y **`NO_CONTACTABLE`**: requieren infraestructura de tracking de respuestas/rebotes que no existe; el estado se queda en `LEAD` (recuperable, se puede reintentar si más adelante se encuentra un email) hasta `CONTACTADO`.
+- Registrar/editar manualmente el email de un prospecto desde el chat o el Command Center web.
+- Mostrar `contactEmail`/`contactEmailSource` en `getProspects()`/`formatCandidate`.
+- Seguimiento automático (recordatorio, segundo email).
+- Canales de contacto distintos a email.
+- Paso de confirmación/preview antes de enviar (decidido explícitamente en contra).
