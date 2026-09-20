@@ -98,7 +98,8 @@ public class OpportunityMemoryService {
                                 "ON CREATE SET c.missionId=$missionId, " +
                                 "c.name=$name, c.status='LEAD', " +
                                 "c.identifiedByAgent=$agentId, c.createdAt=$now, " +
-                                "c.confidence=$confidence " +
+                                "c.confidence=$confidence, c.contactEmail=$contactEmail, " +
+                                "c.contactEmailSource=$contactEmailSource " +
                                 "SET c.updatedAt=$now " +
                                 "MERGE (o)-[:HAS_CANDIDATE]->(c)",
                         Map.of(
@@ -108,6 +109,8 @@ public class OpportunityMemoryService {
                                 "name", candidate.name() == null ? "" : candidate.name(),
                                 "agentId", agentId,
                                 "confidence", candidate.confidence(),
+                                "contactEmail", candidate.contactEmail() == null ? "" : candidate.contactEmail(),
+                                "contactEmailSource", candidate.contactEmailSource() == null ? "" : candidate.contactEmailSource(),
                                 "now", now
                         ));
 
@@ -172,7 +175,8 @@ public class OpportunityMemoryService {
                                     "o.id AS opportunityId, c.createdAt AS createdAt, " +
                                     "e.description AS description, e.source AS source, " +
                                     "e.sourceType AS sourceType, c.status AS status, " +
-                                    "coalesce(c.confidence, 0.0) AS confidence " +
+                                    "coalesce(c.confidence, 0.0) AS confidence, " +
+                                    "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource " +
                                     "ORDER BY c.createdAt DESC")
                     .list(r -> new LeadResponse(
                             r.get("id").asString(),
@@ -186,7 +190,9 @@ public class OpportunityMemoryService {
                             r.get("status").asString("LEAD"),
                             null,
                             null,
-                            r.get("confidence").asDouble(0.0)
+                            r.get("confidence").asDouble(0.0),
+                            r.get("contactEmail").asString(""),
+                            r.get("contactEmailSource").asString("")
                     ));
         }
     }
@@ -217,7 +223,8 @@ public class OpportunityMemoryService {
                                 "e.description AS description, e.source AS source, " +
                                 "e.sourceType AS sourceType, c.status AS status, " +
                                 "c.discardReason AS discardReason, c.discardedAt AS discardedAt, " +
-                                "coalesce(c.confidence, 0.0) AS confidence",
+                                "coalesce(c.confidence, 0.0) AS confidence, " +
+                                "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource",
                         Map.of(
                                 "id", leadId,
                                 "reason", reason == null ? "" : reason,
@@ -237,7 +244,9 @@ public class OpportunityMemoryService {
                         r.get("status").asString("DESCARTADO"),
                         r.get("discardReason").asString(""),
                         Instant.parse(r.get("discardedAt").asString()),
-                        r.get("confidence").asDouble(0.0)
+                        r.get("confidence").asDouble(0.0),
+                        r.get("contactEmail").asString(""),
+                        r.get("contactEmailSource").asString("")
                 ));
             });
         }
@@ -329,7 +338,8 @@ public class OpportunityMemoryService {
                                     "o.id AS opportunityId, c.createdAt AS createdAt, " +
                                     "e.description AS description, e.source AS source, " +
                                     "e.sourceType AS sourceType, c.status AS status, " +
-                                    "coalesce(c.confidence, 0.0) AS confidence " +
+                                    "coalesce(c.confidence, 0.0) AS confidence, " +
+                                    "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource " +
                                     "ORDER BY coalesce(c.confidence, 0.0) DESC",
                             Map.of("missionId", missionId))
                     .list(r -> new LeadResponse(
@@ -344,7 +354,9 @@ public class OpportunityMemoryService {
                             r.get("status").asString("LEAD"),
                             null,
                             null,
-                            r.get("confidence").asDouble(0.0)
+                            r.get("confidence").asDouble(0.0),
+                            r.get("contactEmail").asString(""),
+                            r.get("contactEmailSource").asString("")
                     ));
         }
     }
@@ -368,7 +380,8 @@ public class OpportunityMemoryService {
                                     "o.id AS opportunityId, c.createdAt AS createdAt, " +
                                     "e.description AS description, e.source AS source, " +
                                     "e.sourceType AS sourceType, c.status AS status, " +
-                                    "coalesce(c.confidence, 0.0) AS confidence",
+                                    "coalesce(c.confidence, 0.0) AS confidence, " +
+                                    "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource",
                             Map.of("ids", ids))
                     .list(r -> new LeadResponse(
                             r.get("id").asString(),
@@ -382,8 +395,128 @@ public class OpportunityMemoryService {
                             r.get("status").asString(""),
                             null,
                             null,
-                            r.get("confidence").asDouble(0.0)
+                            r.get("confidence").asDouble(0.0),
+                            r.get("contactEmail").asString(""),
+                            r.get("contactEmailSource").asString("")
                     ));
+        }
+    }
+
+    /**
+     * Reclama el prospecto para un intento de contacto real -- compara-
+     * y-actualiza en una sola sentencia Cypher (el {@code MATCH} con
+     * {@code status:'LEAD'} hace de guarda), mismo patrón que
+     * {@link #markConverted}. Es el mecanismo real contra el doble
+     * envío: dos "contactalo" casi simultáneos no pueden ganar ambos
+     * este CAS -- el segundo (o cualquiera contra un lead ya
+     * convertido/descartado/contactado) recibe {@code false}.
+     */
+    public boolean claimForContact(String leadId) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+
+                var records = tx.run(
+                        "MATCH (c:Customer {id:$id, status:'LEAD'}) " +
+                                "SET c.status='CONTACT_IN_PROGRESS', c.updatedAt=$now " +
+                                "RETURN c.id AS id",
+                        Map.of("id", leadId, "now", Instant.now().toString())
+                ).list();
+
+                return !records.isEmpty();
+            });
+        }
+    }
+
+    /**
+     * Crea el registro real de un intento de contacto ({@code
+     * ContactAttempt}) -- auditoría real de "se intentó, con estos
+     * datos exactos", independiente de si el envío después tuvo éxito
+     * o no. Devuelve el id generado, usado por {@link #markContactSent}/
+     * {@link #markContactFailed} para actualizar el mismo registro.
+     */
+    public String recordContactAttempt(
+            String leadId,
+            String missionId,
+            String opportunityId,
+            String destination,
+            String subject) {
+
+        var attemptId = leadId + "-CONTACT-" + Instant.now().toEpochMilli();
+
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (c:Customer {id:$leadId}) " +
+                                "CREATE (a:ContactAttempt {id:$attemptId, prospectId:$leadId, " +
+                                "missionId:$missionId, opportunityId:$opportunityId, " +
+                                "channel:'EMAIL', destination:$destination, subject:$subject, " +
+                                "status:'PENDING', requestedBy:'human', initiatedAt:$now}) " +
+                                "MERGE (c)-[:HAS_CONTACT_ATTEMPT]->(a)",
+                        Map.of(
+                                "leadId", leadId,
+                                "attemptId", attemptId,
+                                "missionId", missionId == null ? "" : missionId,
+                                "opportunityId", opportunityId == null ? "" : opportunityId,
+                                "destination", destination,
+                                "subject", subject,
+                                "now", Instant.now().toString()
+                        ));
+                return null;
+            });
+        }
+
+        return attemptId;
+    }
+
+    /**
+     * El envío salió: {@code ContactAttempt} pasa a {@code SENT} y el
+     * prospecto a {@code CONTACTADO} (sale de {@link #listLeads}/
+     * {@link #listCandidatesForMission}, que filtran estrictamente
+     * {@code status='LEAD'}).
+     */
+    public void markContactSent(String attemptId, String leadId) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+
+                var now = Instant.now().toString();
+
+                tx.run("MATCH (a:ContactAttempt {id:$attemptId}) " +
+                                "SET a.status='SENT', a.sentAt=$now",
+                        Map.of("attemptId", attemptId, "now", now));
+
+                tx.run("MATCH (c:Customer {id:$leadId}) " +
+                                "SET c.status='CONTACTADO', c.updatedAt=$now",
+                        Map.of("leadId", leadId, "now", now));
+
+                return null;
+            });
+        }
+    }
+
+    /**
+     * El envío falló: {@code ContactAttempt} pasa a {@code FAILED} con
+     * el motivo real, y el prospecto **vuelve** a {@code LEAD} -- un
+     * envío que no salió tiene que poder reintentarse después, no
+     * quedar atascado en {@code CONTACT_IN_PROGRESS} para siempre.
+     */
+    public void markContactFailed(String attemptId, String leadId, String errorMessage) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+
+                var now = Instant.now().toString();
+
+                tx.run("MATCH (a:ContactAttempt {id:$attemptId}) " +
+                                "SET a.status='FAILED', a.errorMessage=$errorMessage",
+                        Map.of(
+                                "attemptId", attemptId,
+                                "errorMessage", errorMessage == null ? "" : errorMessage
+                        ));
+
+                tx.run("MATCH (c:Customer {id:$leadId}) " +
+                                "SET c.status='LEAD', c.updatedAt=$now",
+                        Map.of("leadId", leadId, "now", now));
+
+                return null;
+            });
         }
     }
 
