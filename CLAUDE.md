@@ -406,6 +406,23 @@ Alcance acordado con el usuario (dos preguntas explícitas):
 
 Cubierto por: `routesMissionsNeedingAttentionQueryFilteredByStatusWithDeterministicCount` actualizado (ahora una misión `FAILED` en la lista de entrada **no** debe aparecer en la respuesta), `routesFailedMissionsQueryToItsOwnDeterministicFormatting` nuevo, y la nueva rama `FAILED_MISSIONS` en el test del callback de `query_company_memory`. `mvn test` 130/130. Verificado en vivo contra el chat real con los datos reales de 25 misiones: "¿Qué necesita mi aprobación?" → "Tenés 15 misión(es)..." (solo `AWAITING_INVESTOR`); "¿Qué misiones fallaron?" → "Tenés 10 misión(es) fallida(s)..." (solo `FAILED`) — 15+10=25, cuadra exacto con el desglose que el usuario calculó a mano desde la respuesta anterior. Ambas con `CHAT_INTENT_QUERY` en el log, cero `CEO_CHAT`.
 
+`ProductStatus` (`DISCOVERY/DESIGN/DEVELOPMENT/QA/PUBLISHED/MONETIZING/BUSINESS_SUCCESS`,
+`model/ProductStatus.java`) es el estado real del *producto*, deliberadamente
+separado de `MissionStatus` (el workflow de análisis/decisión) — nunca se
+infiere uno del otro. `ProductStatusService.resolve(missionId)` lo calcula en
+cada consulta a partir de señales reales (`AgentTask` `OFFER_DESIGN`
+completada → `DESIGN`; `Transaction` real → `MONETIZING`; `netProfit` sobre
+capital semilla → `BUSINESS_SUCCESS`), sin persistir nada nuevo.
+`DEVELOPMENT`/`QA`/`PUBLISHED` quedan modelados pero **inalcanzables** hoy
+(siempre `false` en el servicio) — son el punto de enganche de una futura
+ejecución real de código/infraestructura tras la aprobación del
+inversionista, todavía sin diseñar. Un `MISSION-<id>` explícito en el chat
+que no sea inicio ni decisión se resuelve **100% en Java** contra
+`ProductStatusService` + `MissionMemoryService` (nunca pasa por Ollama) —
+mismo motivo que llevó a esto: el chat afirmó una vez "el desarrollo está en
+curso" sobre una misión `COMPLETED` con agentes `IDLE`, sin ninguna
+evidencia real.
+
 ### Mission.environment (`PRODUCTION`/`TEST`) — separa actividad empresarial real de misiones de desarrollo
 
 **Bug real encontrado por el usuario, siguiendo inmediatamente al anterior**: incluso con `MISSIONS_NEEDING_ATTENTION` ya filtrando estrictamente `AWAITING_INVESTOR`, las 15 misiones que devolvía seguían siendo casi todas de desarrollo/depuración (`MISSION-DEBUG-007`, `MISSION-STRUCTURED-*`, `MVP-*`, `MISSION-MAIL-TEST-*`, etc.) — el histórico completo de esta conversación probando el proyecto. El chat no tenía forma de distinguir "esto es la empresa real" de "esto es Claude probando una feature".

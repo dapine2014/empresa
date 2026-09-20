@@ -215,7 +215,18 @@ public class CeoService {
                 + " Decí explícitamente que no tenés ese dato registrado"
                 + " en vez de inventar una cifra, un nombre o una"
                 + " recomendación sobre algo que no existe en Company"
-                + " Memory.";
+                + " Memory."
+                + "\nRegla dura sobre estado de misiones: el workflowStatus de una"
+                + " misión (CREATED/PLANNING/.../AWAITING_INVESTOR/COMPLETED) es el"
+                + " estado del proceso de ANÁLISIS INTERNO — nunca lo uses para"
+                + " afirmar nada sobre el estado real del producto (si está en"
+                + " desarrollo, publicado o generando ingresos). Una AgentTask"
+                + " DELIVERY_FEASIBILITY completada es un estudio de factibilidad,"
+                + " NO significa que el desarrollo haya comenzado. Si te preguntan"
+                + " por el estado de desarrollo/negocio de una misión y no tenés"
+                + " ese dato exacto en este mensaje ni de query_company_memory,"
+                + " respondé exactamente: \"No tengo ese dato registrado.\" — nunca"
+                + " asumas que un paso avanzó porque otro paso anterior terminó.";
 
         var messages = new ArrayList<Map<String, Object>>();
         messages.add(Map.of("role", "system", "content", system));
