@@ -14,6 +14,8 @@ Alcance acordado con el usuario en brainstorming (3 preguntas explícitas):
 2. **"contactalo" ejecuta el envío real de inmediato**, sin paso de confirmación intermedio — el comando del fundador ES la aprobación, mismo criterio ya usado para "las dos misiones están aprobadas".
 3. **El contenido del email es una plantilla determinista en Java**, con los datos reales insertados — nunca redactado por el CEO. Mismo criterio anti-alucinación de todo el proyecto, evitando el riesgo (distinto al de una respuesta interna de chat) de que el CEO invente algo hacia un desconocido externo real.
 
+**Ajuste posterior del usuario**: no siempre hay un email visible de una persona/contacto puntual en una empresa — un email general/de ventas de la compañía (`info@`, `ventas@`, `sales@`, `contacto@`, etc.) es un dato de contacto igual de válido. El agente no debe descartar un candidato solo por no encontrar el email de una persona con nombre.
+
 ## Decisiones de diseño
 
 ### 1. `AgentResult.CustomerCandidate` gana `contactEmail` (opcional)
@@ -38,7 +40,7 @@ public record CustomerCandidate(
 
 `AgentResultSchema.CUSTOMER_CANDIDATE_ITEM_SCHEMA` gana `"contactEmail", Map.of("type", "string")` en `properties` — **sin** `minLength` (puede venir vacío) y **sin** agregarlo a `required` (a diferencia de `name`/`description`/`source`/`sourceType`/`confidence`, que sí lo están): un agente puede legítimamente no encontrar ningún email público.
 
-`AgentRuntime.buildPrompt` (el bloque de reglas para `customerCandidates`, ya existente) gana una instrucción nueva: buscar, junto con cada candidato, un email de contacto público real (página "contacto"/"about"/pie de página del sitio) y reportarlo en `contactEmail` — nunca inventado; si no lo encontró, dejar el campo vacío, nunca inventar uno con formato plausible.
+`AgentRuntime.buildPrompt` (el bloque de reglas para `customerCandidates`, ya existente) gana una instrucción nueva: buscar, junto con cada candidato, un email de contacto público real y reportarlo en `contactEmail` — **explícitamente válido tanto un email general/de ventas de la empresa** (`info@`/`ventas@`/`sales@`/`contacto@`, encontrado en la página de contacto, el pie de página del sitio, o su perfil) **como el de una persona puntual** si lo hay — no hace falta que sea de un individuo nombrado. Nunca inventado; si no encontró ninguno de los dos, dejar el campo vacío, nunca inventar uno con formato plausible.
 
 ### 2. Persistencia: `Customer.contactEmail` + nuevo status `CONTACTADO`
 
@@ -75,7 +77,7 @@ final class ProspectOutreachEmailTemplate {
 }
 ```
 
-Nunca pasa por el CEO — se arma 100% en Java con datos ya reales del `LeadResponse` (el mismo objeto que ya usa `formatCandidate`).
+Redactado de forma genérica a propósito (nunca asume que se dirige a una persona con nombre — funciona igual de bien si el destinatario real es un buzón general de ventas): saludo neutro ("Hola equipo de {empresa}", no "Estimado/a {nombre}"). Nunca pasa por el CEO — se arma 100% en Java con datos ya reales del `LeadResponse` (el mismo objeto que ya usa `formatCandidate`).
 
 ### 5. Disparo: `CompanyTools.contactProspect(LeadResponse candidate)`
 
@@ -122,9 +124,9 @@ public String contactProspect(LeadResponse candidate) {
 
 - `AgentResultValidatorTest`/`MissionExecutorTest`: sin cambios (sus `new CustomerCandidate(...)` de 5 args siguen compilando con el constructor de compatibilidad).
 - Tests nuevos en `AlertMailServiceTest` para `sendToExternal`: envía al destinatario dado (no a `alertEmail`), devuelve `true` en éxito, devuelve `false` (no lanza) si la cuenta del sistema no está configurada, devuelve `false` si `mailSender.send` falla — mismo patrón de mocking que los 3 tests ya existentes de `send`.
-- Tests nuevos en `CompanyToolsTest` para `contactProspect`: candidato sin `contactEmail` → mensaje determinista de "no tengo contacto", nunca llama a `alertMailService`; candidato con `contactEmail` y envío exitoso → llama a `sendToExternal` con el destinatario/asunto/cuerpo reales, llama a `markContacted`, publica el evento, devuelve el mensaje de éxito; envío fallido → mensaje de fallo, **no** llama a `markContacted` ni publica el evento (un email que no salió no debe marcarse como contactado).
+- Tests nuevos en `CompanyToolsTest` para `contactProspect`: candidato sin `contactEmail` → mensaje determinista de "no tengo contacto", nunca llama a `alertMailService`; candidato con `contactEmail` (probado tanto con un email de persona como con uno genérico tipo `ventas@empresa.com`, para confirmar que el código no distingue entre ambos) y envío exitoso → llama a `sendToExternal` con el destinatario/asunto/cuerpo reales, llama a `markContacted`, publica el evento, devuelve el mensaje de éxito; envío fallido → mensaje de fallo, **no** llama a `markContacted` ni publica el evento (un email que no salió no debe marcarse como contactado).
 - Test nuevo en `ChatIntentRouterTest`: "contactalo" contra un foco `CUSTOMER` cuyo candidato SÍ tiene `contactEmail` real llama a `companyTools.contactProspect(...)` (verificado con `verify`, sin necesidad de re-probar la lógica interna de `contactProspect`, ya cubierta en `CompanyToolsTest`).
-- `ProspectOutreachEmailTemplateTest` nuevo (función pura, mismo patrón que `AlertEmailTemplateTest`): el asunto/cuerpo contienen los datos reales del candidato (nombre, descripción, fuente), nunca placeholders.
+- `ProspectOutreachEmailTemplateTest` nuevo (función pura, mismo patrón que `AlertEmailTemplateTest`): el asunto/cuerpo contienen los datos reales del candidato (nombre, descripción, fuente), nunca placeholders, y el saludo es genérico (no asume un nombre de persona).
 - Sin test directo para `OpportunityMemoryService.recordCandidate`/`markContacted`/las 4 lecturas actualizadas (integración Neo4j pura, mismo criterio ya establecido para el resto de los `*MemoryService`) — verificado en vivo.
 
 ## Fuera de alcance de esta ronda (documentado, no descartado)
