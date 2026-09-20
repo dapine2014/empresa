@@ -114,6 +114,9 @@ class AlertMailServiceTest {
         message.saveChanges();
         assertEquals("ventas@panaderiaelsol.com", message.getAllRecipients()[0].toString());
         assertEquals("ai-company@gmail.com", message.getFrom()[0].toString());
+
+        var allText = extractAllText((Multipart) message.getContent());
+        assertFalse(allText.contains("Alerta automática"));
     }
 
     @Test

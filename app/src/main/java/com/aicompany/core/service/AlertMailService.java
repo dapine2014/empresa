@@ -88,7 +88,8 @@ public class AlertMailService {
             helper.setFrom(systemEmail);
             helper.setTo(to);
             helper.setSubject(subject);
-            helper.setText(body, AlertEmailTemplate.html(subject, body, false));
+            helper.setText(body, AlertEmailTemplate.html(
+                    subject, body, false, "Mensaje enviado por Forjai — no es una alerta automática"));
 
             mailSender.send(mimeMessage);
 

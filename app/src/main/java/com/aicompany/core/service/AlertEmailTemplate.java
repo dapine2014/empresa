@@ -19,6 +19,10 @@ final class AlertEmailTemplate {
     }
 
     static String html(String subject, String body, boolean critical) {
+        return html(subject, body, critical, "Alerta automática — Command Center");
+    }
+
+    static String html(String subject, String body, boolean critical, String footer) {
         var accent = critical ? CRITICAL_COLOR : INFO_COLOR;
 
         return "<!doctype html>"
@@ -38,7 +42,7 @@ final class AlertEmailTemplate {
                 + "</div>"
                 + "<div style=\"background:#121821;padding:12px 24px;border-top:1px solid #232c38;\">"
                 + "<span style=\"color:" + MUTED + ";font-size:12px;\">"
-                + "Alerta automática — Command Center</span>"
+                + escape(footer) + "</span>"
                 + "</div>"
                 + "</div>"
                 + "</body></html>";
