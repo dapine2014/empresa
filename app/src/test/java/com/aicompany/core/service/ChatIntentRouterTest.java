@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
@@ -33,8 +34,12 @@ class ChatIntentRouterTest {
     private final ActivityMemoryService activityMemory = mock(ActivityMemoryService.class);
     private final com.aicompany.core.config.AppProperties appProperties =
             new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
+    private final AlertMailService alertMailService = mock(AlertMailService.class);
+    private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
+
     private final CompanyTools companyTools = new CompanyTools(
-            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties
+            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties,
+            alertMailService, events
     );
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-09-19T15:00:00Z"), ZoneOffset.UTC);
@@ -598,6 +603,24 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("1 lead"));
         verify(opportunityMemory, never()).findCandidatesByIds(any());
+    }
+
+    @Test
+    void contactCommandDelegatesToCompanyToolsContactProspect() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc", "src", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.9,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0")))
+        );
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0")))
+                .thenReturn(List.of(candidate));
+
+        router.route("contactalo");
+
+        verify(opportunityMemory).claimForContact("MISSION-1-CANDIDATE-SALES-0");
     }
 
     @Test

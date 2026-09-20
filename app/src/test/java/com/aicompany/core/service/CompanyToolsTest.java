@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.config.AppProperties;
+import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.LastMentioned;
@@ -13,15 +14,18 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class CompanyToolsTest {
@@ -34,8 +38,12 @@ class CompanyToolsTest {
     private final ActivityMemoryService activityMemory = mock(ActivityMemoryService.class);
     private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
 
+    private final AlertMailService alertMailService = mock(AlertMailService.class);
+    private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
+
     private final CompanyTools tools = new CompanyTools(
-            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties
+            missionService, missionMemory, opportunityMemory, customerMemory, conversationMemory, activityMemory, appProperties,
+            alertMailService, events
     );
 
     @Test
@@ -590,5 +598,102 @@ class CompanyToolsTest {
         tools.getActiveMissions();
 
         verify(conversationMemory).recordChatMention("MISSION", List.of("MISSION-2"));
+    }
+
+    @Test
+    void contactProspectReturnsDeterministicMessageWithoutAnyContactChannel() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc", "src", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.5,
+                null, null
+        );
+
+        var response = tools.contactProspect(candidate);
+
+        assertEquals(
+                "No tengo un dato de contacto directo (teléfono/email) registrado para "
+                        + "este prospecto, solo la fuente donde se identificó.",
+                response
+        );
+        verifyNoInteractions(alertMailService);
+        verify(opportunityMemory, never()).claimForContact(any());
+    }
+
+    @Test
+    void contactProspectReturnsDeterministicMessageWhenAlreadyClaimedOrContacted() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc", "src", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.5,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(opportunityMemory.claimForContact("MISSION-1-CANDIDATE-SALES-0")).thenReturn(false);
+
+        var response = tools.contactProspect(candidate);
+
+        assertEquals("Este prospecto ya tiene un contacto en progreso o ya fue contactado.", response);
+        verifyNoInteractions(alertMailService);
+    }
+
+    @Test
+    void contactProspectSendsRealEmailAndMarksSentOnSuccess() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc",
+                "https://panaderiaelsol.com", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.5,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(opportunityMemory.claimForContact("MISSION-1-CANDIDATE-SALES-0")).thenReturn(true);
+        when(opportunityMemory.recordContactAttempt(
+                eq("MISSION-1-CANDIDATE-SALES-0"), eq("MISSION-1"), eq("MISSION-1-OPPORTUNITY"),
+                eq("ventas@panaderiaelsol.com"), any()
+        )).thenReturn("MISSION-1-CANDIDATE-SALES-0-CONTACT-123");
+        when(alertMailService.sendToExternal(eq("ventas@panaderiaelsol.com"), any(), any()))
+                .thenReturn(new AlertMailService.ExternalMailResult(true, null));
+
+        var response = tools.contactProspect(candidate);
+
+        assertTrue(response.contains("ventas@panaderiaelsol.com"));
+        assertTrue(response.contains("MISSION-1-CANDIDATE-SALES-0-CONTACT-123"));
+        verify(opportunityMemory).markContactSent("MISSION-1-CANDIDATE-SALES-0-CONTACT-123", "MISSION-1-CANDIDATE-SALES-0");
+        verify(opportunityMemory, never()).markContactFailed(any(), any(), any());
+        verify(events).publish(
+                eq("EMPRESA_PROSPECT_CONTACTED"), eq("MISSION-1"), any(), eq("ceo"),
+                eq(Map.of(
+                        "leadId", "MISSION-1-CANDIDATE-SALES-0",
+                        "attemptId", "MISSION-1-CANDIDATE-SALES-0-CONTACT-123",
+                        "recipientEmail", "ventas@panaderiaelsol.com"
+                ))
+        );
+    }
+
+    @Test
+    void contactProspectMarksFailedAndNeverMarksSentWhenSendingFails() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc",
+                "https://panaderiaelsol.com", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.5,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(opportunityMemory.claimForContact("MISSION-1-CANDIDATE-SALES-0")).thenReturn(true);
+        when(opportunityMemory.recordContactAttempt(any(), any(), any(), any(), any()))
+                .thenReturn("MISSION-1-CANDIDATE-SALES-0-CONTACT-123");
+        when(alertMailService.sendToExternal(any(), any(), any()))
+                .thenReturn(new AlertMailService.ExternalMailResult(false, "smtp no configurado"));
+
+        var response = tools.contactProspect(candidate);
+
+        assertTrue(response.contains("smtp no configurado"));
+        verify(opportunityMemory).markContactFailed(
+                "MISSION-1-CANDIDATE-SALES-0-CONTACT-123", "MISSION-1-CANDIDATE-SALES-0", "smtp no configurado"
+        );
+        verify(opportunityMemory, never()).markContactSent(any(), any());
+        verify(events).publish(
+                eq("EMPRESA_PROSPECT_CONTACT_FAILED"), eq("MISSION-1"), any(), eq("ceo"),
+                eq(Map.of(
+                        "leadId", "MISSION-1-CANDIDATE-SALES-0",
+                        "attemptId", "MISSION-1-CANDIDATE-SALES-0-CONTACT-123",
+                        "reason", "smtp no configurado"
+                ))
+        );
     }
 }

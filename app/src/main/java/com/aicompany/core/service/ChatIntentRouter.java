@@ -660,10 +660,9 @@ public class ChatIntentRouter {
 
         var clarifyNote = clarifyTopChoice ? " Avisame si te referías a otro." : "";
 
-        var contactNote = " No tengo un dato de contacto directo (teléfono/email) registrado para "
-                + "este prospecto, solo la fuente donde se identificó.";
+        var contactResult = companyTools.contactProspect(candidate);
 
-        return intro + companyTools.formatCandidate(candidate) + "." + contactNote + clarifyNote;
+        return intro + companyTools.formatCandidate(candidate) + ". " + contactResult + clarifyNote;
     }
 
     private enum ReferencePredicate {

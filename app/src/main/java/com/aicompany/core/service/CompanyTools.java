@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.config.AppProperties;
+import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.LeadResponse;
 import com.aicompany.core.model.MissionResponse;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -56,6 +58,8 @@ public class CompanyTools {
     private final ConversationMemoryService conversationMemory;
     private final ActivityMemoryService activityMemory;
     private final AppProperties appProperties;
+    private final AlertMailService alertMailService;
+    private final CompanyEventPublisher events;
 
     public CompanyTools(
             MissionService missionService,
@@ -64,7 +68,9 @@ public class CompanyTools {
             CustomerMemoryService customerMemory,
             ConversationMemoryService conversationMemory,
             ActivityMemoryService activityMemory,
-            AppProperties appProperties) {
+            AppProperties appProperties,
+            AlertMailService alertMailService,
+            CompanyEventPublisher events) {
 
         this.missionService = missionService;
         this.missionMemory = missionMemory;
@@ -73,6 +79,8 @@ public class CompanyTools {
         this.conversationMemory = conversationMemory;
         this.activityMemory = activityMemory;
         this.appProperties = appProperties;
+        this.alertMailService = alertMailService;
+        this.events = events;
     }
 
     /**
@@ -567,6 +575,60 @@ public class CompanyTools {
         }
 
         return "Hablamos de " + id + " en " + dates.size() + " día(s): " + String.join(", ", dates) + ".";
+    }
+
+    /**
+     * Dispara el contacto real (email) a un prospecto ya resuelto por
+     * {@code ChatIntentRouter} contra el foco conversacional -- el
+     * comando "contactalo" del fundador ejecuta este método de
+     * inmediato, sin paso de confirmación intermedio (decisión
+     * explícita del usuario, ver el spec).
+     */
+    public String contactProspect(LeadResponse candidate) {
+
+        if (candidate.contactEmail() == null || candidate.contactEmail().isBlank()) {
+            return "No tengo un dato de contacto directo (teléfono/email) registrado para "
+                    + "este prospecto, solo la fuente donde se identificó.";
+        }
+
+        if (!opportunityMemory.claimForContact(candidate.id())) {
+            return "Este prospecto ya tiene un contacto en progreso o ya fue contactado.";
+        }
+
+        var subject = ProspectOutreachEmailTemplate.subject(candidate);
+        var body = ProspectOutreachEmailTemplate.body(candidate);
+
+        var attemptId = opportunityMemory.recordContactAttempt(
+                candidate.id(), candidate.missionId(), candidate.opportunityId(),
+                candidate.contactEmail(), subject
+        );
+
+        var result = alertMailService.sendToExternal(candidate.contactEmail(), subject, body);
+
+        if (!result.accepted()) {
+
+            opportunityMemory.markContactFailed(attemptId, candidate.id(), result.errorMessage());
+
+            events.publish(
+                    "EMPRESA_PROSPECT_CONTACT_FAILED",
+                    candidate.missionId(), null, "ceo",
+                    Map.of("leadId", candidate.id(), "attemptId", attemptId, "reason", result.errorMessage())
+            );
+
+            return "Intenté enviar el correo, pero no se pudo (" + result.errorMessage() + "). "
+                    + "El intento quedó registrado y el prospecto sigue disponible para reintentar.";
+        }
+
+        opportunityMemory.markContactSent(attemptId, candidate.id());
+
+        events.publish(
+                "EMPRESA_PROSPECT_CONTACTED",
+                candidate.missionId(), null, "ceo",
+                Map.of("leadId", candidate.id(), "attemptId", attemptId, "recipientEmail", candidate.contactEmail())
+        );
+
+        return "Listo, le mandé un correo real a " + candidate.contactEmail()
+                + ". (ContactAttempt " + attemptId + ", estado: SENT)";
     }
 
     /**
