@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.model.LeadResponse;
 import com.aicompany.core.model.OpportunitySummary;
 import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Persistencia del flujo "Opportunity → Customer candidato" —
@@ -95,7 +97,9 @@ public class OpportunityMemoryService {
                                 "MERGE (c:Customer {id:$candidateId}) " +
                                 "ON CREATE SET c.missionId=$missionId, " +
                                 "c.name=$name, c.status='LEAD', " +
-                                "c.identifiedByAgent=$agentId, c.createdAt=$now " +
+                                "c.identifiedByAgent=$agentId, c.createdAt=$now, " +
+                                "c.confidence=$confidence, c.contactEmail=$contactEmail, " +
+                                "c.contactEmailSource=$contactEmailSource " +
                                 "SET c.updatedAt=$now " +
                                 "MERGE (o)-[:HAS_CANDIDATE]->(c)",
                         Map.of(
@@ -104,6 +108,9 @@ public class OpportunityMemoryService {
                                 "missionId", missionId,
                                 "name", candidate.name() == null ? "" : candidate.name(),
                                 "agentId", agentId,
+                                "confidence", candidate.confidence(),
+                                "contactEmail", candidate.contactEmail() == null ? "" : candidate.contactEmail(),
+                                "contactEmailSource", candidate.contactEmailSource() == null ? "" : candidate.contactEmailSource(),
                                 "now", now
                         ));
 
@@ -152,6 +159,124 @@ public class OpportunityMemoryService {
     }
 
     /**
+     * LEADs activos (`status='LEAD'`) para que el fundador humano decida
+     * a quién contactar — antes de esto no existía ningún camino (API,
+     * chat o pantalla) para ver estos candidatos, solo un conteo agregado
+     * (`CustomerMemoryService.countCustomersAndProspects`). `description`/
+     * `source`/`sourceType` viven en el nodo `Evidence` enlazado, no en el
+     * `Customer` mismo (ver {@link #recordCandidate}).
+     */
+    public List<LeadResponse> listLeads() {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity)-[:HAS_CANDIDATE]->(c:Customer {status:'LEAD'}) " +
+                                    "OPTIONAL MATCH (c)-[:HAS_EVIDENCE]->(e:Evidence) " +
+                                    "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
+                                    "o.id AS opportunityId, c.createdAt AS createdAt, " +
+                                    "e.description AS description, e.source AS source, " +
+                                    "e.sourceType AS sourceType, c.status AS status, " +
+                                    "coalesce(c.confidence, 0.0) AS confidence, " +
+                                    "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource " +
+                                    "ORDER BY c.createdAt DESC")
+                    .list(r -> new LeadResponse(
+                            r.get("id").asString(),
+                            r.get("name").asString(""),
+                            r.get("description").asString(""),
+                            r.get("source").asString(""),
+                            r.get("sourceType").asString(""),
+                            r.get("missionId").asString(),
+                            r.get("opportunityId").asString(),
+                            Instant.parse(r.get("createdAt").asString()),
+                            r.get("status").asString("LEAD"),
+                            null,
+                            null,
+                            r.get("confidence").asDouble(0.0),
+                            r.get("contactEmail").asString(""),
+                            r.get("contactEmailSource").asString("")
+                    ));
+        }
+    }
+
+    /**
+     * Compara-y-actualiza en una sola sentencia Cypher (el {@code MATCH}
+     * con {@code status:'LEAD'} hace de guarda): si el lead no existe o ya
+     * cambió de estado (ya `CONVERTIDO` o `DESCARTADO`), la consulta no
+     * devuelve filas y este método retorna vacío en vez de lanzar — es el
+     * llamador ({@code LeadController}) quien decide qué excepción
+     * corresponde. Guarda por `status` dentro de una única sentencia
+     * Cypher — no hay lock explícito entre transacciones concurrentes;
+     * para un solo fundador operando desde el Command Center el riesgo
+     * práctico es despreciable, pero no es una garantía dura de exclusión
+     * mutua.
+     */
+    public Optional<LeadResponse> discardLead(String leadId, String reason) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+
+                var records = tx.run(
+                        "MATCH (o:Opportunity)-[:HAS_CANDIDATE]->(c:Customer {id:$id, status:'LEAD'}) " +
+                                "OPTIONAL MATCH (c)-[:HAS_EVIDENCE]->(e:Evidence) " +
+                                "SET c.status='DESCARTADO', c.discardReason=$reason, " +
+                                "c.discardedAt=$now, c.updatedAt=$now " +
+                                "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
+                                "o.id AS opportunityId, c.createdAt AS createdAt, " +
+                                "e.description AS description, e.source AS source, " +
+                                "e.sourceType AS sourceType, c.status AS status, " +
+                                "c.discardReason AS discardReason, c.discardedAt AS discardedAt, " +
+                                "coalesce(c.confidence, 0.0) AS confidence, " +
+                                "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource",
+                        Map.of(
+                                "id", leadId,
+                                "reason", reason == null ? "" : reason,
+                                "now", Instant.now().toString()
+                        )
+                ).list();
+
+                return records.stream().findFirst().map(r -> new LeadResponse(
+                        r.get("id").asString(),
+                        r.get("name").asString(""),
+                        r.get("description").asString(""),
+                        r.get("source").asString(""),
+                        r.get("sourceType").asString(""),
+                        r.get("missionId").asString(),
+                        r.get("opportunityId").asString(),
+                        Instant.parse(r.get("createdAt").asString()),
+                        r.get("status").asString("DESCARTADO"),
+                        r.get("discardReason").asString(""),
+                        Instant.parse(r.get("discardedAt").asString()),
+                        r.get("confidence").asDouble(0.0),
+                        r.get("contactEmail").asString(""),
+                        r.get("contactEmailSource").asString("")
+                ));
+            });
+        }
+    }
+
+    /**
+     * Igual patrón que {@link #discardLead} pero para la conversión a
+     * cliente real — llamado por {@code CustomerService.registerCustomer}
+     * cuando el comando trae un {@code leadId}. Solo cambia el `status`;
+     * no toca `CustomerMemoryService.registerCustomer` ni crea el
+     * `Customer` real (eso sigue siendo, a propósito, el mismo camino
+     * humano de siempre).
+     */
+    public boolean markConverted(String leadId) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+
+                var records = tx.run(
+                        "MATCH (c:Customer {id:$id, status:'LEAD'}) " +
+                                "SET c.status='CONVERTIDO', c.updatedAt=$now " +
+                                "RETURN c.id AS id",
+                        Map.of("id", leadId, "now", Instant.now().toString())
+                ).list();
+
+                return !records.isEmpty();
+            });
+        }
+    }
+
+    /**
      * Oportunidades más recientes — usado por el intent de consulta
      * "qué oportunidades tenemos" del Chat Intent Router (no hay pantalla
      * dedicada de Opportunities en v1 del Command Center web, pero el dato
@@ -169,6 +294,252 @@ public class OpportunityMemoryService {
                     .single()
                     .get("total")
                     .asLong();
+        }
+    }
+
+    /**
+     * La Opportunity real de una misión puntual — a diferencia de
+     * {@link #listRecent}, que trae una lista global sin filtrar. Usada
+     * por el chat cuando el usuario menciona un {@code MISSION-<id>}
+     * explícito junto con la palabra "oportunidad".
+     */
+    public Optional<OpportunitySummary> findByMissionId(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity {missionId:$missionId}) " +
+                                    "RETURN o.id AS id, o.missionId AS missionId, " +
+                                    "o.description AS description, o.status AS status, " +
+                                    "o.createdAt AS createdAt",
+                            Map.of("missionId", missionId))
+                    .list(r -> new OpportunitySummary(
+                            r.get("id").asString(),
+                            r.get("missionId").asString(),
+                            r.get("description").asString(),
+                            r.get("status").asString(),
+                            Instant.parse(r.get("createdAt").asString())
+                    ))
+                    .stream()
+                    .findFirst();
+        }
+    }
+
+    /**
+     * Prospectos reales ({@code Customer{status:'LEAD'}}) de la
+     * Opportunity de una misión puntual, ordenados por {@code confidence}
+     * descendente — el agente que los identificó autoreporta ese valor
+     * (ver {@link #recordCandidate}).
+     */
+    public List<LeadResponse> listCandidatesForMission(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity {missionId:$missionId})-[:HAS_CANDIDATE]->(c:Customer {status:'LEAD'}) " +
+                                    "OPTIONAL MATCH (c)-[:HAS_EVIDENCE]->(e:Evidence) " +
+                                    "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
+                                    "o.id AS opportunityId, c.createdAt AS createdAt, " +
+                                    "e.description AS description, e.source AS source, " +
+                                    "e.sourceType AS sourceType, c.status AS status, " +
+                                    "coalesce(c.confidence, 0.0) AS confidence, " +
+                                    "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource " +
+                                    "ORDER BY coalesce(c.confidence, 0.0) DESC",
+                            Map.of("missionId", missionId))
+                    .list(r -> new LeadResponse(
+                            r.get("id").asString(),
+                            r.get("name").asString(""),
+                            r.get("description").asString(""),
+                            r.get("source").asString(""),
+                            r.get("sourceType").asString(""),
+                            r.get("missionId").asString(),
+                            r.get("opportunityId").asString(),
+                            Instant.parse(r.get("createdAt").asString()),
+                            r.get("status").asString("LEAD"),
+                            null,
+                            null,
+                            r.get("confidence").asDouble(0.0),
+                            r.get("contactEmail").asString(""),
+                            r.get("contactEmailSource").asString("")
+                    ));
+        }
+    }
+
+    /**
+     * Prospectos puntuales por id — usado para resolver una referencia
+     * conversacional contra el foco {@code type="CUSTOMER"} (ver
+     * {@code ChatIntentRouter.handleCustomerReference}), siempre contra
+     * el dato real y actual en Neo4j, nunca contra el texto de una
+     * respuesta anterior.
+     */
+    public List<LeadResponse> findCandidatesByIds(List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (o:Opportunity)-[:HAS_CANDIDATE]->(c:Customer) WHERE c.id IN $ids " +
+                                    "OPTIONAL MATCH (c)-[:HAS_EVIDENCE]->(e:Evidence) " +
+                                    "RETURN c.id AS id, c.name AS name, c.missionId AS missionId, " +
+                                    "o.id AS opportunityId, c.createdAt AS createdAt, " +
+                                    "e.description AS description, e.source AS source, " +
+                                    "e.sourceType AS sourceType, c.status AS status, " +
+                                    "coalesce(c.confidence, 0.0) AS confidence, " +
+                                    "c.contactEmail AS contactEmail, c.contactEmailSource AS contactEmailSource",
+                            Map.of("ids", ids))
+                    .list(r -> new LeadResponse(
+                            r.get("id").asString(),
+                            r.get("name").asString(""),
+                            r.get("description").asString(""),
+                            r.get("source").asString(""),
+                            r.get("sourceType").asString(""),
+                            r.get("missionId").asString(),
+                            r.get("opportunityId").asString(),
+                            Instant.parse(r.get("createdAt").asString()),
+                            r.get("status").asString(""),
+                            null,
+                            null,
+                            r.get("confidence").asDouble(0.0),
+                            r.get("contactEmail").asString(""),
+                            r.get("contactEmailSource").asString("")
+                    ));
+        }
+    }
+
+    /**
+     * Reclama el prospecto para un intento de contacto real -- compara-
+     * y-actualiza en una sola sentencia Cypher (el {@code MATCH} con
+     * {@code status:'LEAD'} hace de guarda), mismo patrón que
+     * {@link #markConverted}. Es el mecanismo real contra el doble
+     * envío: dos "contactalo" casi simultáneos no pueden ganar ambos
+     * este CAS -- el segundo (o cualquiera contra un lead ya
+     * convertido/descartado/contactado) recibe {@code false}.
+     *
+     * <p>CAS real de "reclamar" un lead para contacto: LEAD -> CONTACT_IN_PROGRESS. El
+     * SET incondicional de c.contactLock ANTES del WHERE fuerza a Neo4j a tomar el
+     * write-lock del nodo de inmediato -- Neo4j es read-committed y solo bloquea en
+     * el SET, no en el MATCH, así que un MATCH{status:'LEAD'}...SET simple deja una
+     * ventana real donde dos transacciones solapadas pueden leer 'LEAD' antes de que
+     * cualquiera de las dos comitee (lost update), encontrado en la revisión final
+     * de rama. Con el lock tomado primero, la segunda transacción solo re-evalúa
+     * status DESPUÉS de que la primera ya comiteó, y ve el valor real. contactLock
+     * es una propiedad dedicada (no updatedAt) para que un intento de claim fallido
+     * nunca se vea como si el registro hubiera cambiado de verdad.
+     */
+    public boolean claimForContact(String leadId) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+
+                var now = Instant.now().toString();
+
+                var records = tx.run(
+                        "MATCH (c:Customer {id:$id}) " +
+                                "SET c.contactLock=$now " +
+                                "WITH c WHERE c.status='LEAD' " +
+                                "SET c.status='CONTACT_IN_PROGRESS', c.updatedAt=$now " +
+                                "RETURN c.id AS id",
+                        Map.of("id", leadId, "now", now)
+                ).list();
+
+                return !records.isEmpty();
+            });
+        }
+    }
+
+    /**
+     * Crea el registro real de un intento de contacto ({@code
+     * ContactAttempt}) -- auditoría real de "se intentó, con estos
+     * datos exactos", independiente de si el envío después tuvo éxito
+     * o no. Devuelve el id generado, usado por {@link #markContactSent}/
+     * {@link #markContactFailed} para actualizar el mismo registro.
+     */
+    public String recordContactAttempt(
+            String leadId,
+            String missionId,
+            String opportunityId,
+            String destination,
+            String subject) {
+
+        var attemptId = leadId + "-CONTACT-" + Instant.now().toEpochMilli();
+
+        try (var session = driver.session()) {
+            var created = session.executeWrite(tx -> {
+
+                var result = tx.run("MATCH (c:Customer {id:$leadId}) " +
+                                "CREATE (a:ContactAttempt {id:$attemptId, prospectId:$leadId, " +
+                                "missionId:$missionId, opportunityId:$opportunityId, " +
+                                "channel:'EMAIL', destination:$destination, subject:$subject, " +
+                                "status:'PENDING', requestedBy:'human', initiatedAt:$now}) " +
+                                "MERGE (c)-[:HAS_CONTACT_ATTEMPT]->(a) " +
+                                "RETURN a.id AS id",
+                        Map.of(
+                                "leadId", leadId,
+                                "attemptId", attemptId,
+                                "missionId", missionId == null ? "" : missionId,
+                                "opportunityId", opportunityId == null ? "" : opportunityId,
+                                "destination", destination,
+                                "subject", subject,
+                                "now", Instant.now().toString()
+                        ));
+
+                return !result.list().isEmpty();
+            });
+
+            if (!created) {
+                throw new IllegalStateException(
+                        "No se pudo registrar el intento de contacto: el lead " + leadId + " no existe.");
+            }
+        }
+
+        return attemptId;
+    }
+
+    /**
+     * El envío salió: {@code ContactAttempt} pasa a {@code SENT} y el
+     * prospecto a {@code CONTACTADO} (sale de {@link #listLeads}/
+     * {@link #listCandidatesForMission}, que filtran estrictamente
+     * {@code status='LEAD'}).
+     */
+    public void markContactSent(String attemptId, String leadId) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+
+                var now = Instant.now().toString();
+
+                tx.run("MATCH (a:ContactAttempt {id:$attemptId}) " +
+                                "SET a.status='SENT', a.sentAt=$now",
+                        Map.of("attemptId", attemptId, "now", now));
+
+                tx.run("MATCH (c:Customer {id:$leadId}) " +
+                                "SET c.status='CONTACTADO', c.updatedAt=$now",
+                        Map.of("leadId", leadId, "now", now));
+
+                return null;
+            });
+        }
+    }
+
+    /**
+     * El envío falló: {@code ContactAttempt} pasa a {@code FAILED} con
+     * el motivo real, y el prospecto **vuelve** a {@code LEAD} -- un
+     * envío que no salió tiene que poder reintentarse después, no
+     * quedar atascado en {@code CONTACT_IN_PROGRESS} para siempre.
+     */
+    public void markContactFailed(String attemptId, String leadId, String errorMessage) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+
+                var now = Instant.now().toString();
+
+                tx.run("MATCH (a:ContactAttempt {id:$attemptId}) " +
+                                "SET a.status='FAILED', a.errorMessage=$errorMessage",
+                        Map.of(
+                                "attemptId", attemptId,
+                                "errorMessage", errorMessage == null ? "" : errorMessage
+                        ));
+
+                tx.run("MATCH (c:Customer {id:$leadId}) " +
+                                "SET c.status='LEAD', c.updatedAt=$now",
+                        Map.of("leadId", leadId, "now", now));
+
+                return null;
+            });
         }
     }
 

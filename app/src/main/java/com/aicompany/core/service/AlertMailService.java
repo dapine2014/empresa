@@ -45,6 +45,67 @@ public class AlertMailService {
         this.memory = memory;
     }
 
+    /**
+     * Sin {@code providerMessageId}: {@code JavaMailSenderImpl.send(...)}
+     * es {@code void} -- SMTP genérico (Gmail vía {@code spring.mail.*})
+     * no da ese dato de forma confiable, a diferencia de un proveedor de
+     * email tipo API (SendGrid/Mailgun). No se inventa un campo que no
+     * existe.
+     */
+    public record ExternalMailResult(boolean accepted, String errorMessage) {
+    }
+
+    /**
+     * Envío real a un destinatario arbitrario (nunca {@code alertEmail()}
+     * del fundador, a diferencia de {@link #send}) -- usado para
+     * contactar prospectos reales. A diferencia de {@code send}, que
+     * nunca lanza porque una alerta interna fallida no debe tumbar
+     * nada, este método SÍ devuelve el resultado real: el chat le tiene
+     * que decir la verdad al fundador sobre si el correo a un
+     * prospecto real salió o no.
+     */
+    public synchronized ExternalMailResult sendToExternal(String to, String subject, String body) {
+        try {
+            var systemEmail = memory.systemEmail();
+            var password = memory.mailPassword();
+
+            if (systemEmail == null || systemEmail.isBlank()
+                    || password == null || password.isBlank()) {
+
+                return new ExternalMailResult(
+                        false,
+                        "El correo propio del sistema no está configurado todavía "
+                                + "(Settings del Command Center web)."
+                );
+            }
+
+            mailSender.setUsername(systemEmail);
+            mailSender.setPassword(password);
+
+            var mimeMessage = mailSender.createMimeMessage();
+            var helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
+
+            helper.setFrom(systemEmail);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(body, AlertEmailTemplate.html(
+                    subject, body, false, "Mensaje enviado por Forjai — no es una alerta automática"));
+
+            mailSender.send(mimeMessage);
+
+            return new ExternalMailResult(true, null);
+
+        } catch (Exception ex) {
+
+            log.warn("No se pudo contactar al prospecto {}: {}", to, ex.getMessage());
+
+            return new ExternalMailResult(
+                    false,
+                    ex.getMessage() == null ? "error desconocido" : ex.getMessage()
+            );
+        }
+    }
+
     public synchronized void send(String subject, String body, boolean critical) {
         try {
             var systemEmail = memory.systemEmail();

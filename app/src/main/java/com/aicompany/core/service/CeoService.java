@@ -4,12 +4,17 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.llm.LlmProvider;
+import com.aicompany.core.llm.LlmResponse;
+import com.aicompany.core.llm.NvidiaNimLlmProvider;
+import com.aicompany.core.llm.OllamaLlmProvider;
 import com.aicompany.core.model.ConversationTurn;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -18,7 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 @Service
 public class CeoService {
@@ -93,8 +98,16 @@ public class CeoService {
                                                             "TEST_MISSIONS",
                                                             "LAST_MENTIONED",
                                                             "OPPORTUNITIES",
+                                                            "LEADS",
                                                             "COMPANY_PROFIT",
-                                                            "COMPANY_STATUS"
+                                                            "COMPANY_STATUS",
+                                                            "MISSION_DETAILS",
+                                                            "OPPORTUNITY_DETAILS",
+                                                            "RECENT_ACTIVITY",
+                                                            "RECENT_DECISIONS",
+                                                            "ACTIVE_MISSIONS",
+                                                            "CHAT_HISTORY",
+                                                            "MENTIONED_DATES"
                                                     ),
                                                     "description",
                                                     "AGENT_STATUS: qué está "
@@ -122,13 +135,24 @@ public class CeoService {
                                                             + "LAST_MENTIONED: "
                                                             + "detalle real de "
                                                             + "las últimas "
-                                                            + "misiones "
-                                                            + "mencionadas en "
+                                                            + "misiones o "
+                                                            + "prospectos "
+                                                            + "mencionados en "
                                                             + "esta "
                                                             + "conversación. "
                                                             + "OPPORTUNITIES: "
                                                             + "oportunidades "
-                                                            + "identificadas. "
+                                                            + "identificadas "
+                                                            + "(lista global, "
+                                                            + "sin prospectos). "
+                                                            + "LEADS: "
+                                                            + "candidatos de "
+                                                            + "cliente (LEAD) "
+                                                            + "que un agente "
+                                                            + "identificó y "
+                                                            + "todavía no se "
+                                                            + "contactaron ni "
+                                                            + "convirtieron. "
                                                             + "COMPANY_PROFIT: "
                                                             + "ingresos/costos/"
                                                             + "utilidad reales "
@@ -146,7 +170,96 @@ public class CeoService {
                                                             + "'status' o "
                                                             + "resumen general, "
                                                             + "nunca inventes "
-                                                            + "ese resumen vos."
+                                                            + "ese resumen vos. "
+                                                            + "MISSION_DETAILS: "
+                                                            + "estado, progreso "
+                                                            + "y tareas reales "
+                                                            + "de UNA misión "
+                                                            + "puntual -- "
+                                                            + "requiere el "
+                                                            + "parámetro id "
+                                                            + "con el "
+                                                            + "MISSION-<numero> "
+                                                            + "exacto. "
+                                                            + "OPPORTUNITY_DETAILS: "
+                                                            + "la oportunidad "
+                                                            + "real y sus "
+                                                            + "prospectos "
+                                                            + "reales de UNA "
+                                                            + "misión puntual "
+                                                            + "-- requiere el "
+                                                            + "parámetro id "
+                                                            + "con el "
+                                                            + "MISSION-<numero> "
+                                                            + "exacto (el id "
+                                                            + "de la misión, "
+                                                            + "nunca el id "
+                                                            + "interno de la "
+                                                            + "Opportunity). "
+                                                            + "RECENT_ACTIVITY: "
+                                                            + "línea de tiempo "
+                                                            + "reciente de la "
+                                                            + "empresa (misiones, "
+                                                            + "tareas, evidencia, "
+                                                            + "decisiones). "
+                                                            + "RECENT_DECISIONS: "
+                                                            + "últimas decisiones "
+                                                            + "reales del "
+                                                            + "inversionista "
+                                                            + "humano, sin "
+                                                            + "filtrar por "
+                                                            + "misión puntual. "
+                                                            + "ACTIVE_MISSIONS: "
+                                                            + "misiones reales "
+                                                            + "en curso (ni "
+                                                            + "esperando "
+                                                            + "aprobación, ni "
+                                                            + "fallidas, ni "
+                                                            + "completadas, ni "
+                                                            + "canceladas) con "
+                                                            + "su status y "
+                                                            + "progreso real. "
+                                                            + "CHAT_HISTORY: "
+                                                            + "transcript real "
+                                                            + "de la charla de "
+                                                            + "un día puntual -- "
+                                                            + "requiere el "
+                                                            + "parámetro id con "
+                                                            + "la fecha exacta "
+                                                            + "en formato "
+                                                            + "YYYY-MM-DD. "
+                                                            + "MENTIONED_DATES: "
+                                                            + "los días reales "
+                                                            + "en los que se "
+                                                            + "mencionó una "
+                                                            + "entidad puntual "
+                                                            + "en el chat -- "
+                                                            + "requiere el "
+                                                            + "parámetro id con "
+                                                            + "el id real de "
+                                                            + "esa entidad "
+                                                            + "(p. ej. un "
+                                                            + "MISSION-<numero>)."
+                                            ),
+                                            "id", Map.of(
+                                                    "type", "string",
+                                                    "description",
+                                                    "El id que corresponda "
+                                                            + "al topic pedido -- "
+                                                            + "MISSION-<numero> "
+                                                            + "exacto para "
+                                                            + "MISSION_DETAILS, "
+                                                            + "OPPORTUNITY_DETAILS "
+                                                            + "y MENTIONED_DATES "
+                                                            + "(si la entidad "
+                                                            + "mencionada es una "
+                                                            + "misión), la fecha "
+                                                            + "exacta en formato "
+                                                            + "YYYY-MM-DD para "
+                                                            + "CHAT_HISTORY. "
+                                                            + "Omitilo para "
+                                                            + "cualquier otro "
+                                                            + "topic."
                                             )
                                     ),
                                     "required", List.of("topic")
@@ -156,29 +269,35 @@ public class CeoService {
     );
 
     private final RestClient ollama;
-    private final String ceoModel;
     private final String agentModel;
     private final JsonMapper jsonMapper;
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
     private final MeterRegistry meterRegistry;
+    private final LlmProvider ceoProvider;
+    private final OllamaLlmProvider ollamaFallbackProvider;
+    private final AiBudgetService aiBudgetService;
 
     public CeoService(
             RestClient ollama,
-            @Value("${ollama.ceo-model}") String ceoModel,
             @Value("${ollama.agent-model}") String agentModel,
             JsonMapper jsonMapper,
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            @Qualifier("ceoProvider") LlmProvider ceoProvider,
+            @Qualifier("ollamaLlmProvider") OllamaLlmProvider ollamaFallbackProvider,
+            AiBudgetService aiBudgetService) {
 
         this.ollama = ollama;
-        this.ceoModel = ceoModel;
         this.agentModel = agentModel;
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
         this.events = events;
         this.meterRegistry = meterRegistry;
+        this.ceoProvider = ceoProvider;
+        this.ollamaFallbackProvider = ollamaFallbackProvider;
+        this.aiBudgetService = aiBudgetService;
     }
 
     /**
@@ -194,7 +313,7 @@ public class CeoService {
             String teamRoster,
             List<ConversationTurn> history,
             String message,
-            Function<String, String> companyMemoryQuery) {
+            BiFunction<String, String, String> companyMemoryQuery) {
 
         var system = systemPrompt()
                 + "\nTu nombre real es " + ceoName
@@ -222,22 +341,24 @@ public class CeoService {
         messages.addAll(buildHistoryMessages(history));
         messages.add(Map.of("role", "user", "content", message));
 
-        var turn = callModel(
-                "CEO_CHAT", "ceo", ceoModel, messages, null, COMPANY_MEMORY_TOOLS
-        );
+        var turn = callCeo("CEO_CHAT", messages, COMPANY_MEMORY_TOOLS);
 
-        var topic =
+        var query =
                 !turn.toolCalls().isEmpty()
                         ? parseCompanyMemoryTopic(turn.toolCalls().get(0))
                         : detectInlineCompanyMemoryTopic(turn.content());
 
-        if (topic == null) {
+        if (query == null) {
             return turn.content();
         }
 
-        log.info("CEO_CHAT_TOOL_CALL topic={}", topic);
+        log.info("CEO_CHAT_TOOL_CALL topic={} id={}", query.topic(), query.id());
 
-        var result = companyMemoryQuery.apply(topic);
+        var result = companyMemoryQuery.apply(query.topic(), query.id());
+
+        var toolCallArguments = query.id() == null
+                ? Map.of("topic", query.topic())
+                : Map.of("topic", query.topic(), "id", query.id());
 
         messages.add(Map.of(
                 "role", "assistant",
@@ -245,16 +366,14 @@ public class CeoService {
                 "tool_calls", List.of(Map.of(
                         "function", Map.of(
                                 "name", "query_company_memory",
-                                "arguments", Map.of("topic", topic)
+                                "arguments", toolCallArguments
                         )
                 ))
         ));
 
         messages.add(Map.of("role", "tool", "content", result));
 
-        var finalTurn = callModel(
-                "CEO_CHAT", "ceo", ceoModel, messages, null, null
-        );
+        var finalTurn = callCeo("CEO_CHAT", messages, null);
 
         return finalTurn.content();
     }
@@ -777,8 +896,11 @@ public class CeoService {
     private record ToolCall(String name, String query) {
     }
 
+    record CompanyMemoryQuery(String topic, String id) {
+    }
+
     @SuppressWarnings("unchecked")
-    private String parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
+    CompanyMemoryQuery parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
 
         var function = (Map<String, Object>) rawToolCall.get("function");
 
@@ -790,10 +912,13 @@ public class CeoService {
         var arguments = function.get("arguments");
 
         String topic = null;
+        String id = null;
 
         if (arguments instanceof Map<?, ?> argMap) {
-            var value = argMap.get("topic");
-            topic = value == null ? null : String.valueOf(value);
+            var topicValue = argMap.get("topic");
+            topic = topicValue == null ? null : String.valueOf(topicValue);
+            var idValue = argMap.get("id");
+            id = idValue == null ? null : String.valueOf(idValue);
         }
 
         if (!"query_company_memory".equals(name)
@@ -802,10 +927,10 @@ public class CeoService {
             return null;
         }
 
-        return topic;
+        return new CompanyMemoryQuery(topic, id);
     }
 
-    private String detectInlineCompanyMemoryTopic(String content) {
+    CompanyMemoryQuery detectInlineCompanyMemoryTopic(String content) {
 
         if (content == null || content.isBlank()) {
             return null;
@@ -830,7 +955,13 @@ public class CeoService {
 
             var topic = argumentsNode.path("topic").asString(null);
 
-            return (topic == null || topic.isBlank()) ? null : topic;
+            if (topic == null || topic.isBlank()) {
+                return null;
+            }
+
+            var id = argumentsNode.path("id").asString(null);
+
+            return new CompanyMemoryQuery(topic, id);
 
         } catch (Exception ex) {
             return null;
@@ -886,9 +1017,93 @@ public class CeoService {
                 Map.of("role", "user", "content", prompt)
         );
 
-        return callModel(
-                "MISSION_CONSOLIDATION", "ceo", ceoModel, messages, null, null
-        ).content();
+        return callCeo("MISSION_CONSOLIDATION", messages, null).content();
+    }
+
+    /**
+     * Único punto por el que pasan las dos llamadas del CEO ({@code chat}
+     * y {@code executeMission}) al proveedor configurado — aplica el
+     * presupuesto diario y el fallback a Ollama descritos en
+     * `docs/superpowers/specs/2026-09-18-nvidia-ceo-provider-design.md`.
+     * {@code executeAgentTask} no pasa por acá: sigue llamando a
+     * {@link #callModel} (Ollama directo) sin cambios.
+     *
+     * <p>Un {@code content} nulo/vacío SIN {@code tool_calls} cuenta como
+     * fallo (el truncamiento real observado en el spike con
+     * `gpt-oss-20b`) SOLO cuando el proveedor configurado es NVIDIA — con
+     * Ollama (hoy el 100% del tráfico real) nunca se validó esto antes de
+     * este plan, y hacerlo incondicional propagaría una respuesta vacía
+     * real de Ollama como excepción, tumbando el turno de chat (perdiendo
+     * el registro en el historial) o, peor, toda la misión completa vía
+     * `MissionExecutor.safeFail` — contradiciendo "Agent failure != Mission
+     * failure" (`CLAUDE.md`). Un {@code content} vacío CON {@code
+     * tool_calls} es un turno de herramienta normal, no un fallo, para
+     * cualquier proveedor.
+     */
+    private LlmResponse callCeo(
+            String operation,
+            List<Map<String, Object>> messages,
+            List<Map<String, Object>> tools) {
+
+        var usingNvidia = ceoProvider instanceof NvidiaNimLlmProvider;
+
+        if (usingNvidia && aiBudgetService.isExhausted()) {
+
+            log.info("CEO_PROVIDER_FALLBACK operation={} reason=BUDGET_EXHAUSTED", operation);
+
+            events.publish(
+                    "EMPRESA_CEO_PROVIDER_FALLBACK",
+                    null, null, "ceo",
+                    Map.of("operation", operation, "reason", "BUDGET_EXHAUSTED")
+            );
+
+            return ollamaFallbackProvider.chat(operation, messages, tools);
+        }
+
+        try {
+
+            var response = ceoProvider.chat(operation, messages, tools);
+
+            var noContentNoToolCalls =
+                    (response.content() == null || response.content().isBlank())
+                            && (response.toolCalls() == null || response.toolCalls().isEmpty());
+
+            if (noContentNoToolCalls && usingNvidia) {
+                throw new IllegalStateException(
+                        "Respuesta vacía del proveedor CEO (sin contenido ni tool_calls)."
+                );
+            }
+
+            if (usingNvidia) {
+                aiBudgetService.recordCall();
+            }
+
+            if (noContentNoToolCalls) {
+                log.warn("CEO_EMPTY_RESPONSE operation={} provider={}",
+                        operation, ceoProvider.getClass().getSimpleName());
+            }
+
+            log.info("CEO_PROVIDER_CALL operation={} provider={}",
+                    operation, ceoProvider.getClass().getSimpleName());
+
+            return response;
+
+        } catch (Exception ex) {
+
+            if (!usingNvidia) {
+                throw ex;
+            }
+
+            log.warn("CEO_PROVIDER_FALLBACK operation={} reason=RATE_LIMIT_OR_ERROR", operation, ex);
+
+            events.publish(
+                    "EMPRESA_CEO_PROVIDER_FALLBACK",
+                    null, null, "ceo",
+                    Map.of("operation", operation, "reason", "RATE_LIMIT_OR_ERROR")
+            );
+
+            return ollamaFallbackProvider.chat(operation, messages, tools);
+        }
     }
 
     private String systemPrompt() {
@@ -1027,7 +1242,7 @@ public class CeoService {
     }
 
     @SuppressWarnings("unchecked")
-    private ModelMessage callModel(
+    private LlmResponse callModel(
             String operation,
             String actor,
             String model,
@@ -1052,7 +1267,7 @@ public class CeoService {
      *              el default del modelo (para operaciones que no usan
      *              modelos con pensamiento, como el CEO).
      */
-    private ModelMessage callModel(
+    private LlmResponse callModel(
             String operation,
             String actor,
             String model,
@@ -1125,7 +1340,7 @@ public class CeoService {
                     localDurationMs
             );
 
-            return new ModelMessage("Sin respuesta del modelo.", List.of());
+            return new LlmResponse("Sin respuesta del modelo.", List.of());
         }
 
         logMetrics(
@@ -1140,7 +1355,7 @@ public class CeoService {
                 (Map<String, Object>) response.get("message");
 
         if (msg == null) {
-            return new ModelMessage("Sin respuesta del modelo.", List.of());
+            return new LlmResponse("Sin respuesta del modelo.", List.of());
         }
 
         var content = String.valueOf(msg.get("content"));
@@ -1158,13 +1373,7 @@ public class CeoService {
             }
         }
 
-        return new ModelMessage(content, toolCalls);
-    }
-
-    private record ModelMessage(
-            String content,
-            List<Map<String, Object>> toolCalls
-    ) {
+        return new LlmResponse(content, toolCalls);
     }
 
     private void logMetrics(

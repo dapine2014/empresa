@@ -513,12 +513,40 @@ public class AgentRuntime {
                 - No declares un resultado futuro como
                   resultado verificado.
                 - No presentes cálculos sin comprobarlos.
-                - customerCandidates es para perfiles de clientes
-                  concretos y reales que hayas identificado en tu
-                  investigación (no genéricos como "microempresarios en
-                  general") — nunca un cliente real ni contactado, eso
-                  solo lo registra un humano. Si no identificaste ninguno,
-                  déjalo como lista vacía; no inventes uno para llenarlo.
+                - customerCandidates es para EMPRESAS CONCRETAS Y
+                  NOMBRADAS que hayas identificado en tu
+                  investigación — no un segmento de mercado con
+                  nombre inventado ("Studio PixelCraft" citando un
+                  artículo genérico de tendencias del sector NO es
+                  un candidato válido). La fuente (source) debe ser
+                  la página, perfil o mención específica de ESA
+                  empresa puntual, nunca un artículo general de la
+                  industria. Nunca un cliente real ni contactado,
+                  eso solo lo registra un humano. Si no
+                  identificaste ninguna empresa real y específica,
+                  dejá la lista vacía — no inventes una ni la
+                  fuerces a partir de un segmento genérico.
+                - confidence de cada candidato: alto (mayor a 0.7)
+                  solo si es una empresa real, nombrada, con fuente
+                  específica de ESA empresa; bajo (menor a 0.4) si
+                  en realidad es más un segmento de mercado que una
+                  empresa puntual verificable. Nunca reportes alto
+                  solo porque el nombre suena a empresa real.
+                - contactEmail (opcional) es para un canal de
+                  contacto público REAL de esa empresa puntual —
+                  tanto un email general/de ventas de la empresa
+                  ("info@", "ventas@", "sales@", "contacto@", visto
+                  en su sitio o pie de página) como el de una
+                  persona puntual son igual de válidos, no hace
+                  falta que sea de un individuo nombrado.
+                  contactEmailSource es OBLIGATORIO si reportás
+                  contactEmail: debe ser la página exacta donde lo
+                  viste publicado. Nunca fabriques un email a partir
+                  del dominio o el nombre de la empresa (ej.
+                  "nombre@empresa.com" sin haberlo visto realmente
+                  publicado en ningún lado). Si no encontraste
+                  ningún canal público real, dejá ambos campos
+                  vacíos.
                 - Responde ÚNICAMENTE con JSON válido.
                 - No utilices Markdown.
                 - No agregues texto antes o después del JSON.
@@ -572,7 +600,8 @@ public class AgentRuntime {
                   "name": "",
                   "description": "",
                   "source": "",
-                  "sourceType": "WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE"
+                  "sourceType": "WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE",
+                  "confidence": 0.0
                 }
 
                 ACCIÓN:

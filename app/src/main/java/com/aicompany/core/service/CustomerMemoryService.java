@@ -39,6 +39,7 @@ public class CustomerMemoryService {
             String customerId,
             String name,
             String contact,
+            String leadId,
             AgentResult.Evidence evidence) {
 
         try (var session = driver.session()) {
@@ -92,6 +93,22 @@ public class CustomerMemoryService {
                                 "verified", evidence.verified(),
                                 "updatedAt", recordedAt
                         ));
+
+                // Solo si el cliente real viene de un LEAD que ya se marcó
+                // CONVERTIDO (CustomerService llama a
+                // OpportunityMemoryService.markConverted antes que esto) --
+                // enlaza el cliente real nuevo al LEAD del que salió, sin
+                // fusionar los nodos ni tocar el LEAD más allá de su
+                // status (ver spec, decisión 2).
+                if (leadId != null && !leadId.isBlank()) {
+
+                    tx.run("MATCH (c:Customer {id:$customerId}), (lead:Customer {id:$leadId}) " +
+                                    "MERGE (c)-[:CONVERTED_FROM]->(lead)",
+                            Map.of(
+                                    "customerId", customerId,
+                                    "leadId", leadId
+                            ));
+                }
 
                 return null;
             });
@@ -191,11 +208,15 @@ public class CustomerMemoryService {
      * reales registradas, de cualquier misión.
      */
     /**
-     * {@code {clientes reales, prospectos}} — un cliente real
+     * {@code {clientes reales, prospectos, contactados}} — un cliente real
      * ({@link #registerCustomer}, canal humano) nunca tiene {@code status}
      * seteado; un prospecto/LEAD ({@code OpportunityMemoryService.recordCandidate})
-     * siempre tiene {@code status='LEAD'}. Usado por el status agregado de
-     * la empresa ({@code QueryIntent.COMPANY_STATUS} en
+     * siempre tiene {@code status='LEAD'}; un LEAD al que ya se le mandó un
+     * correo real de contacto pasa a {@code status='CONTACTADO'} (ver
+     * {@code OpportunityMemoryService.markContactSent}) -- sin este tercer
+     * conteo, un prospecto contactado desaparecía en silencio de "dame un
+     * status" (encontrado en la revisión final de rama). Usado por el
+     * status agregado de la empresa ({@code QueryIntent.COMPANY_STATUS} en
      * {@code ChatIntentRouter}) para no confundir un candidato de agente
      * (hipótesis) con una relación real confirmada.
      */
@@ -204,12 +225,14 @@ public class CustomerMemoryService {
             var record = session.run(
                     "MATCH (c:Customer) "
                             + "RETURN count(CASE WHEN c.status IS NULL THEN 1 END) AS customers, "
-                            + "count(CASE WHEN c.status='LEAD' THEN 1 END) AS prospects"
+                            + "count(CASE WHEN c.status='LEAD' THEN 1 END) AS prospects, "
+                            + "count(CASE WHEN c.status='CONTACTADO' THEN 1 END) AS contacted"
             ).single();
 
             return new long[]{
                     record.get("customers").asLong(),
-                    record.get("prospects").asLong()
+                    record.get("prospects").asLong(),
+                    record.get("contacted").asLong()
             };
         }
     }

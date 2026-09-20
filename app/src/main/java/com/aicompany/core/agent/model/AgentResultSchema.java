@@ -68,20 +68,24 @@ public final class AgentResultSchema {
      */
     private static final Map<String, Object> CUSTOMER_CANDIDATE_ITEM_SCHEMA = Map.of(
             "type", "object",
-            "properties", Map.of(
-                    "name", Map.of("type", "string", "minLength", 1),
-                    "description", Map.of("type", "string", "minLength", 1),
-                    "source", Map.of("type", "string"),
-                    "sourceType", Map.of(
+            "properties", Map.ofEntries(
+                    Map.entry("name", Map.of("type", "string", "minLength", 1)),
+                    Map.entry("description", Map.of("type", "string", "minLength", 1)),
+                    Map.entry("source", Map.of("type", "string")),
+                    Map.entry("sourceType", Map.of(
                             "type", "string",
                             "enum", EVIDENCE_SOURCE_TYPES
-                    )
+                    )),
+                    Map.entry("confidence", Map.of("type", "number", "minimum", 0, "maximum", 1)),
+                    Map.entry("contactEmail", Map.of("type", "string")),
+                    Map.entry("contactEmailSource", Map.of("type", "string"))
             ),
             "required", List.of(
                     "name",
                     "description",
                     "source",
-                    "sourceType"
+                    "sourceType",
+                    "confidence"
             ),
             "additionalProperties", false
     );

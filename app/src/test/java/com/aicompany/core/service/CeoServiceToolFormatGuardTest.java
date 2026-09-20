@@ -2,6 +2,8 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
+import com.aicompany.core.llm.LlmProvider;
+import com.aicompany.core.llm.OllamaLlmProvider;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
@@ -24,12 +26,14 @@ class CeoServiceToolFormatGuardTest {
 
     private final CeoService ceoService = new CeoService(
             mock(RestClient.class),
-            "qwen2.5-coder:14b",
             "qwen3:8b",
             JsonMapper.builder().build(),
             mock(EvidenceAcquisitionService.class),
             mock(CompanyEventPublisher.class),
-            new SimpleMeterRegistry()
+            new SimpleMeterRegistry(),
+            mock(LlmProvider.class),
+            mock(OllamaLlmProvider.class),
+            mock(AiBudgetService.class)
     );
 
     @Test
