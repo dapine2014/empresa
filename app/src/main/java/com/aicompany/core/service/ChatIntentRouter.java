@@ -120,6 +120,17 @@ public class ChatIntentRouter {
     private static final Pattern CONTACT_REFERENCE =
             Pattern.compile("(?i)\\bcontacta(lo|la|me|los|las)?\\b|\\bcontacto de\\b");
 
+    // Formas imperativas que sí autorizan el envío real -- "contactalo"/"contactala"/
+    // "contactalos"/"contactalas". Deliberadamente SIN "contactame" (el fundador habla
+    // de sí mismo, no ordena contactar al prospecto) y SIN la frase "contacto de" (una
+    // pregunta, no una orden) -- ambas formas siguen entrando a handleCustomerReference
+    // vía CONTACT_REFERENCE (el gate de entrada, más amplio) pero ya no disparan
+    // CompanyTools.contactProspect. Encontrado en la revisión final de rama: "¿cuál es
+    // el contacto de X?" y "contactame cuando termines" mandaban un correo real a un
+    // tercero para una pregunta, no una orden.
+    private static final Pattern CONTACT_COMMAND =
+            Pattern.compile("(?i)\\bcontacta(lo|la|los|las)\\b");
+
     // "decisión" normaliza (sin tilde) a "decision", una substring bare
     // demasiado amplia: "¿Qué misiones necesitan una decisión mía?"
     // contiene tanto "necesita" (MISSIONS_NEEDING_ATTENTION) como
@@ -631,17 +642,18 @@ public class ChatIntentRouter {
         }
 
         var normalizedMessage = normalize(message);
+        var shouldContact = CONTACT_COMMAND.matcher(normalizedMessage).find();
 
         var mentioned = candidates.stream()
                 .filter(c -> !c.name().isBlank() && normalizedMessage.contains(normalize(c.name())))
                 .findFirst();
 
         if (mentioned.isPresent()) {
-            return formatCustomerReferenceAnswer(mentioned.get(), false);
+            return formatCustomerReferenceAnswer(mentioned.get(), false, shouldContact);
         }
 
         if (candidates.size() == 1) {
-            return formatCustomerReferenceAnswer(candidates.get(0), false);
+            return formatCustomerReferenceAnswer(candidates.get(0), false, shouldContact);
         }
 
         var topId = focusIds.get(0);
@@ -651,14 +663,29 @@ public class ChatIntentRouter {
                 .findFirst()
                 .orElse(candidates.get(0));
 
-        return formatCustomerReferenceAnswer(top, true);
+        return formatCustomerReferenceAnswer(top, true, shouldContact);
     }
 
-    private String formatCustomerReferenceAnswer(LeadResponse candidate, boolean clarifyTopChoice) {
+    /**
+     * Solo la forma imperativa ("contactalo"/"contactala"/"contactalos"/"contactalas",
+     * ver {@link #CONTACT_COMMAND}) dispara el envío real vía
+     * {@link CompanyTools#contactProspect}. Cualquier otra forma que matchea el gate de
+     * entrada más amplio {@link #CONTACT_REFERENCE} ("contacto de", "contactame") es
+     * puramente informativa: muestra el prospecto real (nunca inventa un teléfono/email)
+     * pero nunca manda nada. Antes de este ajuste esto llamaba a contactProspect
+     * incondicionalmente -- una pregunta real ("¿cuál es el contacto de X?") mandaba un
+     * correo real (encontrado en la revisión final de rama).
+     */
+    private String formatCustomerReferenceAnswer(LeadResponse candidate, boolean clarifyTopChoice, boolean shouldContact) {
 
         var intro = clarifyTopChoice ? "Te muestro el de mayor probabilidad: " : "";
-
         var clarifyNote = clarifyTopChoice ? " Avisame si te referías a otro." : "";
+
+        if (!shouldContact) {
+            return intro + companyTools.formatCandidate(candidate)
+                    + ". Decime \"contactalo\" si querés que le mande un correo real."
+                    + clarifyNote;
+        }
 
         var contactResult = companyTools.contactProspect(candidate);
 

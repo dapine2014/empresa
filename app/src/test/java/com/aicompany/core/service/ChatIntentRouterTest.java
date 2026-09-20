@@ -624,6 +624,46 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void informationalContactQuestionShowsPropspectButNeverSendsARealEmail() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc", "src", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.9,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0")))
+        );
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0")))
+                .thenReturn(List.of(candidate));
+
+        var response = router.route("¿cuál es el contacto de Panadería El Sol?");
+
+        assertTrue(response.contains("Panadería El Sol"));
+        assertTrue(response.contains("contactalo"));
+        verify(opportunityMemory, never()).claimForContact(any());
+        verifyNoInteractions(alertMailService);
+    }
+
+    @Test
+    void founderTalkingAboutBeingContactedNeverTriggersARealSendToTheProspect() {
+        var candidate = new LeadResponse(
+                "MISSION-1-CANDIDATE-SALES-0", "Panadería El Sol", "desc", "src", "WEB",
+                "MISSION-1", "MISSION-1-OPPORTUNITY", Instant.now(), "LEAD", null, null, 0.9,
+                "ventas@panaderiaelsol.com", "https://panaderiaelsol.com/contacto"
+        );
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("CUSTOMER", List.of("MISSION-1-CANDIDATE-SALES-0")))
+        );
+        when(opportunityMemory.findCandidatesByIds(List.of("MISSION-1-CANDIDATE-SALES-0")))
+                .thenReturn(List.of(candidate));
+
+        router.route("contactame cuando termines por favor");
+
+        verify(opportunityMemory, never()).claimForContact(any());
+        verifyNoInteractions(alertMailService);
+    }
+
+    @Test
     void routesLeadsQueryWithDeterministicFormatting() {
         when(opportunityMemory.listLeads()).thenReturn(List.of(
                 new LeadResponse(
