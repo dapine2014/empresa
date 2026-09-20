@@ -626,10 +626,11 @@ public class ChatIntentRouter {
     }
 
     /**
-     * Nunca inventa un teléfono/email: esta ronda es puramente
-     * informativa (no hay integración de telefonía/email construida
-     * todavía) — solo muestra lo que existe de verdad y aclara
-     * explícitamente cuando no hay dato de contacto directo.
+     * Resuelve el prospecto real del foco conversacional {@code CUSTOMER}. El
+     * envío real solo ocurre si el mensaje trae la forma imperativa (ver
+     * {@link #CONTACT_COMMAND} y el javadoc de {@link #formatCustomerReferenceAnswer}
+     * más abajo, la única fuente de verdad sobre cuándo se dispara un envío real) --
+     * este método en sí solo identifica candidatos, nunca inventa un teléfono/email.
      */
     private String handleCustomerReference(List<String> focusIds, String message) {
 
