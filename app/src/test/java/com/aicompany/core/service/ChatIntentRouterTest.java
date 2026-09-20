@@ -624,6 +624,48 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void resolvesProductStatusReferenceAgainstTheFocusWithoutAnyExplicitMissionId() {
+
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1")))
+        );
+        when(missionMemory.findByIds(List.of("MISSION-1"))).thenReturn(List.of(
+                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now())
+        ));
+        when(productStatusService.resolve("MISSION-1")).thenReturn(ProductStatus.DISCOVERY);
+
+        var response = router.route("¿esas están en desarrollo?");
+
+        assertTrue(response.contains("MISSION-1: productStatus=DISCOVERY"));
+        assertTrue(response.contains("no asumas que el desarrollo comenzó"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void lastMentionedTopicIncludesRealProductStatus() {
+
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1")))
+        );
+        when(missionMemory.findByIds(List.of("MISSION-1"))).thenReturn(List.of(
+                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now())
+        ));
+        when(productStatusService.resolve("MISSION-1")).thenReturn(ProductStatus.DESIGN);
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ok");
+
+        router.route("contame más sobre esas");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
+        @SuppressWarnings("unchecked")
+        var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
+
+        assertTrue(companyMemoryQuery.apply("LAST_MENTIONED").contains("productStatus=DESIGN"));
+    }
+
+    @Test
     void respondsDeterministicallyWhenReferenceHasNoFocusYet() {
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
 
