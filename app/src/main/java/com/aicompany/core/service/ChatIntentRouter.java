@@ -2,11 +2,13 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.AgentStatusResponse;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
+import com.aicompany.core.model.ProductStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -118,6 +120,7 @@ public class ChatIntentRouter {
     private final CompanyMemoryService companyMemory;
     private final ConversationMemoryService conversationMemory;
     private final AppProperties appProperties;
+    private final ProductStatusService productStatusService;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -127,7 +130,8 @@ public class ChatIntentRouter {
             CustomerMemoryService customerMemory,
             CompanyMemoryService companyMemory,
             ConversationMemoryService conversationMemory,
-            AppProperties appProperties) {
+            AppProperties appProperties,
+            ProductStatusService productStatusService) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -137,6 +141,7 @@ public class ChatIntentRouter {
         this.companyMemory = companyMemory;
         this.conversationMemory = conversationMemory;
         this.appProperties = appProperties;
+        this.productStatusService = productStatusService;
     }
 
     /**
@@ -180,6 +185,12 @@ public class ChatIntentRouter {
 
         if (decision != null) {
             return handleDecision(decision, message);
+        }
+
+        var missionStatusId = detectMissionStatusQuery(message);
+
+        if (missionStatusId != null) {
+            return handleMissionStatusQuery(missionStatusId);
         }
 
         var referenceMatcher = REFERENCE_PRONOUN.matcher(message);
@@ -306,6 +317,77 @@ public class ChatIntentRouter {
         return "Decisión registrada: " + decision.decision()
                 + " sobre " + decision.missionId()
                 + ". Quedó guardada como Decision real, no fue una ejecución directa de chat.";
+    }
+
+    /**
+     * Un {@code MISSION-<id>} explícito que no fue ni inicio ni decisión —
+     * el fundador está preguntando por el estado real de esa misión
+     * puntual. Reportado en vivo: sin esta rama, este caso caía al chat
+     * general y el CEO alucinó "el desarrollo del MVP está en curso"
+     * sobre una misión COMPLETED con agentes IDLE.
+     */
+    private String detectMissionStatusQuery(String message) {
+
+        var matcher = MISSION_ID.matcher(message);
+
+        return matcher.find() ? matcher.group(1).toUpperCase(Locale.ROOT) : null;
+    }
+
+    /**
+     * Resuelve 100% en Java, sin pasar por Ollama — mismo criterio que
+     * {@code formatAgentStatus}/{@code formatCompanyStatus}. Es la única
+     * garantía dura de esta feature (ver
+     * docs/superpowers/specs/2026-09-20-chat-grounding-product-status-design.md).
+     */
+    private String handleMissionStatusQuery(String missionId) {
+
+        var mission = missionMemory.find(missionId);
+
+        if (mission.isEmpty()) {
+            return "No tengo ese dato registrado. No existe ninguna misión con id "
+                    + missionId + " en Company Memory.";
+        }
+
+        conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+
+        return formatMissionStatus(mission.get(), missionMemory.tasks(missionId));
+    }
+
+    /**
+     * {@code workflowStatus} (MissionStatus) y {@code productStatus}
+     * (ProductStatusService) son preguntas distintas — nunca se infiere
+     * una de la otra.
+     */
+    private String formatMissionStatus(MissionResponse mission, List<AgentTask> tasks) {
+
+        var productStatus = productStatusService.resolve(mission.missionId());
+
+        var taskLines = tasks.stream()
+                .map(t -> t.agentId() + "=" + t.action() + " " + t.status())
+                .collect(Collectors.joining(", "));
+
+        var involvedAgentIds = tasks.stream()
+                .map(AgentTask::agentId)
+                .collect(Collectors.toSet());
+
+        var agentStatusLines = missionMemory.latestTaskPerAgent().stream()
+                .filter(a -> involvedAgentIds.contains(a.agentId()))
+                .map(a -> a.name() + " (" + a.role() + "): " + a.status())
+                .collect(Collectors.joining(", "));
+
+        var closing = productStatus.ordinal() < ProductStatus.DEVELOPMENT.ordinal()
+                ? " No tengo registro de ninguna AgentTask de desarrollo real, evento de "
+                        + "desarrollo iniciado, ni artefacto/repositorio/build para esta "
+                        + "misión — no puedo afirmar que el desarrollo haya comenzado."
+                : "";
+
+        return mission.missionId() + ": workflowStatus=" + mission.status()
+                + " (esto es el estado del proceso de análisis/decisión interno, "
+                + "NO implica nada sobre si el producto está en desarrollo, publicado "
+                + "o generando ingresos). productStatus=" + productStatus
+                + ". Tareas de esta misión: " + taskLines
+                + ". Estado actual de los agentes involucrados: " + agentStatusLines
+                + "." + closing;
     }
 
     private enum ReferencePredicate {
