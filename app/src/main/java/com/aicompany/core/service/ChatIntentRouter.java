@@ -2,11 +2,13 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.AgentStatusResponse;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
+import com.aicompany.core.model.ProductStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -110,6 +112,24 @@ public class ChatIntentRouter {
     // CEO" -- antes CeoService.chat no mandaba ningún turno anterior).
     private static final int HISTORY_LIMIT = 20;
 
+    private static final Pattern PRODUCT_STATUS_PREDICATE =
+            Pattern.compile("\\b(desarroll\\w*|mvp|publicad\\w*|lanzad\\w*)\\b");
+
+    // Dos disclaimers distintos a propósito (singular vs. plural) -- ver
+    // formatMissionStatus/formatProductStatusAnswer. No unificar la
+    // redacción: forzar un solo texto sería un cambio más grande y más
+    // riesgoso que simplemente nombrarlos.
+    private static final String NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_SINGLE =
+            " No tengo registro de ninguna AgentTask de desarrollo real, evento de "
+                    + "desarrollo iniciado, ni artefacto/repositorio/build para esta "
+                    + "misión — no puedo afirmar que el desarrollo haya comenzado.";
+
+    private static final String NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_MULTI =
+            " Ninguna de estas misiones tiene evidencia real de desarrollo (AgentTask de "
+                    + "desarrollo, evento de desarrollo iniciado o artefacto/repositorio/build) "
+                    + "salvo que se indique lo contrario arriba — no asumas que el desarrollo "
+                    + "comenzó solo porque el workflow de análisis haya terminado.";
+
     private final MissionService missionService;
     private final CeoService ceoService;
     private final MissionMemoryService missionMemory;
@@ -118,6 +138,7 @@ public class ChatIntentRouter {
     private final CompanyMemoryService companyMemory;
     private final ConversationMemoryService conversationMemory;
     private final AppProperties appProperties;
+    private final ProductStatusService productStatusService;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -127,7 +148,8 @@ public class ChatIntentRouter {
             CustomerMemoryService customerMemory,
             CompanyMemoryService companyMemory,
             ConversationMemoryService conversationMemory,
-            AppProperties appProperties) {
+            AppProperties appProperties,
+            ProductStatusService productStatusService) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -137,6 +159,7 @@ public class ChatIntentRouter {
         this.companyMemory = companyMemory;
         this.conversationMemory = conversationMemory;
         this.appProperties = appProperties;
+        this.productStatusService = productStatusService;
     }
 
     /**
@@ -180,6 +203,15 @@ public class ChatIntentRouter {
 
         if (decision != null) {
             return handleDecision(decision, message);
+        }
+
+        var missionStatusId = detectMissionStatusQuery(message);
+
+        var isFocusGovernanceCommand = detectReferenceCommand(normalize(message)) != null
+                && (REFERENCE_PRONOUN.matcher(message).find() || FOCUS_QUANTIFIER.matcher(message).find());
+
+        if (missionStatusId != null && !isFocusGovernanceCommand) {
+            return handleMissionStatusQuery(missionStatusId);
         }
 
         var referenceMatcher = REFERENCE_PRONOUN.matcher(message);
@@ -308,10 +340,82 @@ public class ChatIntentRouter {
                 + ". Quedó guardada como Decision real, no fue una ejecución directa de chat.";
     }
 
+    /**
+     * Un {@code MISSION-<id>} explícito que no fue ni inicio ni decisión —
+     * el fundador está preguntando por el estado real de esa misión
+     * puntual. Reportado en vivo: sin esta rama, este caso caía al chat
+     * general y el CEO alucinó "el desarrollo del MVP está en curso"
+     * sobre una misión COMPLETED con agentes IDLE.
+     */
+    private String detectMissionStatusQuery(String message) {
+
+        var matcher = MISSION_ID.matcher(message);
+
+        return matcher.find() ? matcher.group(1).toUpperCase(Locale.ROOT) : null;
+    }
+
+    /**
+     * Resuelve 100% en Java, sin pasar por Ollama — mismo criterio que
+     * {@code formatAgentStatus}/{@code formatCompanyStatus}. Es la única
+     * garantía dura de esta feature (ver
+     * docs/superpowers/specs/2026-09-20-chat-grounding-product-status-design.md).
+     */
+    private String handleMissionStatusQuery(String missionId) {
+
+        log.info("CHAT_INTENT_MISSION_STATUS missionId={}", missionId);
+
+        var mission = missionMemory.find(missionId);
+
+        if (mission.isEmpty()) {
+            return "No tengo ese dato registrado. No existe ninguna misión con id "
+                    + missionId + " en Company Memory.";
+        }
+
+        conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+
+        return formatMissionStatus(mission.get(), missionMemory.tasks(missionId));
+    }
+
+    /**
+     * {@code workflowStatus} (MissionStatus) y {@code productStatus}
+     * (ProductStatusService) son preguntas distintas — nunca se infiere
+     * una de la otra.
+     */
+    private String formatMissionStatus(MissionResponse mission, List<AgentTask> tasks) {
+
+        var productStatus = productStatusService.resolve(mission.missionId());
+
+        var taskLines = tasks.stream()
+                .map(t -> t.agentId() + "=" + t.action() + " " + t.status())
+                .collect(Collectors.joining(", "));
+
+        var involvedAgentIds = tasks.stream()
+                .map(AgentTask::agentId)
+                .collect(Collectors.toSet());
+
+        var agentStatusLines = missionMemory.latestTaskPerAgent().stream()
+                .filter(a -> involvedAgentIds.contains(a.agentId()))
+                .map(a -> a.name() + " (" + a.role() + "): " + a.status())
+                .collect(Collectors.joining(", "));
+
+        var closing = productStatus.ordinal() < ProductStatus.DEVELOPMENT.ordinal()
+                ? NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_SINGLE
+                : "";
+
+        return mission.missionId() + ": workflowStatus=" + mission.status()
+                + " (esto es el estado del proceso de análisis/decisión interno, "
+                + "NO implica nada sobre si el producto está en desarrollo, publicado "
+                + "o generando ingresos). productStatus=" + productStatus
+                + ". Tareas de esta misión: " + taskLines
+                + ". Estado actual de los agentes involucrados: " + agentStatusLines
+                + "." + closing;
+    }
+
     private enum ReferencePredicate {
         ENVIRONMENT_TEST,
         FAILED,
-        NEEDS_APPROVAL
+        NEEDS_APPROVAL,
+        PRODUCT_STATUS
     }
 
     private ReferencePredicate detectReferencePredicate(String normalized) {
@@ -328,6 +432,10 @@ public class ChatIntentRouter {
 
         if (normalized.contains("aprobacion") || normalized.contains("necesita")) {
             return ReferencePredicate.NEEDS_APPROVAL;
+        }
+
+        if (PRODUCT_STATUS_PREDICATE.matcher(normalized).find()) {
+            return ReferencePredicate.PRODUCT_STATUS;
         }
 
         return null;
@@ -461,6 +569,10 @@ public class ChatIntentRouter {
 
         var missions = missionMemory.findByIds(focus.get().ids());
 
+        if (predicate == ReferencePredicate.PRODUCT_STATUS) {
+            return formatProductStatusAnswer(missions);
+        }
+
         return formatReferenceAnswer(predicate, missions);
     }
 
@@ -476,6 +588,8 @@ public class ChatIntentRouter {
             case ENVIRONMENT_TEST -> "pertenecen al entorno de pruebas";
             case FAILED -> "fallaron";
             case NEEDS_APPROVAL -> "están esperando tu aprobación (AWAITING_INVESTOR)";
+            case PRODUCT_STATUS -> throw new IllegalStateException(
+                    "PRODUCT_STATUS se resuelve en formatProductStatusAnswer, nunca aquí");
         };
 
         if (matching.size() == total) {
@@ -493,12 +607,47 @@ public class ChatIntentRouter {
         return matching.size() + " de " + total + " misión(es) " + description + ": " + matchingIds + ".";
     }
 
+    /**
+     * PRODUCT_STATUS no encaja en el patrón "cuántas de estas coinciden
+     * con X" de {@link #formatReferenceAnswer} — cada misión del foco
+     * tiene su propio productStatus real, así que se lista una por una.
+     * Mismo criterio de grounding que {@code handleMissionStatusQuery}:
+     * nunca se afirma desarrollo real sin evidencia.
+     */
+    private String formatProductStatusAnswer(List<MissionResponse> missions) {
+
+        if (missions.isEmpty()) {
+            return "No tengo ese dato registrado. No hay ninguna misión en el foco de esta conversación.";
+        }
+
+        var statuses = missions.stream()
+                .collect(Collectors.toMap(
+                        MissionResponse::missionId,
+                        m -> productStatusService.resolve(m.missionId())
+                ));
+
+        var lines = missions.stream()
+                .map(m -> m.missionId() + ": productStatus=" + statuses.get(m.missionId()))
+                .collect(Collectors.joining(", "));
+
+        var anyBeforeDevelopment = statuses.values().stream()
+                .anyMatch(s -> s.ordinal() < ProductStatus.DEVELOPMENT.ordinal());
+
+        var closing = anyBeforeDevelopment
+                ? NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_MULTI
+                : "";
+
+        return "Estado de producto real: " + lines + "." + closing;
+    }
+
     private boolean matchesReferencePredicate(ReferencePredicate predicate, MissionResponse mission) {
 
         return switch (predicate) {
             case ENVIRONMENT_TEST -> "TEST".equals(mission.environment());
             case FAILED -> mission.status() == MissionStatus.FAILED;
             case NEEDS_APPROVAL -> mission.status() == MissionStatus.AWAITING_INVESTOR;
+            case PRODUCT_STATUS -> throw new IllegalStateException(
+                    "PRODUCT_STATUS se resuelve en formatProductStatusAnswer, nunca aquí");
         };
     }
 
@@ -845,7 +994,9 @@ public class ChatIntentRouter {
         var missions = missionMemory.findByIds(focus.get().ids());
 
         var lines = missions.stream()
-                .map(m -> m.missionId() + " (environment=" + m.environment() + ", status=" + m.status() + ")")
+                .map(m -> m.missionId() + " (environment=" + m.environment()
+                        + ", workflowStatus=" + m.status()
+                        + ", productStatus=" + productStatusService.resolve(m.missionId()) + ")")
                 .collect(Collectors.joining(", "));
 
         return "Las últimas misiones mencionadas fueron: " + lines + ".";

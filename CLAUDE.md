@@ -225,6 +225,23 @@ El chat no es `POST /chat → LLM → texto`. `ChatIntentRouter.route()` graba c
 5. **Consulta determinista** (`detectQuery` → `QueryIntent`): `AGENT_STATUS`, `MISSIONS_NEEDING_ATTENTION` (estrictamente `AWAITING_INVESTOR`, filtrado a `environment=PRODUCTION`), `FAILED_MISSIONS` (estrictamente `FAILED`, `PRODUCTION`), `TEST_MISSIONS` (`environment=TEST`), `OPPORTUNITIES`, `COMPANY_PROFIT`, `COMPANY_STATUS` (snapshot agregado — capital, agentes, misiones, oportunidades, prospectos/clientes, ingresos — catch-all al final para pedidos genéricos de resumen). Todas se formatean **100% en Java**, sin pasar por Ollama — contar/enumerar es una tarea determinista, delegarla a un LLM introduce subconteo o alucinación con volumen real de datos.
 6. **General** → `CeoService.chat(ceoName, teamRoster, message, history, companyMemoryQuery)`, con tool-calling real (`query_company_memory`, mismo enum de topics que las consultas deterministas — nunca Cypher libre) y los últimos `HISTORY_LIMIT=20` mensajes (10 turnos) de `Conversation {id:'MAIN'}` para memoria real de la charla (sin resumen/compactación — límite fijo simple).
 
+`ProductStatus` (`DISCOVERY/DESIGN/DEVELOPMENT/QA/PUBLISHED/MONETIZING/BUSINESS_SUCCESS`,
+`model/ProductStatus.java`) es el estado real del *producto*, deliberadamente
+separado de `MissionStatus` (el workflow de análisis/decisión) — nunca se
+infiere uno del otro. `ProductStatusService.resolve(missionId)` lo calcula en
+cada consulta a partir de señales reales (`AgentTask` `OFFER_DESIGN`
+completada → `DESIGN`; `Transaction` real → `MONETIZING`; `netProfit` sobre
+capital semilla → `BUSINESS_SUCCESS`), sin persistir nada nuevo.
+`DEVELOPMENT`/`QA`/`PUBLISHED` quedan modelados pero **inalcanzables** hoy
+(siempre `false` en el servicio) — son el punto de enganche de una futura
+ejecución real de código/infraestructura tras la aprobación del
+inversionista, todavía sin diseñar. Un `MISSION-<id>` explícito en el chat
+que no sea inicio ni decisión se resuelve **100% en Java** contra
+`ProductStatusService` + `MissionMemoryService` (nunca pasa por Ollama) —
+mismo motivo que llevó a esto: el chat afirmó una vez "el desarrollo está en
+curso" sobre una misión `COMPLETED` con agentes `IDLE`, sin ninguna
+evidencia real.
+
 `Mission.environment` (`PRODUCTION`/`TEST`) es una propiedad real y persistida, nunca heurística sobre el nombre del `missionId`; default `PRODUCTION` si se omite en `POST /missions` (`environmentOrDefault()`) — quien inicia una misión de prueba debe marcarla `"TEST"` explícitamente. `find()`/`findAll()` usan `coalesce(m.environment, 'TEST')` al leer (compatibilidad con misiones viejas sin el campo), con la excepción de `MISSION-001` (misión fundacional real) migrada explícitamente a `PRODUCTION`.
 
 ### Memoria conversacional (`ConversationMemoryService`)

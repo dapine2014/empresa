@@ -228,4 +228,22 @@ public class CustomerMemoryService {
             };
         }
     }
+
+    /**
+     * Cantidad real de {@code Transaction} registradas para una misión —
+     * usado por {@link ProductStatusService} para derivar
+     * {@code ProductStatus.MONETIZING}: una transacción real con
+     * {@code revenueUsd=0, costUsd=0} (caso raro pero posible) igual debe
+     * contar como evidencia de venta cerrada, a diferencia de mirar si
+     * {@link #totalRevenueAndCost} es distinto de cero.
+     */
+    public long transactionCount(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                    "MATCH (m:Mission {id:$missionId})-[:HAS_TRANSACTION]->(t:Transaction) "
+                            + "RETURN count(t) AS total",
+                    Map.of("missionId", missionId)
+            ).single().get("total").asLong();
+        }
+    }
 }

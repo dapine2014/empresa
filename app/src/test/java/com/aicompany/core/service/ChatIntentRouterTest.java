@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.model.AgentStatusResponse;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
 import com.aicompany.core.model.InvestorDecision;
@@ -8,10 +9,12 @@ import com.aicompany.core.model.LastMentioned;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
+import com.aicompany.core.model.ProductStatus;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -29,9 +32,11 @@ class ChatIntentRouterTest {
     private final ConversationMemoryService conversationMemory = mock(ConversationMemoryService.class);
     private final com.aicompany.core.config.AppProperties appProperties =
             new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
+    private final ProductStatusService productStatusService = mock(ProductStatusService.class);
 
     private final ChatIntentRouter router = new ChatIntentRouter(
-            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory, conversationMemory, appProperties
+            missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
+            conversationMemory, appProperties, productStatusService
     );
 
     @Test
@@ -147,6 +152,78 @@ class ChatIntentRouterTest {
         var response = router.route("Aprueba la misión MISSION-404.");
 
         assertTrue(response.contains("No encontré"));
+    }
+
+    @Test
+    void routesExplicitMissionIdStatusQueryDeterministicallyWithoutOllama() {
+
+        var mission = new MissionResponse(
+                "MISSION-1789884929871", MissionStatus.COMPLETED, "PRODUCTION", 100,
+                "Decisión del inversionista", "Aprobada", Instant.now()
+        );
+        when(missionMemory.find("MISSION-1789884929871")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-1789884929871")).thenReturn(List.of(
+                new AgentTask("T1", "MISSION-1789884929871", "sales", "MARKET_DISCOVERY", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("T2", "MISSION-1789884929871", "product", "OFFER_DESIGN", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("T4", "MISSION-1789884929871", "engineering", "DELIVERY_FEASIBILITY", "COMPLETED", "{}", Instant.now())
+        ));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(
+                new AgentStatusResponse("engineering", "Neo", "Engineering", "x", "IDLE",
+                        "MISSION-1789884929871", "DELIVERY_FEASIBILITY", "COMPLETED", Instant.now())
+        ));
+        when(productStatusService.resolve("MISSION-1789884929871")).thenReturn(ProductStatus.DESIGN);
+
+        var response = router.route("¿Cómo va MISSION-1789884929871?");
+
+        assertTrue(response.contains("workflowStatus=COMPLETED"));
+        assertTrue(response.contains("productStatus=DESIGN"));
+        assertTrue(response.contains("no puedo afirmar que el desarrollo haya comenzado"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void returnsNotRegisteredMessageWhenQueriedMissionDoesNotExist() {
+
+        when(missionMemory.find("MISSION-999")).thenReturn(Optional.empty());
+
+        var response = router.route("¿Cómo va MISSION-999?");
+
+        assertEquals(
+                "No tengo ese dato registrado. No existe ninguna misión con id MISSION-999 en Company Memory.",
+                response
+        );
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void hallucinationProtectionCompletedMissionWithIdleAgentsNeverImpliesDevelopmentInProgress() {
+        // Test de protección directo contra el bug real reportado por el
+        // usuario: MISSION-1789884929871 estaba COMPLETED, todos los
+        // agentes IDLE, y la última tarea de engineering era
+        // DELIVERY_FEASIBILITY=COMPLETED -- el CEO afirmó "El desarrollo
+        // del MVP está en curso" sin ninguna evidencia real.
+        var mission = new MissionResponse(
+                "MISSION-1789884929871", MissionStatus.COMPLETED, "PRODUCTION", 100,
+                "Decisión del inversionista", "Aprobada", Instant.now()
+        );
+        when(missionMemory.find("MISSION-1789884929871")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-1789884929871")).thenReturn(List.of(
+                new AgentTask("T4", "MISSION-1789884929871", "engineering", "DELIVERY_FEASIBILITY", "COMPLETED", "{}", Instant.now())
+        ));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(
+                new AgentStatusResponse("engineering", "Neo", "Engineering", "x", "IDLE",
+                        "MISSION-1789884929871", "DELIVERY_FEASIBILITY", "COMPLETED", Instant.now())
+        ));
+        when(productStatusService.resolve("MISSION-1789884929871")).thenReturn(ProductStatus.DISCOVERY);
+
+        var response = router.route("¿Cómo va el desarrollo de MISSION-1789884929871?");
+
+        var lower = response.toLowerCase(Locale.ROOT);
+        assertFalse(lower.contains("en curso"));
+        assertFalse(lower.contains("desarrollando"));
+        assertTrue(response.contains("productStatus=DISCOVERY"));
+        assertTrue(response.contains("no puedo afirmar que el desarrollo haya comenzado"));
+        verifyNoInteractions(ceoService);
     }
 
     @Test
@@ -469,6 +546,57 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void governanceCommandOverFocusStillAppliesWhenMessageAlsoNamesExplicitMissionIds() {
+        // Regresión encontrada en la revisión final: la rama de estado de
+        // misión puntual (MISSION-<id> explícito) se insertaba ANTES del
+        // chequeo de REFERENCE_PRONOUN/FOCUS_QUANTIFIER, así que un comando
+        // de gobernanza que además nombra los ids de las misiones ("Las
+        // dos, MISSION-1 y MISSION-2, están aprobadas.") quedaba
+        // interceptado por la rama de solo-lectura y la aprobación se
+        // perdía en silencio.
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1", "MISSION-2")))
+        );
+        when(missionService.recordDecision(eq("MISSION-1"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-1-DECISION-1", "MISSION-1", InvestorDecision.APPROVE, Instant.now())));
+        when(missionService.recordDecision(eq("MISSION-2"), any(DecisionCommand.class)))
+                .thenReturn(Optional.of(new DecisionResponse("MISSION-2-DECISION-1", "MISSION-2", InvestorDecision.APPROVE, Instant.now())));
+
+        var response = router.route("Las dos, MISSION-1 y MISSION-2, están aprobadas.");
+
+        assertTrue(response.contains("✅"));
+        verify(missionService).recordDecision(eq("MISSION-1"), any(DecisionCommand.class));
+        verify(missionService).recordDecision(eq("MISSION-2"), any(DecisionCommand.class));
+    }
+
+    @Test
+    void explicitMissionIdWithAdjectivalDecisionWordButNoPronounStillGetsDeterministicStatus() {
+        // Regresión encontrada en la re-revisión del fix anterior: el guard
+        // que defiere a handleReference cuando el mensaje "parece" un
+        // comando de gobernanza (detectReferenceCommand no-null) era
+        // demasiado amplio -- sin un REFERENCE_PRONOUN/FOCUS_QUANTIFIER
+        // real, el mensaje nunca llega a handleReference tampoco, y caía
+        // al chat general sin ningún grounding. Este mensaje tiene un id
+        // explícito y una palabra adjetiva de decisión ("aprobada") pero
+        // ningún pronombre/cuantificador plural -- debe seguir resolviendo
+        // por la rama determinista, no por el chat general.
+        var mission = new MissionResponse(
+                "MISSION-3", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 90,
+                "x", "y", Instant.now()
+        );
+        when(missionMemory.find("MISSION-3")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-3")).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-3")).thenReturn(ProductStatus.DISCOVERY);
+
+        var response = router.route("MISSION-3 ya fue aprobada, ¿cierto?");
+
+        assertTrue(response.contains("workflowStatus=AWAITING_INVESTOR"));
+        verifyNoInteractions(ceoService);
+        verify(missionService, never()).recordDecision(anyString(), any());
+    }
+
+    @Test
     void reportsPerMissionOutcomeWhenApprovingMultipleMissionsFromFocusWithAPartialFailure() {
         when(conversationMemory.lastMentioned()).thenReturn(
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-1", "MISSION-2")))
@@ -544,6 +672,48 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("2"));
         assertTrue(response.contains("MISSION-DEBUG-007"));
         verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void resolvesProductStatusReferenceAgainstTheFocusWithoutAnyExplicitMissionId() {
+
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1")))
+        );
+        when(missionMemory.findByIds(List.of("MISSION-1"))).thenReturn(List.of(
+                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now())
+        ));
+        when(productStatusService.resolve("MISSION-1")).thenReturn(ProductStatus.DISCOVERY);
+
+        var response = router.route("¿esas están en desarrollo?");
+
+        assertTrue(response.contains("MISSION-1: productStatus=DISCOVERY"));
+        assertTrue(response.contains("no asumas que el desarrollo comenzó"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void lastMentionedTopicIncludesRealProductStatus() {
+
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(conversationMemory.lastMentioned()).thenReturn(
+                Optional.of(new LastMentioned("MISSION", List.of("MISSION-1")))
+        );
+        when(missionMemory.findByIds(List.of("MISSION-1"))).thenReturn(List.of(
+                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now())
+        ));
+        when(productStatusService.resolve("MISSION-1")).thenReturn(ProductStatus.DESIGN);
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any())).thenReturn("ok");
+
+        router.route("contame más sobre esas");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture());
+        @SuppressWarnings("unchecked")
+        var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
+
+        assertTrue(companyMemoryQuery.apply("LAST_MENTIONED").contains("productStatus=DESIGN"));
     }
 
     @Test
