@@ -3,6 +3,7 @@ package com.aicompany.core.service;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
+import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.MissionStatusResponse;
@@ -113,7 +114,7 @@ public class MissionService {
         );
 
         var newStatus = switch (command.decision()) {
-            case APPROVE -> MissionStatus.COMPLETED;
+            case APPROVE -> MissionStatus.EXECUTING;
             case REJECT -> MissionStatus.CANCELLED;
             case REQUEST_MORE_EVIDENCE -> null;
         };
@@ -123,7 +124,7 @@ public class MissionService {
             memory.updateMission(
                     missionId,
                     newStatus,
-                    100,
+                    96,
                     "Decisión del inversionista",
                     command.reasoning()
             );
@@ -132,10 +133,24 @@ public class MissionService {
                     "EMPRESA_MISSION_UPDATED",
                     missionId,
                     newStatus.name(),
-                    100,
+                    96,
                     "Decisión del inversionista",
                     command.reasoning()
             );
+        }
+
+        if (command.decision() == InvestorDecision.APPROVE) {
+
+            var missionInstruction = memory.instruction(missionId).orElse("");
+
+            executor.executeDevelopmentAsync(missionId, missionInstruction)
+                    .whenComplete((ignored, error) -> {
+                        if (error != null) {
+                            log.error("MISSION {} - development async future failed", missionId, error);
+                        } else {
+                            log.info("MISSION {} - development async orchestration finished", missionId);
+                        }
+                    });
         }
 
         events.publish(

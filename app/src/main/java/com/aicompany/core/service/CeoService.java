@@ -3,6 +3,8 @@ package com.aicompany.core.service;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
+import com.aicompany.core.agent.model.DevelopmentResult;
+import com.aicompany.core.agent.model.DevelopmentResultSchema;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.ConversationTurn;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
@@ -57,6 +59,17 @@ public class CeoService {
                     )
             )
     );
+
+    /**
+     * `num_ctx` real usado solo por {@link #generateDevelopmentArtifact}
+     * (ver el overload de {@code callModel} con {@code options}) — el
+     * default de Ollama es probablemente insuficiente para un prompt que
+     * incluye contexto de discovery completo y pide archivos de código
+     * reales y completos, mucho más largos que un {@code AgentResult} de
+     * discovery.
+     */
+    private static final Map<String, Object> DEVELOPMENT_CONTEXT_OPTIONS =
+            Map.of("num_ctx", 8192);
 
     /**
      * Herramienta disponible solo en {@link #chat}: Neo4j es la memoria
@@ -909,6 +922,100 @@ public class CeoService {
         ).content();
     }
 
+    /**
+     * Genera un {@link DevelopmentResult} real (código, no análisis) para
+     * un agente del Engineering Team — una sola llamada a Ollama por
+     * intento (`format: DevelopmentResultSchema.SCHEMA`, sin `tools`: no
+     * hace falta el turno de decisión de herramienta de
+     * {@link #executeAgentTask} en esta primera ronda). El reintento
+     * (hasta {@code MAX_RESULT_RETRIES + 1} veces) y la validación de
+     * rutas viven en {@code DevelopmentRuntime}, no acá — esta llamada es
+     * la ejecución de un solo intento, igual que el turno final de
+     * {@link #executeAgentTask}.
+     */
+    public DevelopmentResult generateDevelopmentArtifact(
+            String agentId,
+            String prompt,
+            String model) {
+
+        var system =
+                systemPrompt()
+                        + "\nTu rol específico en esta tarea es: "
+                        + agentId
+                        + ".";
+
+        var messages = List.<Map<String, Object>>of(
+                Map.of("role", "system", "content", system),
+                Map.of("role", "user", "content", prompt)
+        );
+
+        var finalTurn =
+                callModel(
+                        "DEVELOPMENT_TASK",
+                        agentId,
+                        model,
+                        messages,
+                        DevelopmentResultSchema.SCHEMA,
+                        null,
+                        false,
+                        // El prompt de desarrollo incluye contexto de
+                        // discovery completo y pide archivos de código
+                        // reales y completos (potencialmente mucho más
+                        // largos que un AgentResult de discovery) — el
+                        // contexto default de Ollama es probablemente
+                        // insuficiente. 8192 es un valor razonable de
+                        // partida para esta llamada puntual, sin afectar
+                        // ninguna otra (discovery/chat siguen sin
+                        // `options`).
+                        DEVELOPMENT_CONTEXT_OPTIONS
+                );
+
+        var response = finalTurn.content();
+
+        try {
+
+            var normalizedResponse =
+                    normalizeJsonResponse(response);
+
+            log.debug(
+                    "DEVELOPMENT_RESULT_RAW agent={} response={}",
+                    agentId,
+                    response
+            );
+
+            var result =
+                    jsonMapper.readValue(
+                            normalizedResponse,
+                            DevelopmentResult.class
+                    );
+
+            log.info(
+                    "DEVELOPMENT_RESULT_PARSED agent={} files={}",
+                    agentId,
+                    result.files().size()
+            );
+
+            return result;
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "DEVELOPMENT_RESULT_PARSE_ERROR agent={} model={} reason={}",
+                    agentId,
+                    model,
+                    ex.getMessage(),
+                    ex
+            );
+
+            throw new IllegalStateException(
+                    "El agente "
+                            + agentId
+                            + " no devolvió un DevelopmentResult JSON válido.",
+                    ex
+            );
+        }
+    }
+
     private String systemPrompt() {
 
         return """
@@ -1057,6 +1164,23 @@ public class CeoService {
     }
 
     /**
+     * Overload de compatibilidad sin {@code options} — todas las llamadas
+     * existentes (discovery, chat, consolidación) siguen usando este
+     * camino, sin cambio de comportamiento.
+     */
+    private ModelMessage callModel(
+            String operation,
+            String actor,
+            String model,
+            List<Map<String, Object>> messages,
+            Object format,
+            List<Map<String, Object>> tools,
+            Boolean think) {
+
+        return callModel(operation, actor, model, messages, format, tools, think, null);
+    }
+
+    /**
      * @param think Modelos con "modo pensamiento" (p. ej. qwen3) generan un
      *              razonamiento previo separado del contenido final
      *              ({@code message.thinking}, no mezclado con
@@ -1069,6 +1193,12 @@ public class CeoService {
      *              latencia, así que ahí se desactiva. {@code null} deja
      *              el default del modelo (para operaciones que no usan
      *              modelos con pensamiento, como el CEO).
+     * @param options Opciones crudas de Ollama (p. ej. {@code num_ctx}),
+     *                agregadas solo si no es {@code null} — hoy usado
+     *                exclusivamente por {@link #generateDevelopmentArtifact}
+     *                vía {@code DEVELOPMENT_CONTEXT_OPTIONS}; ninguna otra
+     *                llamada (discovery, chat, consolidación) pasa
+     *                {@code options}, así que su comportamiento no cambia.
      */
     private ModelMessage callModel(
             String operation,
@@ -1077,7 +1207,8 @@ public class CeoService {
             List<Map<String, Object>> messages,
             Object format,
             List<Map<String, Object>> tools,
-            Boolean think) {
+            Boolean think,
+            Map<String, Object> options) {
 
         rejectFormatCombinedWithTools(operation, format, tools);
 
@@ -1094,6 +1225,10 @@ public class CeoService {
 
         if (tools != null && !tools.isEmpty()) {
             body.put("tools", tools);
+        }
+
+        if (options != null) {
+            body.put("options", options);
         }
 
         if (think != null) {

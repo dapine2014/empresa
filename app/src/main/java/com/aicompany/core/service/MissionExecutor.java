@@ -1,11 +1,14 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.AgentRuntime;
+import com.aicompany.core.agent.DevelopmentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.agent.model.DevelopmentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.AgentExecutionOutcome;
+import com.aicompany.core.model.DevelopmentExecutionOutcome;
 import com.aicompany.core.model.MissionStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +61,8 @@ public class MissionExecutor {
     private final AppProperties appProperties;
     private final OpportunityMemoryService opportunityMemory;
     private final AlertMailService alertMailService;
+    private final DevelopmentRuntime developmentRuntime;
+    private final DevelopmentWorkspaceService developmentWorkspace;
 
     public MissionExecutor(
             MissionMemoryService memory,
@@ -72,7 +77,9 @@ public class MissionExecutor {
             ContradictionDetector contradictionDetector,
             AppProperties appProperties,
             OpportunityMemoryService opportunityMemory,
-            AlertMailService alertMailService) {
+            AlertMailService alertMailService,
+            DevelopmentRuntime developmentRuntime,
+            DevelopmentWorkspaceService developmentWorkspace) {
 
         this.memory = memory;
         this.runtime = runtime;
@@ -86,6 +93,8 @@ public class MissionExecutor {
         this.appProperties = appProperties;
         this.opportunityMemory = opportunityMemory;
         this.alertMailService = alertMailService;
+        this.developmentRuntime = developmentRuntime;
+        this.developmentWorkspace = developmentWorkspace;
     }
 
     public CompletableFuture<Void> executeAsync(
@@ -131,6 +140,253 @@ public class MissionExecutor {
 
             return CompletableFuture.failedFuture(ex);
         }
+    }
+
+    private record DevelopmentDefinition(
+            String agentId,
+            String action,
+            String subdirectory,
+            String objective) {
+    }
+
+    private static final List<DevelopmentDefinition> DEVELOPMENT_DEFINITIONS = List.of(
+            new DevelopmentDefinition(
+                    "engineering", "ARCHITECTURE_DEVELOPMENT", "architecture",
+                    "Definir la arquitectura técnica y el andamiaje inicial del backend."
+            ),
+            new DevelopmentDefinition(
+                    "backend", "BACKEND_DEVELOPMENT", "backend",
+                    "Implementar la lógica de negocio y las APIs principales."
+            ),
+            new DevelopmentDefinition(
+                    "frontend-ui", "FRONTEND_DEVELOPMENT", "frontend",
+                    "Implementar la interfaz de usuario inicial."
+            )
+    );
+
+    /**
+     * Segunda orquestación de {@code MissionExecutor}, disparada desde
+     * {@code MissionService.recordDecision} cuando el inversionista
+     * aprueba la misión — mismo patrón que {@link #executeAsync} para
+     * discovery (async, un método público que delega a uno interno sobre
+     * {@code orchestratorExecutor}), pero para las 3 tareas de desarrollo
+     * real del Engineering Team. Ver
+     * docs/superpowers/specs/2026-09-21-development-generation-design.md.
+     */
+    public CompletableFuture<Void> executeDevelopmentAsync(
+            String missionId,
+            String instruction) {
+
+        log.info("MISSION {} - submitting development orchestration", missionId);
+
+        try {
+
+            return CompletableFuture.runAsync(
+                    () -> executeDevelopmentInternal(missionId, instruction),
+                    orchestratorExecutor
+            );
+
+        } catch (Exception ex) {
+
+            log.error("MISSION {} - could not submit development orchestration", missionId, ex);
+
+            safeFail(missionId, ex);
+
+            return CompletableFuture.failedFuture(ex);
+        }
+    }
+
+    private void executeDevelopmentInternal(String missionId, String instruction) {
+
+        log.info("MISSION {} - development execution started", missionId);
+
+        try {
+
+            var discoveryContext =
+                    memory.tasks(missionId).stream()
+                            .filter(t -> "OFFER_DESIGN".equals(t.action())
+                                    || "DELIVERY_FEASIBILITY".equals(t.action()))
+                            .filter(t -> "COMPLETED".equals(t.status()))
+                            .map(t -> t.agentId() + " (" + t.action() + "):\n" + t.result())
+                            .collect(Collectors.joining("\n\n"));
+
+            var contextForPrompt =
+                    discoveryContext.isBlank() ? "(sin contexto adicional)" : discoveryContext;
+
+            var futuresByAgent =
+                    new LinkedHashMap<String, CompletableFuture<DevelopmentResult>>();
+            var subdirectoryByAgent =
+                    new LinkedHashMap<String, String>();
+
+            for (var definition : DEVELOPMENT_DEFINITIONS) {
+
+                var agentId = definition.agentId();
+                var taskId = missionId + "-" + agentId.toUpperCase() + "-DEV";
+
+                memory.createTask(taskId, missionId, agentId, definition.action());
+
+                events.publishTask(
+                        "EMPRESA_TASK_CREATED", taskId, missionId, agentId, "PENDING",
+                        "Tarea de desarrollo creada."
+                );
+
+                var prompt = buildDevelopmentPrompt(
+                        agentId, definition.objective(), instruction, contextForPrompt
+                );
+
+                var future =
+                        developmentRuntime.execute(
+                                taskId, missionId, agentId, definition.action(), prompt
+                        );
+
+                futuresByAgent.put(agentId, future);
+                subdirectoryByAgent.put(agentId, definition.subdirectory());
+            }
+
+            advanceMission(
+                    missionId, MissionStatus.EXECUTING, 97, "Desarrollo",
+                    "Los agentes están generando código real en paralelo."
+            );
+
+            var outcomes = new ArrayList<DevelopmentExecutionOutcome>();
+
+            for (var entry : futuresByAgent.entrySet()) {
+
+                var agentId = entry.getKey();
+
+                try {
+
+                    var result = entry.getValue().join();
+
+                    outcomes.add(DevelopmentExecutionOutcome.success(agentId, result));
+
+                } catch (Exception ex) {
+
+                    var reason = safeMessage(ex, "El agente no completó su tarea de desarrollo.");
+
+                    log.warn(
+                            "MISSION {} - development agent {} did not complete: {}",
+                            missionId, agentId, reason
+                    );
+
+                    outcomes.add(DevelopmentExecutionOutcome.failure(agentId, reason));
+                }
+            }
+
+            var completedOutcomes =
+                    outcomes.stream().filter(DevelopmentExecutionOutcome::completed).toList();
+            var failedOutcomes =
+                    outcomes.stream().filter(o -> !o.completed()).toList();
+
+            if (completedOutcomes.isEmpty()) {
+
+                throw new IllegalStateException(
+                        "Los " + failedOutcomes.size()
+                                + " agente(s) de desarrollo fallaron: "
+                                + failedOutcomes.stream()
+                                        .map(o -> o.agentId() + " (" + o.error() + ")")
+                                        .collect(Collectors.joining("; "))
+                );
+            }
+
+            var successfulWrites = new ArrayList<DevelopmentExecutionOutcome>();
+
+            for (var outcome : completedOutcomes) {
+
+                try {
+
+                    developmentWorkspace.writeFiles(
+                            missionId,
+                            subdirectoryByAgent.get(outcome.agentId()),
+                            outcome.result()
+                    );
+
+                    successfulWrites.add(outcome);
+
+                } catch (Exception ex) {
+
+                    log.warn(
+                            "MISSION {} - could not write files for agent {}: {}",
+                            missionId, outcome.agentId(), ex.getMessage()
+                    );
+                }
+            }
+
+            if (successfulWrites.isEmpty()) {
+
+                throw new IllegalStateException(
+                        "Ningún agente pudo escribir archivos reales al workspace "
+                                + "(writeFiles falló para los " + completedOutcomes.size()
+                                + " agente(s) que completaron su tarea de desarrollo)."
+                );
+            }
+
+            // El commit consolidado solo debe reflejar lo que realmente se
+            // escribió a disco — nunca un agente cuyo writeFiles falló.
+            var commitMessage =
+                    "Desarrollo generado por Forjai Engineering Team\n\n"
+                            + successfulWrites.stream()
+                                    .map(o -> "- " + o.agentId() + ": " + o.result().summary())
+                                    .collect(Collectors.joining("\n"));
+
+            developmentWorkspace.commitWorkspace(missionId, commitMessage);
+
+            var statusMessage =
+                    failedOutcomes.isEmpty() && successfulWrites.size() == completedOutcomes.size()
+                            ? "Los " + successfulWrites.size()
+                                    + " agente(s) completaron el desarrollo real y escribieron sus archivos."
+                            : "Desarrollo parcial — " + successfulWrites.size() + " de "
+                                    + DEVELOPMENT_DEFINITIONS.size()
+                                    + " agente(s) escribieron archivos reales."
+                                    + (failedOutcomes.isEmpty()
+                                            ? ""
+                                            : " Agentes fallidos: "
+                                                    + failedOutcomes.stream()
+                                                            .map(DevelopmentExecutionOutcome::agentId)
+                                                            .collect(Collectors.joining(", ")));
+
+            advanceMission(
+                    missionId, MissionStatus.COMPLETED, 100, "Desarrollo completado", statusMessage
+            );
+
+            log.info("MISSION {} -> COMPLETED (desarrollo)", missionId);
+
+        } catch (Exception ex) {
+
+            log.error("MISSION {} - development execution failed", missionId, ex);
+
+            safeFail(missionId, ex);
+        }
+    }
+
+    private String buildDevelopmentPrompt(
+            String agentId,
+            String objective,
+            String instruction,
+            String discoveryContext) {
+
+        return """
+                Estás trabajando dentro de Forjai como el agente %s del Engineering Team.
+                La misión ya fue aprobada por el inversionista humano — tu tarea es
+                generar código real (archivos completos, no solo un plan) para
+                arrancar el desarrollo.
+
+                OBJETIVO ESPECÍFICO: %s
+
+                REGLAS:
+                - Genera archivos de código reales y completos, no pseudocódigo ni
+                  placeholders sin terminar.
+                - Cada "path" debe ser relativo (nunca empezar con "/", nunca
+                  contener "..").
+                - Responde ÚNICAMENTE con JSON válido, sin Markdown, sin texto
+                  antes o después.
+
+                MISIÓN:
+                %s
+
+                CONTEXTO DE DISCOVERY YA VALIDADO:
+                %s
+                """.formatted(agentId, objective, instruction, discoveryContext);
     }
 
     private void executeInternal(
