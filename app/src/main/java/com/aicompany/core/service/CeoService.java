@@ -61,6 +61,17 @@ public class CeoService {
     );
 
     /**
+     * `num_ctx` real usado solo por {@link #generateDevelopmentArtifact}
+     * (ver el overload de {@code callModel} con {@code options}) — el
+     * default de Ollama es probablemente insuficiente para un prompt que
+     * incluye contexto de discovery completo y pide archivos de código
+     * reales y completos, mucho más largos que un {@code AgentResult} de
+     * discovery.
+     */
+    private static final Map<String, Object> DEVELOPMENT_CONTEXT_OPTIONS =
+            Map.of("num_ctx", 8192);
+
+    /**
      * Herramienta disponible solo en {@link #chat}: Neo4j es la memoria
      * operacional y fuente de verdad de la empresa (misiones, agentes,
      * oportunidades, finanzas reales) — antes de esta herramienta, el chat
@@ -946,7 +957,17 @@ public class CeoService {
                         messages,
                         DevelopmentResultSchema.SCHEMA,
                         null,
-                        false
+                        false,
+                        // El prompt de desarrollo incluye contexto de
+                        // discovery completo y pide archivos de código
+                        // reales y completos (potencialmente mucho más
+                        // largos que un AgentResult de discovery) — el
+                        // contexto default de Ollama es probablemente
+                        // insuficiente. 8192 es un valor razonable de
+                        // partida para esta llamada puntual, sin afectar
+                        // ninguna otra (discovery/chat siguen sin
+                        // `options`).
+                        DEVELOPMENT_CONTEXT_OPTIONS
                 );
 
         var response = finalTurn.content();
@@ -956,7 +977,7 @@ public class CeoService {
             var normalizedResponse =
                     normalizeJsonResponse(response);
 
-            log.info(
+            log.debug(
                     "DEVELOPMENT_RESULT_RAW agent={} response={}",
                     agentId,
                     response
@@ -1143,6 +1164,23 @@ public class CeoService {
     }
 
     /**
+     * Overload de compatibilidad sin {@code options} — todas las llamadas
+     * existentes (discovery, chat, consolidación) siguen usando este
+     * camino, sin cambio de comportamiento.
+     */
+    private ModelMessage callModel(
+            String operation,
+            String actor,
+            String model,
+            List<Map<String, Object>> messages,
+            Object format,
+            List<Map<String, Object>> tools,
+            Boolean think) {
+
+        return callModel(operation, actor, model, messages, format, tools, think, null);
+    }
+
+    /**
      * @param think Modelos con "modo pensamiento" (p. ej. qwen3) generan un
      *              razonamiento previo separado del contenido final
      *              ({@code message.thinking}, no mezclado con
@@ -1155,6 +1193,12 @@ public class CeoService {
      *              latencia, así que ahí se desactiva. {@code null} deja
      *              el default del modelo (para operaciones que no usan
      *              modelos con pensamiento, como el CEO).
+     * @param options Opciones crudas de Ollama (p. ej. {@code num_ctx}),
+     *                agregadas solo si no es {@code null} — hoy usado
+     *                exclusivamente por {@link #generateDevelopmentArtifact}
+     *                vía {@code DEVELOPMENT_CONTEXT_OPTIONS}; ninguna otra
+     *                llamada (discovery, chat, consolidación) pasa
+     *                {@code options}, así que su comportamiento no cambia.
      */
     private ModelMessage callModel(
             String operation,
@@ -1163,7 +1207,8 @@ public class CeoService {
             List<Map<String, Object>> messages,
             Object format,
             List<Map<String, Object>> tools,
-            Boolean think) {
+            Boolean think,
+            Map<String, Object> options) {
 
         rejectFormatCombinedWithTools(operation, format, tools);
 
@@ -1180,6 +1225,10 @@ public class CeoService {
 
         if (tools != null && !tools.isEmpty()) {
             body.put("tools", tools);
+        }
+
+        if (options != null) {
+            body.put("options", options);
         }
 
         if (think != null) {
