@@ -2,6 +2,7 @@ package com.aicompany.core.config;
 
 import com.aicompany.core.service.CompanyMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
+import com.aicompany.core.service.PromptMemoryService;
 import com.aicompany.core.service.TeamMemoryService;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -12,15 +13,18 @@ public class CompanyMemoryInitializer {
     private final CompanyMemoryService memory;
     private final MissionMemoryService missionMemory;
     private final TeamMemoryService teamMemory;
+    private final PromptMemoryService promptMemory;
 
     public CompanyMemoryInitializer(
             CompanyMemoryService memory,
             MissionMemoryService missionMemory,
-            TeamMemoryService teamMemory) {
+            TeamMemoryService teamMemory,
+            PromptMemoryService promptMemory) {
 
         this.memory = memory;
         this.missionMemory = missionMemory;
         this.teamMemory = teamMemory;
+        this.promptMemory = promptMemory;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -28,5 +32,6 @@ public class CompanyMemoryInitializer {
         memory.initialize();
         missionMemory.backfillMissionEnvironment();
         teamMemory.ensureAllTeams();
+        promptMemory.ensureDefaultPrompts();
     }
 }
