@@ -299,7 +299,7 @@ Las listas de `capabilities` de los 5 roles del equipo se refinaron en varios me
 
 `mvn test` 166/166 tras aplicar los 9 fixes de código de esta ronda de revisión final (Fix 1–9: 404 real en `PUT /agents/{id}/model` sobre un agente inexistente, reordenamiento en `AgentRuntime` para evitar un agente `WORKING` para siempre, import muerto, javadocs de grounding/observabilidad, conteo de agentes actualizado en un javadoc, y un `WARN` nuevo en `EngineeringTeamMemoryService` si un `roleCode` hardcodeado deja de matchear un `Agent` real — deliberadamente sin `WARN` equivalente en la relación `LEADS`, porque ahí `MERGE` es idempotente y generaría falsos positivos en cada restart normal).
 
-## 2026-09-21 — Creative/Product Intelligence + Marketing & Growth: 5 agentes nuevos, TeamMemoryService genérico
+### Creative/Product Intelligence + Marketing & Growth: 5 agentes nuevos, TeamMemoryService genérico
 
 Pedido del usuario: agregar Kael (Interactive Logic & Product Designer),
 Maya (Visual & Asset Director), Gael (Telemetry & Analytics), Kira
