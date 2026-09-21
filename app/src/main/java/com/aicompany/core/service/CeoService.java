@@ -156,8 +156,6 @@ public class CeoService {
     );
 
     private final RestClient ollama;
-    private final String ceoModel;
-    private final String agentModel;
     private final JsonMapper jsonMapper;
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
@@ -165,16 +163,12 @@ public class CeoService {
 
     public CeoService(
             RestClient ollama,
-            @Value("${ollama.ceo-model}") String ceoModel,
-            @Value("${ollama.agent-model}") String agentModel,
             JsonMapper jsonMapper,
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
             MeterRegistry meterRegistry) {
 
         this.ollama = ollama;
-        this.ceoModel = ceoModel;
-        this.agentModel = agentModel;
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
         this.events = events;
@@ -194,7 +188,8 @@ public class CeoService {
             String teamRoster,
             List<ConversationTurn> history,
             String message,
-            Function<String, String> companyMemoryQuery) {
+            Function<String, String> companyMemoryQuery,
+            String model) {
 
         var system = systemPrompt()
                 + "\nTu nombre real es " + ceoName
@@ -234,7 +229,7 @@ public class CeoService {
         messages.add(Map.of("role", "user", "content", message));
 
         var turn = callModel(
-                "CEO_CHAT", "ceo", ceoModel, messages, null, COMPANY_MEMORY_TOOLS
+                "CEO_CHAT", "ceo", model, messages, null, COMPANY_MEMORY_TOOLS
         );
 
         var topic =
@@ -264,7 +259,7 @@ public class CeoService {
         messages.add(Map.of("role", "tool", "content", result));
 
         var finalTurn = callModel(
-                "CEO_CHAT", "ceo", ceoModel, messages, null, null
+                "CEO_CHAT", "ceo", model, messages, null, null
         );
 
         return finalTurn.content();
@@ -330,7 +325,8 @@ public class CeoService {
             String prompt,
             String taskSummary,
             String missionId,
-            String taskId) {
+            String taskId,
+            String model) {
 
         var system =
                 systemPrompt()
@@ -350,7 +346,7 @@ public class CeoService {
                 callModel(
                         "AGENT_TOOL_CALL",
                         agentId,
-                        agentModel,
+                        model,
                         toolDecisionMessages,
                         null,
                         AGENT_TOOLS,
@@ -413,7 +409,7 @@ public class CeoService {
                 callModel(
                         "AGENT_TASK",
                         agentId,
-                        agentModel,
+                        model,
                         messages,
                         AgentResultSchema.SCHEMA,
                         null,
@@ -459,7 +455,7 @@ public class CeoService {
             log.error(
                     "AGENT_RESULT_PARSE_ERROR agent={} model={} reason={}",
                     agentId,
-                    agentModel,
+                    model,
                     ex.getMessage(),
                     ex
             );
@@ -873,7 +869,8 @@ public class CeoService {
 
     public String executeMission(
             String instruction,
-            String agentResults) {
+            String agentResults,
+            String model) {
 
         var prompt = """
                 Actúa como CEO de Forjai.
@@ -898,7 +895,7 @@ public class CeoService {
         );
 
         return callModel(
-                "MISSION_CONSOLIDATION", "ceo", ceoModel, messages, null, null
+                "MISSION_CONSOLIDATION", "ceo", model, messages, null, null
         ).content();
     }
 
