@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.AgentRuntime;
+import com.aicompany.core.agent.DevelopmentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.config.AppProperties;
@@ -43,10 +44,13 @@ class MissionExecutorTest {
     private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final AlertMailService alertMailService = mock(AlertMailService.class);
+    private final DevelopmentRuntime developmentRuntime = mock(DevelopmentRuntime.class);
+    private final DevelopmentWorkspaceService developmentWorkspace = mock(DevelopmentWorkspaceService.class);
 
     private final MissionExecutor executor = new MissionExecutor(
             memory, runtime, ceoService, companyMemory, "qwen2.5-coder:14b", Runnable::run, events, jsonMapper,
-            contradictionDetector, appProperties, opportunityMemory, alertMailService
+            contradictionDetector, appProperties, opportunityMemory, alertMailService,
+            developmentRuntime, developmentWorkspace
     );
 
     @Test

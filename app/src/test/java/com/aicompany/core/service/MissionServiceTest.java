@@ -86,7 +86,7 @@ class MissionServiceTest {
     }
 
     @Test
-    void approvingAMissionMarksItCompleted() {
+    void approvingAMissionMarksItExecutingAndTriggersDevelopment() {
         var memory = mock(MissionMemoryService.class);
         var executor = mock(MissionExecutor.class);
         var eventPublisher = mock(CompanyEventPublisher.class);
@@ -97,6 +97,9 @@ class MissionServiceTest {
                 Instant.parse("2026-09-12T00:00:00Z")
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
+        when(memory.instruction("MISSION-001")).thenReturn(Optional.of("instrucción de prueba"));
+        when(executor.executeDevelopmentAsync(eq("MISSION-001"), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(null));
 
         var service = new MissionService(memory, executor, eventPublisher);
         var response = service.recordDecision(
@@ -112,8 +115,9 @@ class MissionServiceTest {
                 eq("Datos suficientes, aprobado")
         );
         verify(memory).updateMission(
-                eq("MISSION-001"), eq(MissionStatus.COMPLETED), anyInt(), anyString(), anyString()
+                eq("MISSION-001"), eq(MissionStatus.EXECUTING), eq(96), anyString(), anyString()
         );
+        verify(executor).executeDevelopmentAsync(eq("MISSION-001"), anyString());
         verify(eventPublisher).publish(
                 eq("EMPRESA_MISSION_DECISION_RECORDED"), eq("MISSION-001"), any(), eq("human"), any()
         );
