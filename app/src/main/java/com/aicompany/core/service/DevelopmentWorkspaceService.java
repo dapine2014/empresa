@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -38,7 +39,19 @@ public class DevelopmentWorkspaceService {
     }
 
     public Path missionWorkspace(String missionId) {
-        return workspaceRoot.resolve(missionId);
+
+        var dir = workspaceRoot.resolve(missionId).normalize();
+
+        if (!dir.startsWith(workspaceRoot)) {
+            // Defensa en profundidad — un missionId con path traversal
+            // (p. ej. "../../../tmp/pwned") no debe poder escapar del
+            // workspace de productos.
+            throw new IllegalArgumentException(
+                    "missionId inválido, escapa del workspace: " + missionId
+            );
+        }
+
+        return dir;
     }
 
     /**
@@ -95,6 +108,16 @@ public class DevelopmentWorkspaceService {
                     "commit", "-m", commitMessage, "--allow-empty"
             );
 
+        } catch (InterruptedException ex) {
+
+            Thread.currentThread().interrupt();
+
+            log.warn(
+                    "DEVELOPMENT_COMMIT_FAILED missionId={} reason={}",
+                    missionId,
+                    ex.getMessage()
+            );
+
         } catch (Exception ex) {
 
             log.warn(
@@ -116,6 +139,20 @@ public class DevelopmentWorkspaceService {
                 .redirectErrorStream(true)
                 .start();
 
+        // Leemos el stream de salida en un hilo separado ANTES de
+        // waitFor: si git llena el buffer del pipe antes de terminar
+        // (p. ej. un commit con muchos archivos nuevos, una línea
+        // "create mode" por archivo), leer después de waitFor puede
+        // deadlockear — git bloqueado escribiendo, nosotros bloqueados
+        // esperando que termine (ver docs/HISTORY.md).
+        var outputFuture = CompletableFuture.supplyAsync(() -> {
+            try {
+                return new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                return "";
+            }
+        });
+
         var finished = process.waitFor(30, TimeUnit.SECONDS);
 
         if (!finished) {
@@ -125,7 +162,13 @@ public class DevelopmentWorkspaceService {
 
         if (process.exitValue() != 0) {
 
-            var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String output;
+
+            try {
+                output = outputFuture.get(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                output = "(no se pudo leer la salida)";
+            }
 
             throw new IOException("git " + String.join(" ", args) + " falló: " + output);
         }

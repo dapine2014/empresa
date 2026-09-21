@@ -10,11 +10,19 @@ import java.util.List;
 
 /**
  * Gate de seguridad obligatorio antes de escribir cualquier archivo a
- * disco — mismo espíritu que {@link EvidenceValidationGate}: rechaza de
- * inmediato, **sin reintento** (una ruta insegura no es un error de forma
- * que el modelo pueda corregir con feedback útil). Ver
+ * disco. Este gate en sí no reintenta nada — es una función pura de
+ * validación, sin estado ni conocimiento de intentos anteriores; es
+ * {@code DevelopmentRuntime} quien decide reintentar (hasta
+ * {@code MAX_RESULT_RETRIES + 1} veces) con el feedback determinista de
+ * {@link #validate}. A diferencia de {@link EvidenceValidationGate} (cuyo
+ * llamador, {@code AgentRuntime}, no reintenta tras su rechazo), una ruta
+ * de archivo inválida SÍ es corregible con feedback: una evidencia
+ * inventada no lo es (no hay forma de que un reintento "invente mejor"),
+ * pero una ruta absoluta o con path traversal sí — el modelo puede
+ * corregirla con la instrucción exacta de qué estuvo mal. Ver
  * docs/superpowers/specs/2026-09-21-development-generation-design.md,
- * decisión 5.
+ * decisión 5, y docs/HISTORY.md para la discusión completa de esta
+ * asimetría.
  */
 @Component
 public class DevelopmentPathValidationGate {
@@ -65,8 +73,18 @@ public class DevelopmentPathValidationGate {
         }
 
         for (var segment : path.split("[/\\\\]")) {
+
             if (segment.equals("..")) {
                 errors.add("Ruta con path traversal no permitida: \"" + path + "\"");
+                return;
+            }
+
+            if (segment.equals(".git")) {
+                // git ignora cualquier entrada bajo un segmento ".git" al
+                // recorrer el árbol de trabajo — un archivo generado ahí
+                // se escribiría a disco pero nunca se commitearía,
+                // perdiéndose en silencio.
+                errors.add("Ruta con segmento \".git\" no permitida: \"" + path + "\"");
                 return;
             }
         }

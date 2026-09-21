@@ -88,4 +88,26 @@ class DevelopmentWorkspaceServiceTest {
     void commitWorkspaceNeverThrowsEvenIfCalledWithoutAnyFilesWritten() {
         assertDoesNotThrow(() -> workspace.commitWorkspace("MISSION-EMPTY", "commit vacío"));
     }
+
+    @Test
+    void writeFilesRejectsAMissionIdThatEscapesTheWorkspaceRoot() {
+
+        var result = new DevelopmentResult(
+                "resumen",
+                List.of(new DevelopmentResult.GeneratedFile("pwned.txt", "contenido"))
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> workspace.writeFiles("../../../etc", "architecture", result)
+        );
+    }
+
+    @Test
+    void commitWorkspaceNeverThrowsEvenWithAMissionIdThatEscapesTheWorkspaceRoot() {
+        // Mismo invariante "nunca lanza" que el resto de commitWorkspace
+        // (ver commit 281c35d) — el IllegalArgumentException de
+        // missionWorkspace también queda contenido acá, solo logueado.
+        assertDoesNotThrow(() -> workspace.commitWorkspace("../../../etc", "commit malicioso"));
+    }
 }

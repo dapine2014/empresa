@@ -51,6 +51,12 @@ class DevelopmentPathValidationGateTest {
     }
 
     @Test
+    void rejectsAPathWithAGitSegment() {
+        var validation = gate.validate(resultWithPath("src/.git/hook.sh"));
+        assertFalse(validation.valid());
+    }
+
+    @Test
     void rejectsABlankPath() {
         var validation = gate.validate(resultWithPath("   "));
         assertFalse(validation.valid());
