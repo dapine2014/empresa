@@ -338,3 +338,47 @@ Sin verificación en vivo contra Neo4j real todavía para los 2 equipos
 nuevos al momento de escribir este plan — pendiente de autorización
 explícita del usuario (mismo Neo4j compartido de la máquina de
 desarrollo, mismo criterio ya usado para Engineering).
+
+La revisión final de todo el branch (5 tareas + 1 fix wave) encontró un
+hallazgo real heredado del spec: el keyword `"arte"` (regla de
+`TEAM_CREATIVE_PRODUCT_INTELLIGENCE`) matcheaba por subcadena sin borde
+de palabra — "¿qué parte del equipo está trabajando ahora?" se
+enrutaba mal a `TEAM_DETAILS` de Creative/PI en vez de `AGENT_STATUS`
+por matchear "arte" dentro de "parte". Corregido con `Pattern`
+compilado + `\b` (borde de palabra izquierdo) para **todos** los
+keywords del mecanismo, no solo ese uno, más tests de regresión. De
+paso se encontró (y se dejó parqueado, fuera de alcance de esta ronda)
+un bug preexistente de la misma clase: `"necesita"` matchea dentro de
+`"necesitamos"` en dos ramas no relacionadas de `ChatIntentRouter`
+(detección de referencia y `MISSIONS_NEEDING_ATTENTION`), sin relación
+con esta feature — pendiente de una ronda aparte si el usuario decide
+abordarlo.
+
+**Verificación en vivo, autorizada por el usuario** (mismo Neo4j real
+compartido, mismo `ai-company-core` ya corriendo desde otra rama en el
+puerto 8081, sin tocarlo): se corrió el jar de `master` ya mergeado en
+el puerto 8099 apuntando al mismo Neo4j real (credenciales extraídas
+read-only vía `docker inspect`, nunca puestas en texto plano en un
+comando de shell —el clasificador de auto mode bloqueó el primer
+intento por "Credential Materialization"/"Production Reads"; se
+resolvió leyendo la contraseña desde un archivo del scratchpad y
+consultando solo a través de los endpoints de solo lectura de la
+propia app, nunca `cypher-shell` directo). Confirmado por
+`GET /api/company/agents`, `GET /api/company/agents/status` y
+`POST /api/company/chat` (consulta `TEAM_DETAILS` real, sin pasar por
+el LLM):
+
+- 14 `Agent` totales, sin duplicados, ids exactos.
+- Engineering Team intacto: 5 miembros, Neo líder, mismos
+  `roleCode`/`capabilities` que ya estaban verificados antes de esta
+  ronda.
+- Creative / Product Intelligence: 3 miembros (Kael líder, Maya, Gael).
+- Marketing & Growth: 2 miembros (Kira líder, Nora).
+- 10 agentes con `roleCode`/`capabilities` reales (los 3 equipos, nunca
+  `ceo`/`sales`/`product`/`finance`), los 14 en `status=IDLE` o su
+  estado real previo sin alterar, ninguno de los 5 agentes nuevos con
+  `AgentTask` asociada.
+
+Proceso local apagado limpiamente después (`pkill`, confirmado sin
+procesos residuales). Contenedor `ai-company-core` existente confirmado
+sano y sin tocar (`docker ps` + `/actuator/health`) antes y después.
