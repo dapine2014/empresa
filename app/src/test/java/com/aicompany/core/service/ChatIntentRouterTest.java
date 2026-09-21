@@ -4,7 +4,7 @@ import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
-import com.aicompany.core.model.EngineeringTeamSnapshot;
+import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.LastMentioned;
 import com.aicompany.core.model.MissionResponse;
@@ -35,11 +35,11 @@ class ChatIntentRouterTest {
     private final com.aicompany.core.config.AppProperties appProperties =
             new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
     private final ProductStatusService productStatusService = mock(ProductStatusService.class);
-    private final EngineeringTeamMemoryService engineeringTeamMemory = mock(EngineeringTeamMemoryService.class);
+    private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
 
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
-            conversationMemory, appProperties, productStatusService, "qwen2.5-coder:14b", engineeringTeamMemory
+            conversationMemory, appProperties, productStatusService, "qwen2.5-coder:14b", teamMemory
     );
 
     @Test
@@ -485,7 +485,7 @@ class ChatIntentRouterTest {
     @Test
     void routesEngineeringTeamQueryToADeterministicFormatting() {
 
-        var snapshot = new EngineeringTeamSnapshot(
+        var snapshot = new TeamSnapshot(
                 "TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering",
                 List.of(
                         new TeamMemberInfo("engineering", "Neo", "Cloud Architect & Lead Backend",
@@ -494,7 +494,7 @@ class ChatIntentRouterTest {
                                 "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA", "pruebas de carga"), "qwen3:8b")
                 )
         );
-        when(engineeringTeamMemory.snapshot()).thenReturn(snapshot);
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(snapshot);
         when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(
                 new AgentStatusResponse("engineering", "Neo", "Cloud Architect & Lead Backend", "x",
                         "IDLE", null, null, null, Instant.now())
@@ -512,17 +512,80 @@ class ChatIntentRouterTest {
     @Test
     void engineeringTeamQueryNeverInventsDataWhenTeamNotYetRegistered() {
 
-        when(engineeringTeamMemory.snapshot()).thenReturn(
-                new EngineeringTeamSnapshot("TEAM-ENGINEERING", null, null, null, List.of())
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(
+                new TeamSnapshot("TEAM-ENGINEERING", null, null, null, List.of())
         );
 
         var response = router.route("cuéntame del engineering team");
 
         assertEquals(
-                "No tengo ese dato registrado. El Engineering Team todavía no está registrado en Company Memory.",
+                "No tengo ese dato registrado. Ese equipo todavía no está registrado en Company Memory.",
                 response
         );
         verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesCreativeProductIntelligenceTeamQueryToADeterministicFormatting() {
+
+        var snapshot = new TeamSnapshot(
+                "TEAM-CREATIVE-PRODUCT-INTELLIGENCE", "Creative / Product Intelligence", "ACTIVE", "interaction-design",
+                List.of(
+                        new TeamMemberInfo("interaction-design", "Kael", "Interactive Logic & Product Designer AI",
+                                "INTERACTIVE_LOGIC_PRODUCT_DESIGNER", List.of("game design", "UX y arquitectura de interacción"), "qwen3:8b"),
+                        new TeamMemberInfo("visual-design", "Maya", "Visual & Asset Director AI",
+                                "VISUAL_ASSET_DIRECTOR", List.of("identidad visual", "branding"), "qwen3:8b")
+                )
+        );
+        when(teamMemory.snapshot("TEAM-CREATIVE-PRODUCT-INTELLIGENCE")).thenReturn(snapshot);
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(
+                new AgentStatusResponse("interaction-design", "Kael", "Interactive Logic & Product Designer AI", "x",
+                        "IDLE", null, null, null, Instant.now())
+        ));
+
+        var response = router.route("¿quién lidera el equipo creativo?");
+
+        assertTrue(response.contains("Kael"));
+        assertTrue(response.contains("Maya"));
+        assertTrue(response.contains("INTERACTIVE_LOGIC_PRODUCT_DESIGNER"));
+        assertTrue(response.contains("Creative / Product Intelligence"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void routesMarketingGrowthTeamQueryToADeterministicFormatting() {
+
+        var snapshot = new TeamSnapshot(
+                "TEAM-MARKETING-GROWTH", "Marketing & Growth", "ACTIVE", "growth-content",
+                List.of(
+                        new TeamMemberInfo("growth-content", "Kira", "Growth, Content & Community AI",
+                                "GROWTH_CONTENT_COMMUNITY", List.of("growth", "SEO"), "qwen3:8b"),
+                        new TeamMemberInfo("community", "Nora", "Community Manager AI",
+                                "COMMUNITY_MANAGER", List.of("moderación", "Discord"), "qwen3:8b")
+                )
+        );
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(snapshot);
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(
+                new AgentStatusResponse("growth-content", "Kira", "Growth, Content & Community AI", "x",
+                        "IDLE", null, null, null, Instant.now())
+        ));
+
+        var response = router.route("cuéntame del equipo de marketing");
+
+        assertTrue(response.contains("Kira"));
+        assertTrue(response.contains("Nora"));
+        assertTrue(response.contains("GROWTH_CONTENT_COMMUNITY"));
+        assertTrue(response.contains("Marketing & Growth"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void teamDetailsWithUnknownTeamIdNeverInventsData() {
+
+        var response = router.answerMemoryTopic("TEAM_DETAILS:TEAM-BOGUS");
+
+        assertEquals("No tengo ese dato registrado.", response);
+        verifyNoInteractions(teamMemory);
     }
 
     @SuppressWarnings("unchecked")
@@ -542,6 +605,9 @@ class ChatIntentRouterTest {
         when(opportunityMemory.listRecent(20)).thenReturn(List.of());
         when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{100.0, 40.0});
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(
+                new TeamSnapshot("TEAM-ENGINEERING", null, null, null, List.of())
+        );
 
         router.route("Hola, ¿cómo estás?");
 
@@ -558,6 +624,7 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
         assertTrue(companyMemoryQuery.apply("COMPANY_STATUS").contains("Estado actual de Forjai"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
+        assertTrue(companyMemoryQuery.apply("TEAM_DETAILS:TEAM-ENGINEERING").contains("No tengo ese dato registrado"));
     }
 
     @Test

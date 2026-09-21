@@ -141,7 +141,7 @@ public class ChatIntentRouter {
     private final AppProperties appProperties;
     private final ProductStatusService productStatusService;
     private final String defaultCeoModel;
-    private final EngineeringTeamMemoryService engineeringTeamMemory;
+    private final TeamMemoryService teamMemory;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -154,7 +154,7 @@ public class ChatIntentRouter {
             AppProperties appProperties,
             ProductStatusService productStatusService,
             @Value("${ollama.ceo-model}") String defaultCeoModel,
-            EngineeringTeamMemoryService engineeringTeamMemory) {
+            TeamMemoryService teamMemory) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -166,7 +166,7 @@ public class ChatIntentRouter {
         this.appProperties = appProperties;
         this.productStatusService = productStatusService;
         this.defaultCeoModel = defaultCeoModel;
-        this.engineeringTeamMemory = engineeringTeamMemory;
+        this.teamMemory = teamMemory;
     }
 
     /**
@@ -661,7 +661,7 @@ public class ChatIntentRouter {
     }
 
     private enum QueryIntent {
-        ENGINEERING_TEAM,
+        TEAM_DETAILS,
         AGENT_STATUS,
         MISSIONS_NEEDING_ATTENTION,
         FAILED_MISSIONS,
@@ -671,19 +671,37 @@ public class ChatIntentRouter {
         COMPANY_STATUS
     }
 
-    private QueryIntent detectQuery(String message) {
+    private record TeamKeywordRule(String teamId, List<String> topicKeywords) {}
+
+    private static final List<TeamKeywordRule> TEAM_KEYWORD_RULES = List.of(
+            new TeamKeywordRule(TeamMemoryService.TEAM_ENGINEERING,
+                    List.of("ingenieria", "engineering")),
+            new TeamKeywordRule(TeamMemoryService.TEAM_CREATIVE_PRODUCT_INTELLIGENCE,
+                    List.of("creativ", "product intelligence", "visual", "arte", "telemetria", "analytics")),
+            new TeamKeywordRule(TeamMemoryService.TEAM_MARKETING_GROWTH,
+                    List.of("marketing", "growth", "crecimiento", "comunidad", "community"))
+    );
+
+    private record QueryMatch(QueryIntent intent, String teamId) {}
+
+    private QueryMatch detectQuery(String message) {
 
         var normalized = normalize(message);
 
-        if ((normalized.contains("ingenieria") || normalized.contains("engineering"))
-                && (normalized.contains("equipo") || normalized.contains("team")
-                        || normalized.contains("lidera") || normalized.contains("lider"))) {
-            // Chequeo antes que AGENT_STATUS a propósito: "equipo" solo
+        var teamGate = normalized.contains("equipo") || normalized.contains("team")
+                || normalized.contains("lidera") || normalized.contains("lider");
+
+        if (teamGate) {
+            // Chequeado antes que AGENT_STATUS a propósito: "equipo" solo
             // ya dispara AGENT_STATUS (bug real corregido en una ronda
-            // anterior, ver CLAUDE.md) -- "el equipo de ingeniería" es
-            // una pregunta más específica sobre una estructura real
-            // (Team/MEMBER_OF/LEADS), no sobre el estado de cada agente.
-            return QueryIntent.ENGINEERING_TEAM;
+            // anterior, ver CLAUDE.md) -- preguntar por un equipo puntual
+            // ("el equipo creativo", "quién lidera marketing") es más
+            // específico que el estado general de agentes.
+            for (var rule : TEAM_KEYWORD_RULES) {
+                if (rule.topicKeywords().stream().anyMatch(normalized::contains)) {
+                    return new QueryMatch(QueryIntent.TEAM_DETAILS, rule.teamId());
+                }
+            }
         }
 
         if (normalized.contains("equipo")
@@ -701,7 +719,7 @@ public class ChatIntentRouter {
             // misma pregunta de fondo (estado real de los agentes), así
             // que resuelven igual: 100% desde Neo4j, sin pasar por el
             // modelo.
-            return QueryIntent.AGENT_STATUS;
+            return new QueryMatch(QueryIntent.AGENT_STATUS, null);
         }
 
         if (normalized.contains("fallaron")
@@ -715,7 +733,7 @@ public class ChatIntentRouter {
             // 15 AWAITING_INVESTOR y 10 FAILED, pero el texto decía que
             // las 25 necesitaban aprobación"). Consultas separadas, cada
             // una estricta sobre su propio status real.
-            return QueryIntent.FAILED_MISSIONS;
+            return new QueryMatch(QueryIntent.FAILED_MISSIONS, null);
         }
 
         if (TEST_ENVIRONMENT.matcher(normalized).find() || normalized.contains("entorno de test")) {
@@ -723,17 +741,17 @@ public class ChatIntentRouter {
             // cualquier status. Reportado por el usuario: sin esto, ~25
             // misiones de desarrollo (MISSION-STRUCTURED-*, MVP-*, etc.)
             // contaminaban toda pregunta de negocio real.
-            return QueryIntent.TEST_MISSIONS;
+            return new QueryMatch(QueryIntent.TEST_MISSIONS, null);
         }
 
         if (normalized.contains("aprobacion")
                 || normalized.contains("bloquead")
                 || normalized.contains("necesita")) {
-            return QueryIntent.MISSIONS_NEEDING_ATTENTION;
+            return new QueryMatch(QueryIntent.MISSIONS_NEEDING_ATTENTION, null);
         }
 
         if (normalized.contains("oportunidad")) {
-            return QueryIntent.OPPORTUNITIES;
+            return new QueryMatch(QueryIntent.OPPORTUNITIES, null);
         }
 
         if (normalized.contains("gastado")
@@ -741,7 +759,7 @@ public class ChatIntentRouter {
                 || normalized.contains("dinero")
                 || normalized.contains("ganancia")
                 || normalized.contains("beneficio")) {
-            return QueryIntent.COMPANY_PROFIT;
+            return new QueryMatch(QueryIntent.COMPANY_PROFIT, null);
         }
 
         if (normalized.contains("status")
@@ -757,17 +775,21 @@ public class ChatIntentRouter {
             // ninguna fuente real de la que sacar esos datos. Un resumen
             // agregado de la empresa es tan determinista como contar una
             // lista -- no hay ninguna razón para dejárselo al modelo.
-            return QueryIntent.COMPANY_STATUS;
+            return new QueryMatch(QueryIntent.COMPANY_STATUS, null);
         }
 
         return null;
     }
 
-    private String handleQuery(QueryIntent intent) {
+    private String handleQuery(QueryMatch match) {
 
-        log.info("CHAT_INTENT_QUERY intent={}", intent);
+        log.info("CHAT_INTENT_QUERY intent={} teamId={}", match.intent(), match.teamId());
 
-        return answerMemoryTopic(intent.name());
+        if (match.intent() == QueryIntent.TEAM_DETAILS) {
+            return answerMemoryTopic("TEAM_DETAILS:" + match.teamId());
+        }
+
+        return answerMemoryTopic(match.intent().name());
     }
 
     /**
@@ -781,8 +803,11 @@ public class ChatIntentRouter {
      */
     String answerMemoryTopic(String topic) {
 
+        if (topic != null && topic.startsWith("TEAM_DETAILS:")) {
+            return formatTeamDetails(topic.substring("TEAM_DETAILS:".length()));
+        }
+
         return switch (topic) {
-            case "ENGINEERING_TEAM" -> formatEngineeringTeam();
             case "AGENT_STATUS" -> formatAgentStatus(missionMemory.latestTaskPerAgent());
             case "MISSIONS_NEEDING_ATTENTION" -> formatMissionsNeedingAttention(missionMemory.findAll(50));
             case "FAILED_MISSIONS" -> formatFailedMissions(missionMemory.findAll(50));
@@ -796,8 +821,9 @@ public class ChatIntentRouter {
     }
 
     /**
-     * Snapshot real del Engineering Team — cruza
-     * {@link EngineeringTeamMemoryService#snapshot()} (miembros, roles,
+     * Snapshot real de uno de los 3 equipos de Forjai (ver
+     * {@code TeamMemoryService.KNOWN_TEAM_IDS}) — cruza
+     * {@link TeamMemoryService#snapshot(String)} (miembros, roles,
      * roleCode, capabilities, modelo, líder) con
      * {@code missionMemory.latestTaskPerAgent()} (status/tarea actual
      * real) — mismo criterio que {@code formatMissionStatus}: "quién es"
@@ -805,14 +831,22 @@ public class ChatIntentRouter {
      * infiere de la otra. 100% Java, nunca pasa por Ollama. Cada línea
      * arranca con el {@code agentId} real (no solo el nombre) — es el
      * identificador que el resto del chat usa para referirse al agente,
-     * y hay un test que lo exige explícitamente; no lo saques.
+     * y hay un test que lo exige explícitamente; no lo saques. Un
+     * {@code teamId} desconocido (fuera de {@code KNOWN_TEAM_IDS})
+     * nunca llega a Neo4j — devuelve directamente el mismo disclaimer
+     * que un dato no registrado, para no poder "descubrir" un equipo
+     * inexistente por prueba y error.
      */
-    private String formatEngineeringTeam() {
+    private String formatTeamDetails(String teamId) {
 
-        var snapshot = engineeringTeamMemory.snapshot();
+        if (!TeamMemoryService.KNOWN_TEAM_IDS.contains(teamId)) {
+            return "No tengo ese dato registrado.";
+        }
+
+        var snapshot = teamMemory.snapshot(teamId);
 
         if (snapshot.members().isEmpty()) {
-            return "No tengo ese dato registrado. El Engineering Team todavía no está registrado en Company Memory.";
+            return "No tengo ese dato registrado. Ese equipo todavía no está registrado en Company Memory.";
         }
 
         var statusByAgentId = missionMemory.latestTaskPerAgent().stream()
@@ -835,7 +869,7 @@ public class ChatIntentRouter {
                 })
                 .collect(Collectors.joining(" | "));
 
-        return "Engineering Team (" + snapshot.status() + "): " + lines;
+        return snapshot.teamName() + " (" + snapshot.status() + "): " + lines;
     }
 
     /**
