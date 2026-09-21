@@ -230,9 +230,10 @@ public class CeoService {
             List<ConversationTurn> history,
             String message,
             Function<String, String> companyMemoryQuery,
+            String ceoPrompt,
             String model) {
 
-        var system = systemPrompt()
+        var system = systemPrompt(ceoPrompt)
                 + "\nTu nombre real es " + ceoName
                 + " — ese es tu nombre, no inventes otro si te preguntan quién sos."
                 + "\nEste es tu equipo real (nombre y rol) — nunca inventes"
@@ -370,7 +371,7 @@ public class CeoService {
             String model) {
 
         var system =
-                systemPrompt()
+                systemPrompt(null)
                         + "\nTu rol específico en esta tarea es: "
                         + agentId
                         + ".";
@@ -928,6 +929,7 @@ public class CeoService {
     public String executeMission(
             String instruction,
             String agentResults,
+            String ceoPrompt,
             String model) {
 
         var prompt = """
@@ -948,7 +950,7 @@ public class CeoService {
         );
 
         var messages = List.<Map<String, Object>>of(
-                Map.of("role", "system", "content", systemPrompt()),
+                Map.of("role", "system", "content", systemPrompt(ceoPrompt)),
                 Map.of("role", "user", "content", prompt)
         );
 
@@ -957,7 +959,20 @@ public class CeoService {
         ).content();
     }
 
-    private String systemPrompt() {
+    /**
+     * {@code agentPrompt} es el prompt activo persistido del CEO
+     * (`Agent {id:'ceo'}`, ver {@code PromptMemoryService}) — resuelto
+     * por el llamador (`ChatIntentRouter`/`MissionExecutor`), nunca por
+     * este servicio directamente (sigue sin depender de Neo4j). Se
+     * inserta como una sección aparte, condicional: si está en blanco,
+     * el prompt final es byte a byte igual al de antes de esta feature.
+     */
+    private String systemPrompt(String agentPrompt) {
+
+        var agentPromptBlock = (agentPrompt == null || agentPrompt.isBlank())
+                ? ""
+                : "\nCÓMO DEBES RAZONAR (definido por el fundador para vos, no reemplaza las reglas de abajo):\n"
+                        + agentPrompt + "\n";
 
         return """
                 Eres el CEO de Forjai,
@@ -974,7 +989,7 @@ public class CeoService {
 
                 El inversionista puede aprobar, rechazar
                 o proponer una alternativa.
-
+                %s
                 No inventes clientes, ventas, ingresos,
                 búsquedas o evidencia.
 
@@ -986,7 +1001,7 @@ public class CeoService {
                 - resultado verificado
 
                 Responde en español.
-                """;
+                """.formatted(agentPromptBlock);
     }
 
     private String normalizeJsonResponse(String response) {
