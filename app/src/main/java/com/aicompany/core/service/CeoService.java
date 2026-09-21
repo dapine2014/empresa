@@ -86,7 +86,7 @@ public class CeoService {
                                             "topic", Map.of(
                                                     "type", "string",
                                                     "enum", List.of(
-                                                            "ENGINEERING_TEAM",
+                                                            "TEAM_DETAILS",
                                                             "AGENT_STATUS",
                                                             "MISSIONS_NEEDING_ATTENTION",
                                                             "FAILED_MISSIONS",
@@ -97,12 +97,15 @@ public class CeoService {
                                                             "COMPANY_STATUS"
                                                     ),
                                                     "description",
-                                                    "ENGINEERING_TEAM: "
+                                                    "TEAM_DETAILS: "
                                                             + "estructura real "
-                                                            + "del Engineering "
-                                                            + "Team -- "
+                                                            + "de uno de los 3 "
+                                                            + "equipos de "
+                                                            + "Forjai (ver "
+                                                            + "teamId) -- "
                                                             + "miembros, líder, "
                                                             + "roles, "
+                                                            + "roleCode, "
                                                             + "capabilities y "
                                                             + "modelo de cada "
                                                             + "uno. "
@@ -157,6 +160,34 @@ public class CeoService {
                                                             + "resumen general, "
                                                             + "nunca inventes "
                                                             + "ese resumen vos."
+                                            ),
+                                            "teamId", Map.of(
+                                                    "type", "string",
+                                                    "enum", List.of(
+                                                            "TEAM-ENGINEERING",
+                                                            "TEAM-CREATIVE-PRODUCT-INTELLIGENCE",
+                                                            "TEAM-MARKETING-GROWTH"
+                                                    ),
+                                                    "description",
+                                                    "Obligatorio solo si "
+                                                            + "topic=TEAM_DETAILS: "
+                                                            + "qué equipo. "
+                                                            + "TEAM-ENGINEERING: "
+                                                            + "arquitectura, "
+                                                            + "backend, devops, "
+                                                            + "frontend/UI, QA. "
+                                                            + "TEAM-CREATIVE-PRODUCT-INTELLIGENCE: "
+                                                            + "diseño de "
+                                                            + "interacción/UX/"
+                                                            + "game design, "
+                                                            + "dirección "
+                                                            + "visual/arte, "
+                                                            + "telemetría/"
+                                                            + "analytics. "
+                                                            + "TEAM-MARKETING-GROWTH: "
+                                                            + "growth/contenido/"
+                                                            + "SEO, gestión de "
+                                                            + "comunidad."
                                             )
                                     ),
                                     "required", List.of("topic")
@@ -795,7 +826,7 @@ public class CeoService {
     }
 
     @SuppressWarnings("unchecked")
-    private String parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
+    String parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
 
         var function = (Map<String, Object>) rawToolCall.get("function");
 
@@ -807,10 +838,14 @@ public class CeoService {
         var arguments = function.get("arguments");
 
         String topic = null;
+        String teamId = null;
 
         if (arguments instanceof Map<?, ?> argMap) {
             var value = argMap.get("topic");
             topic = value == null ? null : String.valueOf(value);
+
+            var teamIdValue = argMap.get("teamId");
+            teamId = teamIdValue == null ? null : String.valueOf(teamIdValue);
         }
 
         if (!"query_company_memory".equals(name)
@@ -819,10 +854,14 @@ public class CeoService {
             return null;
         }
 
+        if ("TEAM_DETAILS".equals(topic)) {
+            return "TEAM_DETAILS:" + (teamId == null ? "" : teamId);
+        }
+
         return topic;
     }
 
-    private String detectInlineCompanyMemoryTopic(String content) {
+    String detectInlineCompanyMemoryTopic(String content) {
 
         if (content == null || content.isBlank()) {
             return null;
@@ -847,7 +886,16 @@ public class CeoService {
 
             var topic = argumentsNode.path("topic").asString(null);
 
-            return (topic == null || topic.isBlank()) ? null : topic;
+            if (topic == null || topic.isBlank()) {
+                return null;
+            }
+
+            if ("TEAM_DETAILS".equals(topic)) {
+                var teamId = argumentsNode.path("teamId").asString(null);
+                return "TEAM_DETAILS:" + (teamId == null ? "" : teamId);
+            }
+
+            return topic;
 
         } catch (Exception ex) {
             return null;
