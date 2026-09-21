@@ -106,4 +106,40 @@ class ProductStatusServiceTest {
 
         assertEquals(ProductStatus.DISCOVERY, service.resolve("MISSION-1"));
     }
+
+    @Test
+    void movesToDevelopmentWhenAnyDevelopmentTaskIsCompleted() {
+        when(missionMemory.tasks("MISSION-1")).thenReturn(List.of(
+                task("engineering", "ARCHITECTURE_DEVELOPMENT", "COMPLETED")
+        ));
+        when(customerMemory.totalRevenueAndCost("MISSION-1")).thenReturn(new double[]{0.0, 0.0});
+        when(customerMemory.transactionCount("MISSION-1")).thenReturn(0L);
+
+        assertEquals(ProductStatus.DEVELOPMENT, service.resolve("MISSION-1"));
+    }
+
+    @Test
+    void qualityRiskReviewStillNeverCountsAsDevelopmentOrQa() {
+        // Regla dura del spec original de ProductStatus, sigue vigente:
+        // QUALITY_RISK_REVIEW (discovery de qa) no implica ni QA ni
+        // DEVELOPMENT.
+        when(missionMemory.tasks("MISSION-1")).thenReturn(List.of(
+                task("qa", "QUALITY_RISK_REVIEW", "COMPLETED")
+        ));
+        when(customerMemory.totalRevenueAndCost("MISSION-1")).thenReturn(new double[]{0.0, 0.0});
+        when(customerMemory.transactionCount("MISSION-1")).thenReturn(0L);
+
+        assertEquals(ProductStatus.DISCOVERY, service.resolve("MISSION-1"));
+    }
+
+    @Test
+    void incompleteDevelopmentTaskDoesNotProduceDevelopment() {
+        when(missionMemory.tasks("MISSION-1")).thenReturn(List.of(
+                task("backend", "BACKEND_DEVELOPMENT", "FAILED")
+        ));
+        when(customerMemory.totalRevenueAndCost("MISSION-1")).thenReturn(new double[]{0.0, 0.0});
+        when(customerMemory.transactionCount("MISSION-1")).thenReturn(0L);
+
+        assertEquals(ProductStatus.DISCOVERY, service.resolve("MISSION-1"));
+    }
 }

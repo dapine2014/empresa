@@ -4,6 +4,8 @@ import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.ProductStatus;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
+
 /**
  * Deriva el estado real del PRODUCTO (distinto de {@code MissionStatus},
  * que es el workflow de análisis/decisión interno) a partir de señales
@@ -32,6 +34,10 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class ProductStatusService {
+
+    private static final Set<String> DEVELOPMENT_ACTIONS = Set.of(
+            "ARCHITECTURE_DEVELOPMENT", "BACKEND_DEVELOPMENT", "FRONTEND_DEVELOPMENT"
+    );
 
     private final MissionMemoryService missionMemory;
     private final CustomerMemoryService customerMemory;
@@ -105,12 +111,19 @@ public class ProductStatusService {
     }
 
     /**
-     * Punto de enganche del Proyecto B — {@code AgentTask} de desarrollo
-     * real, evento {@code EMPRESA_DEVELOPMENT_STARTED}, o
-     * artefacto/repositorio/build.
+     * Primera señal real de Proyecto B (subproyecto 1: generación de
+     * código) — ver
+     * docs/superpowers/specs/2026-09-21-development-generation-design.md.
+     * Mismo patrón exacto que {@link #isDesigned}: una {@code AgentTask}
+     * real completada, no una inferencia. {@code QUALITY_RISK_REVIEW}
+     * (discovery de {@code qa}) sigue sin contar — no está en
+     * {@code DEVELOPMENT_ACTIONS}.
      */
     private boolean isInDevelopment(String missionId) {
-        return false;
+
+        return missionMemory.tasks(missionId).stream()
+                .anyMatch(t -> DEVELOPMENT_ACTIONS.contains(t.action())
+                        && "COMPLETED".equals(t.status()));
     }
 
     private boolean isDesigned(String missionId) {
