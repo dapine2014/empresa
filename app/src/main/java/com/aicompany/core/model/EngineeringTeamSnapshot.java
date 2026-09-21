@@ -1,0 +1,12 @@
+package com.aicompany.core.model;
+
+import java.util.List;
+
+public record EngineeringTeamSnapshot(
+        String teamId,
+        String teamName,
+        String status,
+        String leaderAgentId,
+        List<TeamMemberInfo> members
+) {
+}
