@@ -160,6 +160,23 @@ public class MissionMemoryService {
         }
     }
 
+    /**
+     * Instrucción original de la misión, ya persistida desde
+     * {@link #ensureMission} pero nunca expuesta hasta ahora — la
+     * necesita {@code MissionService.recordDecision} para poder arrancar
+     * la fase de desarrollo tras un `APPROVE` sin que el llamador (el
+     * fundador, vía chat o el endpoint de decisión) tenga que repetirla.
+     */
+    public Optional<String> instruction(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (m:Mission {id:$id}) RETURN m.instruction AS instruction",
+                            Map.of("id", missionId))
+                    .list(r -> r.get("instruction").asString())
+                    .stream().findFirst();
+        }
+    }
+
     public Optional<MissionResponse> find(String missionId) {
         try (var session = driver.session()) {
             var records = session.run("MATCH (m:Mission {id:$id}) RETURN m.status AS status, coalesce(m.environment, 'TEST') AS environment, m.progress AS progress, m.currentStep AS step, m.message AS message, m.updatedAt AS updatedAt", Map.of("id", missionId)).list();
