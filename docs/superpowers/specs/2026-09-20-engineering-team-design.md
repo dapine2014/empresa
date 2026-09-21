@@ -85,11 +85,48 @@ ronda, no se pidió):
   `FRONTEND_GAME_UI_SPECIALIST`, `QA_CLOUD_PERFORMANCE_ENGINEER`.
 - `Agent.capabilities` (`List<String>`, propiedad de lista real en
   Neo4j): tomado directo de las "Responsabilidades" del pedido original,
-  una entrada por bullet, sin reinterpretar. P. ej. `devops.capabilities`
-  = `["PostgreSQL", "Redis", "bases de datos cloud", "infraestructura",
-  "SRE", "observabilidad", "rendimiento", "backups", "recuperación",
-  "Terraform / Pulumi", "operación cloud", "capacidades de
-  infraestructura cuando el Proyecto B esté implementado"]`.
+  una entrada por bullet, más el stack técnico concreto que el usuario
+  agregó después de la primera aprobación del spec (lenguajes de
+  desarrollo y expertise de infraestructura/datos, repartidos por rol
+  según confirmó explícitamente):
+
+  - `engineering` (Neo).capabilities = `["arquitectura de soluciones",
+    "arquitectura cloud AWS", "arquitectura backend", "decisiones
+    técnicas", "diseño de sistemas", "diseño de arquitectura de
+    videojuegos y aplicaciones cuando aplique", "descomposición técnica
+    del trabajo", "liderazgo técnico", "revisión técnica", "coordinación
+    del Engineering Team", "AWS", "bases de datos SQL", "bases de datos
+    NoSQL", "C#", "Java", "JavaScript / TypeScript"]`.
+  - `devops` (Diego).capabilities = `["PostgreSQL", "Redis", "bases de
+    datos SQL", "bases de datos NoSQL", "bases de datos cloud",
+    "infraestructura", "SRE", "observabilidad", "rendimiento", "backups",
+    "recuperación", "Terraform / Pulumi", "operación cloud AWS",
+    "capacidades de infraestructura cuando el Proyecto B esté
+    implementado"]`.
+  - `backend` (Iris).capabilities = `["backend", "APIs", "integraciones",
+    "microservicios", "lógica de negocio", "servicios backend",
+    "integraciones con terceros", "componentes backend para aplicaciones
+    y videojuegos", "C#", "Java", "JavaScript / TypeScript"]`.
+  - `frontend-ui` (Mila).capabilities = `["frontend", "interfaces web",
+    "UI", "UX técnica", "Game UI", "HUD", "menús", "interfaces de
+    aplicaciones y videojuegos", "C#", "Java", "JavaScript /
+    TypeScript"]`.
+  - `qa` (Vera).capabilities = `["QA", "pruebas funcionales", "pruebas de
+    integración", "pruebas de regresión", "pruebas de rendimiento",
+    "pruebas de carga", "validación de estabilidad", "análisis de
+    errores", "playtesting cuando corresponda", "validación de
+    performance", "validación de calidad"]` (sin stack de lenguajes —
+    QA no es un rol de desarrollo, no se le agregó nada nuevo).
+
+  Los tres roles de desarrollo (Neo, Iris, Mila) comparten el mismo orden
+  de prioridad de lenguajes (`C#` primero, `Java` segundo, `JavaScript /
+  TypeScript` tercero) — la lista no expresa un ranking formal aparte del
+  orden de aparición, es la misma convención de lista simple que ya usa
+  el resto de `capabilities`. Diego no lleva lenguajes de aplicación (es
+  infraestructura/datos, no desarrollo de producto); en cambio suma
+  `"bases de datos SQL"`/`"bases de datos NoSQL"` como expertise
+  operativa propia (a diferencia de Neo, que las tiene como parte de su
+  expertise de *arquitectura*, no de operación día a día).
 
 ### 3. `Team` como entidad de primera clase, ámbito deliberadamente acotado a Engineering
 
