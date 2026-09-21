@@ -402,3 +402,37 @@ listos para cuando exista ejecución real — "Proyecto B" — sin otro
 cambio arquitectónico). Mismo patrón ya probado con `Agent.model`: el
 llamador resuelve el valor real desde Neo4j y lo pasa como parámetro
 explícito; `CeoService` sigue sin depender de Neo4j directamente.
+
+La revisión final del branch (6 tasks + 1 fix wave) encontró y corrigió
+dos hallazgos reales antes de mergear: un `NullPointerException` opaco
+en `createVersion` cuando `content` viene omitido en el `PUT` (el spec
+dice explícitamente que un prompt vacío es válido — ahora se normaliza
+a `""` antes de la transacción), y una referencia hacia adelante
+(`displayedContent` usado antes de declararse) en `AgentsPage.tsx` —
+no explotable en la práctica pero corregida por claridad. Quedaron
+parqueados sin pedido de fix: autocorrección del invariante si alguna
+vez se rompiera a cero versiones activas, confirmación antes de
+"Activar" una versión vieja, accesibilidad de teclado en las tarjetas
+del organigrama, y cobertura de test del lado CEO para `ceoPrompt`
+(hoy los tests usan `any()` en esa posición).
+
+**Verificación en vivo, autorizada por el usuario** (mismo Neo4j real
+compartido, contenedor `ai-company-core` reconstruido desde `master`
+sin misiones en curso): confirmado por los endpoints reales —
+- Los 14 agentes arrancan con exactamente 1 versión activa (`v1`,
+  `content=""`, `changeReason="Versión inicial (seed)"`).
+- Crear una versión nueva (`PUT /agents/sales/prompt`) sube el número
+  (`v2`) y la activa, agregándose al historial sin tocar `v1`.
+- Activar una versión vieja (`PUT /agents/sales/prompt/versions/1/activate`)
+  hace rollback real: `activeVersion` vuelve a `1` con el mismo
+  `createdAt` de siempre (mismo nodo, no uno nuevo), el historial sigue
+  en el mismo tamaño.
+- `content` omitido en el `PUT` devuelve `200` (no `500`), confirmando
+  el fix del `NullPointerException`.
+- `GET /agents/sales/prompt/versions/2` devuelve el contenido de esa
+  versión puntual aunque ya no sea la activa.
+
+`sales` quedó reactivado a `v1` (vacío) después de la prueba —
+el historial de las versiones de prueba (`v2`/`v3`) queda, es
+inmutable por diseño (sin endpoint de borrado). Contenedor confirmado
+sano (`/actuator/health`) antes y después.
