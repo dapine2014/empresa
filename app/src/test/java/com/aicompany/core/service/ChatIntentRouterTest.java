@@ -333,6 +333,51 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void necesitanPluralThirdPersonStillTriggersMissionsNeedingAttention() {
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(awaiting));
+
+        var response = router.route("¿Qué misiones necesitan aprobación?");
+
+        assertTrue(response.contains("1 misión"));
+        assertTrue(response.contains("MISSION-1"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void necesitaSingularThirdPersonStillTriggersMissionsNeedingAttention() {
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        when(missionMemory.findAll(50)).thenReturn(List.of(awaiting));
+
+        var response = router.route("¿Qué misión necesita aprobación?");
+
+        assertTrue(response.contains("1 misión"));
+        assertTrue(response.contains("MISSION-1"));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void necesitoFirstPersonSingularDoesNotTriggerMissionsNeedingAttention() {
+        // Bug real encontrado en la revisión final de Creative/Product
+        // Intelligence + Marketing & Growth: "necesita" sin bordes de
+        // palabra completos matcheaba como prefijo de "necesito"/
+        // "necesitamos" -- ahí el usuario habla de lo que ÉL necesita,
+        // no de qué misión necesita aprobación. Distinto del bug de
+        // "arte" (ese matcheaba en medio de una palabra; acá "necesito"
+        // empieza en un borde de palabra real, un \b solo no alcanza).
+        router.route("Necesito una estrategia de marketing");
+
+        verifyNoInteractions(missionMemory);
+    }
+
+    @Test
+    void necesitamosFirstPersonPluralDoesNotTriggerMissionsNeedingAttention() {
+        router.route("Necesitamos una estrategia de marketing");
+
+        verifyNoInteractions(missionMemory);
+    }
+
+    @Test
     void excludesTestEnvironmentMissionsFromApprovalsAndFailuresByDefault() {
         // Reportado por el usuario: 25 misiones reales acumuladas de
         // sesiones de desarrollo contaminaban las respuestas de negocio.

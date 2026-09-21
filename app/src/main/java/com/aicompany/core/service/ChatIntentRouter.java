@@ -80,6 +80,20 @@ public class ChatIntentRouter {
     private static final Pattern TEST_ENVIRONMENT =
             Pattern.compile("\\bprueba");
 
+    // Bug real encontrado en la revisión final de Creative/Product
+    // Intelligence + Marketing & Growth: "necesita" (contains) también
+    // matcheaba como PREFIJO de "necesito"/"necesitamos" -- a diferencia
+    // de TEST_ENVIRONMENT arriba (donde "arte"/"prueba" aparecían en
+    // MEDIO de una palabra ajena), acá "necesitamos" sí empieza en un
+    // borde de palabra real, así que un \b solo no alcanza. La distinción
+    // es semántica, no solo léxica: "necesita"/"necesitan" (3ª persona)
+    // preguntan qué necesita una misión/entidad consultada; "necesito"/
+    // "necesitamos" (1ª persona) expresan una necesidad del USUARIO, sin
+    // relación con qué misión espera aprobación. Se listan ambas formas
+    // de 3ª persona explícitamente en vez de un prefijo + exclusión.
+    private static final Pattern NEEDS_APPROVAL_VERB =
+            Pattern.compile("\\bnecesita\\b|\\bnecesitan\\b");
+
     // Boundary explícito por el mismo motivo que TEST_ENVIRONMENT. Y
     // deliberadamente NO usa normalize() (que saca tildes): "estás"
     // (verbo) normaliza a "estas" y choca con el pronombre demostrativo
@@ -438,7 +452,7 @@ public class ChatIntentRouter {
             return ReferencePredicate.FAILED;
         }
 
-        if (normalized.contains("aprobacion") || normalized.contains("necesita")) {
+        if (normalized.contains("aprobacion") || NEEDS_APPROVAL_VERB.matcher(normalized).find()) {
             return ReferencePredicate.NEEDS_APPROVAL;
         }
 
@@ -766,7 +780,7 @@ public class ChatIntentRouter {
 
         if (normalized.contains("aprobacion")
                 || normalized.contains("bloquead")
-                || normalized.contains("necesita")) {
+                || NEEDS_APPROVAL_VERB.matcher(normalized).find()) {
             return new QueryMatch(QueryIntent.MISSIONS_NEEDING_ATTENTION, null);
         }
 
