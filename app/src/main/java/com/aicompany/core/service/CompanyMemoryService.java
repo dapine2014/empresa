@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import org.neo4j.driver.Driver;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -11,9 +12,17 @@ import java.util.Optional;
 @Service
 public class CompanyMemoryService {
     private final Driver driver;
+    private final String defaultCeoModel;
+    private final String defaultAgentModel;
 
-    public CompanyMemoryService(Driver driver) {
+    public CompanyMemoryService(
+            Driver driver,
+            @Value("${ollama.ceo-model}") String defaultCeoModel,
+            @Value("${ollama.agent-model}") String defaultAgentModel) {
+
         this.driver = driver;
+        this.defaultCeoModel = defaultCeoModel;
+        this.defaultAgentModel = defaultAgentModel;
     }
 
     public void initialize() {
@@ -48,6 +57,7 @@ public class CompanyMemoryService {
             session.run("CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:AgentTask) REQUIRE t.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT opportunity_id IF NOT EXISTS FOR (o:Opportunity) REQUIRE o.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT team_id IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE").consume();
 
             // Ampliación de memoria (EMPRESA_AI_TODO.md §21 / status.md §17):
             // solo el constraint de identidad — sin propiedades ni relaciones
@@ -99,12 +109,15 @@ public class CompanyMemoryService {
                         + "ON CREATE SET c.alertEmail='dapine@gmail.com', c.systemEmail='', c.mailPassword='' "
                         + "SET c.name='Forjai', c.status='ACTIVE', c.seedCapitalUsd=50.0, c.challengeDays=60");
                 var agents = List.of(
-                        new String[]{"ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico"},
-                        new String[]{"sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados"},
-                        new String[]{"product", "Luna", "Chief Product AI", "creativa, centrada en el usuario"},
-                        new String[]{"finance", "Max", "Chief Finance AI", "analítico, conservador"},
-                        new String[]{"engineering", "Neo", "Chief Engineering AI", "pragmático, meticuloso"},
-                        new String[]{"qa", "Vera", "QA & Operations AI", "escéptica, detallista"}
+                        new String[]{"ceo", "Alex", "Chief Executive Officer AI", "estratégico, crítico", defaultCeoModel},
+                        new String[]{"sales", "Sofia", "Director of Sales AI", "persuasiva, orientada a resultados", defaultAgentModel},
+                        new String[]{"product", "Luna", "Chief Product AI", "creativa, centrada en el usuario", defaultAgentModel},
+                        new String[]{"finance", "Max", "Chief Finance AI", "analítico, conservador", defaultAgentModel},
+                        new String[]{"engineering", "Neo", "Cloud Architect & Lead Backend", "pragmático, meticuloso", defaultAgentModel},
+                        new String[]{"qa", "Vera", "QA & Cloud Performance Engineer", "escéptica, detallista", defaultAgentModel},
+                        new String[]{"devops", "Diego", "Cloud Database & SRE / DevOps", "meticuloso, orientado a la estabilidad", defaultAgentModel},
+                        new String[]{"backend", "Iris", "Dev Backend & Integrations", "riguroso, pragmático", defaultAgentModel},
+                        new String[]{"frontend-ui", "Mila", "Frontend & Game UI Specialist", "creativa, atenta al detalle visual", defaultAgentModel}
                 );
                 for (var agent : agents) {
                     // ON CREATE, no SET incondicional de un valor fijo:
@@ -117,12 +130,18 @@ public class CompanyMemoryService {
                     // (p. ej. 'ACTIVE', el valor fijo que este seed
                     // escribía antes de este cambio, todavía presente en
                     // los 6 nodos reales de sesiones anteriores) a IDLE.
+                    // a.model sigue el mismo criterio de "backfill sin
+                    // pisar": coalesce preserva un valor ya seteado a
+                    // mano (p. ej. vía PUT /agents/{id}/model), y solo
+                    // lo completa la primera vez.
                     tx.run("MERGE (a:Agent {id:$id}) "
                                     + "ON CREATE SET a.status='IDLE' "
                                     + "SET a.name=$name, a.role=$role, a.personality=$personality, "
-                                    + "a.status = CASE WHEN a.status IN ['WORKING','IDLE'] THEN a.status ELSE 'IDLE' END "
+                                    + "a.status = CASE WHEN a.status IN ['WORKING','IDLE'] THEN a.status ELSE 'IDLE' END, "
+                                    + "a.model = coalesce(a.model, $defaultModel) "
                                     + "REMOVE a.title",
-                            Map.of("id", agent[0], "name", agent[1], "role", agent[2], "personality", agent[3]));
+                            Map.of("id", agent[0], "name", agent[1], "role", agent[2],
+                                    "personality", agent[3], "defaultModel", agent[4]));
                 }
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}), (a:Agent) MERGE (a)-[:WORKS_FOR]->(c)");
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}), (ceo:Agent {id:'ceo'}) MERGE (c)-[:HAS_CEO]->(ceo)");
@@ -158,6 +177,42 @@ public class CompanyMemoryService {
                     "MATCH (a:Agent) WHERE a.id <> 'ceo' RETURN a.name AS name, a.role AS role ORDER BY a.id")
                     .list(r -> "- " + r.get("name").asString() + " (" + r.get("role").asString() + ")");
             return String.join("\n", lines);
+        }
+    }
+
+    /**
+     * Modelo LLM real que este agente debe usar en su próxima llamada a
+     * Ollama — {@code AgentRuntime}/{@code MissionExecutor}/
+     * {@code ChatIntentRouter} lo resuelven antes de cada llamada, nunca
+     * {@code CeoService} (que solo ejecuta la llamada que se le pide, sin
+     * decidir qué modelo usar). {@code fallback} cubre el caso defensivo
+     * de un agente sin backfill todavía (no debería pasar en la práctica:
+     * {@link #initializeCompanyAndAgents()} lo completa para los 9
+     * agentes conocidos al arrancar).
+     */
+    public String agentModel(String agentId, String fallback) {
+        try (var session = driver.session()) {
+            return session.run(
+                            "MATCH (a:Agent {id:$id}) RETURN coalesce(a.model, $fallback) AS model",
+                            Map.of("id", agentId, "fallback", fallback))
+                    .list(r -> r.get("model").asString())
+                    .stream().findFirst()
+                    .orElse(fallback);
+        }
+    }
+
+    /**
+     * Cambia el modelo real de un agente puntual (vía
+     * {@code PUT /api/company/agents/{id}/model}) — toma efecto en la
+     * próxima tarea/llamada de ese agente, sin caché ni reinicio.
+     */
+    public void setAgentModel(String agentId, String model) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (a:Agent {id:$id}) SET a.model=$model",
+                        Map.of("id", agentId, "model", model));
+                return null;
+            });
         }
     }
 
