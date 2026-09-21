@@ -96,6 +96,47 @@ class MissionExecutorDevelopmentTest {
     }
 
     @Test
+    void failsTheMissionWhenAllWriteFilesCallsFailEvenIfAllAgentsCompleted() throws Exception {
+
+        when(memory.tasks("MISSION-1")).thenReturn(List.of());
+
+        when(developmentRuntime.execute(anyString(), eq("MISSION-1"), eq("engineering"), eq("ARCHITECTURE_DEVELOPMENT"), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(devResult("arquitectura lista")));
+        when(developmentRuntime.execute(anyString(), eq("MISSION-1"), eq("backend"), eq("BACKEND_DEVELOPMENT"), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(devResult("backend listo")));
+        when(developmentRuntime.execute(anyString(), eq("MISSION-1"), eq("frontend-ui"), eq("FRONTEND_DEVELOPMENT"), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(devResult("frontend listo")));
+
+        doThrow(new java.io.IOException("disco no escribible"))
+                .when(developmentWorkspace).writeFiles(eq("MISSION-1"), anyString(), any());
+
+        executor.executeDevelopmentAsync("MISSION-1", "instrucción real").get();
+
+        verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+        verify(memory, never()).updateMission(eq("MISSION-1"), eq(MissionStatus.COMPLETED), anyInt(), anyString(), anyString());
+        verify(developmentWorkspace, never()).commitWorkspace(anyString(), anyString());
+    }
+
+    @Test
+    void commitsWorkspaceOnlyAfterAllWriteFilesCallsHaveHappened() throws Exception {
+
+        when(memory.tasks("MISSION-1")).thenReturn(List.of());
+
+        when(developmentRuntime.execute(anyString(), eq("MISSION-1"), eq("engineering"), eq("ARCHITECTURE_DEVELOPMENT"), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(devResult("arquitectura lista")));
+        when(developmentRuntime.execute(anyString(), eq("MISSION-1"), eq("backend"), eq("BACKEND_DEVELOPMENT"), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(devResult("backend listo")));
+        when(developmentRuntime.execute(anyString(), eq("MISSION-1"), eq("frontend-ui"), eq("FRONTEND_DEVELOPMENT"), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(devResult("frontend listo")));
+
+        executor.executeDevelopmentAsync("MISSION-1", "instrucción real").get();
+
+        var inOrder = inOrder(developmentWorkspace);
+        inOrder.verify(developmentWorkspace, times(3)).writeFiles(eq("MISSION-1"), anyString(), any());
+        inOrder.verify(developmentWorkspace).commitWorkspace(eq("MISSION-1"), anyString());
+    }
+
+    @Test
     void includesCompletedDiscoveryTasksAsContextInTheDevelopmentPrompt() throws Exception {
 
         when(memory.tasks("MISSION-1")).thenReturn(List.of(

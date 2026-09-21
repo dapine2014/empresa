@@ -289,6 +289,8 @@ public class MissionExecutor {
                 );
             }
 
+            var successfulWrites = new ArrayList<DevelopmentExecutionOutcome>();
+
             for (var outcome : completedOutcomes) {
 
                 try {
@@ -299,6 +301,8 @@ public class MissionExecutor {
                             outcome.result()
                     );
 
+                    successfulWrites.add(outcome);
+
                 } catch (Exception ex) {
 
                     log.warn(
@@ -308,21 +312,38 @@ public class MissionExecutor {
                 }
             }
 
+            if (successfulWrites.isEmpty()) {
+
+                throw new IllegalStateException(
+                        "Ningún agente pudo escribir archivos reales al workspace "
+                                + "(writeFiles falló para los " + completedOutcomes.size()
+                                + " agente(s) que completaron su tarea de desarrollo)."
+                );
+            }
+
+            // El commit consolidado solo debe reflejar lo que realmente se
+            // escribió a disco — nunca un agente cuyo writeFiles falló.
             var commitMessage =
                     "Desarrollo generado por Forjai Engineering Team\n\n"
-                            + completedOutcomes.stream()
+                            + successfulWrites.stream()
                                     .map(o -> "- " + o.agentId() + ": " + o.result().summary())
                                     .collect(Collectors.joining("\n"));
 
             developmentWorkspace.commitWorkspace(missionId, commitMessage);
 
             var statusMessage =
-                    failedOutcomes.isEmpty()
-                            ? "Los 3 agentes completaron el desarrollo real."
-                            : "Desarrollo parcial — agentes fallidos: "
-                                    + failedOutcomes.stream()
-                                            .map(DevelopmentExecutionOutcome::agentId)
-                                            .collect(Collectors.joining(", "));
+                    failedOutcomes.isEmpty() && successfulWrites.size() == completedOutcomes.size()
+                            ? "Los " + successfulWrites.size()
+                                    + " agente(s) completaron el desarrollo real y escribieron sus archivos."
+                            : "Desarrollo parcial — " + successfulWrites.size() + " de "
+                                    + DEVELOPMENT_DEFINITIONS.size()
+                                    + " agente(s) escribieron archivos reales."
+                                    + (failedOutcomes.isEmpty()
+                                            ? ""
+                                            : " Agentes fallidos: "
+                                                    + failedOutcomes.stream()
+                                                            .map(DevelopmentExecutionOutcome::agentId)
+                                                            .collect(Collectors.joining(", ")));
 
             advanceMission(
                     missionId, MissionStatus.COMPLETED, 100, "Desarrollo completado", statusMessage
