@@ -46,6 +46,8 @@ function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose:
     queryFn: () => api.agentPrompt(agent.agentId),
   })
 
+  const displayedContent = content ?? promptQuery.data?.activeContent ?? ''
+
   const saveMutation = useMutation({
     mutationFn: () => api.updateAgentPrompt(agent.agentId, { content: displayedContent, changeReason }),
     onSuccess: () => {
@@ -84,7 +86,6 @@ function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose:
   }
 
   const snapshot = promptQuery.data
-  const displayedContent = content ?? snapshot.activeContent
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

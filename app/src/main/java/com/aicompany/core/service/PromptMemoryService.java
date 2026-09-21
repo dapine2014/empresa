@@ -154,6 +154,8 @@ public class PromptMemoryService {
             throw new IllegalArgumentException("changeReason no puede estar vacío");
         }
 
+        var safeContent = content == null ? "" : content;
+
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
 
@@ -170,7 +172,7 @@ public class PromptMemoryService {
                                 + "DELETE old "
                                 + "CREATE (a)-[:HAS_ACTIVE_PROMPT]->(v) "
                                 + "RETURN v",
-                        Map.of("agentId", agentId, "content", content, "changeReason", changeReason,
+                        Map.of("agentId", agentId, "content", safeContent, "changeReason", changeReason,
                                 "createdAt", Instant.now().toString()));
 
                 if (result.list().isEmpty()) {
