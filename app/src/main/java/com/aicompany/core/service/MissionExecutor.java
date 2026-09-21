@@ -50,6 +50,7 @@ public class MissionExecutor {
     private final AgentRuntime runtime;
     private final CeoService ceoService;
     private final CompanyMemoryService companyMemory;
+    private final PromptMemoryService promptMemory;
     private final String defaultCeoModel;
     private final Executor orchestratorExecutor;
     private final CompanyEventPublisher events;
@@ -64,6 +65,7 @@ public class MissionExecutor {
             AgentRuntime runtime,
             CeoService ceoService,
             CompanyMemoryService companyMemory,
+            PromptMemoryService promptMemory,
             @Value("${ollama.ceo-model}") String defaultCeoModel,
             @Qualifier("missionOrchestratorExecutor")
             Executor orchestratorExecutor,
@@ -78,6 +80,7 @@ public class MissionExecutor {
         this.runtime = runtime;
         this.ceoService = ceoService;
         this.companyMemory = companyMemory;
+        this.promptMemory = promptMemory;
         this.defaultCeoModel = defaultCeoModel;
         this.orchestratorExecutor = orchestratorExecutor;
         this.events = events;
@@ -481,6 +484,7 @@ public class MissionExecutor {
                     ceoService.executeMission(
                             instruction,
                             resultsForCeo,
+                            promptMemory.activePrompt("ceo"),
                             companyMemory.agentModel("ceo", defaultCeoModel)
                     );
 

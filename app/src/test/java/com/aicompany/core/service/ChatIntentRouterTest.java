@@ -36,10 +36,11 @@ class ChatIntentRouterTest {
             new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
     private final ProductStatusService productStatusService = mock(ProductStatusService.class);
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
+    private final PromptMemoryService promptMemory = mock(PromptMemoryService.class);
 
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
-            conversationMemory, appProperties, productStatusService, "qwen2.5-coder:14b", teamMemory
+            conversationMemory, appProperties, productStatusService, "qwen2.5-coder:14b", teamMemory, promptMemory
     );
 
     @Test
@@ -139,7 +140,7 @@ class ChatIntentRouterTest {
     void doesNotRouteToDecisionWhenMessageHasNoExplicitMissionId() {
         when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
-        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any(), any())).thenReturn("¿A qué misión te referís?");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any(), any(), any())).thenReturn("¿A qué misión te referís?");
 
         var response = router.route("Aprueba la misión de la que hablamos ayer.");
 
@@ -455,7 +456,7 @@ class ChatIntentRouterTest {
     void fallsBackToGeneralChatWhenNoIntentMatches() {
         when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
-        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), eq("Hola, ¿cómo estás?"), any(), any()))
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), eq("Hola, ¿cómo estás?"), any(), any(), any()))
                 .thenReturn("Todo bien, gracias.");
 
         var response = router.route("Hola, ¿cómo estás?");
@@ -479,7 +480,7 @@ class ChatIntentRouterTest {
         when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
         when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
         when(conversationMemory.recentMessages(20)).thenReturn(history);
-        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), eq(history), eq("¿Cuál es mi color favorito?"), any(), any()))
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), eq(history), eq("¿Cuál es mi color favorito?"), any(), any(), any()))
                 .thenReturn("Verde.");
 
         var response = router.route("¿Cuál es mi color favorito?");
@@ -704,7 +705,7 @@ class ChatIntentRouterTest {
         router.route("Hola, ¿cómo estás?");
 
         var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
-        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture(), any());
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture(), any(), any());
         var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
 
         assertTrue(companyMemoryQuery.apply("AGENT_STATUS").contains("Sofia"));
@@ -909,12 +910,12 @@ class ChatIntentRouterTest {
                 new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now())
         ));
         when(productStatusService.resolve("MISSION-1")).thenReturn(ProductStatus.DESIGN);
-        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any(), any())).thenReturn("ok");
+        when(ceoService.chat(anyString(), anyString(), any(), anyString(), any(), any(), any())).thenReturn("ok");
 
         router.route("contame más sobre esas");
 
         var captor = org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
-        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture(), any());
+        verify(ceoService).chat(anyString(), anyString(), any(), anyString(), captor.capture(), any(), any());
         @SuppressWarnings("unchecked")
         var companyMemoryQuery = (java.util.function.Function<String, String>) captor.getValue();
 
@@ -945,13 +946,13 @@ class ChatIntentRouterTest {
         when(conversationMemory.lastMentioned()).thenReturn(
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-001")))
         );
-        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), contains("contame más sobre esas"), any(), any()))
+        when(ceoService.chat(eq("Alex"), eq("- Sofia (Sales)"), any(), contains("contame más sobre esas"), any(), any(), any()))
                 .thenReturn("Ahí va el detalle.");
 
         var response = router.route("contame más sobre esas");
 
         assertEquals("Ahí va el detalle.", response);
-        verify(ceoService).chat(eq("Alex"), eq("- Sofia (Sales)"), any(), contains("LAST_MENTIONED"), any(), any());
+        verify(ceoService).chat(eq("Alex"), eq("- Sofia (Sales)"), any(), contains("LAST_MENTIONED"), any(), any(), any());
     }
 
     @Test

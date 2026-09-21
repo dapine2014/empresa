@@ -8,6 +8,7 @@ import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.service.CeoService;
 import com.aicompany.core.service.CompanyMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
+import com.aicompany.core.service.PromptMemoryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -40,6 +41,7 @@ public class AgentRuntime {
     private final CeoService ceoService;
     private final MissionMemoryService memory;
     private final CompanyMemoryService companyMemory;
+    private final PromptMemoryService promptMemory;
     private final String defaultAgentModel;
     private final Executor agentTaskExecutor;
     private final CompanyEventPublisher events;
@@ -52,6 +54,7 @@ public class AgentRuntime {
             CeoService ceoService,
             MissionMemoryService memory,
             CompanyMemoryService companyMemory,
+            PromptMemoryService promptMemory,
             @Value("${ollama.agent-model}") String defaultAgentModel,
             @Qualifier("agentTaskExecutor") Executor agentTaskExecutor,
             CompanyEventPublisher events,
@@ -63,6 +66,7 @@ public class AgentRuntime {
         this.ceoService = ceoService;
         this.memory = memory;
         this.companyMemory = companyMemory;
+        this.promptMemory = promptMemory;
         this.defaultAgentModel = defaultAgentModel;
         this.agentTaskExecutor = agentTaskExecutor;
         this.events = events;
@@ -152,6 +156,7 @@ public class AgentRuntime {
         );
 
         var model = companyMemory.agentModel(agentId, defaultAgentModel);
+        var agentPrompt = promptMemory.activePrompt(agentId);
 
         memory.setAgentStatus(agentId, "WORKING");
 
@@ -182,7 +187,8 @@ public class AgentRuntime {
                 var prompt = buildPrompt(
                         agentId,
                         action,
-                        instruction
+                        instruction,
+                        agentPrompt
                 );
 
                 var taskSummary = buildTaskSummary(
@@ -502,12 +508,18 @@ public class AgentRuntime {
     private String buildPrompt(
             String agentId,
             String action,
-            String instruction) {
+            String instruction,
+            String agentPrompt) {
+
+        var agentPromptBlock = (agentPrompt == null || agentPrompt.isBlank())
+                ? ""
+                : "\nCÓMO DEBES RAZONAR (definido por el fundador para vos, no reemplaza las reglas de abajo):\n"
+                        + agentPrompt + "\n";
 
         return """
                 Estás trabajando dentro de Forjai como el agente %s.
                 Esta es una tarea real dentro de una misión empresarial.
-
+                %s
                 REGLAS:
 
                 - No inventes clientes, ventas, ingresos, costos,
@@ -593,6 +605,7 @@ public class AgentRuntime {
                 %s
                 """.formatted(
                 agentId,
+                agentPromptBlock,
                 agentId,
                 action,
                 action,

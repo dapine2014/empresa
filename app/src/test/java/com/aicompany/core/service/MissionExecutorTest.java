@@ -43,9 +43,16 @@ class MissionExecutorTest {
     private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final AlertMailService alertMailService = mock(AlertMailService.class);
+    private final PromptMemoryService promptMemory = defaultPromptMemory();
+
+    private static PromptMemoryService defaultPromptMemory() {
+        var mock = mock(PromptMemoryService.class);
+        when(mock.activePrompt(anyString())).thenReturn("");
+        return mock;
+    }
 
     private final MissionExecutor executor = new MissionExecutor(
-            memory, runtime, ceoService, companyMemory, "qwen2.5-coder:14b", Runnable::run, events, jsonMapper,
+            memory, runtime, ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events, jsonMapper,
             contradictionDetector, appProperties, opportunityMemory, alertMailService
     );
 
@@ -60,14 +67,14 @@ class MissionExecutorTest {
         when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
 
         var resultsCaptor = ArgumentCaptor.forClass(String.class);
-        when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString()))
+        when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString(), anyString()))
                 .thenReturn("consolidado");
 
         executor.executeAsync("MISSION-1", "instrucción").get();
 
         verify(memory).updateMission(
                 eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
-        verify(ceoService, times(1)).executeMission(anyString(), anyString(), anyString());
+        verify(ceoService, times(1)).executeMission(anyString(), anyString(), anyString(), anyString());
 
         assertFalse(resultsCaptor.getValue().contains("AGENTES_FALLIDOS"));
 
@@ -100,7 +107,7 @@ class MissionExecutorTest {
                 .thenReturn(CompletableFuture.completedFuture(salesResult));
 
         when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
-        when(ceoService.executeMission(anyString(), anyString(), anyString())).thenReturn("consolidado");
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
 
         executor.executeAsync("MISSION-1", "instrucción").get();
 
@@ -122,7 +129,7 @@ class MissionExecutorTest {
         when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
 
         var resultsCaptor = ArgumentCaptor.forClass(String.class);
-        when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString()))
+        when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString(), anyString()))
                 .thenReturn("consolidado con hueco");
 
         executor.executeAsync("MISSION-1", "instrucción").get();
@@ -134,7 +141,7 @@ class MissionExecutorTest {
         verify(memory, never()).updateMission(
                 eq("MISSION-1"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
 
-        verify(ceoService, times(1)).executeMission(anyString(), anyString(), anyString());
+        verify(ceoService, times(1)).executeMission(anyString(), anyString(), anyString(), anyString());
 
         var resultsForCeo = resultsCaptor.getValue();
         assertTrue(resultsForCeo.contains("AGENTES_FALLIDOS"));
@@ -174,7 +181,7 @@ class MissionExecutorTest {
         when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
 
         var resultsCaptor = ArgumentCaptor.forClass(String.class);
-        when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString()))
+        when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString(), anyString()))
                 .thenReturn("consolidado");
 
         executor.executeAsync("MISSION-1", "instrucción").get();
@@ -200,7 +207,7 @@ class MissionExecutorTest {
         stubAgent("qa");
 
         when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
-        when(ceoService.executeMission(anyString(), anyString(), anyString())).thenReturn("consolidado");
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
 
         executor.executeAsync("MISSION-1", "instrucción").get();
 
@@ -225,7 +232,7 @@ class MissionExecutorTest {
 
         verify(memory).updateMission(
                 eq("MISSION-1"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
-        verify(ceoService, never()).executeMission(anyString(), anyString(), anyString());
+        verify(ceoService, never()).executeMission(anyString(), anyString(), anyString(), anyString());
         verify(opportunityMemory, never()).recordOpportunity(anyString(), anyString());
 
         verify(alertMailService).send(contains("MISSION-1"), anyString(), anyBoolean());

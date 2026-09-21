@@ -9,6 +9,7 @@ import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.service.CeoService;
 import com.aicompany.core.service.CompanyMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
+import com.aicompany.core.service.PromptMemoryService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.json.JsonMapper;
@@ -47,8 +48,22 @@ class AgentRuntimeTest {
     private final EvidenceBindingGate evidenceBindingGate = new EvidenceBindingGate();
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
+    // Sin stub explícito, un mock de PromptMemoryService devuelve null en
+    // activePrompt(...) -- buildPrompt ya maneja null como "sin prompt
+    // adicional" (mismo criterio defensivo que agentModel/fallback), así
+    // que los tests existentes que no les importa el prompt del agente
+    // no necesitan stub. Los que sí verifican inyección real lo
+    // sobreescriben.
+    private final PromptMemoryService promptMemory = defaultPromptMemory();
+
+    private static PromptMemoryService defaultPromptMemory() {
+        var mock = mock(PromptMemoryService.class);
+        when(mock.activePrompt(anyString())).thenReturn("");
+        return mock;
+    }
+
     private final AgentRuntime runtime = new AgentRuntime(
-            ceoService, memory, companyMemory, "qwen3:8b", Runnable::run, events,
+            ceoService, memory, companyMemory, promptMemory, "qwen3:8b", Runnable::run, events,
             validator, evidenceGate, evidenceBindingGate, jsonMapper
     );
 
@@ -67,6 +82,42 @@ class AgentRuntimeTest {
         verify(ceoService, times(1)).executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), anyString());
         verify(events, never()).publishTask(eq("EMPRESA_TASK_RETRY"), any(), any(), any(), any(), any());
         verify(memory).updateTask(eq("TASK-1"), eq("COMPLETED"), anyString());
+    }
+
+    @Test
+    void injectsTheAgentsActivePromptIntoTheTaskPrompt() throws Exception {
+        var result = agentResult("finance", "recomendación ok");
+
+        when(promptMemory.activePrompt("finance")).thenReturn("Sé especialmente conservador con las proyecciones.");
+
+        var promptCaptor = ArgumentCaptor.forClass(String.class);
+        when(ceoService.executeAgentTask(eq("finance"), promptCaptor.capture(), anyString(), eq("MISSION-1"), eq("TASK-1"), anyString()))
+                .thenReturn(outcome(result));
+        when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(result)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        var future = runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción");
+
+        assertEquals(result, future.get());
+        assertTrue(promptCaptor.getValue().contains("CÓMO DEBES RAZONAR"));
+        assertTrue(promptCaptor.getValue().contains("Sé especialmente conservador con las proyecciones."));
+    }
+
+    @Test
+    void omitsThePromptBlockEntirelyWhenTheAgentHasNoActivePromptContent() throws Exception {
+        var result = agentResult("finance", "recomendación ok");
+
+        // promptMemory (default) ya devuelve "" para cualquier agente.
+        var promptCaptor = ArgumentCaptor.forClass(String.class);
+        when(ceoService.executeAgentTask(eq("finance"), promptCaptor.capture(), anyString(), eq("MISSION-1"), eq("TASK-1"), anyString()))
+                .thenReturn(outcome(result));
+        when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(result)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        var future = runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción");
+
+        assertEquals(result, future.get());
+        assertFalse(promptCaptor.getValue().contains("CÓMO DEBES RAZONAR"));
     }
 
     @Test

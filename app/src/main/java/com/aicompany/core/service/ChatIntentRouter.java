@@ -156,6 +156,7 @@ public class ChatIntentRouter {
     private final ProductStatusService productStatusService;
     private final String defaultCeoModel;
     private final TeamMemoryService teamMemory;
+    private final PromptMemoryService promptMemory;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -168,7 +169,8 @@ public class ChatIntentRouter {
             AppProperties appProperties,
             ProductStatusService productStatusService,
             @Value("${ollama.ceo-model}") String defaultCeoModel,
-            TeamMemoryService teamMemory) {
+            TeamMemoryService teamMemory,
+            PromptMemoryService promptMemory) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -181,6 +183,7 @@ public class ChatIntentRouter {
         this.productStatusService = productStatusService;
         this.defaultCeoModel = defaultCeoModel;
         this.teamMemory = teamMemory;
+        this.promptMemory = promptMemory;
     }
 
     /**
@@ -254,6 +257,7 @@ public class ChatIntentRouter {
                 conversationMemory.recentMessages(HISTORY_LIMIT),
                 message,
                 this::answerMemoryTopic,
+                promptMemory.activePrompt("ceo"),
                 companyMemory.agentModel("ceo", defaultCeoModel)
         );
     }
@@ -584,6 +588,7 @@ public class ChatIntentRouter {
                     conversationMemory.recentMessages(HISTORY_LIMIT),
                     hint + message,
                     this::answerMemoryTopic,
+                    promptMemory.activePrompt("ceo"),
                     companyMemory.agentModel("ceo", defaultCeoModel)
             );
         }
