@@ -33,7 +33,7 @@ mvn test -Dtest=MiClase#miMetodo  # ejecuta un único test
 mvn spring-boot:run               # arranca el servicio en local (puerto 8081)
 ```
 
-No hay tooling de lint configurado. La suite unitaria está en `src/test/java` y
+No hay tooling de lint configurado en el backend. La suite unitaria está en `src/test/java` y
 cubre la validación de resultados de agentes, el inicio de misiones y el
 enrutamiento del chat del CEO. Las integraciones con Neo4j, Kafka y Ollama se
 mantienen fuera de estas pruebas para que no dependan de Docker.
@@ -47,6 +47,7 @@ cd app/frontend
 npm install
 npm run dev      # dev server en :5173, con proxy a :8081 (vite.config.ts) — no requiere Docker
 npm run build    # compila a dist/, lo que copia el Dockerfile a src/main/resources/static
+npm run lint     # oxlint (`.oxlintrc.json`) — único lint configurado en el repo, solo cubre el frontend
 ```
 
 `mvn spring-boot:run` en local **no** compila ni sirve la SPA (no hay `frontend-maven-plugin`, deliberado): para probar el backend+frontend juntos como en producción, usar Docker; para desarrollar el frontend, `npm run dev` aparte apuntando al backend real en 8081.
