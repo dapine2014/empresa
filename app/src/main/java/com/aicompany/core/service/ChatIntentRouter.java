@@ -671,15 +671,35 @@ public class ChatIntentRouter {
         COMPANY_STATUS
     }
 
-    private record TeamKeywordRule(String teamId, List<String> topicKeywords) {}
+    private record TeamKeywordRule(String teamId, List<Pattern> topicKeywordPatterns) {}
+
+    /**
+     * Compila cada keyword con un boundary IZQUIERDO explícito ({@code \b}),
+     * sin exigir uno a la derecha -- varias keywords son deliberadamente
+     * prefijos de palabras más largas (p. ej. {@code "creativ"} debe seguir
+     * matcheando "creativa"/"creatividad", {@code "telemetria"} como
+     * prefijo). Sin el boundary izquierdo, {@code String.contains} dejaba
+     * pasar falsos positivos reales: {@code "arte"} matcheaba dentro de
+     * "parte"/"comparte"/"aparte"/"reparte" (bug real de la revisión final
+     * de rama, reproducido con "¿qué parte del equipo está trabajando
+     * ahora?" enrutando a Creative/PI en vez de AGENT_STATUS).
+     */
+    private static List<Pattern> compileTeamKeywordPatterns(List<String> keywords) {
+
+        return keywords.stream()
+                .map(keyword -> Pattern.compile("\\b" + Pattern.quote(keyword)))
+                .toList();
+    }
 
     private static final List<TeamKeywordRule> TEAM_KEYWORD_RULES = List.of(
             new TeamKeywordRule(TeamMemoryService.TEAM_ENGINEERING,
-                    List.of("ingenieria", "engineering")),
+                    compileTeamKeywordPatterns(List.of("ingenieria", "engineering"))),
             new TeamKeywordRule(TeamMemoryService.TEAM_CREATIVE_PRODUCT_INTELLIGENCE,
-                    List.of("creativ", "product intelligence", "visual", "arte", "telemetria", "analytics")),
+                    compileTeamKeywordPatterns(List.of(
+                            "creativ", "product intelligence", "visual", "arte", "telemetria", "analytics"))),
             new TeamKeywordRule(TeamMemoryService.TEAM_MARKETING_GROWTH,
-                    List.of("marketing", "growth", "crecimiento", "comunidad", "community"))
+                    compileTeamKeywordPatterns(List.of(
+                            "marketing", "growth", "crecimiento", "comunidad", "community")))
     );
 
     private record QueryMatch(QueryIntent intent, String teamId) {}
@@ -698,7 +718,7 @@ public class ChatIntentRouter {
             // ("el equipo creativo", "quién lidera marketing") es más
             // específico que el estado general de agentes.
             for (var rule : TEAM_KEYWORD_RULES) {
-                if (rule.topicKeywords().stream().anyMatch(normalized::contains)) {
+                if (rule.topicKeywordPatterns().stream().anyMatch(p -> p.matcher(normalized).find())) {
                     return new QueryMatch(QueryIntent.TEAM_DETAILS, rule.teamId());
                 }
             }

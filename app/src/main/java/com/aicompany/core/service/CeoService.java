@@ -164,9 +164,9 @@ public class CeoService {
                                             "teamId", Map.of(
                                                     "type", "string",
                                                     "enum", List.of(
-                                                            "TEAM-ENGINEERING",
-                                                            "TEAM-CREATIVE-PRODUCT-INTELLIGENCE",
-                                                            "TEAM-MARKETING-GROWTH"
+                                                            TeamMemoryService.TEAM_ENGINEERING,
+                                                            TeamMemoryService.TEAM_CREATIVE_PRODUCT_INTELLIGENCE,
+                                                            TeamMemoryService.TEAM_MARKETING_GROWTH
                                                     ),
                                                     "description",
                                                     "Obligatorio solo si "

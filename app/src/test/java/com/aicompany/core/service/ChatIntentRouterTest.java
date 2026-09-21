@@ -588,6 +588,53 @@ class ChatIntentRouterTest {
         verifyNoInteractions(teamMemory);
     }
 
+    @Test
+    void teamDetailsWithEmptyTeamIdNeverInventsData() {
+
+        var response = router.answerMemoryTopic("TEAM_DETAILS:");
+
+        assertEquals("No tengo ese dato registrado.", response);
+        verifyNoInteractions(teamMemory);
+    }
+
+    @Test
+    void teamGateWordDoesNotFalsePositiveOnSubstringMatch() {
+
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+
+        var response = router.route("¿qué parte del equipo está trabajando ahora?");
+
+        // Must NOT route to TEAM_DETAILS for Creative/PI just because "arte"
+        // is a substring of "parte" -- must fall through to the generic
+        // AGENT_STATUS query instead (real bug found in final whole-branch
+        // review: ChatIntentRouter.java's keyword matching used to be plain
+        // substring containment with no word boundary).
+        verify(missionMemory).latestTaskPerAgent();
+        verifyNoInteractions(teamMemory);
+    }
+
+    @Test
+    void teamKeywordWithoutGateWordDoesNotTriggerTeamDetails() {
+
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(companyMemory.agentName("ceo")).thenReturn(Optional.of("Alex"));
+        when(companyMemory.teamRosterDescription()).thenReturn("- Sofia (Sales)");
+        when(opportunityMemory.countOpportunities()).thenReturn(0L);
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+        when(opportunityMemory.listRecent(20)).thenReturn(List.of());
+        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{0.0, 0.0});
+        when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
+
+        router.route("necesitamos una estrategia de marketing nueva");
+
+        // "marketing" is a TEAM_KEYWORD_RULES keyword, but this message has no
+        // "equipo"/"team"/"lidera"/"lider" gate word -- must fall through past
+        // TEAM_DETAILS entirely (not just past AGENT_STATUS) to the general
+        // chat/CEO path, since none of the deterministic keywords match.
+        verifyNoInteractions(teamMemory);
+    }
+
     @SuppressWarnings("unchecked")
     @Test
     void passesCompanyMemoryQueryCallbackThatResolvesAllKnownTopics() {
