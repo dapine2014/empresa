@@ -96,21 +96,22 @@ ronda, no se pidió):
     videojuegos y aplicaciones cuando aplique", "descomposición técnica
     del trabajo", "liderazgo técnico", "revisión técnica", "coordinación
     del Engineering Team", "AWS", "bases de datos SQL", "bases de datos
-    NoSQL", "C#", "Java", "JavaScript / TypeScript"]`.
+    NoSQL", "C#", "Java", "JavaScript / TypeScript", "Flutter"]`.
   - `devops` (Diego).capabilities = `["PostgreSQL", "Redis", "bases de
     datos SQL", "bases de datos NoSQL", "bases de datos cloud",
     "infraestructura", "SRE", "observabilidad", "rendimiento", "backups",
     "recuperación", "Terraform / Pulumi", "operación cloud AWS",
     "capacidades de infraestructura cuando el Proyecto B esté
-    implementado"]`.
+    implementado"]` (sin `Flutter` — no es un rol de desarrollo, ver
+    abajo).
   - `backend` (Iris).capabilities = `["backend", "APIs", "integraciones",
     "microservicios", "lógica de negocio", "servicios backend",
     "integraciones con terceros", "componentes backend para aplicaciones
-    y videojuegos", "C#", "Java", "JavaScript / TypeScript"]`.
+    y videojuegos", "C#", "Java", "JavaScript / TypeScript", "Flutter"]`.
   - `frontend-ui` (Mila).capabilities = `["frontend", "interfaces web",
     "UI", "UX técnica", "Game UI", "HUD", "menús", "interfaces de
-    aplicaciones y videojuegos", "C#", "Java", "JavaScript /
-    TypeScript"]`.
+    aplicaciones y videojuegos", "C#", "Java", "JavaScript / TypeScript",
+    "Flutter"]`.
   - `qa` (Vera).capabilities = `["QA", "pruebas funcionales", "pruebas de
     integración", "pruebas de regresión", "pruebas de rendimiento",
     "pruebas de carga", "validación de estabilidad", "análisis de
@@ -127,6 +128,12 @@ ronda, no se pidió):
   `"bases de datos SQL"`/`"bases de datos NoSQL"` como expertise
   operativa propia (a diferencia de Neo, que las tiene como parte de su
   expertise de *arquitectura*, no de operación día a día).
+
+  `Flutter` (framework exclusivo para móviles) se agregó como capability
+  compartida de **los tres roles de desarrollo** (Neo, Iris, Mila) —
+  mismo criterio que el resto del stack de lenguajes: quien diseña/
+  construye producto debe manejarlo, quien opera infraestructura (Diego)
+  o valida calidad (Vera) no lo necesita como expertise propia.
 
 ### 3. `Team` como entidad de primera clase, ámbito deliberadamente acotado a Engineering
 
