@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { AgentStatusResponse } from '../api/types'
 import { statusDot } from '../statusColor'
@@ -8,13 +9,15 @@ function AgentCard({
   agent,
   teamName,
   isLeader,
+  onClick,
 }: {
   agent: AgentStatusResponse
   teamName?: string
   isLeader?: boolean
+  onClick: () => void
 }) {
   return (
-    <div className="card orgcard">
+    <div className="card orgcard" onClick={onClick} role="button" tabIndex={0}>
       {teamName && <div className="team-label">{teamName}</div>}
       <div className="card-value">
         {statusDot(agent.status)} {agent.name}
@@ -33,7 +36,117 @@ function AgentCard({
   )
 }
 
+function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [content, setContent] = useState('')
+  const [changeReason, setChangeReason] = useState('')
+
+  const promptQuery = useQuery({
+    queryKey: ['agentPrompt', agent.agentId],
+    queryFn: () => api.agentPrompt(agent.agentId),
+  })
+
+  const saveMutation = useMutation({
+    mutationFn: () => api.updateAgentPrompt(agent.agentId, { content, changeReason }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agentPrompt', agent.agentId] })
+      setChangeReason('')
+    },
+  })
+
+  const activateMutation = useMutation({
+    mutationFn: (version: number) => api.activateAgentPromptVersion(agent.agentId, version),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agentPrompt', agent.agentId] }),
+  })
+
+  if (promptQuery.isLoading) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+          <p>Cargando prompt...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (promptQuery.error || !promptQuery.data) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+          <p className="error">No se pudo cargar el prompt de {agent.name}.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const snapshot = promptQuery.data
+  const textareaValue = content || (content === '' && !saveMutation.isSuccess ? snapshot.activeContent : content)
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+        <h2>Prompt de {agent.name}</h2>
+        <p className="hint">
+          Versión activa: v{snapshot.activeVersion} — {snapshot.activeChangeReason}
+        </p>
+
+        <label>
+          Instrucciones adicionales (no reemplazan las reglas de seguridad, siempre fijas en código)
+          <textarea
+            rows={8}
+            value={textareaValue}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Ej: Sé especialmente conservador con las proyecciones financieras."
+          />
+        </label>
+
+        <label>
+          Motivo del cambio
+          <input
+            type="text"
+            value={changeReason}
+            onChange={(e) => setChangeReason(e.target.value)}
+            placeholder="Ej: Ajustar tono tras retro del fundador"
+          />
+        </label>
+
+        <button
+          disabled={!changeReason.trim() || saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          Guardar (crea versión nueva)
+        </button>
+        {saveMutation.isError && <p className="error">No se pudo guardar el prompt.</p>}
+
+        <h3>Historial de versiones</h3>
+        <ul className="prompt-version-list">
+          {snapshot.versions.map((v) => (
+            <li key={v.version}>
+              <span>
+                v{v.version} — {v.changeReason} ({new Date(v.createdAt).toLocaleString()})
+              </span>
+              {v.version !== snapshot.activeVersion && (
+                <button
+                  disabled={activateMutation.isPending}
+                  onClick={() => activateMutation.mutate(v.version)}
+                >
+                  Activar
+                </button>
+              )}
+              {v.version === snapshot.activeVersion && <span className="leader-tag">activa</span>}
+            </li>
+          ))}
+        </ul>
+
+        <button onClick={onClose}>Cerrar</button>
+      </div>
+    </div>
+  )
+}
+
 export default function AgentsPage() {
+  const [selectedAgent, setSelectedAgent] = useState<AgentStatusResponse | null>(null)
+
   const agentsQuery = useQuery({
     queryKey: ['agentsStatus'],
     queryFn: api.agentsStatus,
@@ -57,9 +170,6 @@ export default function AgentsPage() {
   const teamMemberIds = new Set(teams.flatMap((team) => team.members.map((member) => member.agentId)))
 
   const ceo = byId.get('ceo')
-  // Reportes directos sin equipo (Sofia/Max/Luna hoy) -- cualquier
-  // agente que no sea el CEO y no pertenezca a ninguno de los 3 equipos
-  // reales (Team/MEMBER_OF en Neo4j, ver GET /api/company/teams).
   const soloReports = agents.filter((agent) => agent.agentId !== 'ceo' && !teamMemberIds.has(agent.agentId))
 
   return (
@@ -67,11 +177,11 @@ export default function AgentsPage() {
       <h1>Agents</h1>
       <ul className="orgtree">
         <li>
-          {ceo && <AgentCard agent={ceo} />}
+          {ceo && <AgentCard agent={ceo} onClick={() => setSelectedAgent(ceo)} />}
           <ul>
             {soloReports.map((agent) => (
               <li key={agent.agentId}>
-                <AgentCard agent={agent} />
+                <AgentCard agent={agent} onClick={() => setSelectedAgent(agent)} />
               </li>
             ))}
             {teams.map((team) => {
@@ -80,14 +190,21 @@ export default function AgentsPage() {
 
               return (
                 <li key={team.teamId}>
-                  {leaderAgent && <AgentCard agent={leaderAgent} teamName={team.teamName ?? undefined} isLeader />}
+                  {leaderAgent && (
+                    <AgentCard
+                      agent={leaderAgent}
+                      teamName={team.teamName ?? undefined}
+                      isLeader
+                      onClick={() => setSelectedAgent(leaderAgent)}
+                    />
+                  )}
                   {otherMembers.length > 0 && (
                     <ul>
                       {otherMembers.map((member) => {
                         const memberAgent = byId.get(member.agentId)
                         return memberAgent ? (
                           <li key={member.agentId}>
-                            <AgentCard agent={memberAgent} />
+                            <AgentCard agent={memberAgent} onClick={() => setSelectedAgent(memberAgent)} />
                           </li>
                         ) : null
                       })}
@@ -99,6 +216,8 @@ export default function AgentsPage() {
           </ul>
         </li>
       </ul>
+
+      {selectedAgent && <PromptEditor agent={selectedAgent} onClose={() => setSelectedAgent(null)} />}
     </div>
   )
 }

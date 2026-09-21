@@ -117,3 +117,31 @@ export interface SettingsCommand {
   systemEmail: string
   mailPassword: string
 }
+
+// Prompt versionado de un agente -- ver GET/PUT /api/company/agents/{id}/prompt
+export interface PromptVersionSummary {
+  version: number
+  createdBy: string
+  changeReason: string
+  createdAt: string
+}
+
+export interface PromptSnapshot {
+  agentId: string
+  activeVersion: number
+  activeContent: string
+  activeCreatedBy: string
+  activeChangeReason: string
+  activeCreatedAt: string
+  versions: PromptVersionSummary[]
+}
+
+export interface PromptVersionContent {
+  version: number
+  content: string
+}
+
+export interface PromptCommand {
+  content: string
+  changeReason: string
+}

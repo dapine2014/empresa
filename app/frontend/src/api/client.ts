@@ -6,6 +6,9 @@ import type {
   DecisionResponse,
   MissionResponse,
   MissionStatusResponse,
+  PromptCommand,
+  PromptSnapshot,
+  PromptVersionContent,
   SettingsCommand,
   SettingsResponse,
   TeamSnapshot,
@@ -32,6 +35,22 @@ export const api = {
   agentsStatus: () => request<AgentStatusResponse[]>('/api/company/agents/status'),
 
   teams: () => request<TeamSnapshot[]>('/api/company/teams'),
+
+  agentPrompt: (agentId: string) => request<PromptSnapshot>(`/api/company/agents/${agentId}/prompt`),
+
+  agentPromptVersion: (agentId: string, version: number) =>
+    request<PromptVersionContent>(`/api/company/agents/${agentId}/prompt/versions/${version}`),
+
+  updateAgentPrompt: (agentId: string, command: PromptCommand) =>
+    request<PromptSnapshot>(`/api/company/agents/${agentId}/prompt`, {
+      method: 'PUT',
+      body: JSON.stringify(command),
+    }),
+
+  activateAgentPromptVersion: (agentId: string, version: number) =>
+    request<PromptSnapshot>(`/api/company/agents/${agentId}/prompt/versions/${version}/activate`, {
+      method: 'PUT',
+    }),
 
   activity: (limit = 50) => request<ActivityItem[]>(`/api/company/activity?limit=${limit}`),
 

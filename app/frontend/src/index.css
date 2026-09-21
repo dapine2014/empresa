@@ -390,3 +390,67 @@ button:disabled {
   padding: 12px;
   max-width: 800px;
 }
+
+.orgcard {
+  cursor: pointer;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  width: min(560px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+
+.modal-panel textarea,
+.modal-panel input[type='text'] {
+  background: #0e141c;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: inherit;
+}
+
+.prompt-version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt-version-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9em;
+}
