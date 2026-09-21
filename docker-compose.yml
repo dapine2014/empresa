@@ -14,13 +14,19 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: storm-kafka:19092
       SERVER_PORT: 8081
       EVIDENCE_WEB_SEARCH_API_KEY: ${EVIDENCE_WEB_SEARCH_API_KEY}
+      PRODUCTS_WORKSPACE_ROOT: /workspace/products
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "8081:8081"
     networks:
       - ai-company-net
+    volumes:
+      - products-workspace:/workspace/products
 
 networks:
   ai-company-net:
     external: true
+
+volumes:
+  products-workspace:
