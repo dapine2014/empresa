@@ -6,10 +6,12 @@ import com.aicompany.core.agent.validation.EvidenceBindingGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.service.CeoService;
+import com.aicompany.core.service.CompanyMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
@@ -37,6 +39,8 @@ public class AgentRuntime {
 
     private final CeoService ceoService;
     private final MissionMemoryService memory;
+    private final CompanyMemoryService companyMemory;
+    private final String defaultAgentModel;
     private final Executor agentTaskExecutor;
     private final CompanyEventPublisher events;
     private final AgentResultValidator validator;
@@ -47,6 +51,8 @@ public class AgentRuntime {
     public AgentRuntime(
             CeoService ceoService,
             MissionMemoryService memory,
+            CompanyMemoryService companyMemory,
+            @Value("${ollama.agent-model}") String defaultAgentModel,
             @Qualifier("agentTaskExecutor") Executor agentTaskExecutor,
             CompanyEventPublisher events,
             AgentResultValidator validator,
@@ -56,6 +62,8 @@ public class AgentRuntime {
 
         this.ceoService = ceoService;
         this.memory = memory;
+        this.companyMemory = companyMemory;
+        this.defaultAgentModel = defaultAgentModel;
         this.agentTaskExecutor = agentTaskExecutor;
         this.events = events;
         this.validator = validator;
@@ -145,6 +153,8 @@ public class AgentRuntime {
 
         memory.setAgentStatus(agentId, "WORKING");
 
+        var model = companyMemory.agentModel(agentId, defaultAgentModel);
+
         events.publishTask(
                 "EMPRESA_TASK_STARTED",
                 taskId,
@@ -228,7 +238,8 @@ public class AgentRuntime {
                                     prompt,
                                     taskSummary,
                                     missionId,
-                                    taskId
+                                    taskId,
+                                    model
                             );
 
                     result = outcome.result();

@@ -11,6 +11,7 @@ import com.aicompany.core.model.OpportunitySummary;
 import com.aicompany.core.model.ProductStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -139,6 +140,7 @@ public class ChatIntentRouter {
     private final ConversationMemoryService conversationMemory;
     private final AppProperties appProperties;
     private final ProductStatusService productStatusService;
+    private final String defaultCeoModel;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -149,7 +151,8 @@ public class ChatIntentRouter {
             CompanyMemoryService companyMemory,
             ConversationMemoryService conversationMemory,
             AppProperties appProperties,
-            ProductStatusService productStatusService) {
+            ProductStatusService productStatusService,
+            @Value("${ollama.ceo-model}") String defaultCeoModel) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -160,6 +163,7 @@ public class ChatIntentRouter {
         this.conversationMemory = conversationMemory;
         this.appProperties = appProperties;
         this.productStatusService = productStatusService;
+        this.defaultCeoModel = defaultCeoModel;
     }
 
     /**
@@ -232,7 +236,8 @@ public class ChatIntentRouter {
                 companyMemory.teamRosterDescription(),
                 conversationMemory.recentMessages(HISTORY_LIMIT),
                 message,
-                this::answerMemoryTopic
+                this::answerMemoryTopic,
+                companyMemory.agentModel("ceo", defaultCeoModel)
         );
     }
 
@@ -561,7 +566,8 @@ public class ChatIntentRouter {
                     companyMemory.teamRosterDescription(),
                     conversationMemory.recentMessages(HISTORY_LIMIT),
                     hint + message,
-                    this::answerMemoryTopic
+                    this::answerMemoryTopic,
+                    companyMemory.agentModel("ceo", defaultCeoModel)
             );
         }
 
