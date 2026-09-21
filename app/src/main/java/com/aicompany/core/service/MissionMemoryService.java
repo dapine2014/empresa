@@ -170,7 +170,7 @@ public class MissionMemoryService {
     public Optional<String> instruction(String missionId) {
         try (var session = driver.session()) {
             return session.run(
-                            "MATCH (m:Mission {id:$id}) RETURN m.instruction AS instruction",
+                            "MATCH (m:Mission {id:$id}) RETURN coalesce(m.instruction, '') AS instruction",
                             Map.of("id", missionId))
                     .list(r -> r.get("instruction").asString())
                     .stream().findFirst();

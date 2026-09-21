@@ -940,7 +940,8 @@ public class ChatIntentRouter {
             java.util.Set.of("FAILED", "CANCELLED");
     private static final java.util.Set<String> STATUS_YELLOW = java.util.Set.of(
             "PENDING", "WAITING", "AWAITING_INVESTOR", "CONSOLIDATING",
-            "EVALUATING", "WAITING_AGENT_RESULTS", "PLANNING", "DELEGATING", "CREATED"
+            "EVALUATING", "WAITING_AGENT_RESULTS", "PLANNING", "DELEGATING", "CREATED",
+            "EXECUTING"
     );
 
     /**

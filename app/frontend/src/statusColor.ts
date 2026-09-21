@@ -2,7 +2,7 @@
 // el backend) a un color semántico simple para toda la UI.
 
 const GREEN = new Set(['RUNNING', 'WORKING', 'ACTIVE', 'COMPLETED'])
-const YELLOW = new Set(['PENDING', 'WAITING', 'AWAITING_INVESTOR', 'CONSOLIDATING', 'EVALUATING', 'WAITING_AGENT_RESULTS', 'PLANNING', 'DELEGATING', 'CREATED'])
+const YELLOW = new Set(['PENDING', 'WAITING', 'AWAITING_INVESTOR', 'CONSOLIDATING', 'EVALUATING', 'WAITING_AGENT_RESULTS', 'PLANNING', 'DELEGATING', 'CREATED', 'EXECUTING'])
 const RED = new Set(['FAILED', 'CANCELLED'])
 
 export function statusDot(status: string): string {

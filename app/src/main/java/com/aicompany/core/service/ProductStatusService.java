@@ -20,13 +20,15 @@ import java.util.Set;
  *   <li>{@code BUSINESS_SUCCESS}: netProfit &gt; seedCapitalUsd.</li>
  *   <li>{@code MONETIZING}: existe al menos una {@code Transaction} real
  *       para la misión.</li>
- *   <li>{@code PUBLISHED}/{@code QA}/{@code DEVELOPMENT}: hoy no existe
- *       ninguna señal real para estos tres — punto de enganche del
- *       Proyecto B (ejecución real de código/infra tras aprobación).
- *       Siempre {@code false} hasta que ese proyecto exista.
+ *   <li>{@code PUBLISHED}/{@code QA}: hoy no existe ninguna señal real
+ *       para estos dos — siguen siendo el punto de enganche pendiente del
+ *       Proyecto B (build/test/deploy real tras la generación de código).
+ *       Siempre {@code false} hasta que esa parte del proyecto exista.
  *       <b>Importante</b>: una {@code AgentTask} {@code QUALITY_RISK_REVIEW}
  *       (discovery de {@code qa}) nunca cuenta como evidencia de
  *       {@code QA} real — son conceptos distintos.</li>
+ *   <li>{@code DEVELOPMENT}: real desde la generación de código tras
+ *       {@code APPROVE} — señal real, ver {@code isInDevelopment}.</li>
  *   <li>{@code DESIGN}: la {@code AgentTask} {@code OFFER_DESIGN} de esta
  *       misión está {@code COMPLETED}.</li>
  *   <li>{@code DISCOVERY}: default.</li>
