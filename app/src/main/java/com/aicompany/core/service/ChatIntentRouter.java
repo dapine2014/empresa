@@ -141,6 +141,7 @@ public class ChatIntentRouter {
     private final AppProperties appProperties;
     private final ProductStatusService productStatusService;
     private final String defaultCeoModel;
+    private final EngineeringTeamMemoryService engineeringTeamMemory;
 
     public ChatIntentRouter(
             MissionService missionService,
@@ -152,7 +153,8 @@ public class ChatIntentRouter {
             ConversationMemoryService conversationMemory,
             AppProperties appProperties,
             ProductStatusService productStatusService,
-            @Value("${ollama.ceo-model}") String defaultCeoModel) {
+            @Value("${ollama.ceo-model}") String defaultCeoModel,
+            EngineeringTeamMemoryService engineeringTeamMemory) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -164,6 +166,7 @@ public class ChatIntentRouter {
         this.appProperties = appProperties;
         this.productStatusService = productStatusService;
         this.defaultCeoModel = defaultCeoModel;
+        this.engineeringTeamMemory = engineeringTeamMemory;
     }
 
     /**
@@ -658,6 +661,7 @@ public class ChatIntentRouter {
     }
 
     private enum QueryIntent {
+        ENGINEERING_TEAM,
         AGENT_STATUS,
         MISSIONS_NEEDING_ATTENTION,
         FAILED_MISSIONS,
@@ -670,6 +674,17 @@ public class ChatIntentRouter {
     private QueryIntent detectQuery(String message) {
 
         var normalized = normalize(message);
+
+        if ((normalized.contains("ingenieria") || normalized.contains("engineering"))
+                && (normalized.contains("equipo") || normalized.contains("team")
+                        || normalized.contains("lidera") || normalized.contains("lider"))) {
+            // Chequeo antes que AGENT_STATUS a propósito: "equipo" solo
+            // ya dispara AGENT_STATUS (bug real corregido en una ronda
+            // anterior, ver CLAUDE.md) -- "el equipo de ingeniería" es
+            // una pregunta más específica sobre una estructura real
+            // (Team/MEMBER_OF/LEADS), no sobre el estado de cada agente.
+            return QueryIntent.ENGINEERING_TEAM;
+        }
 
         if (normalized.contains("equipo")
                 || normalized.contains("agente")
@@ -767,6 +782,7 @@ public class ChatIntentRouter {
     String answerMemoryTopic(String topic) {
 
         return switch (topic) {
+            case "ENGINEERING_TEAM" -> formatEngineeringTeam();
             case "AGENT_STATUS" -> formatAgentStatus(missionMemory.latestTaskPerAgent());
             case "MISSIONS_NEEDING_ATTENTION" -> formatMissionsNeedingAttention(missionMemory.findAll(50));
             case "FAILED_MISSIONS" -> formatFailedMissions(missionMemory.findAll(50));
@@ -777,6 +793,44 @@ public class ChatIntentRouter {
             case "COMPANY_STATUS" -> formatCompanyStatus();
             default -> "Dato no reconocido: " + topic + ".";
         };
+    }
+
+    /**
+     * Snapshot real del Engineering Team — cruza
+     * {@link EngineeringTeamMemoryService#snapshot()} (miembros, roles,
+     * roleCode, capabilities, modelo, líder) con
+     * {@code missionMemory.latestTaskPerAgent()} (status/tarea actual
+     * real) — mismo criterio que {@code formatMissionStatus}: "quién es"
+     * y "qué está haciendo ahora" son preguntas distintas, ninguna se
+     * infiere de la otra. 100% Java, nunca pasa por Ollama.
+     */
+    private String formatEngineeringTeam() {
+
+        var snapshot = engineeringTeamMemory.snapshot();
+
+        if (snapshot.members().isEmpty()) {
+            return "No tengo ese dato registrado. El Engineering Team todavía no está registrado en Company Memory.";
+        }
+
+        var statusByAgentId = missionMemory.latestTaskPerAgent().stream()
+                .collect(Collectors.toMap(AgentStatusResponse::agentId, a -> a));
+
+        var lines = snapshot.members().stream()
+                .map(m -> {
+                    var status = statusByAgentId.get(m.agentId());
+                    var leaderTag = m.agentId().equals(snapshot.leaderAgentId()) ? " (líder)" : "";
+                    var statusText = status != null ? status.status() : "IDLE";
+                    var taskText = status != null && status.action() != null
+                            ? ", tarea actual: " + status.action() + " (" + status.taskStatus() + ")"
+                            : "";
+
+                    return m.agentId() + ": " + m.name() + leaderTag + " — " + m.role() + " [" + m.roleCode() + "]: "
+                            + "capabilities=" + String.join(", ", m.capabilities())
+                            + ", model=" + m.model() + ", status=" + statusText + taskText;
+                })
+                .collect(Collectors.joining(" | "));
+
+        return "Engineering Team (" + snapshot.status() + "): " + lines;
     }
 
     /**

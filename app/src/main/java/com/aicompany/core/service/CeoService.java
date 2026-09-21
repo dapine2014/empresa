@@ -87,6 +87,7 @@ public class CeoService {
                                             "topic", Map.of(
                                                     "type", "string",
                                                     "enum", List.of(
+                                                            "ENGINEERING_TEAM",
                                                             "AGENT_STATUS",
                                                             "MISSIONS_NEEDING_ATTENTION",
                                                             "FAILED_MISSIONS",
@@ -97,7 +98,17 @@ public class CeoService {
                                                             "COMPANY_STATUS"
                                                     ),
                                                     "description",
-                                                    "AGENT_STATUS: qué está "
+                                                    "ENGINEERING_TEAM: "
+                                                            + "estructura real "
+                                                            + "del Engineering "
+                                                            + "Team -- "
+                                                            + "miembros, líder, "
+                                                            + "roles, "
+                                                            + "capabilities y "
+                                                            + "modelo de cada "
+                                                            + "uno. "
+                                                            + "AGENT_STATUS: qué "
+                                                            + "está "
                                                             + "haciendo cada "
                                                             + "agente ahora. "
                                                             + "MISSIONS_NEEDING_ATTENTION: "
