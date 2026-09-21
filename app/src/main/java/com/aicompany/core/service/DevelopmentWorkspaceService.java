@@ -77,9 +77,9 @@ public class DevelopmentWorkspaceService {
      */
     public void commitWorkspace(String missionId, String commitMessage) {
 
-        var missionDir = missionWorkspace(missionId);
-
         try {
+
+            var missionDir = missionWorkspace(missionId);
 
             Files.createDirectories(missionDir);
 
