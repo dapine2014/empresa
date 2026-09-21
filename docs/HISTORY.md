@@ -298,3 +298,43 @@ Las listas de `capabilities` de los 5 roles del equipo se refinaron en varios me
 **Verificado en vivo tras la revisión final**, contra el Neo4j real y compartido de esta máquina (el mismo que ya usa el contenedor `ai-company-core` de otra rama en ejecución — no se tocó ese contenedor: se corrió el jar de esta rama en local, puerto `8099`, apuntando al mismo Neo4j con las credenciales reales extraídas de forma read-only vía `docker inspect`, y se apagó el proceso al terminar). Estado real confirmado por Cypher tras el arranque: **9 `Agent`** (`MATCH (a:Agent) RETURN count(a)` → 9, no 12 — Neo/Vera no se duplicaron, siguen con `id='engineering'`/`id='qa'`), **1 `Team` real** (`TEAM-ENGINEERING`, `ACTIVE`), **exactamente 5 `MEMBER_OF`** (`backend`, `devops`, `engineering`, `frontend-ui`, `qa`), **1 `LEADS`** (`engineering`→`TEAM-ENGINEERING`), los 9 agentes en `status='IDLE'`, `roleCode` seteado solo en los 5 del equipo (`null` en `ceo`/`sales`/`product`/`finance`), y `model` real backfillado en los 9 (`ceo`→`qwen2.5-coder:14b`, el resto→`qwen3:8b`). Los 5 criterios de aceptación de la decisión 9 del spec quedan confirmados con datos reales, no solo revisión de código.
 
 `mvn test` 166/166 tras aplicar los 9 fixes de código de esta ronda de revisión final (Fix 1–9: 404 real en `PUT /agents/{id}/model` sobre un agente inexistente, reordenamiento en `AgentRuntime` para evitar un agente `WORKING` para siempre, import muerto, javadocs de grounding/observabilidad, conteo de agentes actualizado en un javadoc, y un `WARN` nuevo en `EngineeringTeamMemoryService` si un `roleCode` hardcodeado deja de matchear un `Agent` real — deliberadamente sin `WARN` equivalente en la relación `LEADS`, porque ahí `MERGE` es idempotente y generaría falsos positivos en cada restart normal).
+
+## 2026-09-21 — Creative/Product Intelligence + Marketing & Growth: 5 agentes nuevos, TeamMemoryService genérico
+
+Pedido del usuario: agregar Kael (Interactive Logic & Product Designer),
+Maya (Visual & Asset Director), Gael (Telemetry & Analytics), Kira
+(Growth, Content & Community) y Nora (Community Manager), organizados
+en 2 equipos nuevos (Creative / Product Intelligence: Kael/Maya/Gael;
+Marketing & Growth: Kira/Nora), reutilizando el modelo `Team`/
+`MEMBER_OF`/`LEADS`/`roleCode`/`capabilities` ya implementado para
+Engineering.
+
+Decisión de diseño explícita del usuario (spec
+`docs/superpowers/specs/2026-09-21-creative-marketing-teams-design.md`):
+al pasar de 1 equipo a 3, generalizar `EngineeringTeamMemoryService`
+en vez de triplicarlo — se renombra a `TeamMemoryService`,
+parametrizado por una lista fija de 3 `TeamDefinition` (Engineering sin
+cambios de contenido, más los 2 equipos nuevos). El usuario también
+pidió explícitamente un mecanismo de consulta genérico en el chat
+(`QueryIntent.TEAM_DETAILS`) en vez de un `QueryIntent` por equipo —
+resuelto con un `teamId` cerrado (enum de los 3 ids conocidos, tanto en
+el tool schema de Ollama como en la detección determinista por
+keyword) codificado internamente como `"TEAM_DETAILS:" + teamId` para
+no tener que cambiar la firma `Function<String, String>` que ya usaba
+`ChatIntentRouter`/`CeoService.chat`.
+
+Antes de esta ronda se detectó y resolvió una discrepancia real: el
+`CLAUDE.md` vigente documentaba 9 agentes, pero el código de
+`master` solo tenía 6 — el Engineering Team (Diego/Iris/Mila +
+Team/MEMBER_OF/roleCode/capabilities/model) tenía spec y plan
+**aprobados el 2026-09-20 pero nunca ejecutados**. Se encontró que ya
+existía un worktree (`.claude/worktrees/engineering-team`) con las 6
+tareas de ese plan completas, revisadas y hasta verificadas en vivo
+contra Neo4j real, pendiente solo de merge — se mergeó a `master` (166
+tests en verde antes y después del merge) antes de empezar el diseño
+de esta ronda.
+
+Sin verificación en vivo contra Neo4j real todavía para los 2 equipos
+nuevos al momento de escribir este plan — pendiente de autorización
+explícita del usuario (mismo Neo4j compartido de la máquina de
+desarrollo, mismo criterio ya usado para Engineering).
