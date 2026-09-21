@@ -3,6 +3,8 @@ package com.aicompany.core.service;
 import com.aicompany.core.model.EngineeringTeamSnapshot;
 import com.aicompany.core.model.TeamMemberInfo;
 import org.neo4j.driver.Driver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,6 +25,9 @@ import java.util.Map;
  */
 @Service
 public class EngineeringTeamMemoryService {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(EngineeringTeamMemoryService.class);
 
     private static final String TEAM_ID = "TEAM-ENGINEERING";
     private static final String LEADER_AGENT_ID = "engineering";
@@ -91,13 +96,33 @@ public class EngineeringTeamMemoryService {
                                 "type", "ENGINEERING", "status", "ACTIVE"));
 
                 for (var role : ROLES) {
-                    tx.run("MATCH (a:Agent {id:$agentId}), (t:Team {id:$teamId}) "
+                    var result = tx.run("MATCH (a:Agent {id:$agentId}), (t:Team {id:$teamId}) "
                                     + "SET a.roleCode=$roleCode, a.capabilities=$capabilities "
                                     + "MERGE (a)-[:MEMBER_OF]->(t)",
                             Map.of("agentId", role.agentId(), "teamId", TEAM_ID,
                                     "roleCode", role.roleCode(), "capabilities", role.capabilities()));
+
+                    // SET corre siempre, en cada arranque, sin importar si
+                    // MEMBER_OF ya existía -- a diferencia de un MERGE de
+                    // relación (idempotente, "no creado" es normal en un
+                    // restart), propertiesSet()==0 acá solo puede significar
+                    // que el MATCH de Agent no encontró nada: señal
+                    // confiable de un agentId hardcodeado en ROLES que dejó
+                    // de existir, sin falsos positivos en restarts normales.
+                    if (result.consume().counters().propertiesSet() == 0) {
+                        log.warn("ENGINEERING_TEAM_MEMBER_NOT_FOUND agentId={} — no se pudo agregar al Engineering Team",
+                                role.agentId());
+                    }
                 }
 
+                // Nota: no se agrega un chequeo equivalente para la relación
+                // LEADS -- es un MERGE puro (sin SET), así que
+                // relationshipsCreated()==0 es el camino NORMAL en cualquier
+                // arranque posterior al primero (la relación ya existe), no
+                // una señal de que LEADER_AGENT_ID no matcheó ningún Agent.
+                // Distinguir ambos casos exigiría un MATCH de solo lectura
+                // aparte; se prefiere no agregar un WARN que podría generar
+                // falsos positivos en cada restart normal.
                 tx.run("MATCH (a:Agent {id:$leaderId}), (t:Team {id:$teamId}) MERGE (a)-[:LEADS]->(t)",
                         Map.of("leaderId", LEADER_AGENT_ID, "teamId", TEAM_ID));
 

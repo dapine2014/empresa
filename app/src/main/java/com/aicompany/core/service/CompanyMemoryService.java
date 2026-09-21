@@ -209,8 +209,13 @@ public class CompanyMemoryService {
     public void setAgentModel(String agentId, String model) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                tx.run("MATCH (a:Agent {id:$id}) SET a.model=$model",
+                var result = tx.run("MATCH (a:Agent {id:$id}) SET a.model=$model",
                         Map.of("id", agentId, "model", model));
+
+                if (result.consume().counters().propertiesSet() == 0) {
+                    throw new IllegalArgumentException("No existe el agente " + agentId);
+                }
+
                 return null;
             });
         }

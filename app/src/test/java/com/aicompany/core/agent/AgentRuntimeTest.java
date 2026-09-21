@@ -289,11 +289,11 @@ class AgentRuntimeTest {
         var salesResult = agentResult("sales", "ok sales");
 
         when(companyMemory.agentModel("finance", "qwen3:8b")).thenReturn("llama3:8b");
-        when(companyMemory.agentModel("sales", "qwen3:8b")).thenReturn("qwen3:8b");
+        when(companyMemory.agentModel("sales", "qwen3:8b")).thenReturn("mistral:7b");
 
         when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("llama3:8b")))
                 .thenReturn(new AgentTaskOutcome(financeResult, List.of()));
-        when(ceoService.executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("qwen3:8b")))
+        when(ceoService.executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("mistral:7b")))
                 .thenReturn(new AgentTaskOutcome(salesResult, List.of()));
 
         when(validator.validate(financeResult)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
@@ -305,7 +305,7 @@ class AgentRuntimeTest {
         runtime.execute("TASK-1", "MISSION-1", "sales", "MARKET_DISCOVERY", "instrucción").get();
 
         verify(ceoService).executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("llama3:8b"));
-        verify(ceoService).executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("qwen3:8b"));
+        verify(ceoService).executeAgentTask(eq("sales"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("mistral:7b"));
     }
 
     private AgentTaskOutcome outcome(AgentResult result) {

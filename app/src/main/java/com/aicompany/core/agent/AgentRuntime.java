@@ -151,9 +151,9 @@ public class AgentRuntime {
                 "Agente iniciado."
         );
 
-        memory.setAgentStatus(agentId, "WORKING");
-
         var model = companyMemory.agentModel(agentId, defaultAgentModel);
+
+        memory.setAgentStatus(agentId, "WORKING");
 
         events.publishTask(
                 "EMPRESA_TASK_STARTED",

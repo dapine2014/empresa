@@ -802,7 +802,10 @@ public class ChatIntentRouter {
      * {@code missionMemory.latestTaskPerAgent()} (status/tarea actual
      * real) — mismo criterio que {@code formatMissionStatus}: "quién es"
      * y "qué está haciendo ahora" son preguntas distintas, ninguna se
-     * infiere de la otra. 100% Java, nunca pasa por Ollama.
+     * infiere de la otra. 100% Java, nunca pasa por Ollama. Cada línea
+     * arranca con el {@code agentId} real (no solo el nombre) — es el
+     * identificador que el resto del chat usa para referirse al agente,
+     * y hay un test que lo exige explícitamente; no lo saques.
      */
     private String formatEngineeringTeam() {
 
@@ -819,14 +822,16 @@ public class ChatIntentRouter {
                 .map(m -> {
                     var status = statusByAgentId.get(m.agentId());
                     var leaderTag = m.agentId().equals(snapshot.leaderAgentId()) ? " (líder)" : "";
-                    var statusText = status != null ? status.status() : "IDLE";
+                    var statusText = status != null ? status.status() : "no registrado";
                     var taskText = status != null && status.action() != null
                             ? ", tarea actual: " + status.action() + " (" + status.taskStatus() + ")"
                             : "";
 
-                    return m.agentId() + ": " + m.name() + leaderTag + " — " + m.role() + " [" + m.roleCode() + "]: "
+                    return m.agentId() + ": " + m.name() + leaderTag + " — " + m.role() + " ["
+                            + java.util.Objects.toString(m.roleCode(), "no registrado") + "]: "
                             + "capabilities=" + String.join(", ", m.capabilities())
-                            + ", model=" + m.model() + ", status=" + statusText + taskText;
+                            + ", model=" + java.util.Objects.toString(m.model(), "no registrado")
+                            + ", status=" + statusText + taskText;
                 })
                 .collect(Collectors.joining(" | "));
 

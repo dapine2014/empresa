@@ -15,7 +15,9 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -103,5 +105,14 @@ class CompanyControllerTest {
 
         verify(memory).setAgentModel("engineering", "llama3:8b");
         assertEquals("llama3:8b", response.model());
+    }
+
+    @Test
+    void updateAgentModelThrowsWhenAgentDoesNotExist() {
+        doThrow(new IllegalArgumentException("No existe el agente ghost"))
+                .when(memory).setAgentModel("ghost", "llama3:8b");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.updateAgentModel("ghost", new AgentModelCommand("llama3:8b")));
     }
 }

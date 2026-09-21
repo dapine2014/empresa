@@ -229,7 +229,7 @@ public class MissionMemoryService {
     }
 
     /**
-     * Estado real de cada {@code Agent} (los 6: ceo + los 5 delegados) —
+     * Estado real de cada {@code Agent} (hoy 9: ceo + los 5 delegados + los 3 nuevos del Engineering Team) —
      * base del panel "Agents" del Command Center web. {@code status} es
      * la propiedad propia del nodo {@code Agent} ({@code WORKING}/
      * {@code IDLE}, ver {@link #setAgentStatus}) — deliberadamente
