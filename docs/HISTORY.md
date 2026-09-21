@@ -382,3 +382,23 @@ el LLM):
 Proceso local apagado limpiamente después (`pkill`, confirmado sin
 procesos residuales). Contenedor `ai-company-core` existente confirmado
 sano y sin tocar (`docker ps` + `/actuator/health`) antes y después.
+
+### Prompt versionado y editable por agente (los 14)
+
+Pedido del usuario: que cada agente tenga un prompt propio,
+persistido, versionado, editable desde el Command Center — separado
+explícitamente de las reglas/policies que siguen fijas en código
+(anti-alucinación, FORMATO OBLIGATORIO, `AgentResultSchema`). Modelo
+de separación de conceptos acordado explícitamente: Agent identity /
+Role-roleCode / Capabilities / Model / **Prompt** (cómo razonar en el
+rol) / Policies (qué tiene permitido, en código) / AgentTask (qué está
+ejecutando).
+
+Decisión de diseño: `PromptVersion` inmutable con invariante
+transaccional de "exactamente una activa" por agente; rollback
+reactiva un nodo existente, nunca duplica contenido; alcance a los 14
+agentes aunque solo 6 tengan efecto observable hoy (los otros 8 quedan
+listos para cuando exista ejecución real — "Proyecto B" — sin otro
+cambio arquitectónico). Mismo patrón ya probado con `Agent.model`: el
+llamador resuelve el valor real desde Neo4j y lo pasa como parámetro
+explícito; `CeoService` sigue sin depender de Neo4j directamente.

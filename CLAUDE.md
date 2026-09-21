@@ -216,6 +216,43 @@ Interfaz web como forma **principal** de operar la compañía ("torre de control
 - `GET /teams` (`TeamMemoryService.snapshotAll`): los 3 equipos reales con `teamId`/`teamName`/`leaderAgentId`/`members` (mismo `TeamSnapshot` que ya usa el chat) — estructura únicamente, nunca estado/tarea (eso sigue siendo `GET /agents/status`). Página `AgentsPage.tsx` cruza ambos endpoints para renderizar el organigrama (CEO en la raíz, `ceo`/`sales`/`product`/`finance` como reportes directos sin equipo, los 3 equipos como ramas con su líder arriba) — árbol en CSS puro (listas anidadas + pseudo-elementos como conectores), sin librería de gráficos nueva.
 - `GET /missions` (límite fijo 50, v1 no pagina) y `GET /activity`.
 
+### Prompt versionado por agente (`PromptMemoryService`)
+
+Cada uno de los 14 agentes tiene un prompt propio, persistido y
+versionado (`PromptVersion`, inmutable — `(:Agent)-[:HAS_PROMPT_VERSION]->(:PromptVersion)`
+para el historial completo, `(:Agent)-[:HAS_ACTIVE_PROMPT]->(:PromptVersion)`
+para exactamente la vigente, invariante garantizada transaccionalmente
+en cada creación/rollback). Editar crea una versión nueva (nunca pisa
+una vieja); "activar" una versión del historial hace rollback
+reapuntando la relación activa, sin duplicar contenido.
+`createdBy` queda fijo en `"human"` (mismo criterio que
+`CustomerMemoryService` — no hay concepto de usuario/sesión en el
+proyecto).
+
+Solo tiene efecto real en los 6 agentes que ya ejecutan tareas
+(`ceo`/`sales`/`product`/`finance`/`engineering`/`qa`): el contenido
+activo se inyecta como una sección aparte y condicional ("CÓMO DEBES
+RAZONAR...") dentro de `CeoService.systemPrompt(ceoPrompt)` (CEO,
+resuelto por `ChatIntentRouter`/`MissionExecutor`) o de
+`AgentRuntime.buildPrompt(...)` (los 5 delegados, resuelto por
+`AgentRuntime` mismo) — nunca reemplaza las reglas anti-alucinación, el
+FORMATO OBLIGATORIO, ni el `AgentResultSchema.SCHEMA` (que sigue yendo
+por el parámetro `format`, fuera del texto). Deliberadamente **nunca**
+llega a `toolDecisionSystemPrompt` (turno corto de decisión de
+herramienta, contrato de salida binario). Los otros 8 agentes
+(`devops`/`backend`/`frontend-ui`/`interaction-design`/`visual-design`/
+`telemetry`/`growth-content`/`community`) guardan y versionan su
+prompt igual, sin ningún efecto todavía (no ejecutan `AgentTask`
+reales — ver "Proyecto B").
+
+Endpoints: `GET`/`PUT /api/company/agents/{id}/prompt`,
+`GET /api/company/agents/{id}/prompt/versions/{version}`,
+`PUT /api/company/agents/{id}/prompt/versions/{version}/activate`.
+Editable desde el organigrama de `AgentsPage.tsx`: click en cualquier
+tarjeta abre un panel con el prompt activo, motivo del cambio
+(obligatorio al guardar), y el historial completo con botón "Activar"
+por versión.
+
 ### Chat Intent Router (`ChatIntentRouter`)
 
 El chat no es `POST /chat → LLM → texto`. `ChatIntentRouter.route()` graba cada turno completo (mensaje + respuesta) en `ConversationMemoryService` sin importar qué camino lo resolvió, y clasifica el mensaje **antes** de tocar Ollama (regex/keywords deterministas, nunca "el modelo revisándose a sí mismo" decidiendo la ruta), en este orden:
