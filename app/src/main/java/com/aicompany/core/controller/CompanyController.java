@@ -6,6 +6,9 @@ import com.aicompany.core.model.AgentModelResponse;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.ChatResponse;
+import com.aicompany.core.model.PromptCommand;
+import com.aicompany.core.model.PromptSnapshot;
+import com.aicompany.core.model.PromptVersionContent;
 import com.aicompany.core.model.SettingsCommand;
 import com.aicompany.core.model.SettingsResponse;
 import com.aicompany.core.model.TeamSnapshot;
@@ -13,6 +16,7 @@ import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
+import com.aicompany.core.service.PromptMemoryService;
 import com.aicompany.core.service.TeamMemoryService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
@@ -28,19 +32,22 @@ public class CompanyController {
     private final ActivityMemoryService activityMemoryService;
     private final ChatIntentRouter chatIntentRouter;
     private final TeamMemoryService teamMemoryService;
+    private final PromptMemoryService promptMemoryService;
 
     public CompanyController(
             CompanyMemoryService memoryService,
             MissionMemoryService missionMemoryService,
             ActivityMemoryService activityMemoryService,
             ChatIntentRouter chatIntentRouter,
-            TeamMemoryService teamMemoryService) {
+            TeamMemoryService teamMemoryService,
+            PromptMemoryService promptMemoryService) {
 
         this.memoryService = memoryService;
         this.missionMemoryService = missionMemoryService;
         this.activityMemoryService = activityMemoryService;
         this.chatIntentRouter = chatIntentRouter;
         this.teamMemoryService = teamMemoryService;
+        this.promptMemoryService = promptMemoryService;
     }
 
     @GetMapping("/agents")
@@ -85,6 +92,55 @@ public class CompanyController {
     @GetMapping("/teams")
     public List<TeamSnapshot> teams() {
         return teamMemoryService.snapshotAll();
+    }
+
+    /**
+     * Prompt versionado de un agente puntual — panel "Agents" del
+     * Command Center web (editor dentro del organigrama). Versión
+     * activa + historial (sin el contenido de cada versión vieja, ver
+     * {@code GET .../versions/{version}}).
+     */
+    @GetMapping("/agents/{id}/prompt")
+    public PromptSnapshot agentPrompt(@PathVariable("id") String id) {
+        return promptMemoryService.snapshot(id);
+    }
+
+    /**
+     * Contenido completo de una versión puntual del historial — para
+     * previsualizar antes de activarla (rollback).
+     */
+    @GetMapping("/agents/{id}/prompt/versions/{version}")
+    public PromptVersionContent agentPromptVersion(
+            @PathVariable("id") String id,
+            @PathVariable("version") int version) {
+
+        return new PromptVersionContent(version, promptMemoryService.versionContent(id, version));
+    }
+
+    /**
+     * Crea una versión nueva del prompt de este agente y la activa —
+     * nunca pisa una versión existente. Toma efecto en la próxima
+     * llamada real a Ollama de este agente, sin caché ni reinicio
+     * (mismo criterio ya usado para {@code PUT /agents/{id}/model}).
+     */
+    @PutMapping("/agents/{id}/prompt")
+    public PromptSnapshot updateAgentPrompt(
+            @PathVariable("id") String id,
+            @Valid @RequestBody PromptCommand command) {
+
+        return promptMemoryService.createVersion(id, command.content(), command.changeReason());
+    }
+
+    /**
+     * Rollback: reactiva una versión existente del historial — nunca
+     * crea contenido nuevo.
+     */
+    @PutMapping("/agents/{id}/prompt/versions/{version}/activate")
+    public PromptSnapshot activateAgentPromptVersion(
+            @PathVariable("id") String id,
+            @PathVariable("version") int version) {
+
+        return promptMemoryService.activateVersion(id, version);
     }
 
     /**

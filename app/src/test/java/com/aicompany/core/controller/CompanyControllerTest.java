@@ -4,12 +4,17 @@ import com.aicompany.core.model.ActivityItem;
 import com.aicompany.core.model.AgentModelCommand;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
+import com.aicompany.core.model.PromptCommand;
+import com.aicompany.core.model.PromptSnapshot;
+import com.aicompany.core.model.PromptVersionContent;
+import com.aicompany.core.model.PromptVersionSummary;
 import com.aicompany.core.model.SettingsCommand;
 import com.aicompany.core.model.TeamMemberInfo;
 import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
+import com.aicompany.core.service.PromptMemoryService;
 import com.aicompany.core.service.TeamMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
 import org.junit.jupiter.api.Test;
@@ -33,9 +38,10 @@ class CompanyControllerTest {
     private final ActivityMemoryService activityMemory = mock(ActivityMemoryService.class);
     private final ChatIntentRouter router = mock(ChatIntentRouter.class);
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
+    private final PromptMemoryService promptMemory = mock(PromptMemoryService.class);
 
     private final CompanyController controller =
-            new CompanyController(memory, missionMemory, activityMemory, router, teamMemory);
+            new CompanyController(memory, missionMemory, activityMemory, router, teamMemory, promptMemory);
 
     @Test
     void teamsEndpointDelegatesEntirelyToTeamMemoryServiceSnapshotAll() {
@@ -47,6 +53,50 @@ class CompanyControllerTest {
         var response = controller.teams();
 
         assertEquals(List.of(engineering), response);
+    }
+
+    @Test
+    void agentPromptEndpointDelegatesEntirelyToPromptMemoryServiceSnapshot() {
+        var snapshot = new PromptSnapshot("sales", 2, "Sé más directo.", "human", "Ajuste de tono", Instant.now(),
+                List.of(new PromptVersionSummary(2, "human", "Ajuste de tono", Instant.now()),
+                        new PromptVersionSummary(1, "human", "Versión inicial (seed)", Instant.now())));
+        when(promptMemory.snapshot("sales")).thenReturn(snapshot);
+
+        var response = controller.agentPrompt("sales");
+
+        assertEquals(snapshot, response);
+    }
+
+    @Test
+    void agentPromptVersionEndpointDelegatesEntirelyToPromptMemoryServiceVersionContent() {
+        when(promptMemory.versionContent("sales", 1)).thenReturn("Versión vieja.");
+
+        var response = controller.agentPromptVersion("sales", 1);
+
+        assertEquals(1, response.version());
+        assertEquals("Versión vieja.", response.content());
+    }
+
+    @Test
+    void updateAgentPromptEndpointDelegatesEntirelyToPromptMemoryServiceCreateVersion() {
+        var updated = new PromptSnapshot("sales", 3, "Sé más breve.", "human", "Otro ajuste", Instant.now(), List.of());
+        when(promptMemory.createVersion("sales", "Sé más breve.", "Otro ajuste")).thenReturn(updated);
+
+        var response = controller.updateAgentPrompt("sales", new PromptCommand("Sé más breve.", "Otro ajuste"));
+
+        assertEquals(updated, response);
+        verify(promptMemory).createVersion("sales", "Sé más breve.", "Otro ajuste");
+    }
+
+    @Test
+    void activateAgentPromptVersionEndpointDelegatesEntirelyToPromptMemoryServiceActivateVersion() {
+        var reactivated = new PromptSnapshot("sales", 1, "", "human", "Versión inicial (seed)", Instant.now(), List.of());
+        when(promptMemory.activateVersion("sales", 1)).thenReturn(reactivated);
+
+        var response = controller.activateAgentPromptVersion("sales", 1);
+
+        assertEquals(reactivated, response);
+        verify(promptMemory).activateVersion("sales", 1);
     }
 
     @Test
