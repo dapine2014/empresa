@@ -117,7 +117,12 @@ public class CompanyMemoryService {
                         new String[]{"qa", "Vera", "QA & Cloud Performance Engineer", "escéptica, detallista", defaultAgentModel},
                         new String[]{"devops", "Diego", "Cloud Database & SRE / DevOps", "meticuloso, orientado a la estabilidad", defaultAgentModel},
                         new String[]{"backend", "Iris", "Dev Backend & Integrations", "riguroso, pragmático", defaultAgentModel},
-                        new String[]{"frontend-ui", "Mila", "Frontend & Game UI Specialist", "creativa, atenta al detalle visual", defaultAgentModel}
+                        new String[]{"frontend-ui", "Mila", "Frontend & Game UI Specialist", "creativa, atenta al detalle visual", defaultAgentModel},
+                        new String[]{"interaction-design", "Kael", "Interactive Logic & Product Designer AI", "analítico, obsesionado con la experiencia de usuario", defaultAgentModel},
+                        new String[]{"visual-design", "Maya", "Visual & Asset Director AI", "creativa, con ojo estético", defaultAgentModel},
+                        new String[]{"telemetry", "Gael", "Telemetry & Analytics AI", "analítico, basado en datos", defaultAgentModel},
+                        new String[]{"growth-content", "Kira", "Growth, Content & Community AI", "curiosa, comunicativa", defaultAgentModel},
+                        new String[]{"community", "Nora", "Community Manager AI", "empática, cercana a la comunidad", defaultAgentModel}
                 );
                 for (var agent : agents) {
                     // ON CREATE, no SET incondicional de un valor fijo:
@@ -187,7 +192,7 @@ public class CompanyMemoryService {
      * {@code CeoService} (que solo ejecuta la llamada que se le pide, sin
      * decidir qué modelo usar). {@code fallback} cubre el caso defensivo
      * de un agente sin backfill todavía (no debería pasar en la práctica:
-     * {@link #initializeCompanyAndAgents()} lo completa para los 9
+     * {@link #initializeCompanyAndAgents()} lo completa para los 14
      * agentes conocidos al arrancar).
      */
     public String agentModel(String agentId, String fallback) {
