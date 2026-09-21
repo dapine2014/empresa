@@ -196,6 +196,20 @@ public class TeamMemoryService {
     }
 
     /**
+     * Los 3 equipos reales, en el mismo orden fijo de {@link #TEAMS}
+     * (Engineering, Creative/Product Intelligence, Marketing & Growth)
+     * — para el organigrama del Command Center web
+     * ({@code GET /api/company/teams}). Reusa {@link #snapshot(String)},
+     * mismo criterio de "nunca inventar" (un equipo sin agentes reales
+     * todavía sale con {@code members} vacío, no se omite).
+     */
+    public List<TeamSnapshot> snapshotAll() {
+        return TEAMS.stream()
+                .map(team -> snapshot(team.teamId()))
+                .toList();
+    }
+
+    /**
      * Lectura real para el Company Chat — nunca inventa un miembro, rol,
      * capability o líder que no esté en Company Memory. Devuelve
      * {@code members} vacío (nunca {@code null}) si el {@code teamId}

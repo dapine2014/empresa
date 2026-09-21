@@ -59,6 +59,27 @@ export interface AgentStatusResponse {
   updatedAt: string | null
 }
 
+// Estructura real de uno de los 3 equipos (Team/MEMBER_OF/LEADS en
+// Neo4j) -- separado a propósito de AgentStatusResponse: "quién
+// pertenece a qué equipo" y "qué está haciendo ahora" son preguntas
+// distintas, igual que en el backend (ChatIntentRouter.formatTeamDetails).
+export interface TeamMemberInfo {
+  agentId: string
+  name: string
+  role: string
+  roleCode: string | null
+  capabilities: string[]
+  model: string | null
+}
+
+export interface TeamSnapshot {
+  teamId: string
+  teamName: string | null
+  status: string | null
+  leaderAgentId: string | null
+  members: TeamMemberInfo[]
+}
+
 export interface ActivityItem {
   type: 'TASK' | 'MISSION' | 'EVIDENCE' | 'DECISION'
   missionId: string | null

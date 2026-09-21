@@ -8,10 +8,12 @@ import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.ChatResponse;
 import com.aicompany.core.model.SettingsCommand;
 import com.aicompany.core.model.SettingsResponse;
+import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
+import com.aicompany.core.service.TeamMemoryService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,17 +27,20 @@ public class CompanyController {
     private final MissionMemoryService missionMemoryService;
     private final ActivityMemoryService activityMemoryService;
     private final ChatIntentRouter chatIntentRouter;
+    private final TeamMemoryService teamMemoryService;
 
     public CompanyController(
             CompanyMemoryService memoryService,
             MissionMemoryService missionMemoryService,
             ActivityMemoryService activityMemoryService,
-            ChatIntentRouter chatIntentRouter) {
+            ChatIntentRouter chatIntentRouter,
+            TeamMemoryService teamMemoryService) {
 
         this.memoryService = memoryService;
         this.missionMemoryService = missionMemoryService;
         this.activityMemoryService = activityMemoryService;
         this.chatIntentRouter = chatIntentRouter;
+        this.teamMemoryService = teamMemoryService;
     }
 
     @GetMapping("/agents")
@@ -68,6 +73,18 @@ public class CompanyController {
         memoryService.setAgentModel(id, command.model());
 
         return new AgentModelResponse(id, command.model());
+    }
+
+    /**
+     * Los 3 equipos reales (Engineering, Creative/Product Intelligence,
+     * Marketing & Growth) con sus miembros y líder — panel "Agents" del
+     * Command Center web (vista de organigrama). Estructura únicamente:
+     * el estado real/tarea actual de cada agente sigue viniendo de
+     * {@link #agentStatus()}, nunca duplicado acá.
+     */
+    @GetMapping("/teams")
+    public List<TeamSnapshot> teams() {
+        return teamMemoryService.snapshotAll();
     }
 
     /**

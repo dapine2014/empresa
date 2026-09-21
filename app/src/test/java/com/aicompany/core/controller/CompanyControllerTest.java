@@ -5,9 +5,12 @@ import com.aicompany.core.model.AgentModelCommand;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.SettingsCommand;
+import com.aicompany.core.model.TeamMemberInfo;
+import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
+import com.aicompany.core.service.TeamMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
 import org.junit.jupiter.api.Test;
 
@@ -29,9 +32,22 @@ class CompanyControllerTest {
     private final MissionMemoryService missionMemory = mock(MissionMemoryService.class);
     private final ActivityMemoryService activityMemory = mock(ActivityMemoryService.class);
     private final ChatIntentRouter router = mock(ChatIntentRouter.class);
+    private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
 
     private final CompanyController controller =
-            new CompanyController(memory, missionMemory, activityMemory, router);
+            new CompanyController(memory, missionMemory, activityMemory, router, teamMemory);
+
+    @Test
+    void teamsEndpointDelegatesEntirelyToTeamMemoryServiceSnapshotAll() {
+        var engineering = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering",
+                List.of(new TeamMemberInfo("engineering", "Neo", "Cloud Architect & Lead Backend",
+                        "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("AWS"), "qwen3:8b")));
+        when(teamMemory.snapshotAll()).thenReturn(List.of(engineering));
+
+        var response = controller.teams();
+
+        assertEquals(List.of(engineering), response);
+    }
 
     @Test
     void chatDelegatesEntirelyToTheIntentRouter() {

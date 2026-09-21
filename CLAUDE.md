@@ -213,6 +213,7 @@ Interfaz web como forma **principal** de operar la compañía ("torre de control
 ### Endpoints de solo lectura
 
 - `GET /agents/status` (`MissionMemoryService.latestTaskPerAgent`): para cada `Agent`, `status` (propiedad real del nodo, ver "Agent.status" abajo) + `taskStatus` (de su `AgentTask` más reciente) + `name`/`role`/`personality`.
+- `GET /teams` (`TeamMemoryService.snapshotAll`): los 3 equipos reales con `teamId`/`teamName`/`leaderAgentId`/`members` (mismo `TeamSnapshot` que ya usa el chat) — estructura únicamente, nunca estado/tarea (eso sigue siendo `GET /agents/status`). Página `AgentsPage.tsx` cruza ambos endpoints para renderizar el organigrama (CEO en la raíz, `ceo`/`sales`/`product`/`finance` como reportes directos sin equipo, los 3 equipos como ramas con su líder arriba) — árbol en CSS puro (listas anidadas + pseudo-elementos como conectores), sin librería de gráficos nueva.
 - `GET /missions` (límite fijo 50, v1 no pagina) y `GET /activity`.
 
 ### Chat Intent Router (`ChatIntentRouter`)

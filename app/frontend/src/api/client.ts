@@ -8,6 +8,7 @@ import type {
   MissionStatusResponse,
   SettingsCommand,
   SettingsResponse,
+  TeamSnapshot,
 } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -29,6 +30,8 @@ export const api = {
   health: () => request<{ status: string }>('/actuator/health'),
 
   agentsStatus: () => request<AgentStatusResponse[]>('/api/company/agents/status'),
+
+  teams: () => request<TeamSnapshot[]>('/api/company/teams'),
 
   activity: (limit = 50) => request<ActivityItem[]>(`/api/company/activity?limit=${limit}`),
 

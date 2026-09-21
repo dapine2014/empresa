@@ -154,6 +154,103 @@ a {
   padding: 2px 6px;
 }
 
+/* Organigrama de Agents: técnica clásica de árbol en CSS puro (listas
+   anidadas + pseudo-elementos como conectores), sin dependencia nueva.
+   Cada <li> es un nodo; su ::before/::after dibujan la mitad izquierda/
+   derecha de la línea horizontal hacia sus hermanos, y el ::before del
+   <ul> hijo dibuja la línea vertical que baja desde el nodo padre. */
+.orgtree,
+.orgtree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.orgtree {
+  display: flex;
+  padding: 8px 0 32px;
+  min-width: max-content;
+}
+
+.orgtree li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  padding: 28px 14px 0;
+}
+
+.orgtree ul {
+  display: flex;
+  position: relative;
+  padding-top: 28px;
+}
+
+.orgtree li::before,
+.orgtree li::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 28px;
+  border-top: 1px solid var(--border);
+}
+
+.orgtree li::before {
+  right: 50%;
+}
+
+.orgtree li::after {
+  left: 50%;
+  border-left: 1px solid var(--border);
+}
+
+.orgtree li:first-child::before {
+  border-top: none;
+}
+
+.orgtree li:last-child::after {
+  border-top: none;
+}
+
+.orgtree li:only-child::before,
+.orgtree li:only-child::after {
+  display: none;
+}
+
+.orgtree li:only-child {
+  padding-top: 0;
+}
+
+.orgtree li > ul::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 28px;
+  border-left: 1px solid var(--border);
+}
+
+.orgcard {
+  width: 220px;
+}
+
+.team-label {
+  color: var(--muted);
+  font-size: 0.72em;
+  margin-bottom: 6px;
+}
+
+.leader-tag {
+  font-size: 0.5em;
+  background: rgba(79, 141, 253, 0.18);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-weight: 600;
+}
+
 .activity-list {
   list-style: none;
   padding: 0;
