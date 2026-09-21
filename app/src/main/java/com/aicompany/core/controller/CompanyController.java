@@ -1,6 +1,8 @@
 package com.aicompany.core.controller;
 
 import com.aicompany.core.model.ActivityItem;
+import com.aicompany.core.model.AgentModelCommand;
+import com.aicompany.core.model.AgentModelResponse;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.ChatResponse;
@@ -48,6 +50,24 @@ public class CompanyController {
     @GetMapping("/agents/status")
     public List<AgentStatusResponse> agentStatus() {
         return missionMemoryService.latestTaskPerAgent();
+    }
+
+    /**
+     * Cambia el modelo LLM real de un agente puntual — toma efecto en su
+     * próxima tarea/llamada, sin caché ni reinicio (ver
+     * {@code AgentRuntime}/{@code MissionExecutor}/{@code ChatIntentRouter},
+     * que resuelven el modelo real desde Company Memory en cada llamada).
+     * Sin validar contra qué modelos existen en Ollama — mismo criterio
+     * que el resto del proyecto con `ollama.ceo-model`/`ollama.agent-model`.
+     */
+    @PutMapping("/agents/{id}/model")
+    public AgentModelResponse updateAgentModel(
+            @PathVariable("id") String id,
+            @Valid @RequestBody AgentModelCommand command) {
+
+        memoryService.setAgentModel(id, command.model());
+
+        return new AgentModelResponse(id, command.model());
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.aicompany.core.controller;
 
 import com.aicompany.core.model.ActivityItem;
+import com.aicompany.core.model.AgentModelCommand;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.SettingsCommand;
@@ -93,5 +94,14 @@ class CompanyControllerTest {
 
         verify(memory, never()).setSystemEmail(any());
         verify(memory, never()).setMailPassword(any());
+    }
+
+    @Test
+    void updateAgentModelDelegatesToCompanyMemoryService() {
+
+        var response = controller.updateAgentModel("engineering", new AgentModelCommand("llama3:8b"));
+
+        verify(memory).setAgentModel("engineering", "llama3:8b");
+        assertEquals("llama3:8b", response.model());
     }
 }
