@@ -38,7 +38,7 @@ function AgentCard({
 
 function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose: () => void }) {
   const queryClient = useQueryClient()
-  const [content, setContent] = useState('')
+  const [content, setContent] = useState<string | null>(null)
   const [changeReason, setChangeReason] = useState('')
 
   const promptQuery = useQuery({
@@ -47,16 +47,20 @@ function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose:
   })
 
   const saveMutation = useMutation({
-    mutationFn: () => api.updateAgentPrompt(agent.agentId, { content, changeReason }),
+    mutationFn: () => api.updateAgentPrompt(agent.agentId, { content: displayedContent, changeReason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agentPrompt', agent.agentId] })
       setChangeReason('')
+      setContent(null)
     },
   })
 
   const activateMutation = useMutation({
     mutationFn: (version: number) => api.activateAgentPromptVersion(agent.agentId, version),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agentPrompt', agent.agentId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agentPrompt', agent.agentId] })
+      setContent(null)
+    },
   })
 
   if (promptQuery.isLoading) {
@@ -80,7 +84,7 @@ function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose:
   }
 
   const snapshot = promptQuery.data
-  const textareaValue = content || (content === '' && !saveMutation.isSuccess ? snapshot.activeContent : content)
+  const displayedContent = content ?? snapshot.activeContent
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -94,7 +98,7 @@ function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose:
           Instrucciones adicionales (no reemplazan las reglas de seguridad, siempre fijas en código)
           <textarea
             rows={8}
-            value={textareaValue}
+            value={displayedContent}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Ej: Sé especialmente conservador con las proyecciones financieras."
           />
