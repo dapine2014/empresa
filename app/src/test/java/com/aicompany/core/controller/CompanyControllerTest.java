@@ -1,6 +1,7 @@
 package com.aicompany.core.controller;
 
 import com.aicompany.core.model.ActivityItem;
+import com.aicompany.core.model.AgentModelCommand;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.SettingsCommand;
@@ -14,7 +15,9 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -93,5 +96,23 @@ class CompanyControllerTest {
 
         verify(memory, never()).setSystemEmail(any());
         verify(memory, never()).setMailPassword(any());
+    }
+
+    @Test
+    void updateAgentModelDelegatesToCompanyMemoryService() {
+
+        var response = controller.updateAgentModel("engineering", new AgentModelCommand("llama3:8b"));
+
+        verify(memory).setAgentModel("engineering", "llama3:8b");
+        assertEquals("llama3:8b", response.model());
+    }
+
+    @Test
+    void updateAgentModelThrowsWhenAgentDoesNotExist() {
+        doThrow(new IllegalArgumentException("No existe el agente ghost"))
+                .when(memory).setAgentModel("ghost", "llama3:8b");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.updateAgentModel("ghost", new AgentModelCommand("llama3:8b")));
     }
 }

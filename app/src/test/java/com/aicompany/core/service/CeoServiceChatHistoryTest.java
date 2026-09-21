@@ -27,8 +27,6 @@ class CeoServiceChatHistoryTest {
 
     private final CeoService ceoService = new CeoService(
             mock(RestClient.class),
-            "qwen2.5-coder:14b",
-            "qwen3:8b",
             JsonMapper.builder().build(),
             mock(EvidenceAcquisitionService.class),
             mock(CompanyEventPublisher.class),

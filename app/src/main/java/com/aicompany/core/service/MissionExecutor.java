@@ -10,6 +10,7 @@ import com.aicompany.core.model.MissionStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
@@ -48,6 +49,8 @@ public class MissionExecutor {
     private final MissionMemoryService memory;
     private final AgentRuntime runtime;
     private final CeoService ceoService;
+    private final CompanyMemoryService companyMemory;
+    private final String defaultCeoModel;
     private final Executor orchestratorExecutor;
     private final CompanyEventPublisher events;
     private final JsonMapper jsonMapper;
@@ -60,6 +63,8 @@ public class MissionExecutor {
             MissionMemoryService memory,
             AgentRuntime runtime,
             CeoService ceoService,
+            CompanyMemoryService companyMemory,
+            @Value("${ollama.ceo-model}") String defaultCeoModel,
             @Qualifier("missionOrchestratorExecutor")
             Executor orchestratorExecutor,
             CompanyEventPublisher events,
@@ -72,6 +77,8 @@ public class MissionExecutor {
         this.memory = memory;
         this.runtime = runtime;
         this.ceoService = ceoService;
+        this.companyMemory = companyMemory;
+        this.defaultCeoModel = defaultCeoModel;
         this.orchestratorExecutor = orchestratorExecutor;
         this.events = events;
         this.jsonMapper = jsonMapper;
@@ -473,7 +480,8 @@ public class MissionExecutor {
             var finalResult =
                     ceoService.executeMission(
                             instruction,
-                            resultsForCeo
+                            resultsForCeo,
+                            companyMemory.agentModel("ceo", defaultCeoModel)
                     );
 
             advanceMission(
