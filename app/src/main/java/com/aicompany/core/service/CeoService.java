@@ -3,6 +3,8 @@ package com.aicompany.core.service;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
+import com.aicompany.core.agent.model.DevelopmentResult;
+import com.aicompany.core.agent.model.DevelopmentResultSchema;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.ConversationTurn;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
@@ -907,6 +909,90 @@ public class CeoService {
         return callModel(
                 "MISSION_CONSOLIDATION", "ceo", model, messages, null, null
         ).content();
+    }
+
+    /**
+     * Genera un {@link DevelopmentResult} real (código, no análisis) para
+     * un agente del Engineering Team — una sola llamada a Ollama por
+     * intento (`format: DevelopmentResultSchema.SCHEMA`, sin `tools`: no
+     * hace falta el turno de decisión de herramienta de
+     * {@link #executeAgentTask} en esta primera ronda). El reintento
+     * (hasta {@code MAX_RESULT_RETRIES + 1} veces) y la validación de
+     * rutas viven en {@code DevelopmentRuntime}, no acá — esta llamada es
+     * la ejecución de un solo intento, igual que el turno final de
+     * {@link #executeAgentTask}.
+     */
+    public DevelopmentResult generateDevelopmentArtifact(
+            String agentId,
+            String prompt,
+            String model) {
+
+        var system =
+                systemPrompt()
+                        + "\nTu rol específico en esta tarea es: "
+                        + agentId
+                        + ".";
+
+        var messages = List.<Map<String, Object>>of(
+                Map.of("role", "system", "content", system),
+                Map.of("role", "user", "content", prompt)
+        );
+
+        var finalTurn =
+                callModel(
+                        "DEVELOPMENT_TASK",
+                        agentId,
+                        model,
+                        messages,
+                        DevelopmentResultSchema.SCHEMA,
+                        null,
+                        false
+                );
+
+        var response = finalTurn.content();
+
+        try {
+
+            var normalizedResponse =
+                    normalizeJsonResponse(response);
+
+            log.info(
+                    "DEVELOPMENT_RESULT_RAW agent={} response={}",
+                    agentId,
+                    response
+            );
+
+            var result =
+                    jsonMapper.readValue(
+                            normalizedResponse,
+                            DevelopmentResult.class
+                    );
+
+            log.info(
+                    "DEVELOPMENT_RESULT_PARSED agent={} files={}",
+                    agentId,
+                    result.files().size()
+            );
+
+            return result;
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "DEVELOPMENT_RESULT_PARSE_ERROR agent={} model={} reason={}",
+                    agentId,
+                    model,
+                    ex.getMessage(),
+                    ex
+            );
+
+            throw new IllegalStateException(
+                    "El agente "
+                            + agentId
+                            + " no devolvió un DevelopmentResult JSON válido.",
+                    ex
+            );
+        }
     }
 
     private String systemPrompt() {
