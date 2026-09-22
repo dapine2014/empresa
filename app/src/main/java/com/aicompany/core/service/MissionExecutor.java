@@ -190,7 +190,9 @@ public class MissionExecutor {
                     new AgentDefinition(
                             "finance",
                             "UNIT_ECONOMICS",
-                            "Estimar costos, precio, margen y condiciones necesarias para superar US$50 de utilidad neta."
+                            ("Estimar costos, precio, margen y condiciones necesarias para superar "
+                                    + "US$%.2f de utilidad neta (capital semilla configurado de Forjai, "
+                                    + "no un objetivo fijo de esta tarea).").formatted(appProperties.seedCapitalUsd())
                     ),
 
                     new AgentDefinition(

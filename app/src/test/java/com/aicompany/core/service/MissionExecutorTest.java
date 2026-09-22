@@ -238,6 +238,44 @@ class MissionExecutorTest {
         verify(alertMailService).send(contains("MISSION-1"), anyString(), anyBoolean());
     }
 
+    @Test
+    void financeObjectiveReferencesTheRealConfiguredSeedCapitalInsteadOfAHardcodedAmount() throws Exception {
+        // Bug real: el objetivo de Max tenía "US$50" pegado como literal
+        // en el código, desincronizado de company.seed-capital-usd (el
+        // valor real y configurable). Este test usa un capital semilla
+        // DISTINTO de 50 para probar que el texto sale del config real,
+        // no que "coincide" con un literal viejo.
+        var customAppProperties = new AppProperties("Forjai", 75.0, 60);
+
+        var executorWithCustomCapital = new MissionExecutor(
+                memory, runtime, ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events,
+                jsonMapper, contradictionDetector, customAppProperties, opportunityMemory, alertMailService
+        );
+
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
+
+        executorWithCustomCapital.executeAsync("MISSION-1", "instrucción").get();
+
+        var instructionCaptor = ArgumentCaptor.forClass(String.class);
+        verify(runtime).execute(anyString(), eq("MISSION-1"), eq("finance"), anyString(), instructionCaptor.capture());
+
+        // No asumir el separador decimal (depende del locale de la
+        // máquina, ver "US$%.2f" sin Locale explícito, mismo patrón ya
+        // usado en ChatIntentRouter) -- se arma el fragmento esperado
+        // con el mismo formatter que usa el código real, en vez de
+        // hardcodear "75.00".
+        var expectedAmount = "US$%.2f".formatted(75.0);
+        assertTrue(instructionCaptor.getValue().contains(expectedAmount + " de utilidad neta"));
+        assertFalse(instructionCaptor.getValue().contains("US$50"));
+    }
+
     private void stubAgent(String agentId) {
         var result = new AgentResult(
                 agentId, "ACTION", "NOT_VALIDATED",
