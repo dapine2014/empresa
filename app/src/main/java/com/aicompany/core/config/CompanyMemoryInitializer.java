@@ -1,6 +1,7 @@
 package com.aicompany.core.config;
 
 import com.aicompany.core.service.CompanyMemoryService;
+import com.aicompany.core.service.CompanyPolicyService;
 import com.aicompany.core.service.MissionMemoryService;
 import com.aicompany.core.service.PromptMemoryService;
 import com.aicompany.core.service.TeamMemoryService;
@@ -14,17 +15,20 @@ public class CompanyMemoryInitializer {
     private final MissionMemoryService missionMemory;
     private final TeamMemoryService teamMemory;
     private final PromptMemoryService promptMemory;
+    private final CompanyPolicyService companyPolicyService;
 
     public CompanyMemoryInitializer(
             CompanyMemoryService memory,
             MissionMemoryService missionMemory,
             TeamMemoryService teamMemory,
-            PromptMemoryService promptMemory) {
+            PromptMemoryService promptMemory,
+            CompanyPolicyService companyPolicyService) {
 
         this.memory = memory;
         this.missionMemory = missionMemory;
         this.teamMemory = teamMemory;
         this.promptMemory = promptMemory;
+        this.companyPolicyService = companyPolicyService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -33,5 +37,6 @@ public class CompanyMemoryInitializer {
         missionMemory.backfillMissionEnvironment();
         teamMemory.ensureAllTeams();
         promptMemory.ensureDefaultPrompts();
+        companyPolicyService.ensureDefaultPolicies();
     }
 }
