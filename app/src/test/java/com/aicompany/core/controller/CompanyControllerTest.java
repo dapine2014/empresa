@@ -4,6 +4,9 @@ import com.aicompany.core.model.ActivityItem;
 import com.aicompany.core.model.AgentModelCommand;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
+import com.aicompany.core.model.PolicyCommand;
+import com.aicompany.core.model.PolicyKey;
+import com.aicompany.core.model.PolicySnapshot;
 import com.aicompany.core.model.PromptCommand;
 import com.aicompany.core.model.PromptSnapshot;
 import com.aicompany.core.model.PromptVersionContent;
@@ -14,6 +17,7 @@ import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
+import com.aicompany.core.service.CompanyPolicyService;
 import com.aicompany.core.service.PromptMemoryService;
 import com.aicompany.core.service.TeamMemoryService;
 import com.aicompany.core.service.MissionMemoryService;
@@ -39,9 +43,10 @@ class CompanyControllerTest {
     private final ChatIntentRouter router = mock(ChatIntentRouter.class);
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
     private final PromptMemoryService promptMemory = mock(PromptMemoryService.class);
+    private final CompanyPolicyService companyPolicyService = mock(CompanyPolicyService.class);
 
     private final CompanyController controller =
-            new CompanyController(memory, missionMemory, activityMemory, router, teamMemory, promptMemory);
+            new CompanyController(memory, missionMemory, activityMemory, router, teamMemory, promptMemory, companyPolicyService);
 
     @Test
     void teamsEndpointDelegatesEntirelyToTeamMemoryServiceSnapshotAll() {
@@ -97,6 +102,42 @@ class CompanyControllerTest {
 
         assertEquals(reactivated, response);
         verify(promptMemory).activateVersion("sales", 1);
+    }
+
+    @Test
+    void policiesEndpointDelegatesEntirelyToCompanyPolicyServiceSnapshotAll() {
+        var snapshot = new PolicySnapshot(
+                "SEED_CAPITAL_USD", 1, 50.0, "system", "Valor inicial de seed", Instant.now(), List.of());
+        when(companyPolicyService.snapshotAll()).thenReturn(List.of(snapshot));
+
+        var response = controller.policies();
+
+        assertEquals(List.of(snapshot), response);
+    }
+
+    @Test
+    void updatePolicyEndpointDelegatesEntirelyToCompanyPolicyServiceCreateVersion() {
+        var updated = new PolicySnapshot(
+                "SEED_CAPITAL_USD", 2, 200.0, "human", "Ronda de inversión", Instant.now(), List.of());
+        when(companyPolicyService.createVersion(PolicyKey.SEED_CAPITAL_USD, 200.0, "Ronda de inversión"))
+                .thenReturn(updated);
+
+        var response = controller.updatePolicy("SEED_CAPITAL_USD", new PolicyCommand(200.0, "Ronda de inversión"));
+
+        assertEquals(updated, response);
+        verify(companyPolicyService).createVersion(PolicyKey.SEED_CAPITAL_USD, 200.0, "Ronda de inversión");
+    }
+
+    @Test
+    void activatePolicyVersionEndpointDelegatesEntirelyToCompanyPolicyServiceActivateVersion() {
+        var reactivated = new PolicySnapshot(
+                "SEED_CAPITAL_USD", 1, 50.0, "system", "Valor inicial de seed", Instant.now(), List.of());
+        when(companyPolicyService.activateVersion(PolicyKey.SEED_CAPITAL_USD, 1)).thenReturn(reactivated);
+
+        var response = controller.activatePolicyVersion("SEED_CAPITAL_USD", 1);
+
+        assertEquals(reactivated, response);
+        verify(companyPolicyService).activateVersion(PolicyKey.SEED_CAPITAL_USD, 1);
     }
 
     @Test

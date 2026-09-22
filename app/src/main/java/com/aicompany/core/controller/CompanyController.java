@@ -6,6 +6,9 @@ import com.aicompany.core.model.AgentModelResponse;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.ChatRequest;
 import com.aicompany.core.model.ChatResponse;
+import com.aicompany.core.model.PolicyCommand;
+import com.aicompany.core.model.PolicyKey;
+import com.aicompany.core.model.PolicySnapshot;
 import com.aicompany.core.model.PromptCommand;
 import com.aicompany.core.model.PromptSnapshot;
 import com.aicompany.core.model.PromptVersionContent;
@@ -15,6 +18,7 @@ import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.service.ActivityMemoryService;
 import com.aicompany.core.service.ChatIntentRouter;
 import com.aicompany.core.service.CompanyMemoryService;
+import com.aicompany.core.service.CompanyPolicyService;
 import com.aicompany.core.service.MissionMemoryService;
 import com.aicompany.core.service.PromptMemoryService;
 import com.aicompany.core.service.TeamMemoryService;
@@ -33,6 +37,7 @@ public class CompanyController {
     private final ChatIntentRouter chatIntentRouter;
     private final TeamMemoryService teamMemoryService;
     private final PromptMemoryService promptMemoryService;
+    private final CompanyPolicyService companyPolicyService;
 
     public CompanyController(
             CompanyMemoryService memoryService,
@@ -40,7 +45,8 @@ public class CompanyController {
             ActivityMemoryService activityMemoryService,
             ChatIntentRouter chatIntentRouter,
             TeamMemoryService teamMemoryService,
-            PromptMemoryService promptMemoryService) {
+            PromptMemoryService promptMemoryService,
+            CompanyPolicyService companyPolicyService) {
 
         this.memoryService = memoryService;
         this.missionMemoryService = missionMemoryService;
@@ -48,6 +54,7 @@ public class CompanyController {
         this.chatIntentRouter = chatIntentRouter;
         this.teamMemoryService = teamMemoryService;
         this.promptMemoryService = promptMemoryService;
+        this.companyPolicyService = companyPolicyService;
     }
 
     @GetMapping("/agents")
@@ -141,6 +148,36 @@ public class CompanyController {
             @PathVariable("version") int version) {
 
         return promptMemoryService.activateVersion(id, version);
+    }
+
+    /**
+     * Las 7 Company Financial Policies vigentes -- panel "Settings" del
+     * Command Center web, sección "Financial Policies".
+     */
+    @GetMapping("/policies")
+    public List<PolicySnapshot> policies() {
+        return companyPolicyService.snapshotAll();
+    }
+
+    /**
+     * Crea una versión nueva de una política y la activa de inmediato --
+     * a diferencia del prompt de agentes, acá no hay borrador.
+     */
+    @PutMapping("/policies/{key}")
+    public PolicySnapshot updatePolicy(
+            @PathVariable("key") String key,
+            @Valid @RequestBody PolicyCommand command) {
+
+        return companyPolicyService.createVersion(PolicyKey.valueOf(key), command.value(), command.changeReason());
+    }
+
+    /** Rollback: reactiva una versión existente del historial. */
+    @PutMapping("/policies/{key}/versions/{version}/activate")
+    public PolicySnapshot activatePolicyVersion(
+            @PathVariable("key") String key,
+            @PathVariable("version") int version) {
+
+        return companyPolicyService.activateVersion(PolicyKey.valueOf(key), version);
     }
 
     /**
