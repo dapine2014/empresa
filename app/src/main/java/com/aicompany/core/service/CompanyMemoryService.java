@@ -59,6 +59,8 @@ public class CompanyMemoryService {
             session.run("CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT team_id IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT prompt_version_id IF NOT EXISTS FOR (v:PromptVersion) REQUIRE v.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT company_policy_key IF NOT EXISTS FOR (p:CompanyPolicy) REQUIRE p.key IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT policy_version_id IF NOT EXISTS FOR (v:PolicyVersion) REQUIRE v.id IS UNIQUE").consume();
 
             // Ampliación de memoria (EMPRESA_AI_TODO.md §21 / status.md §17):
             // solo el constraint de identidad — sin propiedades ni relaciones
