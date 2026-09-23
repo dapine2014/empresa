@@ -561,3 +561,48 @@ sano post-arranque). Verificado contra el contenedor real:
 Sin hallazgos durante la verificación en vivo — los 14 tasks del plan
 se comportan en producción real exactamente como documentaron sus
 revisiones de código.
+
+**Revisión final de todo el branch — 3 hallazgos reales, ninguno visible
+en las revisiones por task**: la migración de `AppProperties` a
+`CompanyPolicyService` estaba planificada para 3 clases
+(`MissionExecutor`, `CustomerService`, `ChatIntentRouter`) pero se
+escapó un 4to consumidor real, `ProductStatusService.isBusinessSuccess()`,
+que seguía comparando contra el capital semilla congelado del `.yml` —
+dos fuentes de verdad divergentes visibles en la misma respuesta del
+chat una vez que alguien edita la política desde Settings. Corregido:
+`ProductStatusService` ahora también lee `CompanyPolicyService`.
+
+Segundo hallazgo, contradicción directa con lo que este mismo archivo
+y `CLAUDE.md` ya afirmaban: `CompanyPolicyService.ensureDefaultPolicies()`
+tenía los defaults de `SEED_CAPITAL_USD`/`CHALLENGE_DAYS` hardcodeados
+como literales en vez de leer `AppProperties`, así que cambiar
+`company.seed-capital-usd` en el `.yml`/env no tenía ningún efecto real
+— quedaba documentado como "solo default de seed del primer arranque"
+sin serlo. Corregido: `CompanyPolicyService` ahora inyecta `AppProperties`
+y usa esos 2 valores reales para esas 2 entradas del mapa de defaults
+(los otros 5 — multiplicador de alerta y 4 umbrales de éxito — nunca
+vinieron de `AppProperties`, siguen como literales).
+
+Tercer hallazgo, el más serio: `MissionMemoryService.ensureMission`
+hacía `SET` incondicional de las 4 propiedades de `financialCriteria`,
+y como `ChatIntentRouter` siempre pasa `financialCriteria=null` en sus
+2 caminos de arranque de misión por chat, reiniciar una misión ya
+existente diciendo "ejecuta MISSION-\<id\>" borraba en silencio
+cualquier objetivo financiero que esa misión ya tuviera declarado —
+contradice directamente la inmutabilidad documentada. Corregido: el
+`SET` de esas 4 propiedades ahora se arma condicionalmente en Java, y
+cuando `financialCriteria` es `null` esas propiedades ni se mencionan
+en la query (Neo4j las deja como estén). **Verificado en vivo por el
+controller** (no solo por code review): se reconstruyó el contenedor
+con el fix, se creó una misión de prueba con `financialCriteria`
+(`NET_PROFIT >= US$500`), se la reinició vía "ejecuta MISSION-\<id\>" —
+mismo camino exacto que antes borraba el objetivo — y se confirmó que
+`financialCriteria` sobrevivió intacto.
+
+Ninguno de los 3 hallazgos era visible en la revisión de su task
+individual porque cada uno involucra la interacción entre 2+ tasks
+(la migración de 3 clases distintas dejando una 4ta afuera; el
+`ensureDefaultPolicies()` de un task leído junto al `ChatIntentRouter`
+de otro) — exactamente el tipo de defecto que la revisión final de
+todo el branch existe para atrapar. `mvn test` (202/202) y
+`npm run lint && npm run build` verificados en verde después del fix.
