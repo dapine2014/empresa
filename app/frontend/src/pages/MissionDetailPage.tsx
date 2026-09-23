@@ -21,6 +21,12 @@ export default function MissionDetailPage() {
     refetchInterval: 5_000,
   })
 
+  const netProfitQuery = useQuery({
+    queryKey: ['netProfit', missionId],
+    queryFn: () => api.netProfit(missionId!),
+    enabled: !!missionId,
+  })
+
   const mutation = useMutation({
     mutationFn: () => api.recordDecision(missionId!, { decision, reasoning }),
     onSuccess: (response) => {
@@ -47,6 +53,23 @@ export default function MissionDetailPage() {
         {mission.environment === 'PRODUCTION' ? '🏢 PRODUCTION' : '🧪 TEST'}
       </p>
       <p className="mission-message">{mission.message}</p>
+
+      {mission.financialCriteria && (
+        <div className="financial-criteria">
+          <h2>Objetivo financiero</h2>
+          <p>
+            {mission.financialCriteria.metric} ≥ {mission.financialCriteria.targetAmount} {mission.financialCriteria.currency}
+            {mission.financialCriteria.deadline ? ` para ${mission.financialCriteria.deadline}` : ' (sin plazo definido)'}
+          </p>
+          {netProfitQuery.data?.financialCriteriaEvaluation && (
+            <p>
+              Resultado real: {netProfitQuery.data.netProfitUsd.toFixed(2)} {mission.financialCriteria.currency} (
+              {netProfitQuery.data.financialCriteriaEvaluation.progressPct.toFixed(1)}% del objetivo) —{' '}
+              {netProfitQuery.data.financialCriteriaEvaluation.criterionMet ? 'cumplido' : 'no cumplido todavía'}
+            </p>
+          )}
+        </div>
+      )}
 
       <h2>Tareas por agente</h2>
       <table className="data-table">
