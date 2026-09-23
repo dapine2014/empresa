@@ -15,5 +15,6 @@ public record MissionResponse(
         int progress,
         String currentStep,
         String message,
-        Instant updatedAt
+        Instant updatedAt,
+        FinancialCriteriaResponse financialCriteria
 ) {}

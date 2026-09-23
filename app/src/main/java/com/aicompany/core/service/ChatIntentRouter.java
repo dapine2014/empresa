@@ -211,7 +211,7 @@ public class ChatIntentRouter {
             var missionId = missionStartMatcher.group(1).toUpperCase(Locale.ROOT);
             // Una misión iniciada por un comando real de chat del
             // fundador es trabajo real, no una prueba de desarrollo.
-            var response = missionService.start(missionId, message, "PRODUCTION");
+            var response = missionService.start(missionId, message, "PRODUCTION", null);
 
             return "He recibido " + missionId + ". Estado: " + response.status()
                     + ". La misión está procesándose en segundo plano. Consulta "
@@ -304,7 +304,7 @@ public class ChatIntentRouter {
 
         // Una misión iniciada por un comando real de chat del fundador
         // es trabajo real, no una prueba de desarrollo.
-        var response = missionService.start(missionId, message, "PRODUCTION");
+        var response = missionService.start(missionId, message, "PRODUCTION", null);
 
         conversationMemory.setLastMentioned("MISSION", List.of(missionId));
 

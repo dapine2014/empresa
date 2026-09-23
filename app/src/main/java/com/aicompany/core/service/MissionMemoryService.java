@@ -4,6 +4,9 @@ import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.evidence.EvidenceDedupKey;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
+import com.aicompany.core.model.FinancialCriteriaCommand;
+import com.aicompany.core.model.FinancialCriteriaResponse;
+import com.aicompany.core.model.FinancialMetric;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
@@ -11,6 +14,8 @@ import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,19 +49,80 @@ public class MissionMemoryService {
         }
     }
 
-    public void ensureMission(String missionId, String instruction, String environment) {
+    public void ensureMission(
+            String missionId,
+            String instruction,
+            String environment,
+            FinancialCriteriaCommand financialCriteria) {
+
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, m.environment=$environment, m.status='CREATED', m.progress=0, m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt",
-                        Map.of("id", missionId,
-                                "name", missionId.equals("MISSION-001") ? "MISSION-001 — Descubrimiento del primer negocio" : missionId,
-                                "instruction", instruction,
-                                "environment", environment,
-                                "updatedAt", Instant.now().toString()));
+                tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, "
+                                + "m.environment=$environment, m.status='CREATED', m.progress=0, "
+                                + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt, "
+                                + "m.financialCriteriaMetric=$metric, m.financialCriteriaTargetAmount=$targetAmount, "
+                                + "m.financialCriteriaCurrency=$currency, m.financialCriteriaDeadline=$deadline",
+                        financialCriteriaParams(missionId, instruction, environment, financialCriteria));
                 tx.run("MATCH (m:Mission {id:$id}), (c:Company {id:'AI-COMPANY'}) MERGE (c)-[:HAS_MISSION]->(m)", Map.of("id", missionId));
                 tx.run("MATCH (m:Mission {id:$id}), (a:Agent {id:'ceo'}) MERGE (m)-[:LED_BY]->(a)", Map.of("id", missionId));
                 return null;
             });
+        }
+    }
+
+    /**
+     * Neo4j: asignar {@code null} a una propiedad la remueve -- no hace
+     * falta lógica condicional para "misión sin financialCriteria",
+     * simplemente se pasan los 4 valores como {@code null}. {@code Map.of}
+     * no admite valores {@code null}, por eso un {@code HashMap} mutable acá.
+     */
+    private Map<String, Object> financialCriteriaParams(
+            String missionId, String instruction, String environment, FinancialCriteriaCommand fc) {
+
+        var params = new HashMap<String, Object>();
+        params.put("id", missionId);
+        params.put("name", missionId.equals("MISSION-001") ? "MISSION-001 — Descubrimiento del primer negocio" : missionId);
+        params.put("instruction", instruction);
+        params.put("environment", environment);
+        params.put("updatedAt", Instant.now().toString());
+        params.put("metric", fc == null ? null : fc.metric().name());
+        params.put("targetAmount", fc == null ? null : fc.targetAmount());
+        params.put("currency", fc == null ? null : fc.currencyOrDefault());
+        params.put("deadline", fc == null || fc.deadline() == null ? null : fc.deadline().toString());
+        return params;
+    }
+
+    private FinancialCriteriaResponse mapFinancialCriteria(org.neo4j.driver.Record r) {
+        if (r.get("financialCriteriaMetric").isNull()) {
+            return null;
+        }
+        var deadlineValue = r.get("financialCriteriaDeadline");
+        return new FinancialCriteriaResponse(
+                FinancialMetric.valueOf(r.get("financialCriteriaMetric").asString()),
+                r.get("financialCriteriaTargetAmount").asDouble(),
+                r.get("financialCriteriaCurrency").asString(),
+                deadlineValue.isNull() ? null : LocalDate.parse(deadlineValue.asString())
+        );
+    }
+
+    /**
+     * Lookup dedicado y liviano para {@code MissionExecutor}/
+     * {@code CustomerService} -- separado de {@link #find} para no
+     * acoplar sus mocks de test al resto de {@code MissionResponse}.
+     */
+    public Optional<FinancialCriteriaResponse> financialCriteria(String missionId) {
+        try (var session = driver.session()) {
+            var records = session.run(
+                            "MATCH (m:Mission {id:$id}) RETURN m.financialCriteriaMetric AS financialCriteriaMetric, "
+                                    + "m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, "
+                                    + "m.financialCriteriaCurrency AS financialCriteriaCurrency, "
+                                    + "m.financialCriteriaDeadline AS financialCriteriaDeadline",
+                            Map.of("id", missionId))
+                    .list();
+            if (records.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.ofNullable(mapFinancialCriteria(records.get(0)));
         }
     }
 
@@ -162,7 +228,10 @@ public class MissionMemoryService {
 
     public Optional<MissionResponse> find(String missionId) {
         try (var session = driver.session()) {
-            var records = session.run("MATCH (m:Mission {id:$id}) RETURN m.status AS status, coalesce(m.environment, 'TEST') AS environment, m.progress AS progress, m.currentStep AS step, m.message AS message, m.updatedAt AS updatedAt", Map.of("id", missionId)).list();
+            var records = session.run("MATCH (m:Mission {id:$id}) RETURN m.status AS status, coalesce(m.environment, 'TEST') AS environment, m.progress AS progress, m.currentStep AS step, m.message AS message, m.updatedAt AS updatedAt, "
+                            + "m.financialCriteriaMetric AS financialCriteriaMetric, m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, "
+                            + "m.financialCriteriaCurrency AS financialCriteriaCurrency, m.financialCriteriaDeadline AS financialCriteriaDeadline",
+                    Map.of("id", missionId)).list();
             return records.stream().findFirst().map(r -> new MissionResponse(
                     missionId,
                     MissionStatus.valueOf(r.get("status").asString()),
@@ -170,7 +239,8 @@ public class MissionMemoryService {
                     r.get("progress").asInt(),
                     r.get("step").asString(),
                     r.get("message").asString(),
-                    Instant.parse(r.get("updatedAt").asString())
+                    Instant.parse(r.get("updatedAt").asString()),
+                    mapFinancialCriteria(r)
             ));
         }
     }
@@ -188,7 +258,11 @@ public class MissionMemoryService {
                             "MATCH (m:Mission) WHERE m.id IN $ids RETURN m.id AS id, m.status AS status, " +
                                     "coalesce(m.environment, 'TEST') AS environment, " +
                                     "m.progress AS progress, m.currentStep AS step, " +
-                                    "m.message AS message, m.updatedAt AS updatedAt",
+                                    "m.message AS message, m.updatedAt AS updatedAt, " +
+                                    "m.financialCriteriaMetric AS financialCriteriaMetric, " +
+                                    "m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, " +
+                                    "m.financialCriteriaCurrency AS financialCriteriaCurrency, " +
+                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline",
                             Map.of("ids", missionIds))
                     .list(r -> new MissionResponse(
                             r.get("id").asString(),
@@ -197,7 +271,8 @@ public class MissionMemoryService {
                             r.get("progress").asInt(),
                             r.get("step").asString(),
                             r.get("message").asString(),
-                            Instant.parse(r.get("updatedAt").asString())
+                            Instant.parse(r.get("updatedAt").asString()),
+                            mapFinancialCriteria(r)
                     ));
         }
     }
@@ -213,7 +288,11 @@ public class MissionMemoryService {
                             "MATCH (m:Mission) RETURN m.id AS id, m.status AS status, " +
                                     "coalesce(m.environment, 'TEST') AS environment, " +
                                     "m.progress AS progress, m.currentStep AS step, " +
-                                    "m.message AS message, m.updatedAt AS updatedAt " +
+                                    "m.message AS message, m.updatedAt AS updatedAt, " +
+                                    "m.financialCriteriaMetric AS financialCriteriaMetric, " +
+                                    "m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, " +
+                                    "m.financialCriteriaCurrency AS financialCriteriaCurrency, " +
+                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline " +
                                     "ORDER BY m.updatedAt DESC LIMIT $limit",
                             Map.of("limit", limit))
                     .list(r -> new MissionResponse(
@@ -223,7 +302,8 @@ public class MissionMemoryService {
                             r.get("progress").asInt(),
                             r.get("step").asString(),
                             r.get("message").asString(),
-                            Instant.parse(r.get("updatedAt").asString())
+                            Instant.parse(r.get("updatedAt").asString()),
+                            mapFinancialCriteria(r)
                     ));
         }
     }

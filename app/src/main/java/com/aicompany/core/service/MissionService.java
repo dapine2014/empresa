@@ -3,6 +3,7 @@ package com.aicompany.core.service;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
+import com.aicompany.core.model.FinancialCriteriaCommand;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.MissionStatusResponse;
@@ -31,8 +32,8 @@ public class MissionService {
         this.events = events;
     }
 
-    public MissionResponse start(String missionId, String instruction, String environment) {
-        memory.ensureMission(missionId, instruction, environment);
+    public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
+        memory.ensureMission(missionId, instruction, environment, financialCriteria);
 
         events.publishMission(
                 "EMPRESA_MISSION_CREATED",

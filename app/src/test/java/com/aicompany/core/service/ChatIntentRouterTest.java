@@ -47,15 +47,15 @@ class ChatIntentRouterTest {
     void routesMissionStartToMissionService() {
         var mission = new MissionResponse(
                 "MISSION-42", MissionStatus.CREATED, "PRODUCTION", 0, "Creada", "Misión recibida",
-                Instant.parse("2026-09-12T00:00:00Z")
+                Instant.parse("2026-09-12T00:00:00Z"), null
         );
-        when(missionService.start("MISSION-42", "Inicia mission-42 para investigar.", "PRODUCTION"))
+        when(missionService.start("MISSION-42", "Inicia mission-42 para investigar.", "PRODUCTION", null))
                 .thenReturn(mission);
 
         var response = router.route("Inicia mission-42 para investigar.");
 
         assertTrue(response.contains("MISSION-42"));
-        verify(missionService).start("MISSION-42", "Inicia mission-42 para investigar.", "PRODUCTION");
+        verify(missionService).start("MISSION-42", "Inicia mission-42 para investigar.", "PRODUCTION", null);
         verifyNoInteractions(ceoService);
     }
 
@@ -73,15 +73,15 @@ class ChatIntentRouterTest {
 
         var mission = new MissionResponse(
                 "MISSION-1789412392452", MissionStatus.CREATED, "PRODUCTION", 0, "Creada", "Misión recibida",
-                Instant.now()
+                Instant.now(), null
         );
-        when(missionService.start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION")))
+        when(missionService.start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION"), isNull()))
                 .thenReturn(mission);
 
         var response = router.route(instruction);
 
         assertTrue(response.contains("MISSION-"));
-        verify(missionService).start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION"));
+        verify(missionService).start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION"), isNull());
         verify(conversationMemory).setLastMentioned(eq("MISSION"), argThat(ids -> ids.size() == 1));
         verifyNoInteractions(ceoService);
         verifyNoInteractions(missionMemory);
@@ -163,7 +163,7 @@ class ChatIntentRouterTest {
 
         var mission = new MissionResponse(
                 "MISSION-1789884929871", MissionStatus.COMPLETED, "PRODUCTION", 100,
-                "Decisión del inversionista", "Aprobada", Instant.now()
+                "Decisión del inversionista", "Aprobada", Instant.now(), null
         );
         when(missionMemory.find("MISSION-1789884929871")).thenReturn(Optional.of(mission));
         when(missionMemory.tasks("MISSION-1789884929871")).thenReturn(List.of(
@@ -208,7 +208,7 @@ class ChatIntentRouterTest {
         // del MVP está en curso" sin ninguna evidencia real.
         var mission = new MissionResponse(
                 "MISSION-1789884929871", MissionStatus.COMPLETED, "PRODUCTION", 100,
-                "Decisión del inversionista", "Aprobada", Instant.now()
+                "Decisión del inversionista", "Aprobada", Instant.now(), null
         );
         when(missionMemory.find("MISSION-1789884929871")).thenReturn(Optional.of(mission));
         when(missionMemory.tasks("MISSION-1789884929871")).thenReturn(List.of(
@@ -319,9 +319,9 @@ class ChatIntentRouterTest {
         // FAILED no "necesita aprobación" (mezclarlas bajo esa etiqueta
         // fue un bug real reportado por el usuario). Las FAILED tienen su
         // propia consulta, ver routesFailedMissionsQuery... abajo.
-        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
-        var running = new MissionResponse("MISSION-2", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "y", Instant.now());
-        var failed = new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "y", Instant.now());
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now(), null);
+        var running = new MissionResponse("MISSION-2", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "y", Instant.now(), null);
+        var failed = new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "y", Instant.now(), null);
         when(missionMemory.findAll(50)).thenReturn(List.of(awaiting, running, failed));
 
         var response = router.route("¿Qué misión necesita mi aprobación?");
@@ -335,7 +335,7 @@ class ChatIntentRouterTest {
 
     @Test
     void necesitanPluralThirdPersonStillTriggersMissionsNeedingAttention() {
-        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now(), null);
         when(missionMemory.findAll(50)).thenReturn(List.of(awaiting));
 
         var response = router.route("¿Qué misiones necesitan aprobación?");
@@ -347,7 +347,7 @@ class ChatIntentRouterTest {
 
     @Test
     void necesitaSingularThirdPersonStillTriggersMissionsNeedingAttention() {
-        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now(), null);
         when(missionMemory.findAll(50)).thenReturn(List.of(awaiting));
 
         var response = router.route("¿Qué misión necesita aprobación?");
@@ -383,9 +383,9 @@ class ChatIntentRouterTest {
         // Reportado por el usuario: 25 misiones reales acumuladas de
         // sesiones de desarrollo contaminaban las respuestas de negocio.
         // Toda consulta empresarial filtra PRODUCTION por default.
-        var realApproval = new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
-        var testApproval = new MissionResponse("MISSION-DEBUG-007", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "y", Instant.now());
-        var testFailure = new MissionResponse("MISSION-STRUCTURED-001", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now());
+        var realApproval = new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now(), null);
+        var testApproval = new MissionResponse("MISSION-DEBUG-007", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "y", Instant.now(), null);
+        var testFailure = new MissionResponse("MISSION-STRUCTURED-001", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now(), null);
         when(missionMemory.findAll(50)).thenReturn(List.of(realApproval, testApproval, testFailure));
 
         var approvals = router.route("¿Qué necesita mi aprobación?");
@@ -399,8 +399,8 @@ class ChatIntentRouterTest {
 
     @Test
     void routesFailedMissionsQueryToItsOwnDeterministicFormatting() {
-        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
-        var failed = new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "z", Instant.now());
+        var awaiting = new MissionResponse("MISSION-1", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now(), null);
+        var failed = new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "z", Instant.now(), null);
         when(missionMemory.findAll(50)).thenReturn(List.of(awaiting, failed));
 
         var response = router.route("¿Qué misiones fallaron?");
@@ -413,9 +413,9 @@ class ChatIntentRouterTest {
 
     @Test
     void routesTestMissionsQueryWithDeterministicBreakdownByStatus() {
-        var testAwaiting = new MissionResponse("MISSION-DEBUG-007", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "y", Instant.now());
-        var testFailed = new MissionResponse("MISSION-STRUCTURED-001", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now());
-        var realOne = new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now());
+        var testAwaiting = new MissionResponse("MISSION-DEBUG-007", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "y", Instant.now(), null);
+        var testFailed = new MissionResponse("MISSION-STRUCTURED-001", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now(), null);
+        var realOne = new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now(), null);
         when(missionMemory.findAll(50)).thenReturn(List.of(testAwaiting, testFailed, realOne));
 
         var response = router.route("¿Qué misiones están en prueba?");
@@ -495,10 +495,10 @@ class ChatIntentRouterTest {
         // rellenar como "[Nombre del cliente]" -- porque no existía
         // ninguna consulta agregada real. Debe resolverse 100% en Java.
         var missions = List.of(
-                new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "x", Instant.now()),
-                new MissionResponse("MISSION-2", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "x", Instant.now()),
-                new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "x", Instant.now()),
-                new MissionResponse("MISSION-TEST", MissionStatus.FAILED, "TEST", 100, "x", "x", Instant.now())
+                new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-2", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-3", MissionStatus.FAILED, "PRODUCTION", 100, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-TEST", MissionStatus.FAILED, "TEST", 100, "x", "x", Instant.now(), null)
         );
         when(missionMemory.findAll(50)).thenReturn(missions);
 
@@ -788,7 +788,7 @@ class ChatIntentRouterTest {
         // por la rama determinista, no por el chat general.
         var mission = new MissionResponse(
                 "MISSION-3", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 90,
-                "x", "y", Instant.now()
+                "x", "y", Instant.now(), null
         );
         when(missionMemory.find("MISSION-3")).thenReturn(Optional.of(mission));
         when(missionMemory.tasks("MISSION-3")).thenReturn(List.of());
@@ -851,8 +851,8 @@ class ChatIntentRouterTest {
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-DEBUG-007", "MISSION-STRUCTURED-001")))
         );
         when(missionMemory.findByIds(List.of("MISSION-DEBUG-007", "MISSION-STRUCTURED-001"))).thenReturn(List.of(
-                new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now()),
-                new MissionResponse("MISSION-STRUCTURED-001", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now())
+                new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now(), null),
+                new MissionResponse("MISSION-STRUCTURED-001", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now(), null)
         ));
 
         var response = router.route("pero esas están en prueba");
@@ -868,8 +868,8 @@ class ChatIntentRouterTest {
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-001", "MISSION-DEBUG-007")))
         );
         when(missionMemory.findByIds(List.of("MISSION-001", "MISSION-DEBUG-007"))).thenReturn(List.of(
-                new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now()),
-                new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now())
+                new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "x", "y", Instant.now(), null),
+                new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now(), null)
         ));
 
         var response = router.route("¿esas están en prueba?");
@@ -887,7 +887,7 @@ class ChatIntentRouterTest {
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-1")))
         );
         when(missionMemory.findByIds(List.of("MISSION-1"))).thenReturn(List.of(
-                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now())
+                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now(), null)
         ));
         when(productStatusService.resolve("MISSION-1")).thenReturn(ProductStatus.DISCOVERY);
 
@@ -907,7 +907,7 @@ class ChatIntentRouterTest {
                 Optional.of(new LastMentioned("MISSION", List.of("MISSION-1")))
         );
         when(missionMemory.findByIds(List.of("MISSION-1"))).thenReturn(List.of(
-                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now())
+                new MissionResponse("MISSION-1", MissionStatus.COMPLETED, "PRODUCTION", 100, "x", "y", Instant.now(), null)
         ));
         when(productStatusService.resolve("MISSION-1")).thenReturn(ProductStatus.DESIGN);
         when(ceoService.chat(anyString(), anyString(), any(), anyString(), any(), any(), any())).thenReturn("ok");
@@ -969,7 +969,7 @@ class ChatIntentRouterTest {
 
     @Test
     void testMissionsQueryRecordsItsResultsAsTheNewFocus() {
-        var testMission = new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now());
+        var testMission = new MissionResponse("MISSION-DEBUG-007", MissionStatus.FAILED, "TEST", 100, "x", "y", Instant.now(), null);
         when(missionMemory.findAll(50)).thenReturn(List.of(testMission));
 
         router.route("¿Qué misiones están en prueba?");

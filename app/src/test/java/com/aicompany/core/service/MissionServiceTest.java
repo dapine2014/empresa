@@ -24,7 +24,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
         var mission = new MissionResponse(
                 "MISSION-001", MissionStatus.CREATED, "PRODUCTION", 0,
-                "Creada", "Misión recibida", Instant.parse("2026-09-12T00:00:00Z")
+                "Creada", "Misión recibida", Instant.parse("2026-09-12T00:00:00Z"), null
         );
 
         when(executor.executeAsync("MISSION-001", "Investigar una oportunidad"))
@@ -32,10 +32,10 @@ class MissionServiceTest {
         when(memory.find("MISSION-001")).thenReturn(Optional.of(mission));
 
         var service = new MissionService(memory, executor, eventPublisher);
-        var response = service.start("MISSION-001", "Investigar una oportunidad", "PRODUCTION");
+        var response = service.start("MISSION-001", "Investigar una oportunidad", "PRODUCTION", null);
 
         assertEquals(mission, response);
-        verify(memory).ensureMission("MISSION-001", "Investigar una oportunidad", "PRODUCTION");
+        verify(memory).ensureMission("MISSION-001", "Investigar una oportunidad", "PRODUCTION", null);
         verify(executor).executeAsync("MISSION-001", "Investigar una oportunidad");
         verify(memory).find("MISSION-001");
         verify(eventPublisher).publishMission(
@@ -71,7 +71,7 @@ class MissionServiceTest {
         var running = new MissionResponse(
                 "MISSION-001", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30,
                 "Trabajo paralelo", "Los agentes están trabajando en paralelo.",
-                Instant.parse("2026-09-12T00:00:00Z")
+                Instant.parse("2026-09-12T00:00:00Z"), null
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(running));
 
@@ -94,7 +94,7 @@ class MissionServiceTest {
         var awaitingInvestor = new MissionResponse(
                 "MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95,
                 "Recomendación", "informe final",
-                Instant.parse("2026-09-12T00:00:00Z")
+                Instant.parse("2026-09-12T00:00:00Z"), null
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
 
@@ -128,7 +128,7 @@ class MissionServiceTest {
         var awaitingInvestor = new MissionResponse(
                 "MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95,
                 "Recomendación", "informe final",
-                Instant.parse("2026-09-12T00:00:00Z")
+                Instant.parse("2026-09-12T00:00:00Z"), null
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
 
@@ -152,7 +152,7 @@ class MissionServiceTest {
         var awaitingInvestor = new MissionResponse(
                 "MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95,
                 "Recomendación", "informe final",
-                Instant.parse("2026-09-12T00:00:00Z")
+                Instant.parse("2026-09-12T00:00:00Z"), null
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
 
@@ -181,7 +181,7 @@ class MissionServiceTest {
         var failed = new MissionResponse(
                 "MISSION-001", MissionStatus.FAILED, "PRODUCTION", 100,
                 "Error", "Los 5 agentes fallaron",
-                Instant.parse("2026-09-12T00:00:00Z")
+                Instant.parse("2026-09-12T00:00:00Z"), null
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(failed));
 

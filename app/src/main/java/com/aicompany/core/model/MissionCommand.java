@@ -14,7 +14,8 @@ import java.util.Locale;
 public record MissionCommand(
         @NotBlank String missionId,
         @NotBlank String instruction,
-        String environment
+        String environment,
+        FinancialCriteriaCommand financialCriteria
 ) {
     public String environmentOrDefault() {
         return environment == null || environment.isBlank()
