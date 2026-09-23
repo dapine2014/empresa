@@ -3,14 +3,17 @@ package com.aicompany.core.service;
 import com.aicompany.core.agent.AgentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
-import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.FinancialCriteriaResponse;
+import com.aicompany.core.model.FinancialMetric;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.PolicyKey;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -40,7 +43,15 @@ class MissionExecutorTest {
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
     private final ContradictionDetector contradictionDetector = mock(ContradictionDetector.class);
-    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
+    private final CompanyPolicyService companyPolicyService = defaultCompanyPolicyService();
+
+    private static CompanyPolicyService defaultCompanyPolicyService() {
+        var mock = mock(CompanyPolicyService.class);
+        when(mock.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(50.0);
+        when(mock.activeValue(PolicyKey.CONTRADICTION_SEED_CAPITAL_MULTIPLE)).thenReturn(100.0);
+        return mock;
+    }
+
     private final OpportunityMemoryService opportunityMemory = mock(OpportunityMemoryService.class);
     private final AlertMailService alertMailService = mock(AlertMailService.class);
     private final PromptMemoryService promptMemory = defaultPromptMemory();
@@ -53,7 +64,7 @@ class MissionExecutorTest {
 
     private final MissionExecutor executor = new MissionExecutor(
             memory, runtime, ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events, jsonMapper,
-            contradictionDetector, appProperties, opportunityMemory, alertMailService
+            contradictionDetector, companyPolicyService, opportunityMemory, alertMailService
     );
 
     @Test
@@ -239,17 +250,17 @@ class MissionExecutorTest {
     }
 
     @Test
-    void financeObjectiveReferencesTheRealConfiguredSeedCapitalInsteadOfAHardcodedAmount() throws Exception {
-        // Bug real: el objetivo de Max tenía "US$50" pegado como literal
-        // en el código, desincronizado de company.seed-capital-usd (el
-        // valor real y configurable). Este test usa un capital semilla
-        // DISTINTO de 50 para probar que el texto sale del config real,
-        // no que "coincide" con un literal viejo.
-        var customAppProperties = new AppProperties("Forjai", 75.0, 60);
+    void financeObjectiveReferencesTheLiveSeedCapitalPolicyInsteadOfAHardcodedAmount() throws Exception {
+        // Ya no lee AppProperties -- lee la Company Policy vigente. Valor
+        // DISTINTO de 50 para probar que sale de la política real, no que
+        // "coincide" con un default.
+        var customPolicies = mock(CompanyPolicyService.class);
+        when(customPolicies.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(75.0);
+        when(customPolicies.activeValue(PolicyKey.CONTRADICTION_SEED_CAPITAL_MULTIPLE)).thenReturn(100.0);
 
         var executorWithCustomCapital = new MissionExecutor(
                 memory, runtime, ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events,
-                jsonMapper, contradictionDetector, customAppProperties, opportunityMemory, alertMailService
+                jsonMapper, contradictionDetector, customPolicies, opportunityMemory, alertMailService
         );
 
         stubAgent("sales");
@@ -266,14 +277,55 @@ class MissionExecutorTest {
         var instructionCaptor = ArgumentCaptor.forClass(String.class);
         verify(runtime).execute(anyString(), eq("MISSION-1"), eq("finance"), anyString(), instructionCaptor.capture());
 
-        // No asumir el separador decimal (depende del locale de la
-        // máquina, ver "US$%.2f" sin Locale explícito, mismo patrón ya
-        // usado en ChatIntentRouter) -- se arma el fragmento esperado
-        // con el mismo formatter que usa el código real, en vez de
-        // hardcodear "75.00".
         var expectedAmount = "US$%.2f".formatted(75.0);
-        assertTrue(instructionCaptor.getValue().contains(expectedAmount + " de utilidad neta"));
+        assertTrue(instructionCaptor.getValue().contains(expectedAmount));
         assertFalse(instructionCaptor.getValue().contains("US$50"));
+    }
+
+    @Test
+    void financeObjectiveIncludesMissionsStructuredFinancialCriteriaWhenDeclared() throws Exception {
+        when(memory.financialCriteria("MISSION-1")).thenReturn(Optional.of(
+                new FinancialCriteriaResponse(FinancialMetric.NET_PROFIT, 1000.0, "USD", java.time.LocalDate.of(2026, 11, 20))
+        ));
+
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
+
+        executor.executeAsync("MISSION-1", "instrucción").get();
+
+        var instructionCaptor = ArgumentCaptor.forClass(String.class);
+        verify(runtime).execute(anyString(), eq("MISSION-1"), eq("finance"), anyString(), instructionCaptor.capture());
+
+        var text = instructionCaptor.getValue();
+        assertTrue(text.contains("objetivo financiero explícito"));
+        assertTrue(text.contains("NET_PROFIT"));
+        assertTrue(text.contains("1000"));
+        assertTrue(text.contains("nunca alteres los valores"));
+    }
+
+    @Test
+    void financeObjectiveDoesNotAssertAnyTargetWhenMissionHasNoFinancialCriteria() throws Exception {
+        stubAgent("sales");
+        stubAgent("product");
+        stubAgent("finance");
+        stubAgent("engineering");
+        stubAgent("qa");
+
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
+
+        executor.executeAsync("MISSION-1", "instrucción").get();
+
+        var instructionCaptor = ArgumentCaptor.forClass(String.class);
+        verify(runtime).execute(anyString(), eq("MISSION-1"), eq("finance"), anyString(), instructionCaptor.capture());
+
+        assertFalse(instructionCaptor.getValue().contains("objetivo financiero explícito"));
     }
 
     private void stubAgent(String agentId) {

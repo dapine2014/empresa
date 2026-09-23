@@ -3,10 +3,11 @@ package com.aicompany.core.service;
 import com.aicompany.core.agent.AgentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
-import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.AgentExecutionOutcome;
+import com.aicompany.core.model.FinancialCriteriaResponse;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.PolicyKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -56,7 +57,7 @@ public class MissionExecutor {
     private final CompanyEventPublisher events;
     private final JsonMapper jsonMapper;
     private final ContradictionDetector contradictionDetector;
-    private final AppProperties appProperties;
+    private final CompanyPolicyService companyPolicyService;
     private final OpportunityMemoryService opportunityMemory;
     private final AlertMailService alertMailService;
 
@@ -72,7 +73,7 @@ public class MissionExecutor {
             CompanyEventPublisher events,
             JsonMapper jsonMapper,
             ContradictionDetector contradictionDetector,
-            AppProperties appProperties,
+            CompanyPolicyService companyPolicyService,
             OpportunityMemoryService opportunityMemory,
             AlertMailService alertMailService) {
 
@@ -86,7 +87,7 @@ public class MissionExecutor {
         this.events = events;
         this.jsonMapper = jsonMapper;
         this.contradictionDetector = contradictionDetector;
-        this.appProperties = appProperties;
+        this.companyPolicyService = companyPolicyService;
         this.opportunityMemory = opportunityMemory;
         this.alertMailService = alertMailService;
     }
@@ -173,6 +174,9 @@ public class MissionExecutor {
                     missionId
             );
 
+            var seedCapitalUsd = companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD);
+            var financialCriteria = memory.financialCriteria(missionId).orElse(null);
+
             var definitions = List.of(
 
                     new AgentDefinition(
@@ -190,9 +194,7 @@ public class MissionExecutor {
                     new AgentDefinition(
                             "finance",
                             "UNIT_ECONOMICS",
-                            ("Estimar costos, precio, margen y condiciones necesarias para superar "
-                                    + "US$%.2f de utilidad neta (capital semilla configurado de Forjai, "
-                                    + "no un objetivo fijo de esta tarea).").formatted(appProperties.seedCapitalUsd())
+                            financeObjective(seedCapitalUsd, financialCriteria)
                     ),
 
                     new AgentDefinition(
@@ -437,8 +439,8 @@ public class MissionExecutor {
             var contradictions =
                     contradictionDetector.detect(
                             agentResults,
-                            appProperties.seedCapitalUsd(),
-                            100.0
+                            seedCapitalUsd,
+                            companyPolicyService.activeValue(PolicyKey.CONTRADICTION_SEED_CAPITAL_MULTIPLE)
                     );
 
             if (!contradictions.isEmpty()) {
@@ -627,6 +629,32 @@ public class MissionExecutor {
         }
 
         return settled;
+    }
+
+    private String financeObjective(double seedCapitalUsd, FinancialCriteriaResponse financialCriteria) {
+
+        var base = ("Estimar costos, precio, margen y condiciones de la oferta, "
+                + "apoyándote en el capital semilla vigente de Forjai (US$%.2f) "
+                + "como recurso disponible de la empresa — no como un monto de "
+                + "utilidad que esta misión deba superar por defecto.")
+                .formatted(seedCapitalUsd);
+
+        if (financialCriteria == null) {
+            return base;
+        }
+
+        var deadlineText = financialCriteria.deadline() == null
+                ? "sin plazo definido"
+                : "para " + financialCriteria.deadline();
+
+        return base + " "
+                + ("Esta misión tiene un objetivo financiero explícito: %s >= %.2f %s, %s. "
+                        + "Analiza cómo alcanzarlo, pero nunca alteres los valores que reportes "
+                        + "para forzar que el resultado coincida con este objetivo — tu análisis "
+                        + "orienta la decisión, no reescribe los datos.")
+                .formatted(
+                        financialCriteria.metric(), financialCriteria.targetAmount(),
+                        financialCriteria.currency(), deadlineText);
     }
 
     private String serializeAgentResults(
