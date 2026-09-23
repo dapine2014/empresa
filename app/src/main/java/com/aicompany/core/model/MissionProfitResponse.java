@@ -7,6 +7,7 @@ public record MissionProfitResponse(
         double netProfitUsd,
         double seedCapitalUsd,
         boolean successCriterionMet,
-        String successLevel
+        String successLevel,
+        FinancialCriteriaEvaluation financialCriteriaEvaluation
 ) {
 }

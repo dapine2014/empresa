@@ -2,10 +2,12 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
-import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.CustomerCommand;
 import com.aicompany.core.model.CustomerResponse;
+import com.aicompany.core.model.FinancialCriteriaEvaluation;
+import com.aicompany.core.model.FinancialCriteriaResponse;
 import com.aicompany.core.model.MissionProfitResponse;
+import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.TransactionCommand;
 import com.aicompany.core.model.TransactionResponse;
 import org.springframework.stereotype.Service;
@@ -25,23 +27,21 @@ import java.util.Optional;
 @Service
 public class CustomerService {
 
-    private static final double GOOD_THRESHOLD = 50.0;
-    private static final double VERY_GOOD_THRESHOLD = 100.0;
-    private static final double EXCELLENT_THRESHOLD = 1000.0;
-    private static final double EXTRAORDINARY_THRESHOLD = 5000.0;
-
     private final CustomerMemoryService memory;
     private final EvidenceValidationGate evidenceGate;
-    private final AppProperties appProperties;
+    private final CompanyPolicyService companyPolicyService;
+    private final MissionMemoryService missionMemory;
 
     public CustomerService(
             CustomerMemoryService memory,
             EvidenceValidationGate evidenceGate,
-            AppProperties appProperties) {
+            CompanyPolicyService companyPolicyService,
+            MissionMemoryService missionMemory) {
 
         this.memory = memory;
         this.evidenceGate = evidenceGate;
-        this.appProperties = appProperties;
+        this.companyPolicyService = companyPolicyService;
+        this.missionMemory = missionMemory;
     }
 
     public CustomerResponse registerCustomer(
@@ -139,36 +139,49 @@ public class CustomerService {
         var totalRevenue = totals[0];
         var totalCost = totals[1];
         var netProfit = totalRevenue - totalCost;
-        var seedCapitalUsd = appProperties.seedCapitalUsd();
+        var seedCapitalUsd = companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD);
 
         var successCriterionMet = netProfit > seedCapitalUsd;
 
+        var evaluation = missionMemory.financialCriteria(missionId)
+                .map(fc -> evaluate(fc, netProfit))
+                .orElse(null);
+
         return new MissionProfitResponse(
-                missionId,
-                totalRevenue,
-                totalCost,
-                netProfit,
-                seedCapitalUsd,
-                successCriterionMet,
-                successLevel(netProfit)
+                missionId, totalRevenue, totalCost, netProfit, seedCapitalUsd,
+                successCriterionMet, successLevel(netProfit), evaluation
+        );
+    }
+
+    private FinancialCriteriaEvaluation evaluate(FinancialCriteriaResponse criteria, double netProfit) {
+
+        var criterionMet = netProfit >= criteria.targetAmount();
+        var progressPct = criteria.targetAmount() > 0 ? (netProfit / criteria.targetAmount()) * 100 : 0;
+        var deadlinePassed = criteria.deadline() == null
+                ? null
+                : (Boolean) java.time.LocalDate.now().isAfter(criteria.deadline());
+
+        return new FinancialCriteriaEvaluation(
+                criteria.metric(), criteria.targetAmount(), criteria.currency(), criteria.deadline(),
+                criterionMet, progressPct, deadlinePassed
         );
     }
 
     private String successLevel(double netProfit) {
 
-        if (netProfit >= EXTRAORDINARY_THRESHOLD) {
+        if (netProfit >= companyPolicyService.activeValue(PolicyKey.SUCCESS_THRESHOLD_EXTRAORDINARY)) {
             return "EXTRAORDINARIO";
         }
 
-        if (netProfit >= EXCELLENT_THRESHOLD) {
+        if (netProfit >= companyPolicyService.activeValue(PolicyKey.SUCCESS_THRESHOLD_EXCELLENT)) {
             return "EXCELENTE";
         }
 
-        if (netProfit > VERY_GOOD_THRESHOLD) {
+        if (netProfit > companyPolicyService.activeValue(PolicyKey.SUCCESS_THRESHOLD_VERY_GOOD)) {
             return "MUY_BUENO";
         }
 
-        if (netProfit > GOOD_THRESHOLD) {
+        if (netProfit > companyPolicyService.activeValue(PolicyKey.SUCCESS_THRESHOLD_GOOD)) {
             return "BUENO";
         }
 
