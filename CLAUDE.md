@@ -190,7 +190,7 @@ El chat del CEO (`CeoService.chat`) y la consolidación de misión son una sola 
 
 ### Configuración
 
-Todo por variables de entorno (defaults de dev en `app/src/main/resources/application.yml`): `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`, `OLLAMA_BASE_URL`, `ollama.ceo-model`/`ollama.agent-model` (default `qwen2.5-coder:14b`/`qwen2.5-coder:7b` — nota: el agente real en uso es `qwen3:8b` vía `OLLAMA_AGENT_MODEL`, ver `docker-compose.yml`; **solo defaults de seed del primer arranque**, ver "LLM: Ollama" más arriba — no tienen efecto sobre un `Agent.model` ya sembrado), `KAFKA_BOOTSTRAP_SERVERS`, `SERVER_PORT` (8081), `MAIL_HOST`/`MAIL_PORT` (default `smtp.gmail.com:587`, transporte genérico sin credenciales de cuenta — esas viven en Neo4j, ver "Alertas por correo"). Capital semilla US$50 y ventana de 60 días en `company.*` (`AppProperties`). `NEO4J_PASSWORD` se toma de `.env` en Docker Compose.
+Todo por variables de entorno (defaults de dev en `app/src/main/resources/application.yml`): `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`, `OLLAMA_BASE_URL`, `ollama.ceo-model`/`ollama.agent-model` (default `qwen2.5-coder:14b`/`qwen2.5-coder:7b` — nota: el agente real en uso es `qwen3:8b` vía `OLLAMA_AGENT_MODEL`, ver `docker-compose.yml`; **solo defaults de seed del primer arranque**, ver "LLM: Ollama" más arriba — no tienen efecto sobre un `Agent.model` ya sembrado), `KAFKA_BOOTSTRAP_SERVERS`, `SERVER_PORT` (8081), `MAIL_HOST`/`MAIL_PORT` (default `smtp.gmail.com:587`, transporte genérico sin credenciales de cuenta — esas viven en Neo4j, ver "Alertas por correo"). Capital semilla US$50 y ventana de 60 días en `company.*` (`AppProperties`) — igual que `ollama.agent-model`/`ollama.ceo-model`, `company.seed-capital-usd`/`company.challenge-days` son hoy **solo default de seed del primer arranque**: `CompanyPolicyService.ensureDefaultPolicies()` los usa como valor inicial de `PolicyKey.SEED_CAPITAL_USD`/`CHALLENGE_DAYS` la primera vez, y no vuelven a pisar el valor real una vez sembrado en Neo4j — para cambiarlo después hay que usar `PUT /api/company/policies/{key}` (ver "Company Financial Policies y Mission.financialCriteria" más abajo). `NEO4J_PASSWORD` se toma de `.env` en Docker Compose.
 
 ### Definiciones de agentes
 
@@ -252,6 +252,123 @@ Editable desde el organigrama de `AgentsPage.tsx`: click en cualquier
 tarjeta abre un panel con el prompt activo, motivo del cambio
 (obligatorio al guardar), y el historial completo con botón "Activar"
 por versión.
+
+### Company Financial Policies y Mission.financialCriteria
+
+Separación en 4 capas (documento de diseño:
+`docs/superpowers/specs/2026-09-22-financial-policies-design.md`), de las
+cuales solo las primeras 2 son configurables; las otras 2 son reglas de
+dominio deterministas que **no** se tocan (`netProfitUsd = revenueUsd -
+costUsd`, validación de `Calculation`, gates de evidencia): 1) Company
+Financial Policies (parámetros de la empresa, esta sección), 2)
+`Mission.financialCriteria` (objetivo puntual de una misión, esta
+sección), 3) Agent Prompt (sin cambios, ver arriba), 4) Domain Financial
+Rules (código puro, sin mecanismo de edición).
+
+**Company Financial Policies** (`CompanyPolicyService`, `model/PolicyKey.java`)
+es el mirror exacto de `PromptMemoryService` aplicado a parámetros
+financieros: `(:CompanyPolicy {key})-[:HAS_POLICY_VERSION]->(:PolicyVersion
+{version, value, createdBy, changeReason, createdAt})`,
+`-[:HAS_ACTIVE_POLICY]->` apunta a exactamente una (mismo invariante
+transaccional que `HAS_ACTIVE_PROMPT`). A diferencia del prompt de
+agentes, acá no hay paso de "borrador": `createVersion` crea y activa en
+la misma transacción — editar una política es siempre efectivo de
+inmediato. Catálogo fijo de 7 en el enum `PolicyKey` (agregar una octava
+es cambio de código, no de datos, mismo criterio que
+`TeamMemoryService.TEAMS`): `SEED_CAPITAL_USD` (default seed 50),
+`CHALLENGE_DAYS` (default seed 60), `CONTRADICTION_SEED_CAPITAL_MULTIPLE`
+(default 100, el mismo multiplicador que antes era
+`ContradictionDetector.SEED_CAPITAL_MULTIPLE_THRESHOLD` hardcoded), y los
+4 umbrales de clasificación de venta que antes eran `static final double`
+en `CustomerService` — `SUCCESS_THRESHOLD_GOOD` (50), `_VERY_GOOD` (100),
+`_EXCELLENT` (1.000), `_EXTRAORDINARY` (5.000). `ensureDefaultPolicies()`
+siembra estos 7 valores idempotentemente en `ApplicationReadyEvent`
+(`createdBy='system'`, vs. `'human'` para ediciones reales posteriores —
+mismo criterio que `PromptMemoryService`, deliberadamente distinto solo
+en ese valor de string). `activeValue(PolicyKey)` es el hot path de
+lectura usado por `MissionExecutor`/`CustomerService`. `ContradictionDetector`
+se mantiene como función pura sin dependencia a Neo4j: recibe el
+multiplicador como parámetro explícito
+(`detect(results, seedCapitalUsd, seedCapitalMultipleThreshold)`) — es
+`MissionExecutor` quien resuelve ambos valores desde
+`CompanyPolicyService` antes de llamarlo. Endpoints: `GET
+/api/company/policies` (las 7 con historial completo), `PUT
+/api/company/policies/{key}` (`PolicyCommand{value, changeReason}` —
+`value` debe ser `> 0`, `IllegalArgumentException` → 500 si no), `PUT
+/api/company/policies/{key}/versions/{version}/activate` (rollback,
+reactiva un nodo existente, nunca duplica contenido). Frontend: sección
+"Financial Policies" en `SettingsPage.tsx`, tabla de las 7 con edición
+inline (motivo obligatorio) e historial con botón "Activar" —
+componente `PolicyEditor` nuevo, no una generalización forzada de
+`PromptEditor`.
+
+**`Mission.financialCriteria`** es el objetivo financiero puntual de una
+misión concreta — estructurado, opcional, e **inmutable una vez creada
+la misión** (no hay `PUT` para editarlo después; se declara una sola vez
+al arrancar). Propiedades aplanadas y opcionales en el nodo `Mission`
+(mismo criterio que `Mission.environment` — sin nodo aparte, es 1:0..1 y
+pequeño): `financialCriteriaMetric` (string del enum `FinancialMetric`,
+hoy solo `NET_PROFIT`), `financialCriteriaTargetAmount` (double, debe ser
+`> 0`), `financialCriteriaCurrency` (normalizado a mayúsculas, default
+`"USD"` si viene vacío/null), `financialCriteriaDeadline` (string ISO
+`LocalDate`, opcional incluso si el resto está presente — rechazado en
+`MissionService.start` si es anterior a la fecha de creación de la
+misión). Si la misión no declaró objetivo, las 4 propiedades quedan
+ausentes (asignar `null` en Cypher remueve la propiedad).
+`MissionMemoryService.financialCriteria(missionId)` es un método de
+lectura dedicado y liviano (separado de `find()` para no acoplar el mock
+de `MissionExecutorTest` al resto de `MissionResponse`); `find()`/`findAll()`
+también mapean las 4 propiedades a `FinancialCriteriaResponse` dentro de
+`MissionResponse` cuando están presentes. `MissionCommand`/`MissionResponse`
+ganan el campo `financialCriteria` (nullable,
+`FinancialCriteriaCommand`/`FinancialCriteriaResponse`). Una misión
+iniciada por chat en lenguaje libre
+(`ChatIntentRouter.detectFreeMissionStart`) sigue naciendo con
+`financialCriteria = null` — no hay parsing LLM de un objetivo financiero
+desde texto libre, deliberadamente fuera de alcance; el único mecanismo
+para declararlo hoy es el formulario del Command Center.
+
+`MissionExecutor` **ya no tiene un objetivo universal hardcodeado** para
+Max (finance) — el viejo "superar US$50 de utilidad neta" desapareció.
+El texto de la tarea `UNIT_ECONOMICS` se arma 100% en Java, nunca
+interpretado por un LLM: siempre incluye el capital semilla vigente
+(`companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)`, ya no
+`appProperties.seedCapitalUsd()`); si la misión declaró
+`financialCriteria`, se agrega un bloque estructurado ("esta misión
+tiene un objetivo financiero explícito: {metric} ≥ {targetAmount}
+{currency} para {deadline}") con la instrucción explícita de que Max
+debe analizar cómo alcanzarlo **sin alterar los valores que reporte** —
+el criterio orienta el análisis, nunca fuerza ni redondea los números
+que Max calcula (`AgentResultValidator` sigue recalculando cada
+`Calculation` igual que siempre). El `AgentResult` de Max no gana ningún
+campo de "objetivo cumplido" — Max nunca autodeclara cumplimiento; eso
+se evalúa exclusivamente en capa determinista (siguiente párrafo). Si no
+hay `financialCriteria`, no se afirma ningún monto "a superar".
+
+**Evaluación de cumplimiento**, exclusivamente contra resultados reales
+(nunca contra lo que reporta un agente): `GET
+/missions/{id}/net-profit` (`CustomerService.netProfit`, ver "Customer
+Validation" arriba) gana `financialCriteriaEvaluation` en
+`MissionProfitResponse` (nullable, ausente si la misión no declaró
+criterio) — `FinancialCriteriaEvaluation{metric, targetAmount, currency,
+deadline, criterionMet (netProfit >= targetAmount), progressPct
+(netProfit / targetAmount * 100), deadlinePassed (null si no hay
+deadline, puramente informativo)}`. Ningún vencimiento de `deadline`
+cierra, falla ni transiciona la misión automáticamente — coherente con
+que solo el inversionista humano decide el estado final (`POST
+/missions/{id}/decision`). `CustomerService` pierde su dependencia a
+`AppProperties` (gana `CompanyPolicyService` para los umbrales de venta,
+y `MissionMemoryService` para leer `financialCriteria`).
+`ChatIntentRouter` expone `financialCriteria` + su evaluación en el
+lookup determinista ya existente de `MISSION-<id>` (100% Java, mismo
+punto que resuelve `ProductStatusService` — no hace falta `QueryIntent`
+ni topic nuevo).
+
+Frontend: `MissionDetailPage.tsx` muestra `financialCriteria` (si existe)
+y `financialCriteriaEvaluation`; `MissionsPage.tsx` gana un formulario
+"Iniciar misión" (missionId autogenerado `"MISSION-" + Date.now()`,
+mismo criterio que `detectFreeMissionStart`; instrucción; environment;
+sub-sección opcional colapsable "Objetivo financiero").
 
 ### Chat Intent Router (`ChatIntentRouter`)
 

@@ -436,3 +436,98 @@ sin misiones en curso): confirmado por los endpoints reales —
 el historial de las versiones de prueba (`v2`/`v3`) queda, es
 inmutable por diseño (sin endpoint de borrado). Contenedor confirmado
 sano (`/actuator/health`) antes y después.
+
+### Company Financial Policies + Mission.financialCriteria
+
+`MissionExecutor` fijaba un objetivo universal para Max (finance):
+"superar US$50 de utilidad neta" — un literal que ya referenciaba
+`AppProperties.seedCapitalUsd()` en vez de un número pegado en el
+string, pero seguía siendo (a) un objetivo *universal* impuesto a toda
+misión y (b) parte de un conjunto más amplio de reglas financieras
+hardcodeadas sin ningún mecanismo de edición (capital semilla, ventana
+de tiempo, umbrales de éxito de venta en `CustomerService`, multiplicador
+de alerta de `ContradictionDetector`). Documento de diseño completo:
+`docs/superpowers/specs/2026-09-22-financial-policies-design.md`.
+
+Antes de escribir el plan de implementación se acordaron con el fundador
+3 decisiones de alcance:
+
+1. **Los umbrales de clasificación de venta (`SUCCESS_THRESHOLD_GOOD`/
+   `_VERY_GOOD`/`_EXCELLENT`/`_EXTRAORDINARY`) siguen siendo valores
+   absolutos e independientes del capital semilla configurado** — se
+   vuelven editables como Company Policy (en vez de `static final
+   double` en `CustomerService`), pero no se les agrega ninguna fórmula
+   que los escale automáticamente en función de `SEED_CAPITAL_USD` u
+   otra política. Es una decisión deliberada de mantener el
+   comportamiento ya documentado en `CLAUDE.md` ("no escalan con el
+   capital semilla configurado"), no una limitación técnica: si en el
+   futuro se quiere que escalen, es un cambio de diseño aparte, no un
+   efecto secundario de este.
+2. **`Mission.financialCriteria` es un campo estructurado
+   (`FinancialMetric`/`targetAmount`/`currency`/`deadline`), nunca texto
+   libre parseado por un LLM.** Se evaluó y se descartó explícitamente
+   la alternativa de dejar que el fundador escriba el objetivo en
+   lenguaje natural y que un modelo lo interprete al iniciar la misión
+   — mismo criterio ya aplicado en todo el proyecto a decisiones que
+   deben ser deterministas y auditables (`ChatIntentRouter` clasifica
+   por regex antes de tocar Ollama, las consultas de compañía se
+   formatean 100% en Java): un objetivo financiero mal interpretado por
+   un LLM sería un riesgo de gobernanza mayor que la fricción de un
+   formulario estructurado. Consecuencia directa: una misión iniciada
+   por chat en lenguaje libre sigue naciendo con `financialCriteria =
+   null` — no se intenta inferirlo del mensaje.
+3. **El formulario "Iniciar misión" del Command Center (`MissionsPage.tsx`)
+   se incluyó en esta misma ronda de trabajo**, en vez de quedar como
+   una mejora de UI separada para después — sin él, la única forma de
+   declarar un `financialCriteria` habría sido `POST
+   /api/company/missions` a mano (curl/Postman), lo que hubiera dejado
+   la feature completa en el backend pero inutilizable desde la
+   interfaz principal de operación de la empresa (ver "Command Center
+   web" en `CLAUDE.md`: la web es la forma *principal* de operar, no un
+   complemento).
+
+Decisiones de diseño técnico, todas mirror de patrones ya probados en
+este repo (no inventadas para esta feature): `CompanyPolicyService`
+reutiliza exactamente el patrón `PromptVersion`/`HAS_ACTIVE_PROMPT` de
+`PromptMemoryService` (mismo invariante transaccional de "exactamente
+una versión activa"), con una diferencia deliberada — acá no hay paso de
+"borrador", `createVersion` crea y activa en la misma transacción,
+porque una política financiera no tiene el mismo caso de uso de
+"redactar y revisar antes de publicar" que un prompt largo.
+`AppProperties.seedCapitalUsd()`/`challengeDays()` se degradan a default
+de seed del primer arranque únicamente, mismo patrón ya aplicado a
+`Agent.model`/`ollama.agent-model`. `ContradictionDetector` se mantiene
+como función pura sin acceso a Neo4j (cambia su firma para recibir el
+multiplicador como parámetro explícito) — deliberadamente no se le dio
+acceso directo a `CompanyPolicyService` para no convertir una clase de
+reglas deterministas en un cliente de infraestructura.
+
+Los 13 tasks de implementación (backend: `PolicyKey`/`CompanyPolicyService`
++ endpoints, `Mission.financialCriteria` + validación en
+`MissionService.start`, reemplazo del objetivo hardcodeado en
+`MissionExecutor`, migración de `ContradictionDetector`/`CustomerService`
+a `CompanyPolicyService`, `FinancialCriteriaEvaluation` en
+`GET .../net-profit`, exposición en `ChatIntentRouter`; frontend: tipos y
+cliente API, sección "Financial Policies" en `SettingsPage.tsx`,
+formulario "Iniciar misión" con objetivo financiero opcional en
+`MissionsPage.tsx`, y despliegue de `financialCriteria`/su evaluación en
+`MissionDetailPage.tsx`) se ejecutaron con revisión de código limpia en
+cada uno (ver `.superpowers/sdd/2026-09-22-financial-policies/progress.md`
+para el detalle task por task) — sin hallazgos bloqueantes, solo un
+puñado de items menores parqueados deliberadamente (nombres/casts
+cosméticos, CSS sin terminar en el formulario nuevo, cobertura de test
+parcial en algunos campos de paso). `mvn test` (190 tests en baseline) y
+`npm run lint && npm run build` verificados en verde al cierre de la
+ronda de documentación.
+
+**Verificación en vivo (Docker + Neo4j + Ollama reales) pendiente**: las
+Tasks 11-13 (frontend) documentan explícitamente que la verificación en
+navegador contra el contenedor real se difirió a esta última ronda
+porque el puerto 8081 estaba ocupado por un contenedor de producción
+real (`ai-company-core`) — reconstruirlo requiere confirmar primero que
+no hay una misión real en curso, una decisión que le corresponde
+tomarla al fundador humano, no a un agente. Queda pendiente de completar
+y registrar en una entrada posterior de este archivo: confirmar `GET
+/api/company/policies` con las 7 políticas sembradas, editar una
+política desde Settings y confirmar el efecto vía chat, e iniciar una
+misión real con objetivo financiero desde el formulario nuevo.
