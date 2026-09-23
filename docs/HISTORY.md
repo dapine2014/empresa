@@ -520,14 +520,44 @@ cosméticos, CSS sin terminar en la sección Financial Policies de
 `npm run lint && npm run build` verificados en verde al cierre de la
 ronda de documentación.
 
-**Verificación en vivo (Docker + Neo4j + Ollama reales) pendiente**: las
-Tasks 11-13 (frontend) documentan explícitamente que la verificación en
-navegador contra el contenedor real se difirió a esta última ronda
-porque el puerto 8081 estaba ocupado por un contenedor de producción
-real (`ai-company-core`) — reconstruirlo requiere confirmar primero que
-no hay una misión real en curso, una decisión que le corresponde
-tomarla al fundador humano, no a un agente. Queda pendiente de completar
-y registrar en una entrada posterior de este archivo: confirmar `GET
-/api/company/policies` con las 7 políticas sembradas, editar una
-política desde Settings y confirmar el efecto vía chat, e iniciar una
-misión real con objetivo financiero desde el formulario nuevo.
+**Verificación en vivo (Docker + Neo4j + Ollama reales), completada**:
+el fundador confirmó que no había ninguna misión real en curso y
+autorizó reconstruir `ai-company-core` con el código de esta feature
+(rebuild desde el worktree, `docker compose build && up -d`, contenedor
+sano post-arranque). Verificado contra el contenedor real:
+
+- `GET /api/company/policies` devuelve las 7 políticas correctamente
+  sembradas (`createdBy='system'`, `changeReason='Valor inicial de
+  seed'`, versión 1 cada una).
+- `PUT /api/company/policies/SEED_CAPITAL_USD` (US$50 → US$200) crea y
+  activa la versión 2 en la misma llamada (sin paso de "borrador", tal
+  como se diseñó); el chat (`"dame el estado de la empresa"`) refleja
+  de inmediato `capital disponible US$200.00` — confirma que
+  `ChatIntentRouter.formatCompanyStatus` ya lee la política vigente, no
+  un valor stale de `AppProperties`. Rollback a la versión 1 probado
+  también (`PUT .../versions/1/activate`), reactiva US$50 sin duplicar
+  contenido, el historial conserva ambas versiones.
+- Una misión real (`environment=TEST`, `MISSION-VERIFY-FINPOL-*`) con
+  `financialCriteria={NET_PROFIT, US$1.000, deadline 2026-12-31}`
+  corrió de punta a punta contra los 5 agentes reales (`qwen3:8b` vía
+  Ollama). Log real capturado del agente finance en el intento 1:
+  `Cálculo inconsistente: Suscriptores necesarios para alcanzar $1000
+  de ganancia neta expected=1005.0 actual=200.0` — evidencia directa de
+  que Max efectivamente razonó sobre el objetivo estructurado de la
+  misión (no un monto universal hardcodeado), y de que
+  `AgentResultValidator` rechazó el cálculo inconsistente y forzó un
+  reintento (intento 2, aprobado) — exactamente el comportamiento
+  diseñado: Max nunca autodeclara cumplimiento, y un cálculo que no
+  cierra se rechaza igual que siempre.
+- `GET .../net-profit` de esa misión devolvió
+  `financialCriteriaEvaluation` completo (`criterionMet=false`,
+  `progressPct=0.0`, `deadlinePassed=false` — coherente, todavía sin
+  `Transaction` reales registradas). El chat sobre esa misión puntual
+  (`"dame el estado de la mision MISSION-VERIFY-FINPOL-*"`) incluyó la
+  línea `Objetivo financiero declarado: NET_PROFIT >= 1000.00 USD
+  (2026-12-31). Resultado real: 0.00 USD (0.0% del objetivo) --
+  objetivo no cumplido todavía.`
+
+Sin hallazgos durante la verificación en vivo — los 14 tasks del plan
+se comportan en producción real exactamente como documentaron sus
+revisiones de código.
