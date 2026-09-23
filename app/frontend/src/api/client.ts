@@ -4,8 +4,12 @@ import type {
   ChatResponse,
   DecisionCommand,
   DecisionResponse,
+  MissionCommand,
+  MissionProfitResponse,
   MissionResponse,
   MissionStatusResponse,
+  PolicyCommand,
+  PolicySnapshot,
   PromptCommand,
   PromptSnapshot,
   PromptVersionContent,
@@ -76,6 +80,28 @@ export const api = {
   updateSettings: (command: SettingsCommand) =>
     request<SettingsResponse>('/api/company/settings', {
       method: 'PUT',
+      body: JSON.stringify(command),
+    }),
+
+  policies: () => request<PolicySnapshot[]>('/api/company/policies'),
+
+  updatePolicy: (key: string, command: PolicyCommand) =>
+    request<PolicySnapshot>(`/api/company/policies/${key}`, {
+      method: 'PUT',
+      body: JSON.stringify(command),
+    }),
+
+  activatePolicyVersion: (key: string, version: number) =>
+    request<PolicySnapshot>(`/api/company/policies/${key}/versions/${version}/activate`, {
+      method: 'PUT',
+    }),
+
+  netProfit: (missionId: string) =>
+    request<MissionProfitResponse>(`/api/company/missions/${missionId}/net-profit`),
+
+  startMission: (command: MissionCommand) =>
+    request<MissionResponse>('/api/company/missions', {
+      method: 'POST',
       body: JSON.stringify(command),
     }),
 }

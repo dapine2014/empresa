@@ -26,6 +26,7 @@ export interface MissionResponse {
   currentStep: string
   message: string
   updatedAt: string
+  financialCriteria: FinancialCriteriaResponse | null
 }
 
 export interface AgentTask {
@@ -143,5 +144,82 @@ export interface PromptVersionContent {
 
 export interface PromptCommand {
   content: string
+  changeReason: string
+}
+
+export type FinancialMetric = 'NET_PROFIT'
+
+export interface FinancialCriteriaCommand {
+  metric: FinancialMetric
+  targetAmount: number
+  currency: string
+  deadline: string | null
+}
+
+export interface FinancialCriteriaResponse {
+  metric: FinancialMetric
+  targetAmount: number
+  currency: string
+  deadline: string | null
+}
+
+export interface FinancialCriteriaEvaluation {
+  metric: FinancialMetric
+  targetAmount: number
+  currency: string
+  deadline: string | null
+  criterionMet: boolean
+  progressPct: number
+  deadlinePassed: boolean | null
+}
+
+export interface MissionProfitResponse {
+  missionId: string
+  totalRevenueUsd: number
+  totalCostUsd: number
+  netProfitUsd: number
+  seedCapitalUsd: number
+  successCriterionMet: boolean
+  successLevel: string
+  financialCriteriaEvaluation: FinancialCriteriaEvaluation | null
+}
+
+export interface MissionCommand {
+  missionId: string
+  instruction: string
+  environment: string
+  financialCriteria: FinancialCriteriaCommand | null
+}
+
+// Company Financial Policy versionada -- ver GET/PUT /api/company/policies
+export type PolicyKey =
+  | 'SEED_CAPITAL_USD'
+  | 'CHALLENGE_DAYS'
+  | 'CONTRADICTION_SEED_CAPITAL_MULTIPLE'
+  | 'SUCCESS_THRESHOLD_GOOD'
+  | 'SUCCESS_THRESHOLD_VERY_GOOD'
+  | 'SUCCESS_THRESHOLD_EXCELLENT'
+  | 'SUCCESS_THRESHOLD_EXTRAORDINARY'
+
+export interface PolicyVersionSummary {
+  version: number
+  value: number
+  createdBy: string
+  changeReason: string
+  createdAt: string
+}
+
+export interface PolicySnapshot {
+  key: PolicyKey
+  activeVersion: number
+  activeValue: number
+  createdBy: string
+  changeReason: string
+  updatedAt: string
+  history: PolicyVersionSummary[]
+}
+
+export interface PolicyCommand {
+  value: number
   changeReason: string
 }
