@@ -2,12 +2,16 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.DecisionCommand;
+import com.aicompany.core.model.FinancialCriteriaCommand;
+import com.aicompany.core.model.FinancialCriteriaResponse;
+import com.aicompany.core.model.FinancialMetric;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -192,5 +196,57 @@ class MissionServiceTest {
         );
 
         assertTrue(response.isPresent());
+    }
+
+    @Test
+    void startPersistsFinancialCriteriaWhenProvided() {
+        var memory = mock(MissionMemoryService.class);
+        var executor = mock(MissionExecutor.class);
+        var eventPublisher = mock(CompanyEventPublisher.class);
+        var criteria = new FinancialCriteriaCommand(FinancialMetric.NET_PROFIT, 1000.0, "USD", LocalDate.now().plusDays(30));
+        var mission = new MissionResponse(
+                "MISSION-001", MissionStatus.CREATED, "PRODUCTION", 0,
+                "Creada", "Misión recibida", Instant.parse("2026-09-12T00:00:00Z"),
+                new FinancialCriteriaResponse(FinancialMetric.NET_PROFIT, 1000.0, "USD", LocalDate.now().plusDays(30))
+        );
+
+        when(executor.executeAsync("MISSION-001", "Investigar una oportunidad"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(memory.find("MISSION-001")).thenReturn(Optional.of(mission));
+
+        var service = new MissionService(memory, executor, eventPublisher);
+        service.start("MISSION-001", "Investigar una oportunidad", "PRODUCTION", criteria);
+
+        verify(memory).ensureMission("MISSION-001", "Investigar una oportunidad", "PRODUCTION", criteria);
+    }
+
+    @Test
+    void rejectsFinancialCriteriaWithNonPositiveTargetAmount() {
+        var memory = mock(MissionMemoryService.class);
+        var executor = mock(MissionExecutor.class);
+        var eventPublisher = mock(CompanyEventPublisher.class);
+        var criteria = new FinancialCriteriaCommand(FinancialMetric.NET_PROFIT, 0.0, "USD", null);
+
+        var service = new MissionService(memory, executor, eventPublisher);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.start("MISSION-001", "Investigar", "PRODUCTION", criteria));
+
+        verify(memory, never()).ensureMission(any(), any(), any(), any());
+    }
+
+    @Test
+    void rejectsFinancialCriteriaWithDeadlineInThePast() {
+        var memory = mock(MissionMemoryService.class);
+        var executor = mock(MissionExecutor.class);
+        var eventPublisher = mock(CompanyEventPublisher.class);
+        var criteria = new FinancialCriteriaCommand(FinancialMetric.NET_PROFIT, 1000.0, "USD", LocalDate.now().minusDays(1));
+
+        var service = new MissionService(memory, executor, eventPublisher);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.start("MISSION-001", "Investigar", "PRODUCTION", criteria));
+
+        verify(memory, never()).ensureMission(any(), any(), any(), any());
     }
 }

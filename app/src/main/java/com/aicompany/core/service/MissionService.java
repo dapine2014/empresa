@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,6 +34,8 @@ public class MissionService {
     }
 
     public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
+        validateFinancialCriteria(financialCriteria);
+
         memory.ensureMission(missionId, instruction, environment, financialCriteria);
 
         events.publishMission(
@@ -156,5 +159,25 @@ public class MissionService {
                 command.decision(),
                 Instant.now()
         ));
+    }
+
+    private void validateFinancialCriteria(FinancialCriteriaCommand financialCriteria) {
+
+        if (financialCriteria == null) {
+            return;
+        }
+
+        if (financialCriteria.metric() == null) {
+            throw new IllegalArgumentException(
+                    "financialCriteria.metric es obligatorio si se declara un objetivo financiero");
+        }
+
+        if (financialCriteria.targetAmount() <= 0) {
+            throw new IllegalArgumentException("financialCriteria.targetAmount debe ser mayor a 0");
+        }
+
+        if (financialCriteria.deadline() != null && financialCriteria.deadline().isBefore(LocalDate.now())) {
+            throw new IllegalArgumentException("financialCriteria.deadline no puede ser anterior a hoy");
+        }
     }
 }
