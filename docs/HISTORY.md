@@ -515,8 +515,8 @@ formulario "Iniciar misión" con objetivo financiero opcional en
 cada uno (ver `.superpowers/sdd/2026-09-22-financial-policies/progress.md`
 para el detalle task por task) — sin hallazgos bloqueantes, solo un
 puñado de items menores parqueados deliberadamente (nombres/casts
-cosméticos, CSS sin terminar en el formulario nuevo, cobertura de test
-parcial en algunos campos de paso). `mvn test` (190 tests en baseline) y
+cosméticos, CSS sin terminar en la sección Financial Policies de
+`SettingsPage.tsx`, cobertura de test parcial en algunos campos de paso). `mvn test` (202 tests, 190 en el baseline previo a este feature) y
 `npm run lint && npm run build` verificados en verde al cierre de la
 ronda de documentación.
 

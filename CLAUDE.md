@@ -299,7 +299,7 @@ multiplicador como parámetro explícito
 reactiva un nodo existente, nunca duplica contenido). Frontend: sección
 "Financial Policies" en `SettingsPage.tsx`, tabla de las 7 con edición
 inline (motivo obligatorio) e historial con botón "Activar" —
-componente `PolicyEditor` nuevo, no una generalización forzada de
+componente `PolicyRow` nuevo, no una generalización forzada de
 `PromptEditor`.
 
 **`Mission.financialCriteria`** es el objetivo financiero puntual de una
