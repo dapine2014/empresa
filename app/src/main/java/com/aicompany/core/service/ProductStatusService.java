@@ -1,6 +1,6 @@
 package com.aicompany.core.service;
 
-import com.aicompany.core.config.AppProperties;
+import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.ProductStatus;
 import org.springframework.stereotype.Service;
 
@@ -35,16 +35,16 @@ public class ProductStatusService {
 
     private final MissionMemoryService missionMemory;
     private final CustomerMemoryService customerMemory;
-    private final AppProperties appProperties;
+    private final CompanyPolicyService companyPolicyService;
 
     public ProductStatusService(
             MissionMemoryService missionMemory,
             CustomerMemoryService customerMemory,
-            AppProperties appProperties) {
+            CompanyPolicyService companyPolicyService) {
 
         this.missionMemory = missionMemory;
         this.customerMemory = customerMemory;
-        this.appProperties = appProperties;
+        this.companyPolicyService = companyPolicyService;
     }
 
     public ProductStatus resolve(String missionId) {
@@ -81,7 +81,7 @@ public class ProductStatusService {
         var totals = customerMemory.totalRevenueAndCost(missionId);
         var netProfit = totals[0] - totals[1];
 
-        return netProfit > appProperties.seedCapitalUsd();
+        return netProfit > companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD);
     }
 
     private boolean isMonetizing(String missionId) {

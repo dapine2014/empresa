@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.PolicySnapshot;
 import com.aicompany.core.model.PolicyVersionSummary;
@@ -32,17 +33,17 @@ import java.util.Map;
 public class CompanyPolicyService {
 
     private final Driver driver;
+    private final Map<PolicyKey, Double> defaults;
 
-    public CompanyPolicyService(Driver driver) {
+    public CompanyPolicyService(Driver driver, AppProperties appProperties) {
         this.driver = driver;
+        this.defaults = defaults(appProperties);
     }
 
-    private static final Map<PolicyKey, Double> DEFAULTS = defaults();
-
-    private static Map<PolicyKey, Double> defaults() {
+    private static Map<PolicyKey, Double> defaults(AppProperties appProperties) {
         var map = new LinkedHashMap<PolicyKey, Double>();
-        map.put(PolicyKey.SEED_CAPITAL_USD, 50.0);
-        map.put(PolicyKey.CHALLENGE_DAYS, 60.0);
+        map.put(PolicyKey.SEED_CAPITAL_USD, appProperties.seedCapitalUsd());
+        map.put(PolicyKey.CHALLENGE_DAYS, (double) appProperties.challengeDays());
         map.put(PolicyKey.CONTRADICTION_SEED_CAPITAL_MULTIPLE, 100.0);
         map.put(PolicyKey.SUCCESS_THRESHOLD_GOOD, 50.0);
         map.put(PolicyKey.SUCCESS_THRESHOLD_VERY_GOOD, 100.0);
@@ -62,7 +63,7 @@ public class CompanyPolicyService {
     public void ensureDefaultPolicies() {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                for (var entry : DEFAULTS.entrySet()) {
+                for (var entry : defaults.entrySet()) {
                     tx.run(
                             "MERGE (p:CompanyPolicy {key:$key}) "
                                     + "WITH p WHERE NOT (p)-[:HAS_ACTIVE_POLICY]->(:PolicyVersion) "

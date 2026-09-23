@@ -1,7 +1,7 @@
 package com.aicompany.core.service;
 
-import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.AgentTask;
+import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.ProductStatus;
 import org.junit.jupiter.api.Test;
 
@@ -16,10 +16,16 @@ class ProductStatusServiceTest {
 
     private final MissionMemoryService missionMemory = mock(MissionMemoryService.class);
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
-    private final AppProperties appProperties = new AppProperties("Forjai", 50.0, 60);
+    private final CompanyPolicyService companyPolicyService = defaultCompanyPolicyService();
+
+    private static CompanyPolicyService defaultCompanyPolicyService() {
+        var mock = mock(CompanyPolicyService.class);
+        when(mock.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(50.0);
+        return mock;
+    }
 
     private final ProductStatusService service =
-            new ProductStatusService(missionMemory, customerMemory, appProperties);
+            new ProductStatusService(missionMemory, customerMemory, companyPolicyService);
 
     private static AgentTask task(String agentId, String action, String status) {
         return new AgentTask("TASK-1", "MISSION-1", agentId, action, status, "{}", Instant.now());

@@ -57,11 +57,24 @@ public class MissionMemoryService {
 
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
+                // Neo4j: asignar `null` a una propiedad la remueve. `ensureMission`
+                // se invoca también para "re-arrancar" una misión ya existente
+                // (p. ej. "ejecuta MISSION-42" por chat, que siempre llama acá con
+                // financialCriteria=null) -- si el SET incluyera las 4 propiedades
+                // con valores null incondicionalmente, un re-arranque borraría en
+                // silencio un objetivo financiero ya declarado para esa misión
+                // (financialCriteria es inmutable una vez creada). Por eso el SET
+                // de esas 4 propiedades solo se arma cuando financialCriteria no
+                // es null; si es null, ni siquiera se mencionan y quedan como
+                // estén (ausentes en una misión nueva, preservadas en una existente).
+                var financialCriteriaSet = financialCriteria == null
+                        ? ""
+                        : ", m.financialCriteriaMetric=$metric, m.financialCriteriaTargetAmount=$targetAmount, "
+                                + "m.financialCriteriaCurrency=$currency, m.financialCriteriaDeadline=$deadline";
                 tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, "
                                 + "m.environment=$environment, m.status='CREATED', m.progress=0, "
-                                + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt, "
-                                + "m.financialCriteriaMetric=$metric, m.financialCriteriaTargetAmount=$targetAmount, "
-                                + "m.financialCriteriaCurrency=$currency, m.financialCriteriaDeadline=$deadline",
+                                + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt"
+                                + financialCriteriaSet,
                         financialCriteriaParams(missionId, instruction, environment, financialCriteria));
                 tx.run("MATCH (m:Mission {id:$id}), (c:Company {id:'AI-COMPANY'}) MERGE (c)-[:HAS_MISSION]->(m)", Map.of("id", missionId));
                 tx.run("MATCH (m:Mission {id:$id}), (a:Agent {id:'ceo'}) MERGE (m)-[:LED_BY]->(a)", Map.of("id", missionId));
@@ -71,10 +84,11 @@ public class MissionMemoryService {
     }
 
     /**
-     * Neo4j: asignar {@code null} a una propiedad la remueve -- no hace
-     * falta lógica condicional para "misión sin financialCriteria",
-     * simplemente se pasan los 4 valores como {@code null}. {@code Map.of}
-     * no admite valores {@code null}, por eso un {@code HashMap} mutable acá.
+     * {@code Map.of} no admite valores {@code null}, por eso un
+     * {@code HashMap} mutable acá. Cuando {@code fc} es {@code null} los 4
+     * parámetros de financialCriteria igual se incluyen (Neo4j ignora
+     * parámetros no referenciados por la query) pero el SET condicional de
+     * {@link #ensureMission} no los usa en ese caso.
      */
     private Map<String, Object> financialCriteriaParams(
             String missionId, String instruction, String environment, FinancialCriteriaCommand fc) {
