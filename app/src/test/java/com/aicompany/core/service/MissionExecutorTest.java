@@ -64,7 +64,7 @@ class MissionExecutorTest {
         stubAgent("engineering");
         stubAgent("qa");
 
-        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
 
         var resultsCaptor = ArgumentCaptor.forClass(String.class);
         when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString(), anyString()))
@@ -106,7 +106,7 @@ class MissionExecutorTest {
         when(runtime.execute(anyString(), eq("MISSION-1"), eq("sales"), anyString(), anyString()))
                 .thenReturn(CompletableFuture.completedFuture(salesResult));
 
-        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
         when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
 
         executor.executeAsync("MISSION-1", "instrucción").get();
@@ -126,7 +126,7 @@ class MissionExecutorTest {
         stubAgent("engineering");
         stubAgent("qa");
 
-        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
 
         var resultsCaptor = ArgumentCaptor.forClass(String.class);
         when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString(), anyString()))
@@ -178,7 +178,7 @@ class MissionExecutorTest {
                 .thenReturn(failedFuture)
                 .thenReturn(CompletableFuture.completedFuture(recovered));
 
-        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
 
         var resultsCaptor = ArgumentCaptor.forClass(String.class);
         when(ceoService.executeMission(anyString(), resultsCaptor.capture(), anyString(), anyString()))
@@ -206,7 +206,7 @@ class MissionExecutorTest {
         stubAgent("engineering");
         stubAgent("qa");
 
-        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
         when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
 
         executor.executeAsync("MISSION-1", "instrucción").get();
@@ -258,7 +258,7 @@ class MissionExecutorTest {
         stubAgent("engineering");
         stubAgent("qa");
 
-        when(contradictionDetector.detect(any(), anyDouble())).thenReturn(List.of());
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
         when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
 
         executorWithCustomCapital.executeAsync("MISSION-1", "instrucción").get();

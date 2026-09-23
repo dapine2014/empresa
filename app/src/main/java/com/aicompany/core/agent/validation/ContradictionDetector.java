@@ -24,7 +24,6 @@ public class ContradictionDetector {
     private static final double LOW_CONFIDENCE_FOR_VALIDATED = 0.5;
     private static final double HIGH_CONFIDENCE_FOR_NOT_VALIDATED = 0.85;
     private static final double CALCULATION_TOLERANCE = 0.000001;
-    private static final double SEED_CAPITAL_MULTIPLE_THRESHOLD = 100.0;
 
     /**
      * Marcadores léxicos de incertidumbre/especulación. Si aparecen dentro
@@ -44,13 +43,14 @@ public class ContradictionDetector {
 
     public List<String> detect(
             List<AgentResult> results,
-            double seedCapitalUsd) {
+            double seedCapitalUsd,
+            double seedCapitalMultipleThreshold) {
 
         var contradictions = new ArrayList<String>();
 
         detectConfidenceStatusMismatch(results, contradictions);
         detectCalculationNameConflicts(results, contradictions);
-        detectMagnitudeOutliers(results, seedCapitalUsd, contradictions);
+        detectMagnitudeOutliers(results, seedCapitalUsd, seedCapitalMultipleThreshold, contradictions);
         detectFactHypothesisBlending(results, contradictions);
 
         return contradictions;
@@ -253,13 +253,14 @@ public class ContradictionDetector {
     private void detectMagnitudeOutliers(
             List<AgentResult> results,
             double seedCapitalUsd,
+            double seedCapitalMultipleThreshold,
             List<String> contradictions) {
 
         if (seedCapitalUsd <= 0) {
             return;
         }
 
-        var limit = seedCapitalUsd * SEED_CAPITAL_MULTIPLE_THRESHOLD;
+        var limit = seedCapitalUsd * seedCapitalMultipleThreshold;
 
         for (var result : results) {
 
@@ -291,7 +292,7 @@ public class ContradictionDetector {
                                     + "' = "
                                     + calculation.result()
                                     + " excede en más de "
-                                    + (int) SEED_CAPITAL_MULTIPLE_THRESHOLD
+                                    + (int) seedCapitalMultipleThreshold
                                     + "x el capital semilla (US$"
                                     + seedCapitalUsd
                                     + ") sin evidencia verificada que lo respalde."

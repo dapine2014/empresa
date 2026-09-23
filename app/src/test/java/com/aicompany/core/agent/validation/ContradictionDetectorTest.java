@@ -22,7 +22,7 @@ class ContradictionDetectorTest {
                 List.of(new AgentResult.Calculation("margen", 100, 30, "SUBTRACT", 70))
         );
 
-        var contradictions = detector.detect(List.of(sales, finance), 50);
+        var contradictions = detector.detect(List.of(sales, finance), 50, 100);
 
         assertTrue(contradictions.isEmpty(), () -> String.join(", ", contradictions));
     }
@@ -31,7 +31,7 @@ class ContradictionDetectorTest {
     void detectsValidatedWithLowConfidence() {
         var result = result("finance", "VALIDATED", 0.2, List.of(), List.of());
 
-        var contradictions = detector.detect(List.of(result), 50);
+        var contradictions = detector.detect(List.of(result), 50, 100);
 
         assertTrue(contradictions.stream()
                 .anyMatch(c -> c.contains("VALIDATED") && c.contains("confidence baja")));
@@ -41,7 +41,7 @@ class ContradictionDetectorTest {
     void detectsNotValidatedWithHighConfidence() {
         var result = result("finance", "NOT_VALIDATED", 0.95, List.of(), List.of());
 
-        var contradictions = detector.detect(List.of(result), 50);
+        var contradictions = detector.detect(List.of(result), 50, 100);
 
         assertTrue(contradictions.stream()
                 .anyMatch(c -> c.contains("NOT_VALIDATED") && c.contains("confidence muy alta")));
@@ -65,7 +65,7 @@ class ContradictionDetectorTest {
                 List.of(new AgentResult.Calculation("Costo Total", 40, 10, "ADD", 90))
         );
 
-        var contradictions = detector.detect(List.of(finance, product), 50);
+        var contradictions = detector.detect(List.of(finance, product), 50, 100);
 
         assertTrue(contradictions.stream()
                 .anyMatch(c -> c.contains("costo total") && c.contains("reportado de forma inconsistente")));
@@ -86,7 +86,7 @@ class ContradictionDetectorTest {
                 )
         );
 
-        var contradictions = detector.detect(List.of(finance), 50);
+        var contradictions = detector.detect(List.of(finance), 50, 100);
 
         assertTrue(contradictions.stream()
                 .anyMatch(c -> c.contains("costos") && c.contains("52000.0") && c.contains("capital semilla")));
@@ -109,7 +109,7 @@ class ContradictionDetectorTest {
                 List.of(new AgentResult.Calculation("ingreso contrato", 10000, 0, "ADD", 10000))
         );
 
-        var contradictions = detector.detect(List.of(finance), 50);
+        var contradictions = detector.detect(List.of(finance), 50, 100);
 
         assertTrue(contradictions.isEmpty(), () -> String.join(", ", contradictions));
     }
@@ -123,7 +123,7 @@ class ContradictionDetectorTest {
                 List.of()
         );
 
-        var contradictions = detector.detect(List.of(result), 50);
+        var contradictions = detector.detect(List.of(result), 50, 100);
 
         assertTrue(contradictions.isEmpty(), () -> String.join(", ", contradictions));
     }
@@ -137,7 +137,7 @@ class ContradictionDetectorTest {
                 List.of()
         );
 
-        var contradictions = detector.detect(List.of(result), 50);
+        var contradictions = detector.detect(List.of(result), 50, 100);
 
         assertTrue(contradictions.stream()
                 .anyMatch(c -> c.contains("hecho e hipótesis al mismo tiempo")));
@@ -152,7 +152,7 @@ class ContradictionDetectorTest {
                 List.of()
         );
 
-        var contradictions = detector.detect(List.of(result), 50);
+        var contradictions = detector.detect(List.of(result), 50, 100);
 
         assertTrue(contradictions.stream()
                 .anyMatch(c -> c.contains("lenguaje de hipótesis/estimación")

@@ -437,7 +437,8 @@ public class MissionExecutor {
             var contradictions =
                     contradictionDetector.detect(
                             agentResults,
-                            appProperties.seedCapitalUsd()
+                            appProperties.seedCapitalUsd(),
+                            100.0
                     );
 
             if (!contradictions.isEmpty()) {
