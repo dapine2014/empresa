@@ -4,12 +4,15 @@ import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
+import com.aicompany.core.model.FinancialCriteriaResponse;
+import com.aicompany.core.model.FinancialMetric;
 import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.LastMentioned;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
+import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.ProductStatus;
 import com.aicompany.core.model.TeamMemberInfo;
 import org.junit.jupiter.api.Test;
@@ -32,16 +35,21 @@ class ChatIntentRouterTest {
     private final CustomerMemoryService customerMemory = mock(CustomerMemoryService.class);
     private final CompanyMemoryService companyMemory = mock(CompanyMemoryService.class);
     private final ConversationMemoryService conversationMemory = mock(ConversationMemoryService.class);
-    private final com.aicompany.core.config.AppProperties appProperties =
-            new com.aicompany.core.config.AppProperties("Forjai", 50.0, 60);
+    private final CompanyPolicyService companyPolicyService = mock(CompanyPolicyService.class);
+    private final CustomerService customerService = mock(CustomerService.class);
     private final ProductStatusService productStatusService = mock(ProductStatusService.class);
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
     private final PromptMemoryService promptMemory = mock(PromptMemoryService.class);
 
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
-            conversationMemory, appProperties, productStatusService, "qwen2.5-coder:14b", teamMemory, promptMemory
+            conversationMemory, companyPolicyService, customerService, productStatusService,
+            "qwen2.5-coder:14b", teamMemory, promptMemory
     );
+
+    {
+        when(companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(50.0);
+    }
 
     @Test
     void routesMissionStartToMissionService() {
@@ -975,5 +983,42 @@ class ChatIntentRouterTest {
         router.route("¿Qué misiones están en prueba?");
 
         verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-DEBUG-007"));
+    }
+
+    @Test
+    void missionStatusQueryIncludesDeclaredFinancialCriteriaAndItsEvaluation() {
+        var mission = new MissionResponse(
+                "MISSION-42", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 90, "Consolidando",
+                "informe final", Instant.parse("2026-09-12T00:00:00Z"),
+                new FinancialCriteriaResponse(FinancialMetric.NET_PROFIT, 1000.0, "USD", null)
+        );
+        when(missionMemory.find("MISSION-42")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-42")).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-42")).thenReturn(ProductStatus.DISCOVERY);
+        when(customerService.netProfit("MISSION-42")).thenReturn(new com.aicompany.core.model.MissionProfitResponse(
+                "MISSION-42", 1200.0, 100.0, 1100.0, 50.0, true, "MUY_BUENO",
+                new com.aicompany.core.model.FinancialCriteriaEvaluation(
+                        FinancialMetric.NET_PROFIT, 1000.0, "USD", null, true, 110.0, null)
+        ));
+
+        var response = router.route("MISSION-42");
+
+        assertTrue(response.contains("NET_PROFIT"));
+        assertTrue(response.contains("objetivo cumplido"));
+    }
+
+    @Test
+    void companyStatusQueryReadsSeedCapitalFromTheLivePolicyInsteadOfAppProperties() {
+        when(companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(200.0);
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(opportunityMemory.countOpportunities()).thenReturn(0L);
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{0.0, 0.0});
+
+        var response = router.route("dame el estado de la empresa");
+
+        assertTrue(response.contains("US$200"));
     }
 }

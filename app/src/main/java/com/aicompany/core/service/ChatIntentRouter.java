@@ -1,6 +1,5 @@
 package com.aicompany.core.service;
 
-import com.aicompany.core.config.AppProperties;
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
@@ -8,6 +7,7 @@ import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
+import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.ProductStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -152,7 +152,8 @@ public class ChatIntentRouter {
     private final CustomerMemoryService customerMemory;
     private final CompanyMemoryService companyMemory;
     private final ConversationMemoryService conversationMemory;
-    private final AppProperties appProperties;
+    private final CompanyPolicyService companyPolicyService;
+    private final CustomerService customerService;
     private final ProductStatusService productStatusService;
     private final String defaultCeoModel;
     private final TeamMemoryService teamMemory;
@@ -166,7 +167,8 @@ public class ChatIntentRouter {
             CustomerMemoryService customerMemory,
             CompanyMemoryService companyMemory,
             ConversationMemoryService conversationMemory,
-            AppProperties appProperties,
+            CompanyPolicyService companyPolicyService,
+            CustomerService customerService,
             ProductStatusService productStatusService,
             @Value("${ollama.ceo-model}") String defaultCeoModel,
             TeamMemoryService teamMemory,
@@ -179,7 +181,8 @@ public class ChatIntentRouter {
         this.customerMemory = customerMemory;
         this.companyMemory = companyMemory;
         this.conversationMemory = conversationMemory;
-        this.appProperties = appProperties;
+        this.companyPolicyService = companyPolicyService;
+        this.customerService = customerService;
         this.productStatusService = productStatusService;
         this.defaultCeoModel = defaultCeoModel;
         this.teamMemory = teamMemory;
@@ -434,7 +437,40 @@ public class ChatIntentRouter {
                 + "o generando ingresos). productStatus=" + productStatus
                 + ". Tareas de esta misión: " + taskLines
                 + ". Estado actual de los agentes involucrados: " + agentStatusLines
-                + "." + closing;
+                + "." + closing + formatFinancialCriteria(mission);
+    }
+
+    /**
+     * Expone {@code MissionResponse.financialCriteria} (Task 5) + su
+     * evaluación real contra resultados reales ({@code CustomerService.netProfit},
+     * Task 7) cuando el fundador pregunta por el estado de una misión
+     * puntual — mismo criterio de grounding que el resto de este método:
+     * nunca se afirma cumplimiento sin datos reales.
+     */
+    private String formatFinancialCriteria(MissionResponse mission) {
+
+        if (mission.financialCriteria() == null) {
+            return " Esta misión no tiene un objetivo financiero estructurado declarado.";
+        }
+
+        var criteria = mission.financialCriteria();
+        var profit = customerService.netProfit(mission.missionId());
+        var evaluation = profit.financialCriteriaEvaluation();
+        var deadlineText = criteria.deadline() == null ? "sin plazo definido" : criteria.deadline().toString();
+
+        if (evaluation == null) {
+            return String.format(Locale.ROOT,
+                    " Objetivo financiero declarado: %s >= %.2f %s (%s). Sin resultados reales registrados "
+                            + "todavía para evaluar cumplimiento.",
+                    criteria.metric(), criteria.targetAmount(), criteria.currency(), deadlineText);
+        }
+
+        return String.format(Locale.ROOT,
+                " Objetivo financiero declarado: %s >= %.2f %s (%s). Resultado real: %.2f %s (%.1f%% del "
+                        + "objetivo) -- %s.",
+                criteria.metric(), criteria.targetAmount(), criteria.currency(), deadlineText,
+                profit.netProfitUsd(), criteria.currency(), evaluation.progressPct(),
+                evaluation.criterionMet() ? "objetivo cumplido" : "objetivo no cumplido todavía");
     }
 
     private enum ReferencePredicate {
@@ -964,7 +1000,7 @@ public class ChatIntentRouter {
                         + "Misiones (producción): %d activa(s), %d esperando tu aprobación, %d fallida(s). "
                         + "Oportunidades registradas: %d. Prospectos (leads): %d. Clientes reales: %d. "
                         + "Ingresos: US$%.2f. Beneficio neto: US$%.2f.",
-                appProperties.seedCapitalUsd(), working, idle,
+                companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD), working, idle,
                 active, awaitingInvestor, failed,
                 opportunities, prospects, customers,
                 revenue, netProfit
