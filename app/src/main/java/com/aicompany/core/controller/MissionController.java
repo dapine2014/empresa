@@ -47,6 +47,19 @@ public class MissionController {
     }
 
     /**
+     * Borrado real de una misión terminada (limpieza de misiones de
+     * prueba). Si está en curso, es la fundacional o tiene clientes/ventas
+     * reales, {@code MissionService} lanza {@code IllegalStateException}
+     * → 500, misma convención que el resto de controllers.
+     */
+    @DeleteMapping("/{missionId}")
+    public ResponseEntity<Void> delete(@PathVariable String missionId) {
+        return missionService.delete(missionId)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+
+    /**
      * Decisión real del fundador humano sobre una misión en
      * {@code AWAITING_INVESTOR} (o {@code FAILED}) — nunca generada por un
      * agente ni por el CEO.

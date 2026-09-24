@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import DeleteMissionButton from '../components/DeleteMissionButton'
 
 function StartMissionForm() {
   const queryClient = useQueryClient()
@@ -107,6 +108,7 @@ export default function MissionsPage() {
             <th>Progreso</th>
             <th>Paso actual</th>
             <th>Actualizada</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -122,6 +124,9 @@ export default function MissionsPage() {
               <td>{mission.progress}%</td>
               <td>{mission.currentStep}</td>
               <td>{new Date(mission.updatedAt).toLocaleString()}</td>
+              <td>
+                <DeleteMissionButton missionId={mission.missionId} status={mission.status} />
+              </td>
             </tr>
           ))}
         </tbody>

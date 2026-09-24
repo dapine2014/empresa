@@ -606,3 +606,38 @@ individual porque cada uno involucra la interacción entre 2+ tasks
 de otro) — exactamente el tipo de defecto que la revisión final de
 todo el branch existe para atrapar. `mvn test` (202/202) y
 `npm run lint && npm run build` verificados en verde después del fix.
+
+### Borrado de misiones desde el Command Center
+
+Pedido del fundador: poder borrar misiones desde el front para ir
+puliendo prompts de agentes sin dejar basura. Alcance acordado:
+cualquier misión que **no esté corriendo** (se rechaza en curso porque
+los threads de `MissionExecutor` seguirían escribiendo sobre nodos
+borrados), no solo las `TEST` — muchas pruebas de prompt se lanzaron
+como `PRODUCTION` por default. Además se bloquean `MISSION-001`
+(fundacional) y cualquier misión con `HAS_CUSTOMER`/`HAS_TRANSACTION`
+reales del fundador (datos que no se regeneran re-ejecutando). Borrado
+real, no soft-delete. Las `Evidence` solo se borran si quedan
+huérfanas, porque `EvidenceDedupKey` comparte nodos entre misiones.
+
+**Bug real encontrado en la verificación en vivo** (invisible a los
+tests unitarios, que mockean `MissionMemoryService`): la primera
+versión de la query que junta los ids de evidencia hacía
+`RETURN taskEvidence + collect(DISTINCT ce.id)` — Neo4j lo rechaza
+(`42I18`, agregación con agrupación implícita). Como todo el borrado
+corre en una sola transacción, el fallo dejó el grafo intacto (rollback
+completo, nada borrado a medias). Fix: extraer el `collect` a un `WITH`
+previo.
+
+**Verificado en vivo** (Docker + Neo4j real) con una misión sintética
+sembrada por Cypher (tarea, evidencia propia, evidencia compartida con
+otra `AgentTask`, `Decision`, `Opportunity`, `Customer` LEAD con su
+evidencia, foco conversacional apuntándola): `DELETE` → 204, segundo
+`DELETE` → 404; borrado todo lo propio; la evidencia compartida y su
+otra tarea sobrevivieron; `Agent` intacto; `lastMentionedIds` quedó en
+`null`. Misión en `WAITING_AGENT_RESULTS` → 500 sin borrar; misión
+`COMPLETED` con `HAS_TRANSACTION` → 500 sin borrar. Datos sintéticos
+limpiados y foco original de la conversación restaurado después.
+`MISSION-001` no existe en esta instancia de Neo4j (→ 404); su
+protección queda cubierta por `MissionServiceTest`. `mvn test`,
+`npm run lint` y `npm run build` en verde.

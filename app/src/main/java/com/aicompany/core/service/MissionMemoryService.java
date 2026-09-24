@@ -187,6 +187,76 @@ public class MissionMemoryService {
         }
     }
 
+    /**
+     * Si la misión tiene clientes o ventas reales registrados por el
+     * fundador ({@code CustomerMemoryService}) — datos que no se
+     * regeneran re-ejecutando la misión, así que bloquean su borrado.
+     */
+    public boolean hasRealCustomerData(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                    "MATCH (m:Mission {id:$missionId}) " +
+                            "RETURN EXISTS { (m)-[:HAS_CUSTOMER|HAS_TRANSACTION]->() } AS has",
+                    Map.of("missionId", missionId)
+            ).list().stream().findFirst().map(r -> r.get("has").asBoolean()).orElse(false);
+        }
+    }
+
+    /**
+     * Borra la misión y todo lo que su orquestación colgó de ella, en una
+     * sola transacción: {@code AgentTask}, {@code Decision},
+     * {@code Opportunity} y sus {@code Customer} LEAD. Las {@code Evidence}
+     * solo se borran si quedan huérfanas — por la deduplicación de
+     * {@code EvidenceDedupKey} un mismo nodo puede estar citado por tareas
+     * de otras misiones. Nunca toca {@code Agent}/{@code Company}/prompts/
+     * políticas. También saca la misión del foco conversacional
+     * ({@code Conversation.lastMentionedIds}) para que el chat no resuelva
+     * una referencia a un id que ya no existe.
+     */
+    public void deleteMission(String missionId) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                var params = Map.<String, Object>of("missionId", missionId);
+
+                var evidenceIds = tx.run(
+                        "MATCH (m:Mission {id:$missionId}) " +
+                                "OPTIONAL MATCH (m)-[:HAS_TASK]->(:AgentTask)-[:HAS_EVIDENCE]->(te:Evidence) " +
+                                "WITH m, collect(DISTINCT te.id) AS taskEvidence " +
+                                "OPTIONAL MATCH (m)-[:HAS_OPPORTUNITY]->(:Opportunity)-[:HAS_CANDIDATE]->" +
+                                "(:Customer {status:'LEAD'})-[:HAS_EVIDENCE]->(ce:Evidence) " +
+                                "WITH taskEvidence, collect(DISTINCT ce.id) AS candidateEvidence " +
+                                "RETURN taskEvidence + candidateEvidence AS ids",
+                        params
+                ).single().get("ids").asList(v -> v.asString());
+
+                tx.run("MATCH (m:Mission {id:$missionId})-[:HAS_OPPORTUNITY]->(o:Opportunity)" +
+                                "-[:HAS_CANDIDATE]->(c:Customer {status:'LEAD'}) " +
+                                "WHERE NOT EXISTS { (c)<-[:HAS_CANDIDATE|HAS_CUSTOMER]-(other) WHERE other <> o } " +
+                                "DETACH DELETE c",
+                        params);
+
+                tx.run("MATCH (m:Mission {id:$missionId}) " +
+                                "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY]->(n) " +
+                                "WITH m, collect(DISTINCT n) AS owned " +
+                                "FOREACH (n IN owned | DETACH DELETE n) " +
+                                "DETACH DELETE m",
+                        params);
+
+                tx.run("MATCH (e:Evidence) WHERE e.id IN $ids " +
+                                "AND NOT EXISTS { ()-[:HAS_EVIDENCE]->(e) } " +
+                                "DETACH DELETE e",
+                        Map.of("ids", evidenceIds));
+
+                tx.run("MATCH (c:Conversation {id:'MAIN'}) WHERE $missionId IN c.lastMentionedIds " +
+                                "WITH c, [x IN c.lastMentionedIds WHERE x <> $missionId] AS remaining " +
+                                "SET c.lastMentionedIds = CASE WHEN size(remaining) = 0 THEN null ELSE remaining END",
+                        params);
+
+                return null;
+            });
+        }
+    }
+
     public void createTask(String taskId, String missionId, String agentId, String action) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {

@@ -161,6 +161,66 @@ public class MissionService {
         ));
     }
 
+    /**
+     * Solo se puede borrar una misión cuya orquestación ya terminó: los
+     * threads de {@code MissionExecutor} de una misión en curso seguirían
+     * escribiendo tareas y evidencia sobre nodos borrados.
+     */
+    private static final Set<MissionStatus> DELETABLE_STATUSES = Set.of(
+            MissionStatus.AWAITING_INVESTOR,
+            MissionStatus.FAILED,
+            MissionStatus.COMPLETED,
+            MissionStatus.CANCELLED
+    );
+
+    /** Misión fundacional real (`docs/MISSION-001.md`) — nunca se borra desde la API. */
+    private static final String FOUNDATIONAL_MISSION_ID = "MISSION-001";
+
+    /**
+     * Borrado real (no soft-delete) de una misión y todo lo que la
+     * orquestación colgó de ella — pensado para limpiar misiones de
+     * prueba mientras se pulen prompts. Devuelve {@code false} si la
+     * misión no existe.
+     */
+    public boolean delete(String missionId) {
+
+        var mission = memory.find(missionId);
+
+        if (mission.isEmpty()) {
+            return false;
+        }
+
+        if (FOUNDATIONAL_MISSION_ID.equals(missionId)) {
+            throw new IllegalStateException(
+                    FOUNDATIONAL_MISSION_ID + " es la misión fundacional y no se puede borrar");
+        }
+
+        if (!DELETABLE_STATUSES.contains(mission.get().status())) {
+            throw new IllegalStateException(
+                    "No se puede borrar una misión en curso (estado actual: "
+                            + mission.get().status()
+                            + ")"
+            );
+        }
+
+        if (memory.hasRealCustomerData(missionId)) {
+            throw new IllegalStateException(
+                    "La misión " + missionId + " tiene clientes o ventas reales registrados; no se puede borrar");
+        }
+
+        memory.deleteMission(missionId);
+
+        events.publish(
+                "EMPRESA_MISSION_DELETED",
+                missionId,
+                null,
+                "human",
+                Map.of("previousStatus", mission.get().status().name())
+        );
+
+        return true;
+    }
+
     private void validateFinancialCriteria(FinancialCriteriaCommand financialCriteria) {
 
         if (financialCriteria == null) {

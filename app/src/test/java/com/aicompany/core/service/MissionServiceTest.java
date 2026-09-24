@@ -249,4 +249,75 @@ class MissionServiceTest {
 
         verify(memory, never()).ensureMission(any(), any(), any(), any());
     }
+
+    private static MissionResponse missionIn(String missionId, MissionStatus status) {
+        return new MissionResponse(
+                missionId, status, "TEST", 100,
+                "Paso", "mensaje",
+                Instant.parse("2026-09-12T00:00:00Z"), null
+        );
+    }
+
+    @Test
+    void deleteReturnsFalseWhenMissionDoesNotExist() {
+        var memory = mock(MissionMemoryService.class);
+        var eventPublisher = mock(CompanyEventPublisher.class);
+        when(memory.find("MISSION-404")).thenReturn(Optional.empty());
+
+        var service = new MissionService(memory, mock(MissionExecutor.class), eventPublisher);
+
+        assertFalse(service.delete("MISSION-404"));
+        verify(memory, never()).deleteMission(anyString());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void deleteRejectsMissionThatIsStillRunning() {
+        var memory = mock(MissionMemoryService.class);
+        when(memory.find("MISSION-42")).thenReturn(Optional.of(missionIn("MISSION-42", MissionStatus.WAITING_AGENT_RESULTS)));
+
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class));
+
+        assertThrows(IllegalStateException.class, () -> service.delete("MISSION-42"));
+        verify(memory, never()).deleteMission(anyString());
+    }
+
+    @Test
+    void deleteRejectsFoundationalMission() {
+        var memory = mock(MissionMemoryService.class);
+        when(memory.find("MISSION-001")).thenReturn(Optional.of(missionIn("MISSION-001", MissionStatus.COMPLETED)));
+
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class));
+
+        assertThrows(IllegalStateException.class, () -> service.delete("MISSION-001"));
+        verify(memory, never()).deleteMission(anyString());
+    }
+
+    @Test
+    void deleteRejectsMissionWithRealCustomersOrTransactions() {
+        var memory = mock(MissionMemoryService.class);
+        when(memory.find("MISSION-42")).thenReturn(Optional.of(missionIn("MISSION-42", MissionStatus.AWAITING_INVESTOR)));
+        when(memory.hasRealCustomerData("MISSION-42")).thenReturn(true);
+
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class));
+
+        assertThrows(IllegalStateException.class, () -> service.delete("MISSION-42"));
+        verify(memory, never()).deleteMission(anyString());
+    }
+
+    @Test
+    void deleteRemovesFinishedMissionAndPublishesEvent() {
+        var memory = mock(MissionMemoryService.class);
+        var eventPublisher = mock(CompanyEventPublisher.class);
+        when(memory.find("MISSION-42")).thenReturn(Optional.of(missionIn("MISSION-42", MissionStatus.FAILED)));
+        when(memory.hasRealCustomerData("MISSION-42")).thenReturn(false);
+
+        var service = new MissionService(memory, mock(MissionExecutor.class), eventPublisher);
+
+        assertTrue(service.delete("MISSION-42"));
+        verify(memory).deleteMission("MISSION-42");
+        verify(eventPublisher).publish(
+                eq("EMPRESA_MISSION_DELETED"), eq("MISSION-42"), any(), eq("human"), any()
+        );
+    }
 }

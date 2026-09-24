@@ -14,7 +14,7 @@ Ya hay **una implementación real y en evolución activa** en `app/` (servicio `
 - `docs/MISSION-001.md` — la primera misión (descubrir y validar el primer negocio real).
 - `docs/EVENTS.md` — contrato de eventos Kafka.
 - `docs/HISTORY.md` — **registro detallado y cronológico** de cada feature: decisiones de diseño acordadas con el usuario, bugs reales encontrados (muchos en producción), y verificaciones en vivo (Docker + Neo4j + Kafka + Ollama reales). Este `CLAUDE.md` describe el sistema *como es hoy*; `docs/HISTORY.md` tiene el *por qué* y el *cómo se verificó* de cada pieza. Consultalo antes de re-verificar algo que ya se probó en vivo, o para entender el razonamiento detrás de una decisión no obvia.
-- `docs/superpowers/plans/` — specs y planes de implementación (flujo `writing-plans`/`executing-plans`) para trabajo **todavía no incorporado al código**: ledger financiero, puente LEAD→cliente real, rondas de evidencia, memoria conversacional del chat. Antes de asumir que una de estas features ya existe, verificar en el código — este `CLAUDE.md` solo documenta lo ya implementado.
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — pares diseño/plan (flujo `writing-plans`/`executing-plans`), uno por feature y fechados. **Mezclan trabajo ya implementado y pendiente**: memoria conversacional, chat grounding/product status, Engineering Team, versionado de prompts, equipos Creative/Marketing y Financial Policies ya están en el código; ledger financiero (`2026-09-15`), rondas de evidencia (`2026-09-16`), puente LEAD→cliente real (`2026-09-17`) y development generation (`2026-09-21`) **todavía no**. Antes de asumir que una feature de un plan existe, verificarlo en el código — este `CLAUDE.md` solo documenta lo ya implementado.
 - `EMPRESA_AI_TODO.md` — estado y roadmap de una fase anterior de esta implementación (contrato `AgentResult`, JSON Schema, Evidence Engine v1, Customer Validation, agente `qa`, eventos Kafka) — ese roadmap ya está **completo**.
 - `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` — el roadmap **vigente**: Evidence Acquisition Engine (búsqueda + fetch web real, ya implementado — ver "Evidence Acquisition" más abajo), Agent Failure != Mission Failure (implementado), memoria empresarial avanzada (parcial). `status.md` quedó "en pausa" en un punto de configuración de Kafka muy anterior a todo esto; no lo uses como estado actual.
 
@@ -33,10 +33,13 @@ mvn test -Dtest=MiClase#miMetodo  # ejecuta un único test
 mvn spring-boot:run               # arranca el servicio en local (puerto 8081)
 ```
 
-No hay tooling de lint configurado en el backend. La suite unitaria está en `src/test/java` y
-cubre la validación de resultados de agentes, el inicio de misiones y el
-enrutamiento del chat del CEO. Las integraciones con Neo4j, Kafka y Ollama se
-mantienen fuera de estas pruebas para que no dependan de Docker.
+No hay tooling de lint configurado en el backend. La suite unitaria está en `src/test/java`
+(JUnit + mocks, ~21 clases): gates de validación (`AgentResultValidator`/`EvidenceValidationGate`/`EvidenceBindingGate`),
+`ContradictionDetector`, `AgentRuntime`, `MissionService`/`MissionExecutor`, `ChatIntentRouter`,
+`CeoService` (historial, topics de memoria, guard `format`+`tools`), `CustomerService`, `ProductStatusService`,
+el paquete `evidence` (Serper, `WebPageFetcher`, relevancia, dedup) y las alertas por correo. Las integraciones
+con Neo4j, Kafka y Ollama se mantienen fuera de estas pruebas para que no dependan de Docker — su verificación
+es en vivo y queda registrada en `docs/HISTORY.md`.
 
 Healthcheck: `GET http://localhost:8081/actuator/health` (actuator en el classpath; solo se exponen `health`, `info` y `metrics`, con probes de readiness/liveness activadas; el indicador de correo está deshabilitado — ver "Alertas por correo" más abajo).
 
@@ -72,8 +75,8 @@ Servicio REST monolítico (Spring Boot 4.1.1, Java 21) que orquesta agentes LLM.
 
 ### Entradas HTTP
 
-- `CompanyController` (`/api/company`): `GET /agents` (identidad estática), `GET /agents/status` (estado real, ver "Agent.status" más abajo), `PUT /agents/{id}/model` (`AgentModelCommand{model}` — cambia el modelo LLM real de un agente puntual; sin validación contra qué modelos existen en Ollama, mismo criterio del resto del proyecto: un valor inválido falla en la próxima llamada real a Ollama, no antes; `IllegalArgumentException` → 500 si el agente no existe, misma convención de errores del resto de controllers), `GET /activity` (línea de tiempo derivada de Neo4j), `GET`/`PUT /settings` (correo de alertas y credenciales SMTP), `POST /chat` (delega todo en `ChatIntentRouter`).
-- `MissionController` (`/api/company/missions`): `POST` para iniciar, `GET` lista misiones recientes (límite fijo 50), `GET /{id}` estado, `GET /{id}/details` estado + tareas, `POST /{id}/decision` decisión real del inversionista humano.
+- `CompanyController` (`/api/company`): `GET /agents` (identidad estática), `GET /agents/status` (estado real, ver "Agent.status" más abajo), `PUT /agents/{id}/model` (`AgentModelCommand{model}` — cambia el modelo LLM real de un agente puntual; sin validación contra qué modelos existen en Ollama, mismo criterio del resto del proyecto: un valor inválido falla en la próxima llamada real a Ollama, no antes; `IllegalArgumentException` → 500 si el agente no existe, misma convención de errores del resto de controllers), `GET /activity` (línea de tiempo derivada de Neo4j), `GET`/`PUT /settings` (correo de alertas y credenciales SMTP), `POST /chat` (delega todo en `ChatIntentRouter`). También expone `GET /teams`, `/agents/{id}/prompt/**` y `/policies/**` — detallados en "Command Center web", "Prompt versionado por agente" y "Company Financial Policies" más abajo.
+- `MissionController` (`/api/company/missions`): `POST` para iniciar, `GET` lista misiones recientes (límite fijo 50), `GET /{id}` estado, `GET /{id}/details` estado + tareas, `POST /{id}/decision` decisión real del inversionista humano. `DELETE /{id}` borra la misión (ver "Borrado de misiones" más abajo).
 - `CustomerController` (`/api/company/missions/{missionId}/...`): `POST /customers`, `POST /transactions`, `GET /net-profit` — ver "Customer Validation" más abajo.
 - `SpaController`: sin API real, solo reenvía una **lista explícita** de rutas de la SPA (`/`, `/chat`, `/agents`, `/missions`, `/missions/{id}`, `/activity`, `/settings`) a `index.html`. Deliberadamente no es un comodín (`"/{path:[^.]*}"` atrapaba también `/api/**` mal escritos y les devolvía 200+HTML en vez de 404) — mantener esta lista sincronizada a mano con `App.tsx` al agregar pantallas nuevas.
 
@@ -161,6 +164,10 @@ Pasos posteriores del flujo objetivo (`contact`, cerrar venta) son nivel 🔴 de
 `POST /missions/{missionId}/decision` (`DecisionCommand{decision: APPROVE|REJECT|REQUEST_MORE_EVIDENCE, reasoning}`) — el punto de `empresa.md` §5 nivel 🔴 donde el fundador registra su decisión real. Solo sobre una misión en `AWAITING_INVESTOR` o `FAILED` (`IllegalStateException` si no). `APPROVE` → `COMPLETED`, `REJECT` → `CANCELLED`, `REQUEST_MORE_EVIDENCE` no cambia el estado (sin re-ejecución automática todavía). `MissionMemoryService.recordDecision` persiste `(:Mission)-[:HAS_DECISION]->(:Decision {decision, reasoning, decidedAt})` — `decisionId` incluye timestamp, no es idempotente (una misión puede acumular varias decisiones). Publica `EMPRESA_MISSION_DECISION_RECORDED` siempre, más `EMPRESA_MISSION_UPDATED` cuando cambia el estado.
 
 De los 5 tipos que agrupaba esta pieza del roadmap (`Decision`/`Lesson`/`Strategy`/`Prediction`/`CapitalAllocation`), solo `Decision` tiene hoy un disparador real — los otros 4 solo tienen el constraint de unicidad `id` en Neo4j (`CompanyMemoryService.initializeSchema`, junto con otros 19 labels especulativos del roadmap de memoria avanzada), sin propiedades/relaciones ni código que los use.
+
+### Borrado de misiones (`MissionService.delete` → `MissionMemoryService.deleteMission`)
+
+`DELETE /missions/{id}` (botón "Borrar" con confirmación inline en `MissionsPage`/`MissionDetailPage`, componente `DeleteMissionButton`) — borrado **real**, pensado para limpiar misiones de prueba mientras se pulen prompts. 204 si borra, 404 si no existe, `IllegalStateException` → 500 si: es `MISSION-001` (fundacional, protegida), no está en `AWAITING_INVESTOR`/`FAILED`/`COMPLETED`/`CANCELLED` (en curso — sus threads seguirían escribiendo; una misión colgada en `RUNNING` tras un restart hay que corregirla antes por Cypher, ver "Comandos"), o tiene `HAS_CUSTOMER`/`HAS_TRANSACTION` reales del fundador (`hasRealCustomerData`). En una sola transacción borra `Mission` + `AgentTask` + `Decision` + `Opportunity` + sus `Customer` LEAD exclusivos; las `Evidence` solo si quedan huérfanas (la dedup las comparte entre misiones); y saca el id de `Conversation.lastMentionedIds`. Publica `EMPRESA_MISSION_DELETED`.
 
 ### Memoria: Neo4j
 
@@ -434,4 +441,4 @@ Nombre de marca del proyecto (antes "AI Company") — aplicado a toda la documen
 
 ## Al implementar
 
-Cuando avances más allá del núcleo actual, actualiza este archivo: comandos reales de lint/test cuando existan, agentes nuevos incorporados al flujo de misión, y los pendientes de `docs/STATE.md` que se vayan cerrando (Junta AI multiagente, ledger financiero, motor de aprobaciones humanas, scheduler de misiones, herramientas de investigación web, dossiers Markdown). Para cambios que involucren una decisión de alcance acordada con el usuario, un bug real encontrado, o una verificación en vivo — agregalos a `docs/HISTORY.md`, no acá; este archivo describe el estado vigente, no el historial de cómo se llegó a él.
+Cuando avances más allá del núcleo actual, actualiza este archivo: comandos reales de lint/test cuando existan, agentes nuevos incorporados al flujo de misión, y los pendientes de `docs/STATE.md` que se vayan cerrando (Junta AI multiagente, ledger financiero, motor de aprobaciones humanas, scheduler de misiones, dossiers Markdown — la investigación web ya está cubierta por "Evidence Acquisition"). Para cambios que involucren una decisión de alcance acordada con el usuario, un bug real encontrado, o una verificación en vivo — agregalos a `docs/HISTORY.md`, no acá; este archivo describe el estado vigente, no el historial de cómo se llegó a él.

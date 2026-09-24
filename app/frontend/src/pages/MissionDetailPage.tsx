@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import DeleteMissionButton from '../components/DeleteMissionButton'
 import type { InvestorDecision } from '../api/types'
 
 const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED'])
@@ -10,6 +11,7 @@ const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED'])
 export default function MissionDetailPage() {
   const { missionId } = useParams<{ missionId: string }>()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [reasoning, setReasoning] = useState('')
   const [decision, setDecision] = useState<InvestorDecision>('APPROVE')
   const [feedback, setFeedback] = useState<string | null>(null)
@@ -53,6 +55,11 @@ export default function MissionDetailPage() {
         {mission.environment === 'PRODUCTION' ? '🏢 PRODUCTION' : '🧪 TEST'}
       </p>
       <p className="mission-message">{mission.message}</p>
+      <DeleteMissionButton
+        missionId={mission.missionId}
+        status={mission.status}
+        onDeleted={() => navigate('/missions')}
+      />
 
       {mission.financialCriteria && (
         <div className="financial-criteria">
