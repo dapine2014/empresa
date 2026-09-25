@@ -675,3 +675,26 @@ evidencia compartida con una `AgentTask` real de otra misión,
 `DELETE` → 204, 0 ítems en Activity, 0 nodos con ese `missionId`. La
 evidencia compartida sobrevivió reasignada a la otra misión que la
 citaba. Datos sintéticos limpiados después.
+
+### Misiones por equipo + generación real de código (Proyecto B, subproyecto 1)
+
+**Diagnóstico**: `MISSION-1790304372795` ("inicia una misión PRODUCTION exclusivamente para el Engineering Team… crear un videojuego") corrió igual las 5 tareas fijas de discovery (Max, Luna y Sofia recibieron tareas) y terminó en `AWAITING_INVESTOR` sin ningún código. Se dejó intacta como caso de diagnóstico.
+
+**Decisiones** (spec `2026-09-21-development-generation-design.md`, revisión 2026-09-24): `Mission.teamId` explícito y exacto (en el chat solo el id `TEAM-...`); el líder planifica y `TeamPlanValidator` valida en Java; `TeamExecutionStrategy` por tipo de equipo (análisis vs. desarrollo); un commit por agente con él como autor y trailers de misión/tarea; validación estática en dos capas con `validationStatus` calculado por Java; bloque "Estado verificable" generado por Java. Cambios frente al spec original de Proyecto B: disparo por `teamId` (no por `APPROVE`), los 5 miembros vía plan del líder (no 3 tareas fijas), `ownedPaths` en vez de subdirectorios fijos, commit por agente en vez de uno consolidado, fallo de commit = fallo de tarea, termina en `AWAITING_INVESTOR`.
+
+**Bugs reales encontrados en la verificación en vivo** (invisibles a los tests unitarios):
+1. `MISSION-TEAM-VERIFY-1` → `FAILED` en `PLANNING`: Ollama 0.20 corría `qwen3:8b` con `KvSize:4096` (ninguna llamada enviaba `num_ctx`), lo que recorta en silencio prompts de código y de revisión. Fix: `options.num_ctx=16384` solo para `TEAM_PLANNING`/`DEVELOPMENT_TASK`/`STATIC_REVIEW` (entra en la GPU de 8 GB; discovery y chat sin cambios); tope de revisión bajado de 60.000/8.000 a 24.000/6.000 caracteres para que quepa. Confirmado después en los logs de Ollama: `KvSize:16384`.
+2. En esa misma misión Neo repitió 3 veces el mismo error (`entryPoint` fuera de sus `ownedPaths`) porque la corrección no listaba los `ownedPaths`. Fix: el error ahora lista los `ownedPaths` por agente y dice cómo corregirlo.
+3. `git add -- <ruta>` interpretaba magia de pathspec (una ruta `:x` fallaba). Fix: `GIT_LITERAL_PATHSPECS=1` en `GitCommandRunner`.
+4. El test del plan para `ForbiddenClaimsGuard` detectó que "compila sin errores" pasaba como negación; la negación ahora solo cuenta si precede a la afirmación.
+
+**Verificado en vivo** (contenedor reconstruido, Neo4j + Ollama reales), `MISSION-TEAM-VERIFY-2` (`TEST`, `teamId=TEAM-ENGINEERING`) → `AWAITING_INVESTOR`:
+- Plan de Neo aceptado (5 tareas). Ninguna tarea de `sales`/`product`/`finance`.
+- Commits reales en `~/forjai-products/MISSION-TEAM-VERIFY-2`, uno por agente, autor y trailer correctos: Iris `1e2fe77` (9 archivos), Diego `2a6f11e` (5), Neo `e1362be` (4), Mila `7ec4f94` (3). Los `commitSha` de Neo4j coinciden con `git log`.
+- Vera: 20/20 chequeos deterministas en PASS, `validationStatus=STATICALLY_VALIDATED`, verdict `ISSUES_FOUND` (16 MAJOR, 1 MINOR), evidencia `INTERNAL` citando `workspace:MISSION-TEAM-VERIFY-2@7ec4f94…/<ruta>` reales, `notValidatableWithoutExecution` no vacío.
+- Mensaje final con el bloque "Estado verificable" y la frase fija de no ejecución.
+
+**Observaciones abiertas** (no bloquean la mecánica, sí la calidad del resultado):
+- Lo generado por `qwen3:8b` no es un juego de navegador jugable: Neo eligió un stack ASP.NET + React + PostgreSQL/Redis, sin HTML de entrada, sin game loop y sin `.csproj`/`package.json`; el `entryPoint` fue `src/Cloud/Architecture/EntryPoint.cs`. La trazabilidad y los artefactos son reales; la coherencia del producto no.
+- `STATICALLY_VALIDATED` convive con verdict `ISSUES_FOUND` y 16 MAJOR (Vera clasificó un error de sintaxis de C# como MINOR). La regla aprobada solo falla por BLOCKER; queda para decisión del fundador si `ISSUES_FOUND`/MAJOR debería impedir `STATICALLY_VALIDATED`.
+- Los archivos del workspace quedan con dueño root en el host (el contenedor corre como root); para inspeccionar con git usar `git -c safe.directory='*'`.
