@@ -62,6 +62,14 @@ public class ChatIntentRouter {
     private static final Pattern MISSION_START =
             Pattern.compile("(?i)\\b(?:ejecuta|inicia)\\s+(MISSION-\\d+)\\b");
 
+    /**
+     * Solo el id EXACTO de uno de los 3 equipos (case-sensitive, mismo
+     * principio determinista que MISSION-<id>). Nunca se infiere el equipo
+     * de frases como "Engineering Team" (spec de Proyecto B §1).
+     */
+    private static final Pattern TEAM_ID_TOKEN =
+            Pattern.compile("\\bTEAM-[A-Z]+(?:-[A-Z]+)*\\b");
+
     private static final Pattern MISSION_ID =
             Pattern.compile("(?i)(MISSION-[\\w-]+)");
 
@@ -212,12 +220,19 @@ public class ChatIntentRouter {
         if (missionStartMatcher.find()) {
 
             var missionId = missionStartMatcher.group(1).toUpperCase(Locale.ROOT);
+            var teamId = detectTeamToken(message);
+
+            if (teamId != null && !TeamMemoryService.KNOWN_TEAM_IDS.contains(teamId)) {
+                return unknownTeamMessage(teamId);
+            }
+
             // Una misión iniciada por un comando real de chat del
             // fundador es trabajo real, no una prueba de desarrollo.
-            var response = missionService.start(missionId, message, "PRODUCTION", null);
+            var response = startMission(missionId, message, teamId);
 
-            return "He recibido " + missionId + ". Estado: " + response.status()
-                    + ". La misión está procesándose en segundo plano. Consulta "
+            return "He recibido " + missionId + ". Estado: " + response.status() + "."
+                    + teamSuffix(teamId)
+                    + " La misión está procesándose en segundo plano. Consulta "
                     + "/api/company/missions/" + missionId
                     + "/details para ver el progreso y las tareas.";
         }
@@ -276,6 +291,27 @@ public class ChatIntentRouter {
      * Por eso este chequeo corre *antes* que {@code detectDecision}/
      * {@code detectQuery}.
      */
+    private String detectTeamToken(String message) {
+        var matcher = TEAM_ID_TOKEN.matcher(message);
+        return matcher.find() ? matcher.group() : null;
+    }
+
+    private String unknownTeamMessage(String teamToken) {
+        return "No inicié ninguna misión: " + teamToken + " no es un equipo de Forjai. Equipos válidos: "
+                + TeamMemoryService.KNOWN_TEAM_IDS.stream().sorted().toList() + ".";
+    }
+
+    /** Sin equipo se llama la sobrecarga de siempre (mismo contrato que antes de esta feature). */
+    private MissionResponse startMission(String missionId, String message, String teamId) {
+        return teamId == null
+                ? missionService.start(missionId, message, "PRODUCTION", null)
+                : missionService.start(missionId, message, "PRODUCTION", null, teamId);
+    }
+
+    private static String teamSuffix(String teamId) {
+        return teamId == null ? "" : " Equipo responsable: " + teamId + ".";
+    }
+
     private boolean detectFreeMissionStart(String normalized) {
 
         if (!normalized.contains("mision")) {
@@ -301,19 +337,26 @@ public class ChatIntentRouter {
      */
     private String handleFreeMissionStart(String message) {
 
+        var teamId = detectTeamToken(message);
+
+        if (teamId != null && !TeamMemoryService.KNOWN_TEAM_IDS.contains(teamId)) {
+            return unknownTeamMessage(teamId);
+        }
+
         var missionId = "MISSION-" + Instant.now().toEpochMilli();
 
-        log.info("CHAT_INTENT_FREE_MISSION_START missionId={}", missionId);
+        log.info("CHAT_INTENT_FREE_MISSION_START missionId={} teamId={}", missionId, teamId);
 
         // Una misión iniciada por un comando real de chat del fundador
         // es trabajo real, no una prueba de desarrollo.
-        var response = missionService.start(missionId, message, "PRODUCTION", null);
+        var response = startMission(missionId, message, teamId);
 
         conversationMemory.setLastMentioned("MISSION", List.of(missionId));
 
         return "Creé la misión " + missionId + " con tu descripción y la mandé a "
-                + "procesar en segundo plano. Estado: " + response.status()
-                + ". Consulta /api/company/missions/" + missionId
+                + "procesar en segundo plano. Estado: " + response.status() + "."
+                + teamSuffix(teamId)
+                + " Consulta /api/company/missions/" + missionId
                 + "/details para ver el progreso y las tareas.";
     }
 
@@ -437,7 +480,34 @@ public class ChatIntentRouter {
                 + "o generando ingresos). productStatus=" + productStatus
                 + ". Tareas de esta misión: " + taskLines
                 + ". Estado actual de los agentes involucrados: " + agentStatusLines
-                + "." + closing + formatFinancialCriteria(mission);
+                + "." + closing + formatFinancialCriteria(mission) + formatTeamExecution(mission, tasks);
+    }
+
+    /** Equipo, commits reales y estado de validación — 100% desde Neo4j, nunca redactado por el LLM. */
+    private String formatTeamExecution(MissionResponse mission, List<AgentTask> tasks) {
+
+        if (mission.teamId() == null) {
+            return "";
+        }
+
+        var out = new StringBuilder(" Equipo responsable: ").append(mission.teamId()).append(".");
+
+        var commits = tasks.stream()
+                .filter(t -> t.commitSha() != null && !t.commitSha().isBlank())
+                .map(t -> t.agentId() + "=" + t.commitSha().substring(0, Math.min(7, t.commitSha().length())))
+                .collect(Collectors.joining(", "));
+
+        if (!commits.isEmpty()) {
+            out.append(" Commits: ").append(commits).append(".");
+        }
+
+        tasks.stream()
+                .filter(t -> t.validationStatus() != null)
+                .findFirst()
+                .ifPresent(t -> out.append(" Validación estática: ").append(t.validationStatus())
+                        .append(" (esta fase no ejecuta código)."));
+
+        return out.toString();
     }
 
     /**

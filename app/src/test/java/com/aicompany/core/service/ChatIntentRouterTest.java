@@ -1021,4 +1021,71 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("US$200"));
     }
+
+    private static MissionResponse created(String id, String teamId) {
+        return new MissionResponse(id, MissionStatus.CREATED, "PRODUCTION", 0, "Creada", "Misión recibida",
+                Instant.parse("2026-09-24T00:00:00Z"), null, teamId);
+    }
+
+    @Test
+    void anExplicitExactTeamIdStartsATeamMission() {
+        var message = "CEO, inicia una misión para TEAM-ENGINEERING para crear un videojuego.";
+        when(missionService.start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING")))
+                .thenReturn(created("MISSION-1", "TEAM-ENGINEERING"));
+
+        var response = router.route(message);
+
+        verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
+        assertTrue(response.contains("TEAM-ENGINEERING"));
+    }
+
+    @Test
+    void anUnknownTeamTokenDoesNotStartAnyMission() {
+        var response = router.route("CEO, inicia una misión para TEAM-DESIGN para crear un logo.");
+
+        verifyNoInteractions(missionService);
+        assertTrue(response.contains("TEAM-DESIGN"));
+    }
+
+    @Test
+    void aTeamNameWithoutTheExactIdStartsAMissionWithoutTeam() {
+        var message = "CEO, inicia una misión exclusivamente para el Engineering Team.";
+        when(missionService.start(anyString(), eq(message), eq("PRODUCTION"), isNull())).thenReturn(created("MISSION-2", null));
+
+        router.route(message);
+
+        verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull());
+        verify(missionService, never()).start(anyString(), anyString(), anyString(), any(), anyString());
+    }
+
+    // Review Focus: el id es exacto; en minúsculas no se reconoce y la misión arranca sin equipo.
+    @Test
+    void aLowercaseTeamIdIsNotRecognized() {
+        var message = "CEO, inicia una misión para team-engineering.";
+        when(missionService.start(anyString(), eq(message), eq("PRODUCTION"), isNull())).thenReturn(created("MISSION-3", null));
+
+        router.route(message);
+
+        verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull());
+    }
+
+    @Test
+    void theMissionStatusLookupShowsTeamCommitsAndValidation() {
+        var mission = new MissionResponse("MISSION-77", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "Recomendación",
+                "ok", Instant.parse("2026-09-24T00:00:00Z"), null, "TEAM-ENGINEERING");
+        when(missionMemory.find("MISSION-77")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-77")).thenReturn(List.of(
+                new AgentTask("MISSION-77-BACKEND", "MISSION-77", "backend", "GAME_LOGIC", "COMPLETED", "{}",
+                        Instant.parse("2026-09-24T00:00:00Z"), "WORK", "/data/forjai-products/MISSION-77",
+                        "abcdef1234567890abcdef1234567890abcdef12", List.of("web/game/main.js"), null, null),
+                new AgentTask("MISSION-77-QA", "MISSION-77", "qa", "STATIC_REVIEW", "COMPLETED", "{}",
+                        Instant.parse("2026-09-24T00:00:00Z"), "VALIDATION", null, null, null, "STATICALLY_VALIDATED", "[]")));
+        when(productStatusService.resolve("MISSION-77")).thenReturn(ProductStatus.DEVELOPMENT);
+
+        var response = router.route("¿Cómo va MISSION-77?");
+
+        assertTrue(response.contains("TEAM-ENGINEERING"));
+        assertTrue(response.contains("backend=abcdef1"));
+        assertTrue(response.contains("STATICALLY_VALIDATED"));
+    }
 }
