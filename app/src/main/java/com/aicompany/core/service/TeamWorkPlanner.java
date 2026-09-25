@@ -186,7 +186,8 @@ public class TeamWorkPlanner {
                   ese agente puede escribir. Los ownedPaths de agentes distintos no pueden solaparse.
                   Nunca uses rutas absolutas, "..", "\\" ni ".git".
                 - techStack: la tecnología elegida; debe permitir un MVP pequeño y completo con la capacidad real del equipo.
-                - entryPoint: ruta relativa del punto de entrada del proyecto; debe caer dentro de los ownedPaths de una tarea WORK.
+                - entryPoint: ruta relativa del punto de entrada del proyecto. Esa misma ruta (o su carpeta) DEBE aparecer
+                  en los ownedPaths de la tarea WORK que lo va a escribir; si no, el plan se rechaza.
                 """;
     }
 

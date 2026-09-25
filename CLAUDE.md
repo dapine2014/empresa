@@ -12,7 +12,7 @@ Hay una implementación real y en evolución activa en `app/` (servicio `company
 - `Plan%20Maestro%20v0-2.md` — plan maestro (organización, modelo económico, gobernanza, fases técnicas).
 - `docs/STATE.md` (estado del sprint), `docs/MISSION-001.md` (primera misión), `docs/EVENTS.md` (contrato de eventos Kafka).
 - `docs/HISTORY.md` — el *por qué* y el *cómo se verificó* de cada pieza: decisiones acordadas con el usuario, bugs reales encontrados y verificaciones en vivo (Docker + Neo4j + Kafka + Ollama). Consultarlo antes de re-verificar algo ya probado o de cambiar una decisión no obvia. Este `CLAUDE.md` describe solo el estado vigente.
-- `docs/superpowers/specs/` + `plans/` — pares diseño/plan fechados, uno por feature. **Mezclan trabajo implementado y pendiente**: ledger financiero (`2026-09-15`), rondas de evidencia (`2026-09-16`), puente LEAD→cliente real (`2026-09-17`) y development generation (`2026-09-21`) **todavía no** existen en el código. Verificar en el código antes de asumir que algo de un plan existe.
+- `docs/superpowers/specs/` + `plans/` — pares diseño/plan fechados, uno por feature. **Mezclan trabajo implementado y pendiente**: ledger financiero (`2026-09-15`), rondas de evidencia (`2026-09-16`) y puente LEAD→cliente real (`2026-09-17`) **todavía no** existen en el código; development generation (`2026-09-21`, revisado el 2026-09-24 como "misiones por equipo") sí. Verificar en el código antes de asumir que algo de un plan existe.
 - `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` — roadmap vigente. `EMPRESA_AI_TODO.md` es un roadmap anterior ya completo; `status.md` y `docs/KAFKA-BUILD-FIX.md` están obsoletos, no usarlos como estado actual.
 
 ## Comandos
@@ -70,6 +70,7 @@ Convenciones transversales:
 ### Flujo de misión (`MissionService` → `MissionExecutor` → `AgentRuntime` → `CeoService`)
 
 1. `MissionService.start` persiste la misión y lanza `MissionExecutor.executeAsync` (responde de inmediato).
+   Si la misión tiene `teamId`, `MissionExecutor` no crea las 5 tareas fijas: ver "Misiones por equipo".
 2. Máquina de estados `PLANNING → DELEGATING → WAITING_AGENT_RESULTS → EVALUATING → CONSOLIDATING → AWAITING_INVESTOR`. `MissionExecutor.advanceMission` es el **único** punto que persiste la transición en Neo4j, publica a Kafka y dispara alertas por correo.
 3. `DELEGATING` crea 5 tareas fijas: `sales` (MARKET_DISCOVERY), `product` (OFFER_DESIGN), `finance` (UNIT_ECONOMICS), `engineering` (DELIVERY_FEASIBILITY), `qa` (QUALITY_RISK_REVIEW, en paralelo y sin ver a los demás).
 4. Cada tarea corre en paralelo vía `AgentRuntime.execute` → `CeoService.executeAgentTask`.
@@ -80,6 +81,12 @@ Convenciones transversales:
 Cualquier excepción → `MissionExecutor.safeFail` → `FAILED`. Estados de `AgentTask` (strings): `PENDING → RUNNING → COMPLETED/FAILED`. `Agent.status` (`WORKING`/`IDLE`) es una propiedad persistida distinta del estado de su última tarea; `AgentRuntime` la pone en `IDLE` en un `finally`.
 
 `Mission.environment` (`PRODUCTION`/`TEST`) es explícito (default `PRODUCTION` al crear; al leer, las misiones viejas sin el campo se tratan como `TEST`, salvo `MISSION-001`). `DELETE /missions/{id}` borra de verdad, pero rechaza `MISSION-001`, misiones en curso y misiones con clientes/transacciones reales del fundador. Las `Evidence` solo se borran si quedan huérfanas.
+
+### Misiones por equipo (`Mission.teamId`)
+
+`teamId` opcional, inmutable y validado en `MissionService.start` (uno de los 3 de `TeamMemoryService.KNOWN_TEAM_IDS`, `status=ACTIVE`, con líder y miembros). En el chat solo se reconoce el id exacto (`TEAM-ENGINEERING`…), nunca el nombre del equipo. Con `teamId`: `TeamWorkPlanner` (el líder planifica con `format`, sin `tools`) → `TeamPlanValidator` (miembros reales, `requiredCapabilities` textuales; en desarrollo: todos los miembros, una `VALIDATION` para quien tenga `QA`, `ownedPaths` sin solapamiento, `entryPoint`) con 3 intentos y sin plan por defecto → `TeamExecutionStrategy` por `Team.type`: `AnalysisTeamStrategy` (Creative, Marketing: `AgentRuntime` actual vía `AgentTaskBatchRunner`) o `DevelopmentTeamStrategy` (Engineering). Sin `teamId`, discovery exactamente como antes.
+
+**Engineering**: `DevelopmentRuntime` genera `DevelopmentResult` en paralelo (ruta insegura → falla sin reintento; fuera de `ownedPaths` o con `\` → reintento; la tarea queda `GENERATED`) → `DevelopmentWorkspaceService` hace un commit por agente en `products.workspace-root/<missionId>/` (autor = el agente, trailers `Forjai-Mission`/`Forjai-Task`; si el commit falla, la tarea falla) → `StaticWorkspaceValidator` (capa 1, Git real) → revisión estática del validador (`StaticReviewResult`, gates `RepositoryEvidenceGate` + `ForbiddenClaimsGuard`) → `validationStatus` calculado por Java (`STATICALLY_VALIDATED`/`UNVALIDATED`/`FAILED`) → el CEO consolida y Java agrega el bloque "Estado verificable". Nunca se ejecuta el código generado. `ProductStatus.DEVELOPMENT` = tarea `WORK` completada con `commitSha`; `QA` sigue inalcanzable. Borrar una misión borra también su workspace. En Docker el workspace es el volumen `~/forjai-products` (archivos creados como root: en el host usar `git -c safe.directory='*'`).
 
 ### Contrato de agentes (`AgentResult`) y gates de validación
 

@@ -86,4 +86,15 @@ class DevelopmentWorkspaceServiceTest {
     void rejectsMissionIdsThatEscapeTheWorkspaceRoot() {
         assertThrows(IllegalArgumentException.class, () -> workspace().missionWorkspace("../fuera"));
     }
+
+    // Las rutas que escribe un agente son literales: git no debe interpretar magia de pathspec (":...").
+    @Test
+    void pathsAreCommittedLiterallyWithoutPathspecMagic() throws Exception {
+        var ws = workspace();
+
+        var record = ws.commitAgentWork("MISSION-5", "T", "backend", "Iris", result(
+                new GeneratedFile(":notas.md", "literal")));
+
+        assertEquals(List.of(":notas.md"), ws.filesAtCommit("MISSION-5", record.sha()));
+    }
 }

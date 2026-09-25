@@ -156,4 +156,14 @@ class TeamPlanValidatorTest {
         var errors = validator.validate(withValidation, marketing, TeamExecutionMode.ANALYSIS);
         assertTrue(errors.stream().anyMatch(e -> e.contains("VALIDATION")), errors.toString());
     }
+
+    // Verificado en vivo: Neo falló 3 veces seguidas con el entryPoint fuera de sus ownedPaths
+    // porque el error no le decía cuáles eran; la corrección tiene que ser accionable.
+    @Test
+    void theEntryPointErrorListsTheWorkOwnedPathsAndHowToFixIt() {
+        var errors = validateDev(new TeamPlan("x", "HTML5", "src/index.html", validTasks()));
+        var error = errors.stream().filter(e -> e.contains("entryPoint")).findFirst().orElseThrow();
+        assertTrue(error.contains("web/ui"), error);
+        assertTrue(error.contains("engineering=[web/index.html, docs]"), error);
+    }
 }

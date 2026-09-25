@@ -203,6 +203,18 @@ public class CeoService {
     );
 
     private final RestClient ollama;
+    /**
+     * Contexto explícito para las llamadas estructuradas de equipos (plan,
+     * código, revisión estática). Verificado en vivo: sin options.num_ctx
+     * Ollama 0.20 corre qwen3:8b con KvSize 4096 y recorta el prompt en
+     * silencio. 16384 entra en la GPU de 8 GB de desarrollo; discovery y
+     * chat no cambian (siguen sin options).
+     */
+    static final int TEAM_CONTEXT_WINDOW_TOKENS = 16_384;
+
+    private static final java.util.Set<String> TEAM_STRUCTURED_OPERATIONS =
+            java.util.Set.of("TEAM_PLANNING", "DEVELOPMENT_TASK", "STATIC_REVIEW");
+
     private final JsonMapper jsonMapper;
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
@@ -1249,6 +1261,10 @@ public class CeoService {
 
         if (think != null) {
             body.put("think", think);
+        }
+
+        if (TEAM_STRUCTURED_OPERATIONS.contains(operation)) {
+            body.put("options", Map.of("num_ctx", TEAM_CONTEXT_WINDOW_TOKENS));
         }
 
         Map<String, Object> response;

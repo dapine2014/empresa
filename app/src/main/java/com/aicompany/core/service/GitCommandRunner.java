@@ -34,6 +34,8 @@ public class GitCommandRunner {
         builder.environment().put("GIT_TERMINAL_PROMPT", "0");
         builder.environment().put("GIT_CONFIG_NOSYSTEM", "1");
         builder.environment().put("GIT_CONFIG_GLOBAL", "/dev/null");
+        // Las rutas vienen de agentes: siempre literales, nunca magia de pathspec (":(glob)...", ":!...").
+        builder.environment().put("GIT_LITERAL_PATHSPECS", "1");
 
         var process = builder.start();
         var stderr = CompletableFuture.supplyAsync(() -> readQuietly(process.getErrorStream()));

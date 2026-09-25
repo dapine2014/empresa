@@ -181,7 +181,12 @@ public class TeamPlanValidator {
 
         if (plan.entryPoint() != null && !plan.entryPoint().isBlank()
                 && work.stream().noneMatch(t -> OwnedPaths.coveredByAny(t.ownedPathsOrEmpty(), plan.entryPoint()))) {
-            errors.add("entryPoint \"" + plan.entryPoint() + "\" no cae dentro de los ownedPaths de ninguna tarea WORK.");
+            var ownedByAgent = work.stream()
+                    .map(t -> t.agentId() + "=" + t.ownedPathsOrEmpty())
+                    .collect(java.util.stream.Collectors.joining(", "));
+            errors.add("entryPoint \"" + plan.entryPoint() + "\" no cae dentro de los ownedPaths de ninguna tarea WORK ("
+                    + ownedByAgent + "). Cambia entryPoint por una ruta dentro de esos ownedPaths, o agrega esa "
+                    + "ruta exacta a los ownedPaths de la tarea WORK que va a escribir el punto de entrada.");
         }
     }
 }

@@ -41,8 +41,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(DevelopmentTeamStrategy.class);
 
-    static final int REVIEW_TOTAL_BUDGET_CHARS = 60_000;
-    static final int REVIEW_FILE_BUDGET_CHARS = 8_000;
+    // Debe entrar en CeoService.TEAM_CONTEXT_WINDOW_TOKENS (16k) junto con el prompt y la respuesta.
+    static final int REVIEW_TOTAL_BUDGET_CHARS = 24_000;
+    static final int REVIEW_FILE_BUDGET_CHARS = 6_000;
     static final String NO_EXECUTION_DISCLAIMER =
             "Esta fase no ejecuta código: no se puede afirmar que el juego compile, se ejecute o pase tests.";
 
