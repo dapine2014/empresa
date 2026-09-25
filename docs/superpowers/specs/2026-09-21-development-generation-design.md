@@ -274,11 +274,13 @@ Reintento hasta 3 intentos con corrección, tras estos gates:
   que el código compila, se ejecuta, funciona o pasa tests.
 
 **`validationStatus` lo calcula Java, no Vera**:
-- `FAILED` — algún chequeo de la capa 1 en `FAIL`, o algún finding `BLOCKER`.
+- `FAILED` — algún chequeo de la capa 1 en `FAIL`, algún finding `BLOCKER`, o
+  verdict `ISSUES_FOUND` con al menos un finding `MAJOR` (decisión del fundador
+  del 2026-09-25, tras la verificación en vivo).
 - `UNVALIDATED` — capa 1 pasa pero la revisión de Vera no se completó
   (reintentos agotados).
-- `STATICALLY_VALIDATED` — capa 1 pasa y Vera completó sin `BLOCKER`
-  (`MAJOR`/`MINOR` se reportan igual).
+- `STATICALLY_VALIDATED` — capa 1 pasa y Vera completó sin `BLOCKER` y sin
+  `ISSUES_FOUND`+`MAJOR` (los `MINOR` se reportan igual).
 
 Persistido en la `AgentTask` de Vera (`kind=VALIDATION`, `validationStatus`,
 `staticChecks` como JSON, `result` = `StaticReviewResult`). Su evidencia pasa

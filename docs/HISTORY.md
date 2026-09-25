@@ -696,5 +696,5 @@ citaba. Datos sintéticos limpiados después.
 
 **Observaciones abiertas** (no bloquean la mecánica, sí la calidad del resultado):
 - Lo generado por `qwen3:8b` no es un juego de navegador jugable: Neo eligió un stack ASP.NET + React + PostgreSQL/Redis, sin HTML de entrada, sin game loop y sin `.csproj`/`package.json`; el `entryPoint` fue `src/Cloud/Architecture/EntryPoint.cs`. La trazabilidad y los artefactos son reales; la coherencia del producto no.
-- `STATICALLY_VALIDATED` convive con verdict `ISSUES_FOUND` y 16 MAJOR (Vera clasificó un error de sintaxis de C# como MINOR). La regla aprobada solo falla por BLOCKER; queda para decisión del fundador si `ISSUES_FOUND`/MAJOR debería impedir `STATICALLY_VALIDATED`.
+- `STATICALLY_VALIDATED` convivía con verdict `ISSUES_FOUND` y 16 MAJOR (Vera clasificó además un error de sintaxis de C# como MINOR). **Decisión del fundador (2026-09-25)**: `ISSUES_FOUND` con algún `MAJOR` pasa a `FAILED` (`StaticValidationStatusTest.failedWhenReviewFindsIssuesWithAMajorFinding`). Con esa regla, `MISSION-TEAM-VERIFY-2` habría quedado en `FAILED`; su valor persistido no se recalcula. Sigue abierto que Vera puede subestimar la severidad (el error de sintaxis como MINOR).
 - Los archivos del workspace quedan con dueño root en el host (el contenedor corre como root); para inspeccionar con git usar `git -c safe.directory='*'`.

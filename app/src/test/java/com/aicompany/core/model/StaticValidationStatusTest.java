@@ -23,9 +23,25 @@ class StaticValidationStatusTest {
     );
 
     @Test
-    void staticallyValidatedWhenChecksPassAndReviewHasNoBlocker() {
+    void staticallyValidatedWhenChecksPassAndReviewOnlyHasMinorFindings() {
         assertEquals(StaticValidationStatus.STATICALLY_VALIDATED,
+                StaticValidationStatus.compute(ALL_PASS, review("MINOR")));
+    }
+
+    // Decisión del fundador (verificado en vivo con MISSION-TEAM-VERIFY-2): ISSUES_FOUND con
+    // hallazgos MAJOR no puede quedar como STATICALLY_VALIDATED.
+    @Test
+    void failedWhenReviewFindsIssuesWithAMajorFinding() {
+        assertEquals(StaticValidationStatus.FAILED,
                 StaticValidationStatus.compute(ALL_PASS, review("MAJOR")));
+    }
+
+    @Test
+    void aMajorFindingWithNoEvidentIssuesVerdictStaysValidated() {
+        var review = new StaticReviewResult("NO_EVIDENT_ISSUES",
+                List.of(new StaticReviewResult.Finding("web/game.js", "MAJOR", "detalle")), List.of(), "coherente",
+                List.of("No se puede verificar la ejecución."), List.of());
+        assertEquals(StaticValidationStatus.STATICALLY_VALIDATED, StaticValidationStatus.compute(ALL_PASS, review));
     }
 
     @Test

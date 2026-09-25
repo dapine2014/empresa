@@ -23,6 +23,14 @@ public enum StaticValidationStatus {
             return UNVALIDATED;
         }
 
-        return review.hasBlocker() ? FAILED : STATICALLY_VALIDATED;
+        if (review.hasBlocker()) {
+            return FAILED;
+        }
+
+        // Decisión del fundador: ISSUES_FOUND con algún hallazgo MAJOR no es "sin inconsistencias evidentes".
+        var majorIssues = "ISSUES_FOUND".equals(review.verdict()) && review.findingsOrEmpty().stream()
+                .anyMatch(f -> f != null && "MAJOR".equals(f.severity()));
+
+        return majorIssues ? FAILED : STATICALLY_VALIDATED;
     }
 }
