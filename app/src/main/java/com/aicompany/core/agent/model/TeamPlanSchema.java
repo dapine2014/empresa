@@ -30,7 +30,14 @@ public final class TeamPlanSchema {
                     "summary", Map.of("type", "string", "minLength", 1),
                     "techStack", Map.of("type", "string"),
                     "entryPoint", Map.of("type", "string"),
-                    "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1)
+                    "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1),
+                    "participationConflicts", Map.of("type", "array", "items", Map.of(
+                            "type", "object",
+                            "properties", Map.of(
+                                    "agentId", Map.of("type", "string", "minLength", 1),
+                                    "reason", Map.of("type", "string", "minLength", 1)),
+                            "required", List.of("agentId", "reason"),
+                            "additionalProperties", false))
             ),
             "required", List.of("summary", "techStack", "entryPoint", "tasks"),
             "additionalProperties", false

@@ -162,6 +162,16 @@ Reglas de `DevelopmentTeamStrategy`:
 Reglas de `AnalysisTeamStrategy`: no admite tareas `VALIDATION`; no exige
 que todos los miembros trabajen.
 
+Ajustes del 2026-09-25 (verificado en vivo con `MISSION-1790325370585`: Neo
+dio dos tareas a Mila y mandó el listado completo de capabilities como un solo
+texto): el roster se presenta con cada capability entre comillas como elemento
+separado; una capability concatenada se rechaza con un error que lo nombra y
+sugiere elementos reales; el líder debe tener tarea; `ownedPaths` literales
+(sin globs) y sin rutas repetidas dentro de una tarea. Si el objetivo no da
+trabajo real a un miembro, el líder no inventa una tarea: lo declara en
+`participationConflicts` y la misión termina en `FAILED` con ese reporte antes
+de ejecutar nada (sin reintento).
+
 Rechazo → reintento hasta 3 intentos con bloque `CORRECCIÓN DEL INTENTO
 ANTERIOR` (mismo patrón que `AgentRuntime`), `EMPRESA_TEAM_PLAN_REJECTED` por
 intento rechazado. Agotados → la misión va a `FAILED` con el motivo exacto.
