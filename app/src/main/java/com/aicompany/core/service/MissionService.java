@@ -26,17 +26,37 @@ public class MissionService {
     private final MissionMemoryService memory;
     private final MissionExecutor executor;
     private final CompanyEventPublisher events;
+    private final TeamMemoryService teamMemory;
+    private final DevelopmentWorkspaceService workspace;
 
-    public MissionService(MissionMemoryService memory, MissionExecutor executor, CompanyEventPublisher events) {
+    public MissionService(
+            MissionMemoryService memory,
+            MissionExecutor executor,
+            CompanyEventPublisher events,
+            TeamMemoryService teamMemory,
+            DevelopmentWorkspaceService workspace) {
         this.memory = memory;
         this.executor = executor;
         this.events = events;
+        this.teamMemory = teamMemory;
+        this.workspace = workspace;
     }
 
     public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
-        validateFinancialCriteria(financialCriteria);
+        return start(missionId, instruction, environment, financialCriteria, null);
+    }
 
-        memory.ensureMission(missionId, instruction, environment, financialCriteria);
+    public MissionResponse start(
+            String missionId,
+            String instruction,
+            String environment,
+            FinancialCriteriaCommand financialCriteria,
+            String teamId) {
+
+        validateFinancialCriteria(financialCriteria);
+        validateTeam(teamId);
+
+        memory.ensureMission(missionId, instruction, environment, financialCriteria, teamId);
 
         events.publishMission(
                 "EMPRESA_MISSION_CREATED",
@@ -159,6 +179,100 @@ public class MissionService {
                 command.decision(),
                 Instant.now()
         ));
+    }
+
+    /**
+     * Solo se puede borrar una misión cuya orquestación ya terminó: los
+     * threads de {@code MissionExecutor} de una misión en curso seguirían
+     * escribiendo tareas y evidencia sobre nodos borrados.
+     */
+    private static final Set<MissionStatus> DELETABLE_STATUSES = Set.of(
+            MissionStatus.AWAITING_INVESTOR,
+            MissionStatus.FAILED,
+            MissionStatus.COMPLETED,
+            MissionStatus.CANCELLED
+    );
+
+    /** Misión fundacional real (`docs/MISSION-001.md`) — nunca se borra desde la API. */
+    private static final String FOUNDATIONAL_MISSION_ID = "MISSION-001";
+
+    /**
+     * Borrado real (no soft-delete) de una misión y todo lo que la
+     * orquestación colgó de ella — pensado para limpiar misiones de
+     * prueba mientras se pulen prompts. Devuelve {@code false} si la
+     * misión no existe.
+     */
+    public boolean delete(String missionId) {
+
+        var mission = memory.find(missionId);
+
+        if (mission.isEmpty()) {
+            return false;
+        }
+
+        if (FOUNDATIONAL_MISSION_ID.equals(missionId)) {
+            throw new IllegalStateException(
+                    FOUNDATIONAL_MISSION_ID + " es la misión fundacional y no se puede borrar");
+        }
+
+        if (!DELETABLE_STATUSES.contains(mission.get().status())) {
+            throw new IllegalStateException(
+                    "No se puede borrar una misión en curso (estado actual: "
+                            + mission.get().status()
+                            + ")"
+            );
+        }
+
+        if (memory.hasRealCustomerData(missionId)) {
+            throw new IllegalStateException(
+                    "La misión " + missionId + " tiene clientes o ventas reales registrados; no se puede borrar");
+        }
+
+        memory.deleteMission(missionId);
+
+        try {
+            workspace.deleteWorkspace(missionId);
+        } catch (Exception ex) {
+            // Neo4j ya quedó limpio; el directorio huérfano no debe revertir el borrado.
+            log.warn("MISSION {} - no se pudo borrar el workspace: {}", missionId, ex.getMessage());
+        }
+
+        events.publish(
+                "EMPRESA_MISSION_DELETED",
+                missionId,
+                null,
+                "human",
+                Map.of("previousStatus", mission.get().status().name())
+        );
+
+        return true;
+    }
+
+    /**
+     * teamId es opcional; si viene, tiene que ser uno de los 3 equipos del
+     * catálogo fijo, existir en Neo4j con status ACTIVE y tener líder y
+     * miembros reales (spec §1). Nunca lo decide ni lo corrige un modelo.
+     */
+    private void validateTeam(String teamId) {
+
+        if (teamId == null) {
+            return;
+        }
+
+        if (!TeamMemoryService.KNOWN_TEAM_IDS.contains(teamId)) {
+            throw new IllegalArgumentException("teamId desconocido: " + teamId
+                    + ". Valores válidos: " + TeamMemoryService.KNOWN_TEAM_IDS);
+        }
+
+        var team = teamMemory.snapshot(teamId);
+
+        if (team == null || !"ACTIVE".equals(team.status())) {
+            throw new IllegalArgumentException("El equipo " + teamId + " no existe o no está ACTIVE en Company Memory.");
+        }
+
+        if (team.leaderAgentId() == null || team.members().isEmpty()) {
+            throw new IllegalArgumentException("El equipo " + teamId + " no tiene líder o miembros en Company Memory.");
+        }
     }
 
     private void validateFinancialCriteria(FinancialCriteriaCommand financialCriteria) {

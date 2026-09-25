@@ -24,7 +24,8 @@ public class MissionController {
     @PostMapping
     public ResponseEntity<MissionResponse> start(@Valid @RequestBody MissionCommand command) {
         return ResponseEntity.accepted().body(
-                missionService.start(command.missionId(), command.instruction(), command.environmentOrDefault(), command.financialCriteria())
+                missionService.start(command.missionId(), command.instruction(), command.environmentOrDefault(),
+                        command.financialCriteria(), command.teamIdOrNull())
         );
     }
 
@@ -44,6 +45,19 @@ public class MissionController {
     @GetMapping("/{missionId}/details")
     public ResponseEntity<MissionStatusResponse> details(@PathVariable String missionId) {
         return missionService.details(missionId).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Borrado real de una misión terminada (limpieza de misiones de
+     * prueba). Si está en curso, es la fundacional o tiene clientes/ventas
+     * reales, {@code MissionService} lanza {@code IllegalStateException}
+     * → 500, misma convención que el resto de controllers.
+     */
+    @DeleteMapping("/{missionId}")
+    public ResponseEntity<Void> delete(@PathVariable String missionId) {
+        return missionService.delete(missionId)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
     }
 
     /**

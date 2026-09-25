@@ -105,12 +105,15 @@ public class ProductStatusService {
     }
 
     /**
-     * Punto de enganche del Proyecto B — {@code AgentTask} de desarrollo
-     * real, evento {@code EMPRESA_DEVELOPMENT_STARTED}, o
-     * artefacto/repositorio/build.
+     * DEVELOPMENT = existe una tarea WORK completada con un commit real
+     * (spec de Proyecto B §9) — el commit es la prueba, no el nombre de la acción.
      */
     private boolean isInDevelopment(String missionId) {
-        return false;
+        return missionMemory.tasks(missionId).stream()
+                .anyMatch(t -> "WORK".equals(t.kind())
+                        && "COMPLETED".equals(t.status())
+                        && t.commitSha() != null
+                        && !t.commitSha().isBlank());
     }
 
     private boolean isDesigned(String missionId) {

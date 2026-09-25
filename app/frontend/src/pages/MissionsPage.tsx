@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import DeleteMissionButton from '../components/DeleteMissionButton'
 
 function StartMissionForm() {
   const queryClient = useQueryClient()
   const [instruction, setInstruction] = useState('')
   const [environment, setEnvironment] = useState<'PRODUCTION' | 'TEST'>('PRODUCTION')
+  const [teamId, setTeamId] = useState('')
   const [hasFinancialCriteria, setHasFinancialCriteria] = useState(false)
   const [targetAmount, setTargetAmount] = useState('')
   const [currency, setCurrency] = useState('USD')
@@ -20,6 +22,7 @@ function StartMissionForm() {
         missionId: `MISSION-${Date.now()}`,
         instruction,
         environment,
+        teamId: teamId || null,
         financialCriteria: hasFinancialCriteria
           ? { metric: 'NET_PROFIT', targetAmount: Number(targetAmount), currency, deadline: deadline || null }
           : null,
@@ -28,6 +31,7 @@ function StartMissionForm() {
       setFeedback(`Misión ${response.missionId} creada.`)
       setInstruction('')
       setHasFinancialCriteria(false)
+      setTeamId('')
       setTargetAmount('')
       setDeadline('')
       queryClient.invalidateQueries({ queryKey: ['missions'] })
@@ -54,6 +58,15 @@ function StartMissionForm() {
         <select value={environment} onChange={(e) => setEnvironment(e.target.value as 'PRODUCTION' | 'TEST')}>
           <option value="PRODUCTION">PRODUCTION</option>
           <option value="TEST">TEST</option>
+        </select>
+      </label>
+      <label>
+        Equipo responsable
+        <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+          <option value="">Sin equipo</option>
+          <option value="TEAM-ENGINEERING">Engineering Team</option>
+          <option value="TEAM-CREATIVE-PRODUCT-INTELLIGENCE">Creative / Product Intelligence</option>
+          <option value="TEAM-MARKETING-GROWTH">Marketing &amp; Growth</option>
         </select>
       </label>
       <label>
@@ -107,6 +120,7 @@ export default function MissionsPage() {
             <th>Progreso</th>
             <th>Paso actual</th>
             <th>Actualizada</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -122,6 +136,9 @@ export default function MissionsPage() {
               <td>{mission.progress}%</td>
               <td>{mission.currentStep}</td>
               <td>{new Date(mission.updatedAt).toLocaleString()}</td>
+              <td>
+                <DeleteMissionButton missionId={mission.missionId} status={mission.status} />
+              </td>
             </tr>
           ))}
         </tbody>

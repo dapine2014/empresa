@@ -526,3 +526,18 @@ button:disabled {
 .financial-criteria h2 {
   margin-top: 0;
 }
+
+button.danger {
+  background: #c0392b;
+}
+
+.delete-mission {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.delete-mission button {
+  padding: 6px 12px;
+}

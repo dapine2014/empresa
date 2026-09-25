@@ -15,11 +15,17 @@ public record MissionCommand(
         @NotBlank String missionId,
         @NotBlank String instruction,
         String environment,
-        FinancialCriteriaCommand financialCriteria
+        FinancialCriteriaCommand financialCriteria,
+        String teamId
 ) {
     public String environmentOrDefault() {
         return environment == null || environment.isBlank()
                 ? "PRODUCTION"
                 : environment.toUpperCase(Locale.ROOT);
+    }
+
+    /** Exacto (sin cambiar mayúsculas): el backend valida contra el catálogo fijo de equipos. */
+    public String teamIdOrNull() {
+        return teamId == null || teamId.isBlank() ? null : teamId.strip();
     }
 }

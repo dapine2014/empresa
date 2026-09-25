@@ -69,6 +69,9 @@ export const api = {
       body: JSON.stringify(command),
     }),
 
+  deleteMission: (missionId: string) =>
+    request<void>(`/api/company/missions/${missionId}`, { method: 'DELETE' }),
+
   chat: (message: string) =>
     request<ChatResponse>('/api/company/chat', {
       method: 'POST',

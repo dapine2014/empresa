@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -53,7 +54,8 @@ public class MissionMemoryService {
             String missionId,
             String instruction,
             String environment,
-            FinancialCriteriaCommand financialCriteria) {
+            FinancialCriteriaCommand financialCriteria,
+            String teamId) {
 
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
@@ -71,11 +73,16 @@ public class MissionMemoryService {
                         ? ""
                         : ", m.financialCriteriaMetric=$metric, m.financialCriteriaTargetAmount=$targetAmount, "
                                 + "m.financialCriteriaCurrency=$currency, m.financialCriteriaDeadline=$deadline";
+                // teamId es inmutable: mismo criterio que financialCriteria, un re-arranque
+                // sin teamId nunca borra el ya declarado.
+                var teamIdSet = teamId == null ? "" : ", m.teamId=$teamId";
+                var params = financialCriteriaParams(missionId, instruction, environment, financialCriteria);
+                params.put("teamId", teamId);
                 tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, "
                                 + "m.environment=$environment, m.status='CREATED', m.progress=0, "
                                 + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt"
-                                + financialCriteriaSet,
-                        financialCriteriaParams(missionId, instruction, environment, financialCriteria));
+                                + financialCriteriaSet + teamIdSet,
+                        params);
                 tx.run("MATCH (m:Mission {id:$id}), (c:Company {id:'AI-COMPANY'}) MERGE (c)-[:HAS_MISSION]->(m)", Map.of("id", missionId));
                 tx.run("MATCH (m:Mission {id:$id}), (a:Agent {id:'ceo'}) MERGE (m)-[:LED_BY]->(a)", Map.of("id", missionId));
                 return null;
@@ -187,16 +194,147 @@ public class MissionMemoryService {
         }
     }
 
-    public void createTask(String taskId, String missionId, String agentId, String action) {
+    /**
+     * Si la misión tiene clientes o ventas reales registrados por el
+     * fundador ({@code CustomerMemoryService}) — datos que no se
+     * regeneran re-ejecutando la misión, así que bloquean su borrado.
+     */
+    public boolean hasRealCustomerData(String missionId) {
+        try (var session = driver.session()) {
+            return session.run(
+                    "MATCH (m:Mission {id:$missionId}) " +
+                            "RETURN EXISTS { (m)-[:HAS_CUSTOMER|HAS_TRANSACTION]->() } AS has",
+                    Map.of("missionId", missionId)
+            ).list().stream().findFirst().map(r -> r.get("has").asBoolean()).orElse(false);
+        }
+    }
+
+    /**
+     * Borra la misión y todo lo que su orquestación colgó de ella, en una
+     * sola transacción: {@code AgentTask}, {@code Decision},
+     * {@code Opportunity} y sus {@code Customer} LEAD. Las {@code Evidence}
+     * solo se borran si quedan huérfanas — por la deduplicación de
+     * {@code EvidenceDedupKey} un mismo nodo puede estar citado por tareas
+     * de otras misiones; si sobreviven y esta misión las había creado, su
+     * {@code missionId} se reasigna a una misión que todavía las cita. Todo
+     * se matchea también por la propiedad {@code missionId} (no solo por
+     * relaciones), que es lo que usa Activity. Nunca toca {@code Agent}/{@code Company}/prompts/
+     * políticas. También saca la misión del foco conversacional
+     * ({@code Conversation.lastMentionedIds}) para que el chat no resuelva
+     * una referencia a un id que ya no existe.
+     */
+    public void deleteMission(String missionId) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
+                var params = Map.<String, Object>of("missionId", missionId);
+
+                // Además de seguir las relaciones, se matchea por la propiedad
+                // missionId: Activity (ActivityMemoryService) filtra por esa
+                // propiedad, y un nodo cuya relación con la misión se perdió
+                // seguiría apareciendo en la línea de tiempo de una misión
+                // que ya no existe.
+                var evidenceIds = tx.run(
+                        "OPTIONAL MATCH (m:Mission {id:$missionId})-[:HAS_TASK]->(:AgentTask)" +
+                                "-[:HAS_EVIDENCE]->(te:Evidence) " +
+                                "WITH collect(DISTINCT te.id) AS taskEvidence " +
+                                "OPTIONAL MATCH (o:Opportunity {missionId:$missionId})-[:HAS_CANDIDATE]->" +
+                                "(:Customer {status:'LEAD'})-[:HAS_EVIDENCE]->(ce:Evidence) " +
+                                "WITH taskEvidence, collect(DISTINCT ce.id) AS candidateEvidence " +
+                                "OPTIONAL MATCH (pe:Evidence {missionId:$missionId}) " +
+                                "WITH taskEvidence, candidateEvidence, collect(DISTINCT pe.id) AS propertyEvidence " +
+                                "RETURN taskEvidence + candidateEvidence + propertyEvidence AS ids",
+                        params
+                ).single().get("ids").asList(v -> v.asString());
+
+                tx.run("MATCH (o:Opportunity {missionId:$missionId})-[:HAS_CANDIDATE]->(c:Customer {status:'LEAD'}) " +
+                                "WHERE NOT EXISTS { (c)<-[:HAS_CANDIDATE|HAS_CUSTOMER]-(other) WHERE other <> o } " +
+                                "DETACH DELETE c",
+                        params);
+
+                tx.run("OPTIONAL MATCH (m:Mission {id:$missionId}) " +
+                                "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY]->(n) " +
+                                "WITH m, collect(DISTINCT n) AS owned " +
+                                "FOREACH (n IN owned | DETACH DELETE n) " +
+                                "FOREACH (x IN CASE WHEN m IS NULL THEN [] ELSE [m] END | DETACH DELETE x)",
+                        params);
+
+                tx.run("MATCH (n) WHERE (n:AgentTask OR n:Decision OR n:Opportunity) " +
+                                "AND n.missionId = $missionId " +
+                                "DETACH DELETE n",
+                        params);
+
+                tx.run("MATCH (e:Evidence) WHERE e.id IN $ids " +
+                                "AND NOT EXISTS { ()-[:HAS_EVIDENCE]->(e) } " +
+                                "DETACH DELETE e",
+                        Map.of("ids", evidenceIds));
+
+                // Evidencia compartida (dedup) que sigue citada por otra
+                // misión pero fue creada por esta: se reasigna a una misión
+                // que todavía la cita, para que Activity no la muestre bajo
+                // un id borrado.
+                tx.run("MATCH (e:Evidence {missionId:$missionId})<-[:HAS_EVIDENCE]-(p) " +
+                                "WHERE p.missionId IS NOT NULL AND p.missionId <> $missionId " +
+                                "WITH e, min(p.missionId) AS newOwner " +
+                                "SET e.missionId = newOwner",
+                        params);
+
+                tx.run("MATCH (c:Conversation {id:'MAIN'}) WHERE $missionId IN c.lastMentionedIds " +
+                                "WITH c, [x IN c.lastMentionedIds WHERE x <> $missionId] AS remaining " +
+                                "SET c.lastMentionedIds = CASE WHEN size(remaining) = 0 THEN null ELSE remaining END",
+                        params);
+
+                return null;
+            });
+        }
+    }
+
+    public void createTask(String taskId, String missionId, String agentId, String action) {
+        createTask(taskId, missionId, agentId, action, null);
+    }
+
+    /** kind: PLANNING | WORK | VALIDATION para misiones de equipo; null en discovery. */
+    public void createTask(String taskId, String missionId, String agentId, String action, String kind) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                var params = new HashMap<String, Object>();
+                params.put("taskId", taskId);
+                params.put("missionId", missionId);
+                params.put("agentId", agentId);
+                params.put("action", action);
+                params.put("kind", kind);
+                params.put("updatedAt", Instant.now().toString());
                 tx.run("MATCH (m:Mission {id:$missionId}), (a:Agent {id:$agentId}) " +
                                 "MERGE (t:AgentTask {id:$taskId}) SET t.missionId=$missionId, t.agentId=$agentId, " +
-                                "t.action=$action, t.status='PENDING', t.updatedAt=$updatedAt " +
+                                "t.action=$action, t.kind=$kind, t.status='PENDING', t.updatedAt=$updatedAt " +
                                 "MERGE (m)-[:HAS_TASK]->(t) MERGE (a)-[:ASSIGNED_TASK]->(t) " +
                                 "MERGE (m)-[:INVOLVES_AGENT]->(a)",
-                        Map.of("taskId", taskId, "missionId", missionId, "agentId", agentId,
-                                "action", action, "updatedAt", Instant.now().toString()));
+                        params);
+                return null;
+            });
+        }
+    }
+
+    /** Artefacto real de una tarea de desarrollo: el commit es la prueba del trabajo (spec §6). */
+    public void recordTaskArtifact(String taskId, String workspacePath, String commitSha, List<String> files) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (t:AgentTask {id:$id}) SET t.workspacePath=$workspacePath, t.commitSha=$commitSha, "
+                                + "t.files=$files, t.updatedAt=$updatedAt",
+                        Map.of("id", taskId, "workspacePath", workspacePath, "commitSha", commitSha,
+                                "files", files, "updatedAt", Instant.now().toString()));
+                return null;
+            });
+        }
+    }
+
+    /** Estado calculado por Java + chequeos deterministas, en la tarea VALIDATION (spec §7). */
+    public void recordStaticValidation(String taskId, String validationStatus, String staticChecksJson) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (t:AgentTask {id:$id}) SET t.validationStatus=$validationStatus, "
+                                + "t.staticChecks=$staticChecks, t.updatedAt=$updatedAt",
+                        Map.of("id", taskId, "validationStatus", validationStatus,
+                                "staticChecks", staticChecksJson, "updatedAt", Instant.now().toString()));
                 return null;
             });
         }
@@ -240,11 +378,26 @@ public class MissionMemoryService {
         }
     }
 
+    public Optional<String> teamId(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN m.teamId AS teamId", Map.of("id", missionId))
+                    .list(r -> nullableString(r.get("teamId")))
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .findFirst();
+        }
+    }
+
+    private static String nullableString(org.neo4j.driver.Value value) {
+        return value == null || value.isNull() ? null : value.asString();
+    }
+
     public Optional<MissionResponse> find(String missionId) {
         try (var session = driver.session()) {
             var records = session.run("MATCH (m:Mission {id:$id}) RETURN m.status AS status, coalesce(m.environment, 'TEST') AS environment, m.progress AS progress, m.currentStep AS step, m.message AS message, m.updatedAt AS updatedAt, "
                             + "m.financialCriteriaMetric AS financialCriteriaMetric, m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, "
-                            + "m.financialCriteriaCurrency AS financialCriteriaCurrency, m.financialCriteriaDeadline AS financialCriteriaDeadline",
+                            + "m.financialCriteriaCurrency AS financialCriteriaCurrency, m.financialCriteriaDeadline AS financialCriteriaDeadline, "
+                            + "m.teamId AS teamId",
                     Map.of("id", missionId)).list();
             return records.stream().findFirst().map(r -> new MissionResponse(
                     missionId,
@@ -254,7 +407,8 @@ public class MissionMemoryService {
                     r.get("step").asString(),
                     r.get("message").asString(),
                     Instant.parse(r.get("updatedAt").asString()),
-                    mapFinancialCriteria(r)
+                    mapFinancialCriteria(r),
+                    nullableString(r.get("teamId"))
             ));
         }
     }
@@ -276,7 +430,8 @@ public class MissionMemoryService {
                                     "m.financialCriteriaMetric AS financialCriteriaMetric, " +
                                     "m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, " +
                                     "m.financialCriteriaCurrency AS financialCriteriaCurrency, " +
-                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline",
+                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline, " +
+                                    "m.teamId AS teamId",
                             Map.of("ids", missionIds))
                     .list(r -> new MissionResponse(
                             r.get("id").asString(),
@@ -286,7 +441,8 @@ public class MissionMemoryService {
                             r.get("step").asString(),
                             r.get("message").asString(),
                             Instant.parse(r.get("updatedAt").asString()),
-                            mapFinancialCriteria(r)
+                            mapFinancialCriteria(r),
+                            nullableString(r.get("teamId"))
                     ));
         }
     }
@@ -306,7 +462,8 @@ public class MissionMemoryService {
                                     "m.financialCriteriaMetric AS financialCriteriaMetric, " +
                                     "m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, " +
                                     "m.financialCriteriaCurrency AS financialCriteriaCurrency, " +
-                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline " +
+                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline, " +
+                                    "m.teamId AS teamId " +
                                     "ORDER BY m.updatedAt DESC LIMIT $limit",
                             Map.of("limit", limit))
                     .list(r -> new MissionResponse(
@@ -317,7 +474,8 @@ public class MissionMemoryService {
                             r.get("step").asString(),
                             r.get("message").asString(),
                             Instant.parse(r.get("updatedAt").asString()),
-                            mapFinancialCriteria(r)
+                            mapFinancialCriteria(r),
+                            nullableString(r.get("teamId"))
                     ));
         }
     }
@@ -429,12 +587,22 @@ public class MissionMemoryService {
 
     public List<AgentTask> tasks(String missionId) {
         try (var session = driver.session()) {
-            return session.run("MATCH (t:AgentTask {missionId:$missionId}) RETURN t.id AS id, t.agentId AS agentId, t.action AS action, t.status AS status, t.result AS result, t.updatedAt AS updatedAt ORDER BY t.id",
+            return session.run("MATCH (t:AgentTask {missionId:$missionId}) RETURN t.id AS id, t.agentId AS agentId, "
+                                    + "t.action AS action, t.status AS status, t.result AS result, t.updatedAt AS updatedAt, "
+                                    + "t.kind AS kind, t.workspacePath AS workspacePath, t.commitSha AS commitSha, "
+                                    + "t.files AS files, t.validationStatus AS validationStatus, t.staticChecks AS staticChecks "
+                                    + "ORDER BY t.id",
                             Map.of("missionId", missionId))
                     .list(r -> new AgentTask(
                             r.get("id").asString(), missionId,
                             r.get("agentId").asString(), r.get("action").asString(), r.get("status").asString(),
-                            r.get("result").asString(""), Instant.parse(r.get("updatedAt").asString())));
+                            r.get("result").asString(""), Instant.parse(r.get("updatedAt").asString()),
+                            nullableString(r.get("kind")),
+                            nullableString(r.get("workspacePath")),
+                            nullableString(r.get("commitSha")),
+                            r.get("files").isNull() ? null : r.get("files").asList(v -> v.asString()),
+                            nullableString(r.get("validationStatus")),
+                            nullableString(r.get("staticChecks"))));
         }
     }
 }

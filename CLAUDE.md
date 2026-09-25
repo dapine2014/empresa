@@ -6,432 +6,160 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Proyecto "Forjai": una empresa real operada principalmente por agentes de IA. El fundador humano (Alexander / `dapine@gmail.com`) define visión y aprueba decisiones reservadas; los agentes investigan, proponen y ejecutan de forma autónoma dentro de las políticas.
 
-Ya hay **una implementación real y en evolución activa** en `app/` (servicio `company-core`, Spring Boot / Java) — no es solo un esqueleto inicial. El repositorio está bajo git (`git log` tiene el historial real; consúltalo en vez de asumir que no existe). Documentos de referencia, en orden de detalle:
+Hay una implementación real y en evolución activa en `app/` (servicio `company-core`, Spring Boot / Java + SPA React). Documentos de referencia:
 
-- `empresa.md` — documento fundacional (niveles de autonomía 🟢🟡🔴, formato de reportes, diagramas).
-- `Plan%20Maestro%20v0-2.md` — plan maestro v0.2 (organización, modelo económico, gobernanza, fases técnicas).
-- `docs/STATE.md` — estado del sprint y qué falta para cerrar Sprint 0.
-- `docs/MISSION-001.md` — la primera misión (descubrir y validar el primer negocio real).
-- `docs/EVENTS.md` — contrato de eventos Kafka.
-- `docs/HISTORY.md` — **registro detallado y cronológico** de cada feature: decisiones de diseño acordadas con el usuario, bugs reales encontrados (muchos en producción), y verificaciones en vivo (Docker + Neo4j + Kafka + Ollama reales). Este `CLAUDE.md` describe el sistema *como es hoy*; `docs/HISTORY.md` tiene el *por qué* y el *cómo se verificó* de cada pieza. Consultalo antes de re-verificar algo que ya se probó en vivo, o para entender el razonamiento detrás de una decisión no obvia.
-- `docs/superpowers/plans/` — specs y planes de implementación (flujo `writing-plans`/`executing-plans`) para trabajo **todavía no incorporado al código**: ledger financiero, puente LEAD→cliente real, rondas de evidencia, memoria conversacional del chat. Antes de asumir que una de estas features ya existe, verificar en el código — este `CLAUDE.md` solo documenta lo ya implementado.
-- `EMPRESA_AI_TODO.md` — estado y roadmap de una fase anterior de esta implementación (contrato `AgentResult`, JSON Schema, Evidence Engine v1, Customer Validation, agente `qa`, eventos Kafka) — ese roadmap ya está **completo**.
-- `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` — el roadmap **vigente**: Evidence Acquisition Engine (búsqueda + fetch web real, ya implementado — ver "Evidence Acquisition" más abajo), Agent Failure != Mission Failure (implementado), memoria empresarial avanzada (parcial). `status.md` quedó "en pausa" en un punto de configuración de Kafka muy anterior a todo esto; no lo uses como estado actual.
-
-Consulta esos documentos antes de tomar decisiones de diseño; en particular la sección "Niveles de autonomía" de `empresa.md` antes de asumir qué acciones requieren aprobación humana (nivel 🟢 automatizable sin aprobación vs. 🔴 que requiere al fundador — p. ej. contactar clientes o cerrar una venta es 🔴, buscar oportunidades o analizar mercados es 🟢).
+- `empresa.md` — documento fundacional. Consultar su sección "Niveles de autonomía" antes de asumir qué requiere aprobación humana (🟢 automatizable, p. ej. buscar oportunidades o analizar mercados; 🔴 requiere al fundador, p. ej. contactar clientes o cerrar una venta).
+- `Plan%20Maestro%20v0-2.md` — plan maestro (organización, modelo económico, gobernanza, fases técnicas).
+- `docs/STATE.md` (estado del sprint), `docs/MISSION-001.md` (primera misión), `docs/EVENTS.md` (contrato de eventos Kafka).
+- `docs/HISTORY.md` — el *por qué* y el *cómo se verificó* de cada pieza: decisiones acordadas con el usuario, bugs reales encontrados y verificaciones en vivo (Docker + Neo4j + Kafka + Ollama). Consultarlo antes de re-verificar algo ya probado o de cambiar una decisión no obvia. Este `CLAUDE.md` describe solo el estado vigente.
+- `docs/superpowers/specs/` + `plans/` — pares diseño/plan fechados, uno por feature. **Mezclan trabajo implementado y pendiente**: ledger financiero (`2026-09-15`), rondas de evidencia (`2026-09-16`) y puente LEAD→cliente real (`2026-09-17`) **todavía no** existen en el código; development generation (`2026-09-21`, revisado el 2026-09-24 como "misiones por equipo") sí. Verificar en el código antes de asumir que algo de un plan existe.
+- `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` — roadmap vigente. `EMPRESA_AI_TODO.md` es un roadmap anterior ya completo; `status.md` y `docs/KAFKA-BUILD-FIX.md` están obsoletos, no usarlos como estado actual.
 
 ## Comandos
 
-Trabajar siempre dentro de `app/`. No hay Maven wrapper; se usa `mvn` del sistema. El build fija el bytecode a Java 21 (`--release 21` vía `<java.version>`), así que compila con cualquier JDK ≥ 21 aunque sea más nuevo; `maven-enforcer-plugin` corta el build en `validate` si el JDK es < 21 o Maven < 3.9.
+Backend: trabajar dentro de `app/`. No hay Maven wrapper (`mvn` del sistema). Bytecode fijado a Java 21 (`--release 21`); `maven-enforcer-plugin` corta el build si JDK < 21 o Maven < 3.9.
 
 ```bash
 cd app
-mvn package                       # compila + empaqueta el jar (target/company-core-0.1.0-SNAPSHOT.jar)
-mvn -DskipTests package           # empaqueta sin tests
-mvn test                          # ejecuta la suite unitaria
-mvn test -Dtest=MiClase#miMetodo  # ejecuta un único test
-mvn spring-boot:run               # arranca el servicio en local (puerto 8081)
+mvn package                       # jar en target/company-core-0.1.0-SNAPSHOT.jar
+mvn -DskipTests package
+mvn test                          # suite unitaria (JUnit + Mockito)
+mvn test -Dtest=MiClase#miMetodo  # un único test
+mvn spring-boot:run               # servicio local en :8081
 ```
 
-No hay tooling de lint configurado en el backend. La suite unitaria está en `src/test/java` y
-cubre la validación de resultados de agentes, el inicio de misiones y el
-enrutamiento del chat del CEO. Las integraciones con Neo4j, Kafka y Ollama se
-mantienen fuera de estas pruebas para que no dependan de Docker.
+No hay lint en el backend. Los tests unitarios mockean Neo4j, Kafka y Ollama (los `*MemoryService` no llevan test directo; se cubren vía los tests de los servicios que los usan). La integración real se verifica en vivo y se registra en `docs/HISTORY.md`. Healthcheck: `GET http://localhost:8081/actuator/health` (se exponen `health`, `info`, `metrics`).
 
-Healthcheck: `GET http://localhost:8081/actuator/health` (actuator en el classpath; solo se exponen `health`, `info` y `metrics`, con probes de readiness/liveness activadas; el indicador de correo está deshabilitado — ver "Alertas por correo" más abajo).
-
-**Frontend** (`app/frontend/`, SPA React+Vite+TS — ver "Command Center web" más abajo):
+Frontend (`app/frontend/`, React + Vite + TS):
 
 ```bash
 cd app/frontend
 npm install
-npm run dev      # dev server en :5173, con proxy a :8081 (vite.config.ts) — no requiere Docker
-npm run build    # compila a dist/, lo que copia el Dockerfile a src/main/resources/static
-npm run lint     # oxlint (`.oxlintrc.json`) — único lint configurado en el repo, solo cubre el frontend
+npm run dev      # :5173 con proxy a :8081 (vite.config.ts)
+npm run build    # dist/ (el Dockerfile lo copia a src/main/resources/static)
+npm run lint     # oxlint — único lint del repo
 ```
 
-`mvn spring-boot:run` en local **no** compila ni sirve la SPA (no hay `frontend-maven-plugin`, deliberado): para probar el backend+frontend juntos como en producción, usar Docker; para desarrollar el frontend, `npm run dev` aparte apuntando al backend real en 8081.
+`mvn spring-boot:run` **no** compila ni sirve la SPA (sin `frontend-maven-plugin`, deliberado). Backend+frontend juntos como en producción → Docker; desarrollo de frontend → `npm run dev` contra el backend en 8081.
 
-Docker (la imagen construye con Maven **y** con Node en multi-stage — 3 stages: `frontend-build` (`node:22-alpine`, compila la SPA) → `build` (Maven, copia `dist/` a `src/main/resources/static` antes de `mvn package`) → runtime `jre`):
+Docker (multi-stage: `frontend-build` node → `build` Maven → runtime `jre`):
 
 ```bash
-docker network create ai-company-net   # red externa requerida (una sola vez)
-docker compose build
-docker compose up
+docker network create ai-company-net   # una sola vez
+docker compose build && docker compose up
 ```
 
-`docker-compose.yml` **solo** define `company-core`. Neo4j, Ollama y Kafka se esperan ya en ejecución y accesibles, todos en la red `ai-company-net`; `docker-compose.yml` fija `KAFKA_BOOTSTRAP_SERVERS=storm-kafka:19092` (listener interno agregado a Kafka para `company-core`). El default de `application.yml` para Kafka (`host.docker.internal:9092`) es legado y solo aplica si corres `mvn spring-boot:run` en local sin exportar `KAFKA_BOOTSTRAP_SERVERS`; Neo4j/Ollama sí traen default a `localhost` para ese caso.
+`docker-compose.yml` **solo** define `company-core`; Neo4j, Ollama y Kafka deben estar ya corriendo en la red `ai-company-net` (Kafka en `storm-kafka:19092`). El default de Kafka en `application.yml` (`host.docker.internal:9092`) es legado.
 
-**Importante antes de reconstruir/reiniciar el contenedor**: `MissionExecutor` orquesta misiones en threads en memoria del proceso — no sobrevive a un restart, y no hay reconciliación automática. Confirmar que no haya una misión real en curso antes de un `docker compose build && up`; si igual pasa, corregir a mano por Cypher (`status='FAILED'` en la misión y en las tareas colgadas en `RUNNING`) y relanzar la instrucción.
+**Antes de reconstruir/reiniciar el contenedor**: las misiones se orquestan en threads en memoria y no sobreviven un restart (sin reconciliación). Confirmar que no haya una misión real en curso; si igual pasa, corregir por Cypher (`status='FAILED'` en la misión y en las tareas colgadas en `RUNNING`) y relanzar. Lo mismo aplica a `Agent.status` que quede en `WORKING`.
 
 ## Arquitectura
 
-Servicio REST monolítico (Spring Boot 4.1.1, Java 21) que orquesta agentes LLM. Starter `spring-boot-starter-kafka` (nuevo en Boot 4).
+Servicio REST monolítico (Spring Boot 4.1.1, Java 21) que orquesta agentes LLM (Ollama), con memoria en Neo4j y eventos en Kafka.
 
-**Jackson 3**: el código de la app usa `tools.jackson.*` (p. ej. `JsonMapper` en `CompanyEventPublisher`), no `com.fasterxml.jackson.*`. Ojo: `app/pom.xml` todavía declara explícitamente `com.fasterxml.jackson.core:jackson-databind` y `docs/KAFKA-BUILD-FIX.md` describe el problema con la API vieja — ambos están **desactualizados** respecto al código actual; no te guíes por ellos.
-
-### Entradas HTTP
-
-- `CompanyController` (`/api/company`): `GET /agents` (identidad estática), `GET /agents/status` (estado real, ver "Agent.status" más abajo), `PUT /agents/{id}/model` (`AgentModelCommand{model}` — cambia el modelo LLM real de un agente puntual; sin validación contra qué modelos existen en Ollama, mismo criterio del resto del proyecto: un valor inválido falla en la próxima llamada real a Ollama, no antes; `IllegalArgumentException` → 500 si el agente no existe, misma convención de errores del resto de controllers), `GET /activity` (línea de tiempo derivada de Neo4j), `GET`/`PUT /settings` (correo de alertas y credenciales SMTP), `POST /chat` (delega todo en `ChatIntentRouter`).
-- `MissionController` (`/api/company/missions`): `POST` para iniciar, `GET` lista misiones recientes (límite fijo 50), `GET /{id}` estado, `GET /{id}/details` estado + tareas, `POST /{id}/decision` decisión real del inversionista humano.
-- `CustomerController` (`/api/company/missions/{missionId}/...`): `POST /customers`, `POST /transactions`, `GET /net-profit` — ver "Customer Validation" más abajo.
-- `SpaController`: sin API real, solo reenvía una **lista explícita** de rutas de la SPA (`/`, `/chat`, `/agents`, `/missions`, `/missions/{id}`, `/activity`, `/settings`) a `index.html`. Deliberadamente no es un comodín (`"/{path:[^.]*}"` atrapaba también `/api/**` mal escritos y les devolvía 200+HTML en vez de 404) — mantener esta lista sincronizada a mano con `App.tsx` al agregar pantallas nuevas.
-
-Ningún controller de este proyecto tiene manejo fino de errores HTTP: una `IllegalArgumentException`/`IllegalStateException` sin capturar cae al handler default de Spring → 500. Es la convención existente, no un descuido puntual.
+Convenciones transversales:
+- **Jackson 3**: el código usa `tools.jackson.*`, nunca `com.fasterxml.jackson.*` (aunque el `pom.xml` todavía declare `jackson-databind` explícitamente).
+- **Sin `@Async`** en la orquestación: executors explícitos inyectados con `@Qualifier` + `CompletableFuture.supplyAsync/runAsync` (pools `missionOrchestratorExecutor` y `agentTaskExecutor` en `AsyncConfig`). No reintroducirlo.
+- **Errores HTTP**: ningún controller hace manejo fino; `IllegalArgumentException`/`IllegalStateException` caen al handler default → 500. Es la convención, no agregar manejo nuevo por su cuenta.
+- **Determinismo sobre LLM**: todo lo que se puede decidir en Java (ruteo del chat, conteos, validación, contradicciones, evaluación financiera) se hace en Java, nunca pidiéndole al modelo que se revise a sí mismo. Es el hilo conductor de casi todas las decisiones del proyecto.
+- **Kafka**: topic `EMPRESA_EVENTS` vía `CompanyEventPublisher`; todo `eventType` debe empezar por `EMPRESA_` (`publish()` lanza si no). El proyecto es 100% productor, no hay consumers.
+- **Neo4j**: driver plano (`neo4j-java-driver`, no Spring Data), Cypher a mano en los `*MemoryService`. Constraints y seed se aplican idempotentemente al arrancar (`CompanyMemoryInitializer`, `ApplicationReadyEvent`, con reintentos). `neo4j/init.cypher` es solo referencia del seed, sin constraints. La instancia es compartida con otros proyectos: ignorar labels ajenos (`Agente`, `Carrera`, `Vehiculo`).
+- **Rebrand "Forjai"**: solo el nombre de marca. Los identificadores técnicos siguen sin tocar a propósito: paquete `com.aicompany.core`, prefijo `EMPRESA_*`, servicio `company-core`/`ai-company-core`, `Company {id:'AI-COMPANY'}`.
+- Rarezas conocidas: `AgentResult.java` vive en `com/aicompany/core/` pero declara `package com.aicompany.core.agent.model`; `CeoService.executeAgentTask` conserva un bloque grande comentado de código muerto (no copiar lógica de ahí).
 
 ### Flujo de misión (`MissionService` → `MissionExecutor` → `AgentRuntime` → `CeoService`)
 
-1. `MissionService.start` persiste la misión en Neo4j (`ensureMission`) y lanza `MissionExecutor.executeAsync`, devolviendo el estado inmediatamente (procesamiento en segundo plano).
-2. `MissionExecutor` corre en el pool `missionOrchestratorExecutor` (2 hilos) y avanza una máquina de estados: `PLANNING → DELEGATING → WAITING_AGENT_RESULTS → EVALUATING → CONSOLIDATING → AWAITING_INVESTOR`. `MissionExecutor.advanceMission` es el único punto que persiste en Neo4j y publica a Kafka para cada transición, en la misma operación (evita desincronización entre las dos memorias); también dispara `AlertMailService` cuando la misión llega a `AWAITING_INVESTOR` o `FAILED` (ver "Alertas por correo").
-3. En `DELEGATING` crea **5 tareas fijas hardcodeadas**: `sales` (MARKET_DISCOVERY), `product` (OFFER_DESIGN), `finance` (UNIT_ECONOMICS), `engineering` (DELIVERY_FEASIBILITY), `qa` (QUALITY_RISK_REVIEW — corre en paralelo con las otras 4 sin acceso a sus resultados, para evaluar riesgos/huecos de evidencia de forma independiente).
-4. Cada tarea se ejecuta en paralelo vía `AgentRuntime.execute` sobre el pool `agentTaskExecutor` (4–8 hilos); `AgentRuntime` construye el prompt y llama a `CeoService.executeAgentTask`.
-5. Se espera cada agente por separado (no `CompletableFuture.allOf(...).join()` — un solo agente no recuperable ya no tumba el trabajo de los demás, ver "Agent failure ≠ Mission failure"). `CeoService.executeMission` consolida los resultados de los que sí completaron. La misión queda en `AWAITING_INVESTOR` — **nunca llega a `COMPLETED` automáticamente**; lo cierra el inversionista humano (ver "Decisión del inversionista").
+1. `MissionService.start` persiste la misión y lanza `MissionExecutor.executeAsync` (responde de inmediato).
+   Si la misión tiene `teamId`, `MissionExecutor` no crea las 5 tareas fijas: ver "Misiones por equipo".
+2. Máquina de estados `PLANNING → DELEGATING → WAITING_AGENT_RESULTS → EVALUATING → CONSOLIDATING → AWAITING_INVESTOR`. `MissionExecutor.advanceMission` es el **único** punto que persiste la transición en Neo4j, publica a Kafka y dispara alertas por correo.
+3. `DELEGATING` crea 5 tareas fijas: `sales` (MARKET_DISCOVERY), `product` (OFFER_DESIGN), `finance` (UNIT_ECONOMICS), `engineering` (DELIVERY_FEASIBILITY), `qa` (QUALITY_RISK_REVIEW, en paralelo y sin ver a los demás).
+4. Cada tarea corre en paralelo vía `AgentRuntime.execute` → `CeoService.executeAgentTask`.
+5. **Agent failure ≠ mission failure**: se espera cada agente por separado. Un agente que agota sus intentos recibe hasta `MAX_AGENT_REPLANS` (1) re-ejecuciones desde cero (`EMPRESA_MISSION_REPLANNED`). Si al menos uno completa, se consolida con un bloque `AGENTES_FALLIDOS`; si fallan todos, la misión termina en `FAILED`.
+6. `ContradictionDetector` (función pura, reglas deterministas) revisa el conjunto de resultados y antepone `CONTRADICCIONES_DETECTADAS` al texto de consolidación. No bloquea.
+7. `CeoService.executeMission` consolida → `AWAITING_INVESTOR`. **Nunca llega a `COMPLETED` sola**: la cierra el inversionista con `POST /missions/{id}/decision` (`APPROVE`→`COMPLETED`, `REJECT`→`CANCELLED`, `REQUEST_MORE_EVIDENCE` no cambia el estado ni re-ejecuta todavía).
 
-**Concurrencia**: **no se usa el proxy `@Async`** para la orquestación (patch deliberado, ver `README.md`). Se usan executors explícitos inyectados con `@Qualifier` + `CompletableFuture.supplyAsync/runAsync`. No reintroducir `@Async` en estos caminos. `AsyncConfig` todavía lleva `@EnableAsync` y define ambos pools; la anotación es inofensiva pero ningún método `@Async` la usa.
+Cualquier excepción → `MissionExecutor.safeFail` → `FAILED`. Estados de `AgentTask` (strings): `PENDING → RUNNING → COMPLETED/FAILED`. `Agent.status` (`WORKING`/`IDLE`) es una propiedad persistida distinta del estado de su última tarea; `AgentRuntime` la pone en `IDLE` en un `finally`.
 
-Ante cualquier excepción, `MissionExecutor.safeFail` deja la misión en `FAILED` (progreso 100). `RESEARCHING`/`EXECUTING` del enum `MissionStatus` siguen sin ningún código que los use. Estados de tarea (`AgentTask`, strings, no enum): `PENDING → RUNNING → COMPLETED` / `FAILED`.
+`Mission.environment` (`PRODUCTION`/`TEST`) es explícito (default `PRODUCTION` al crear; al leer, las misiones viejas sin el campo se tratan como `TEST`, salvo `MISSION-001`). `DELETE /missions/{id}` borra de verdad, pero rechaza `MISSION-001`, misiones en curso y misiones con clientes/transacciones reales del fundador. Las `Evidence` solo se borran si quedan huérfanas.
 
-### Contrato estructurado de agentes (`AgentResult`) y pipeline de validación
+### Misiones por equipo (`Mission.teamId`)
 
-Las tareas de agente devuelven JSON restringido por el JSON Schema formal `AgentResultSchema.SCHEMA` (`agent/model/AgentResultSchema.java`) — el campo `"format"` de la llamada `AGENT_TASK` a Ollama, no el modo débil `"json"`. `normalizeJsonResponse` limpia fences Markdown como red de seguridad; si el parseo falla, `IllegalStateException`.
+`teamId` opcional, inmutable y validado en `MissionService.start` (uno de los 3 de `TeamMemoryService.KNOWN_TEAM_IDS`, `status=ACTIVE`, con líder y miembros). En el chat solo se reconoce el id exacto (`TEAM-ENGINEERING`…), nunca el nombre del equipo. Con `teamId`: `TeamWorkPlanner` (el líder planifica con `format`, sin `tools`) → `TeamPlanValidator` (miembros reales, `requiredCapabilities` textuales; en desarrollo: todos los miembros, una `VALIDATION` para quien tenga `QA`, `ownedPaths` sin solapamiento, `entryPoint`) con 3 intentos y sin plan por defecto → `TeamExecutionStrategy` por `Team.type`: `AnalysisTeamStrategy` (Creative, Marketing: `AgentRuntime` actual vía `AgentTaskBatchRunner`) o `DevelopmentTeamStrategy` (Engineering). Sin `teamId`, discovery exactamente como antes.
 
-El schema solo garantiza la *forma*; el contenido pasa por una cadena de gates en `AgentRuntime.executeInternal`, en este orden:
+**Engineering**: `DevelopmentRuntime` genera `DevelopmentResult` en paralelo (ruta insegura → falla sin reintento; fuera de `ownedPaths` o con `\` → reintento; la tarea queda `GENERATED`) → `DevelopmentWorkspaceService` hace un commit por agente en `products.workspace-root/<missionId>/` (autor = el agente, trailers `Forjai-Mission`/`Forjai-Task`; si el commit falla, la tarea falla) → `StaticWorkspaceValidator` (capa 1, Git real) → revisión estática del validador (`StaticReviewResult`, gates `RepositoryEvidenceGate` + `ForbiddenClaimsGuard`) → `validationStatus` calculado por Java (`STATICALLY_VALIDATED`/`UNVALIDATED`/`FAILED`; `FAILED` si falla un chequeo o hay algún finding `BLOCKER` o `MAJOR`) → el CEO consolida y Java agrega el bloque "Estado verificable". Nunca se ejecuta el código generado. `ProductStatus.DEVELOPMENT` = tarea `WORK` completada con `commitSha`; `QA` sigue inalcanzable. Borrar una misión borra también su workspace. En Docker el workspace es el volumen `~/forjai-products` (archivos creados como root: en el host usar `git -c safe.directory='*'`).
 
-1. **`AgentResultValidator`** (sintáctico): campos obligatorios no nulos, `confidence` en `[0,1]`, cada `Calculation` recalculado (solo `ADD`/`SUBTRACT`), cada `Evidence` con `description`/`sourceType` (y `source` si `verified=true`), `verificationStatus` restringido a `NOT_VALIDATED|PARTIALLY_VALIDATED|VALIDATED` (`VALIDATED` exige ≥1 evidencia `verified=true` con `source`).
-2. **`EvidenceValidationGate`** (semántico — `agent/validation/EvidenceValidationGate.java`): `sourceType` debe ser `WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE`; `verified=true` con `sourceType=NONE` se rechaza; `verified=true` con `sourceType=WEB` exige que `source` empiece con `http(s)://`. **Sin reintento** — falla la tarea de inmediato (asimetría deliberada frente a los otros gates).
-3. **`EvidenceBindingGate`** ("buscó pero no citó" — `agent/validation/EvidenceBindingGate.java`): si el agente pidió `search_web_evidence` y recibió URLs confirmadas (`confirmReachable`), su `AgentResult.evidence[]` final debe citar al menos una — si no, rechaza. `CeoService.executeAgentTask` devuelve `AgentTaskOutcome(result, confirmedEvidenceUrls)`; las URLs confirmadas se acumulan (`LinkedHashSet.addAll`) entre reintentos, nunca se reasignan (un reintento puede no volver a pedir la herramienta).
+### Contrato de agentes (`AgentResult`) y gates de validación
 
-`AgentResultValidator` y `EvidenceBindingGate` **sí reintentan** (ver abajo); `EvidenceValidationGate` no. Los tres son gates duros por tarea; `ContradictionDetector` (siguiente sección) opera después, a nivel de misión, y no falla la tarea.
+La llamada final de cada tarea usa el JSON Schema `AgentResultSchema.SCHEMA` como `format` de Ollama. El contenido pasa por gates en `AgentRuntime.executeInternal`, en este orden:
 
-**Reintento**: `AgentRuntime.executeInternal` reintenta hasta `MAX_RESULT_RETRIES + 1` veces (hoy: 3 intentos), tanto por excepción de parseo como por rechazo de `AgentResultValidator`/`EvidenceBindingGate`. El motivo exacto del rechazo se antepone al prompt del siguiente intento como bloque `CORRECCIÓN DEL INTENTO ANTERIOR` — el feedback es siempre determinista (nunca "el modelo revisándose a sí mismo"). Solo tras agotar los intentos se lanza `IllegalStateException` (tarea `FAILED`). A partir del intento 2 se publica `EMPRESA_TASK_RETRY` a Kafka.
+1. `AgentResultValidator` (sintáctico: obligatorios, `confidence`∈[0,1], recalcula cada `Calculation` `ADD`/`SUBTRACT`, `VALIDATED` exige evidencia `verified=true` con `source`). **Reintenta.**
+2. `EvidenceValidationGate` (semántico: `sourceType`∈`WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE`, `verified` + `NONE` prohibido, `WEB` verificado exige URL http(s)). **No reintenta**, falla la tarea de inmediato (asimetría deliberada).
+3. `EvidenceBindingGate` ("buscó pero no citó"): si el agente recibió URLs confirmadas de la herramienta de búsqueda, debe citar al menos una. Las URLs se acumulan entre reintentos. **Reintenta.**
 
-`AgentResult` lleva `@JsonInclude(Include.NON_EMPTY)` (omite listas vacías/strings en blanco al serializar, compacta el prompt de consolidación y lo persistido en Neo4j). Los campos `List<String>` (`facts`, `hypotheses`, `estimates`, `evidenceRequired`, `risks`) usan `@JsonDeserialize(contentUsing = LenientStringDeserializer.class)` — si el modelo devuelve un objeto en vez de string, rescata `description`/`text`/`value`/`content`/`name`/`detail`/`summary` o cae al JSON crudo, nunca lanza excepción de parseo.
+Reintentos: hasta 3 intentos (`MAX_RESULT_RETRIES + 1`); el motivo exacto del rechazo se antepone al siguiente prompt como `CORRECCIÓN DEL INTENTO ANTERIOR`. Tras pasar los gates, cada `Evidence` se persiste como nodo deduplicado (`EvidenceDedupKey.stableId` = SHA-256 de source+description, `MERGE`).
 
-Nota de paquete: `AgentResult.java` vive en `src/main/java/com/aicompany/core/AgentResult.java` pero declara `package com.aicompany.core.agent.model;` — no coincide con su carpeta (compila igual, Maven no lo exige).
-
-`CeoService.executeAgentTask` conserva un bloque grande comentado (parseo de una versión anterior) — código muerto, no dupliques lógica a partir de él.
-
-### Detección de contradicciones entre agentes (`ContradictionDetector`)
-
-Corre en `MissionExecutor` sobre el `List<AgentResult>` completo de la misión, justo antes de consolidar — algo que los gates por-tarea no pueden ver. Reglas deterministas (nunca otra llamada al modelo):
-
-1. `verificationStatus=VALIDATED` con `confidence` baja (< 0.5), o `NOT_VALIDATED` con `confidence` muy alta (> 0.85).
-2. El mismo nombre de `Calculation` (normalizado) reportado con resultados distintos por agentes distintos.
-3. `Calculation.result` que supera 100x el capital semilla (`company.seed-capital-usd`) sin ninguna `Evidence.verified=true` en ese `AgentResult`.
-4. Dentro de un mismo `AgentResult` (`detectFactHypothesisBlending`): el mismo enunciado no puede estar a la vez en `facts` y en `hypotheses`/`estimates`; `facts` no debería contener lenguaje de cobertura (`podría`, `probablemente`, `se estima`, etc. — lista `HEDGE_MARKERS`, heurístico léxico, puede tener falsos positivos/negativos).
-
-Si detecta algo, lo antepone al texto que recibe `CeoService.executeMission` como bloque `CONTRADICCIONES_DETECTADAS` — no bloquea la misión, solo obliga al CEO a verlo al consolidar.
-
-### Agent failure ≠ Mission failure
-
-`MissionExecutor.executeInternal` espera cada agente por separado (`futuresByAgent`) y captura éxito/fallo en `AgentExecutionOutcome`. Si **todos** fallan, no hay nada que consolidar y la misión sí termina en `FAILED`. Si **al menos uno** completó, la misión sigue: `serializeAgentResults`/`ContradictionDetector` operan solo sobre los que completaron, y el texto de consolidación incluye un bloque `AGENTES_FALLIDOS` (mismo patrón que `CONTRADICCIONES_DETECTADAS`) — la consolidación del CEO decide cómo tratar el hueco, no un `catch` genérico.
-
-### Replanificación automática
-
-Un agente que agota sus 3 intentos internos todavía no se acepta como definitivamente fallido: `MissionExecutor.replanFailedAgents` le da hasta `MAX_AGENT_REPLANS` (hoy: 1) oportunidades más de correr su tarea **desde cero** (no una continuación del intento fallido) antes de incluirlo en `AGENTES_FALLIDOS`. Publica `EMPRESA_MISSION_REPLANNED` por intento. `MAX_AGENT_REPLANS=1` es deliberadamente bajo — una segunda oportunidad completa, no una corrección incremental.
-
-### Evidence Engine (persistencia y deduplicación)
-
-`MissionMemoryService.recordEvidence` escribe cada `AgentResult.Evidence` como nodo `Evidence` de primera clase (`(:AgentTask)-[:HAS_EVIDENCE]->(:Evidence)`), llamado desde `AgentRuntime` una vez que los gates sintáctico + semántico pasan. El id del nodo es `EvidenceDedupKey.stableId(source, description)` (`evidence/EvidenceDedupKey.java`, SHA-256 de ambos campos normalizados) — si dos tareas (de la misma o distinta misión) citan la misma fuente+descripción, el `MERGE` de Cypher apunta al mismo nodo (`ON CREATE SET` fija el contenido la primera vez, `ON MATCH SET` solo refresca `updatedAt`), pero cada tarea igual gana su propia relación `HAS_EVIDENCE`.
-
-`neo4j/init.cypher` (referencia manual) **no** incluye ningún `CREATE CONSTRAINT` — desincronizado de `CompanyMemoryService.initializeSchema()`, solo úsalo para el seed.
-
-### Customer Validation (`CustomerController` → `CustomerService` → `CustomerMemoryService`)
-
-Registrar un cliente o venta **real** es un flujo separado del de misiones — no pasa por `AgentResult` ni por un LLM. Canal de entrada de datos para el fundador humano; ningún flujo permite a un agente llamarlo autónomamente:
-
-- `POST /missions/{missionId}/customers` (`CustomerCommand`): registra un `Customer`, exige una `Evidence` que pasa por el **mismo** `EvidenceValidationGate` que usan los agentes (sobrecarga que no depende de `AgentResult`). 404 si la misión no existe.
-- `POST /missions/{missionId}/transactions` (`TransactionCommand`): venta ligada a un `customerId` existente (404 si no), calcula `netProfitUsd = revenueUsd - costUsd`, exige su propia evidencia.
-- `GET /missions/{missionId}/net-profit`: suma todas las `Transaction` de la misión, devuelve `netProfitUsd`, `successCriterionMet` (`> company.seed-capital-usd`) y `successLevel` (`NINGUNO|BUENO|MUY_BUENO|EXCELENTE|EXTRAORDINARIO`, umbrales fijos: >US$50, >US$100, ≥US$1.000, ≥US$5.000 — no escalan con el capital semilla configurado).
-
-Grafo: `(:Mission)-[:HAS_CUSTOMER]->(:Customer)-[:HAS_EVIDENCE]->(:Evidence)`, `(:Mission)-[:HAS_TRANSACTION]->(:Transaction)-[:FOR_CUSTOMER]->(:Customer)`, `(:Transaction)-[:HAS_EVIDENCE]->(:Evidence)` — a diferencia de `MissionMemoryService.recordEvidence`, acá el `agentId` guardado es el literal `"human"`.
-
-### Flujo Opportunity → Customer candidato (`OpportunityMemoryService`) — automático, 100% nivel 🟢
-
-`MissionExecutor` llama a `OpportunityMemoryService.recordOpportunity(missionId, instruction)` siempre que la misión produce al menos un resultado — un nodo `Opportunity {status:'IDENTIFIED'}` por misión (`status` nunca avanza automáticamente; es del inversionista humano). `AgentResult.customerCandidates: List<CustomerCandidate>` (`name`/`description`/`source`/`sourceType`, sin `verified`) se persiste vía `OpportunityMemoryService.recordCandidate` como `Customer {status:'LEAD'}` (`(:Opportunity)-[:HAS_CANDIDATE]->(:Customer)`, evidencia siempre `verified=false`) — **relación distinta** de `(:Mission)-[:HAS_CUSTOMER]->(:Customer)` del flujo humano; ambas comparten el label `Customer` en distintas etapas (LEAD/PROSPECT/CUSTOMER/PAYING_CUSTOMER) pero llegan por caminos separados.
-
-Pasos posteriores del flujo objetivo (`contact`, cerrar venta) son nivel 🔴 de `empresa.md` §5 y requieren aprobación humana — no se automatizan.
-
-### Relaciones funcionales (grafo)
-
-`(:Mission)-[:INVOLVES_AGENT]->(:Agent)` conecta cada uno de los 5 agentes delegados directamente a la misión (además de `LED_BY` hacia el CEO), creada en `MissionMemoryService.createTask`. `CustomerMemoryService.registerCustomer` también intenta `MATCH (o:Opportunity {id:...}) MERGE (o)-[:HAS_CUSTOMER]->(c)` (deliberadamente `MATCH`, no `MERGE`, de la Opportunity — si todavía no existe, no pasa nada; nunca crea una Opportunity vacía como efecto secundario).
-
-### Decisión del inversionista humano (`MissionController.decide` → `MissionService.recordDecision`)
-
-`POST /missions/{missionId}/decision` (`DecisionCommand{decision: APPROVE|REJECT|REQUEST_MORE_EVIDENCE, reasoning}`) — el punto de `empresa.md` §5 nivel 🔴 donde el fundador registra su decisión real. Solo sobre una misión en `AWAITING_INVESTOR` o `FAILED` (`IllegalStateException` si no). `APPROVE` → `COMPLETED`, `REJECT` → `CANCELLED`, `REQUEST_MORE_EVIDENCE` no cambia el estado (sin re-ejecución automática todavía). `MissionMemoryService.recordDecision` persiste `(:Mission)-[:HAS_DECISION]->(:Decision {decision, reasoning, decidedAt})` — `decisionId` incluye timestamp, no es idempotente (una misión puede acumular varias decisiones). Publica `EMPRESA_MISSION_DECISION_RECORDED` siempre, más `EMPRESA_MISSION_UPDATED` cuando cambia el estado.
-
-De los 5 tipos que agrupaba esta pieza del roadmap (`Decision`/`Lesson`/`Strategy`/`Prediction`/`CapitalAllocation`), solo `Decision` tiene hoy un disparador real — los otros 4 solo tienen el constraint de unicidad `id` en Neo4j (`CompanyMemoryService.initializeSchema`, junto con otros 19 labels especulativos del roadmap de memoria avanzada), sin propiedades/relaciones ni código que los use.
-
-### Memoria: Neo4j
-
-Acceso con el driver plano `neo4j-java-driver` (no Spring Data Neo4j); Cypher a mano en `MissionMemoryService`/`CompanyMemoryService`/etc. Nodos en uso real: `Company {id:'AI-COMPANY'}`, `Agent`, `Team`, `Mission`, `AgentTask`, `Opportunity`, `Customer`, `Transaction`, `Evidence`, `Decision`, `Conversation`, `Message`. Relaciones: `WORKS_FOR`, `HAS_CEO`, `HAS_MISSION`, `LED_BY`, `INVOLVES_AGENT`, `HAS_TASK`, `ASSIGNED_TASK`, `HAS_OPPORTUNITY`, `HAS_CANDIDATE`, `HAS_CUSTOMER`, `HAS_TRANSACTION`, `FOR_CUSTOMER`, `HAS_EVIDENCE`, `HAS_DECISION`, `MEMBER_OF`, `LEADS`.
-
-El esquema (constraints) y el seed de company + agents se aplican **idempotentemente al arrancar** (`CompanyMemoryInitializer` en `ApplicationReadyEvent`), con reintentos (12 × 2 s) esperando a que Neo4j esté disponible. `neo4j/init.cypher` es la misma inicialización en forma de referencia manual (solo el seed, sin constraints — ver arriba).
-
-Este Neo4j es una **instancia compartida** en la máquina de desarrollo (otros proyectos también la usan) — `SHOW CONSTRAINTS`/labels de otros proyectos (`Agente`, `Carrera`, `Vehiculo`) no tienen relación con `empresa`; ignóralos.
-
-### Eventos: Kafka
-
-Se publican en el topic `EMPRESA_EVENTS` vía `CompanyEventPublisher`. **Regla dura**: todo `eventType` debe empezar por `EMPRESA_` — `publish()` lanza `IllegalArgumentException` si no. Envelope y catálogo completo en `docs/EVENTS.md`. Cobertura: ciclo de vida de misión y tarea (`CREATED/STARTED/UPDATED/FAILED/RETRY/REPLANNED`), decisión del inversionista, y Evidence Acquisition (`SEARCH_STARTED/COMPLETED`, `VERIFIED`/`REJECTED` por candidato).
-
-**Métricas** (`/actuator/metrics`, vía Micrometer/`MeterRegistry`, sin exportador Prometheus registrado — usa el `SimpleMeterRegistry` en memoria default de Boot): `evidence.search.requests`/`.duration` (tag `agent`), `evidence.candidate.verified`/`.rejected` (tags `agent`, `reason` en rejected = nombre simple de la excepción), `evidence.candidate.duration` (tags `agent`, `outcome`).
+`AgentResult` usa `@JsonInclude(NON_EMPTY)`, y sus `List<String>` usan `LenientStringDeserializer` (tolera objetos en vez de strings).
 
 ### LLM: Ollama
 
-`CeoService` es el **único** cliente de Ollama: `RestClient` POST a `/api/chat`, no streaming, pero **ya no decide qué modelo usar** — recibe el `model` explícito de cada llamador (`chat`/`executeAgentTask`/`executeMission` toman `model` como parámetro) y solo ejecuta la llamada con lo que se le pide. Cada uno de los 14 agentes (`ceo` + los 5 delegados de misión + los 8 restantes repartidos en los 3 equipos organizativos) resuelve su propio modelo real y persistido, `Agent.model`, vía `CompanyMemoryService.agentModel(agentId, fallback)` — `AgentRuntime` (antes de cada tarea), `MissionExecutor` (para el CEO) y `ChatIntentRouter` (para las dos llamadas a `ceoService.chat`) lo resuelven cada uno antes de llamar a `CeoService`. `ollama.ceo-model`/`ollama.agent-model` (ver "Configuración" abajo) siguen existiendo, pero solo como **default de seed en el primer arranque** — `CompanyMemoryService.initializeCompanyAndAgents()` los usa vía `coalesce(a.model, $defaultModel)`, así que nunca pisan un `Agent.model` ya seteado; cambiar la variable de entorno después del primer arranque no tiene ningún efecto sobre agentes ya sembrados — para cambiar el modelo real de un agente existente hay que usar `PUT /api/company/agents/{id}/model` (o Cypher directo). Seed inicial: CEO en `qwen2.5-coder:14b` (razonamiento/consolidación, más lento), los demás en `qwen3:8b` (ejecución paralela — ver por qué no `qwen2.5-coder:7b` en `docs/HISTORY.md`). Todos los system/user prompts están en español y son fuertemente anti-alucinación.
+`CeoService` es el único cliente de Ollama (`/api/chat`, sin streaming) y recibe el `model` de cada llamador. El modelo real de cada uno de los 14 agentes es `Agent.model` en Neo4j (`CompanyMemoryService.agentModel`); se cambia con `PUT /api/company/agents/{id}/model`. Todos los prompts están en español y son fuertemente anti-alucinación.
 
-Las tareas de agente (`executeAgentTask`) hacen hasta dos llamadas por intento, **nunca combinando `format` y `tools` en la misma llamada** (Ollama fuerza la gramática del schema y el modelo no puede emitir una tool call — reproducido en vivo con `qwen3:8b` inventando una URL falsa; `CeoService.callModel` tiene un guard duro, `rejectFormatCombinedWithTools`, que lanza si algún cambio futuro combina ambos):
+**Nunca combinar `format` y `tools` en la misma llamada**: Ollama fuerza la gramática y el modelo inventa en vez de llamar la herramienta. `CeoService.rejectFormatCombinedWithTools` lo impide en runtime. Por eso cada intento de tarea tiene dos turnos:
+1. Decisión (`toolDecisionSystemPrompt`, `tools=[search_web_evidence]`, sin `format`).
+2. Si pidió la herramienta: búsqueda + `confirmReachable` sobre hasta 5 candidatos; los inaccesibles o irrelevantes se descartan antes de llegar al modelo.
+3. Final (`AgentRuntime.buildPrompt`, `format: SCHEMA`, sin `tools`).
 
-1. **Turno de decisión** (`toolDecisionSystemPrompt` + resumen corto de la tarea, sin `format`, con `tools=[search_web_evidence]`, `think: true`): decide si necesita evidencia real.
-2. Si pidió la herramienta, `CeoService.executeTool` ejecuta `searchEvidence` y llama `confirmReachable` sobre hasta `CANDIDATES_TO_CONFIRM = 5` candidatos **antes** de devolver nada al modelo — los que no responden o no son relevantes se descartan ahí mismo (log `TOOL_CANDIDATE_REJECTED`) y nunca llegan al modelo.
-3. **Turno final** (prompt completo de `AgentRuntime.buildPrompt`, `format: AgentResultSchema.SCHEMA`, sin `tools`, `think: false`): produce el `AgentResult` con la evidencia real ya en el historial.
+### Configuración: env vars = solo seed del primer arranque
 
-El chat del CEO (`CeoService.chat`) y la consolidación de misión son una sola llamada, sin `format` ni `tools` (excepto el tool-calling de `query_company_memory` en el chat, ver "Chat Intent Router" más abajo — ahí no hace falta el diseño de dos turnos porque el chat nunca usa `format`).
+Variables de entorno con defaults en `application.yml`: `NEO4J_*`, `OLLAMA_BASE_URL`, `OLLAMA_CEO_MODEL`/`OLLAMA_AGENT_MODEL`, `KAFKA_BOOTSTRAP_SERVERS`, `SERVER_PORT`, `MAIL_HOST`/`MAIL_PORT`, `EVIDENCE_WEB_SEARCH_API_KEY`. `NEO4J_PASSWORD` viene de `.env` en Docker Compose.
 
-### Configuración
+**Regla importante**: `ollama.*-model` y `company.seed-capital-usd`/`challenge-days` solo siembran valores la primera vez. Después, el valor real vive en Neo4j (`Agent.model`, `CompanyPolicy`) y cambiar la variable de entorno no tiene efecto. Hay que usar la API o el Command Center.
 
-Todo por variables de entorno (defaults de dev en `app/src/main/resources/application.yml`): `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`, `OLLAMA_BASE_URL`, `ollama.ceo-model`/`ollama.agent-model` (default `qwen2.5-coder:14b`/`qwen2.5-coder:7b` — nota: el agente real en uso es `qwen3:8b` vía `OLLAMA_AGENT_MODEL`, ver `docker-compose.yml`; **solo defaults de seed del primer arranque**, ver "LLM: Ollama" más arriba — no tienen efecto sobre un `Agent.model` ya sembrado), `KAFKA_BOOTSTRAP_SERVERS`, `SERVER_PORT` (8081), `MAIL_HOST`/`MAIL_PORT` (default `smtp.gmail.com:587`, transporte genérico sin credenciales de cuenta — esas viven en Neo4j, ver "Alertas por correo"). Capital semilla US$50 y ventana de 60 días en `company.*` (`AppProperties`) — igual que `ollama.agent-model`/`ollama.ceo-model`, `company.seed-capital-usd`/`company.challenge-days` son hoy **solo default de seed del primer arranque**: `CompanyPolicyService.ensureDefaultPolicies()` los usa como valor inicial de `PolicyKey.SEED_CAPITAL_USD`/`CHALLENGE_DAYS` la primera vez, y no vuelven a pisar el valor real una vez sembrado en Neo4j — para cambiarlo después hay que usar `PUT /api/company/policies/{key}` (ver "Company Financial Policies y Mission.financialCriteria" más abajo). `NEO4J_PASSWORD` se toma de `.env` en Docker Compose.
+### Financial Policies y objetivos de misión
 
-### Definiciones de agentes
+- **Company Financial Policies** (`CompanyPolicyService`, enum `PolicyKey`, catálogo fijo de 7: capital semilla, días del desafío, multiplicador de contradicción, 4 umbrales de nivel de venta). Están versionadas: `(:CompanyPolicy)-[:HAS_POLICY_VERSION]->(:PolicyVersion)` + exactamente una `HAS_ACTIVE_POLICY`. Editar crea una versión nueva y la activa; rollback = reactivar una existente. `activeValue(key)` es la lectura que usan `MissionExecutor`/`CustomerService`. Endpoints `/api/company/policies/**`.
+- **`Mission.financialCriteria`**: objetivo opcional, estructurado e inmutable, declarado al crear la misión (propiedades `financialCriteria*` aplanadas en `Mission`). Solo el formulario del Command Center lo declara; las misiones iniciadas por chat no lo tienen. Se inyecta como bloque armado en Java en la tarea de `finance`, sin que el agente autodeclare cumplimiento. El cumplimiento se evalúa solo contra transacciones reales en `GET /missions/{id}/net-profit`, y un `deadline` vencido nunca transiciona la misión.
+- Las reglas de dominio (`netProfit = revenue - cost`, validación de `Calculation`, gates) no son configurables.
 
-`config/agents/ceo.md` es la definición operativa del CEO (cargo, misión, prohibiciones, escalamiento humano). Al añadir agentes nuevos, seguir ese formato en `config/agents/`.
+### Datos reales del fundador vs. hallazgos de agentes
 
-### Evidence Acquisition (`com.aicompany.core.evidence.*`)
+- **Customer Validation** (`CustomerController`, `/missions/{id}/customers|transactions|net-profit`): canal exclusivo del fundador; ningún agente puede llamarlo. Exige evidencia validada por el mismo `EvidenceValidationGate`, y `agentId` queda como `"human"`. `net-profit` compara contra la policy de capital semilla y clasifica con los umbrales de policy.
+- **Oportunidades** (automático, 🟢): cada misión con resultados crea una `Opportunity {status:'IDENTIFIED'}`, y los `customerCandidates` de los agentes se guardan como `Customer {status:'LEAD'}` vía `HAS_CANDIDATE` (evidencia siempre `verified=false`). Es una relación distinta de `(:Mission)-[:HAS_CUSTOMER]` del flujo humano. Contactar o vender es 🔴 y no se automatiza.
 
-Búsqueda web + recuperación de páginas, conectada al flujo real de agentes (ver "LLM: Ollama" arriba), con dos capas separadas:
+### Evidence Acquisition (`com.aicompany.core.evidence`)
 
-- `EvidenceCandidate` (`claim`/`url`/`title`/`snippet`/`sourceType`): un resultado de búsqueda, **sin** `verified` — encontrar una URL no es evidencia.
-- `WebSearchPort` (interfaz) + `SerperSearchAdapter` (única implementación — `google.serper.dev`, 2.500 consultas gratis sin tarjeta; historial de por qué no DuckDuckGo/Brave en `docs/HISTORY.md`). `POST /search`, header `X-API-KEY`, respuesta `organic[]` (`title`/`link`/`snippet`). Config: `evidence.web-search.base-url`/`EVIDENCE_WEB_SEARCH_API_KEY`. `parseResults(String)` es package-private para testear sin red.
-- `WebPageFetcher`: recupera una URL real con protección SSRF (bloquea `localhost`/loopback/rangos privados/link-local incluyendo `169.254.169.254`, exige `http(s)`, no sigue redirects, timeout, límite de 2 MB leído por stream). **Limitación conocida no resuelta**: no protege contra DNS rebinding (la IP se resuelve una vez, sin pinning).
-- `EvidenceAcquisitionService.searchEvidence(query)` → `List<EvidenceCandidate>`. `confirmReachable(candidate)` → `AgentResult.Evidence` con **`verified=false` siempre** (confirma que la URL respondió y el contenido está relacionado con el `claim`, no que el dato concreto esté verificado — desviación deliberada del pseudocódigo original del roadmap).
-- **`ClaimRelevanceChecker`**: heurística léxica determinista (sin modelo), normaliza claim y contenido, exige ≥30% de coincidencia de términos significativos (≥3 letras, fuera de stopwords en español). No prueba que el dato concreto esté en la página, solo descarta fuentes accesibles pero ajenas al tema. Pendiente: extracción/NLP real del dato concreto (no bloqueante).
+`WebSearchPort` con una sola implementación, `SerperSearchAdapter` (google.serper.dev). `WebPageFetcher` tiene protección SSRF (bloquea privados/loopback/link-local, no sigue redirects, 2 MB máx.; **no** cubre DNS rebinding). `ClaimRelevanceChecker` es heurística léxica (≥30% de términos). `confirmReachable` siempre devuelve `verified=false`: confirma que la URL responde y trata el tema, no que el dato sea cierto. Hay métricas Micrometer `evidence.*` en `/actuator/metrics`.
+
+### Chat (`ChatIntentRouter`)
+
+`POST /api/company/chat` clasifica cada mensaje con regex/keywords **antes** de tocar Ollama, en este orden (el orden importa):
+1. `(ejecuta|inicia) MISSION-\d+`.
+2. Arranque de misión en lenguaje libre (va antes que las consultas para no perder instrucciones que mencionen palabras de consulta).
+3. Decisión sobre `MISSION-<id>` (misma gobernanza que el endpoint).
+4. Referencia al foco conversacional ("esas", "ambas"…) → se resuelve contra los datos actuales de `Conversation.lastMentionedIds`, nunca contra el texto anterior.
+5. Consultas deterministas (`QueryIntent`: equipos, agentes, misiones por estado, oportunidades, profit, status general) formateadas 100% en Java. Un `MISSION-<id>` suelto también se resuelve en Java (`ProductStatusService`).
+6. General → `CeoService.chat` con tool-calling `query_company_memory` (topics fijos, nunca Cypher libre) y los últimos 20 mensajes de `Conversation {id:'MAIN'}` (hilo global único).
+
+Cada turno se graba en `ConversationMemoryService`. `ProductStatus` (estado del producto) está separado de `MissionStatus` y se calcula en cada consulta a partir de señales reales. `DEVELOPMENT`/`QA`/`PUBLISHED` están modelados pero hoy son inalcanzables.
+
+### Agentes, equipos y prompts
+
+- 14 agentes con identidad plana (`name`/`role`/`personality`; la personalidad es solo UI). Solo 6 ejecutan tareas (`ceo` + los 5 delegados). Los otros 8 forman los 3 equipos fijos de `TeamMemoryService.TEAMS` (Engineering, Creative/Product Intelligence, Marketing & Growth; `MEMBER_OF`/`LEADS`, `roleCode`, `capabilities`) y son **solo organizacionales**: crear equipos nunca crea `AgentTask` ni toca `Agent.status`.
+- **Prompt versionado** (`PromptMemoryService`): mismo patrón versión inmutable + `HAS_ACTIVE_PROMPT` que las policies. El prompt activo se inyecta como sección adicional en `CeoService.systemPrompt` / `AgentRuntime.buildPrompt`. Nunca reemplaza las reglas anti-alucinación ni el schema, y nunca llega a `toolDecisionSystemPrompt`. En los 8 agentes que no ejecutan tareas no tiene efecto.
+- `config/agents/ceo.md` es el formato de referencia para definiciones de agentes.
+
+### Alertas por correo (`AlertMailService`)
+
+Solo se envían para `AWAITING_INVESTOR` y `FAILED` (desde `advanceMission`). Las credenciales SMTP de envío (`Company.systemEmail`/`mailPassword`) y el destinatario (`Company.alertEmail`) viven en Neo4j y se editan en `/api/company/settings`. El envío es `synchronized` (bean mutable) y **nunca lanza**, solo loguea. `management.health.mail.enabled=false` es necesario para que la falta de credenciales no ponga `/actuator/health` en `DOWN`.
 
 ## Command Center web (`app/frontend/`)
 
-Interfaz web como forma **principal** de operar la compañía ("torre de control", no un chatbot en terminal); la consola queda para debugging. v1: **Dashboard + Chat + Agents + Missions + Activity + Settings**. Decisiones de arquitectura: SPA React+Vite+TS servida como estáticos por `company-core` (un solo despliegue); polling simple (`@tanstack/react-query`, `refetchInterval`, sin WebSocket/SSE); Activity derivado de Neo4j con una sola query (`ActivityMemoryService.recent`, UNION de `AgentTask`/`Mission`/`Evidence`/`Decision`), no un `KafkaConsumer` nuevo (sería el primer consumer del proyecto, hoy 100% productor).
+Interfaz principal para operar la compañía: Dashboard, Chat, Agents (organigrama + editor de prompts), Missions (+ formulario de inicio con objetivo financiero), Activity y Settings (correo + Financial Policies). SPA servida como estáticos por `company-core`; polling con `@tanstack/react-query` (sin WebSocket/SSE). Activity sale de una sola query UNION en Neo4j (`ActivityMemoryService`).
 
-### Endpoints de solo lectura
-
-- `GET /agents/status` (`MissionMemoryService.latestTaskPerAgent`): para cada `Agent`, `status` (propiedad real del nodo, ver "Agent.status" abajo) + `taskStatus` (de su `AgentTask` más reciente) + `name`/`role`/`personality`.
-- `GET /teams` (`TeamMemoryService.snapshotAll`): los 3 equipos reales con `teamId`/`teamName`/`leaderAgentId`/`members` (mismo `TeamSnapshot` que ya usa el chat) — estructura únicamente, nunca estado/tarea (eso sigue siendo `GET /agents/status`). Página `AgentsPage.tsx` cruza ambos endpoints para renderizar el organigrama (CEO en la raíz, `ceo`/`sales`/`product`/`finance` como reportes directos sin equipo, los 3 equipos como ramas con su líder arriba) — árbol en CSS puro (listas anidadas + pseudo-elementos como conectores), sin librería de gráficos nueva.
-- `GET /missions` (límite fijo 50, v1 no pagina) y `GET /activity`.
-
-### Prompt versionado por agente (`PromptMemoryService`)
-
-Cada uno de los 14 agentes tiene un prompt propio, persistido y
-versionado (`PromptVersion`, inmutable — `(:Agent)-[:HAS_PROMPT_VERSION]->(:PromptVersion)`
-para el historial completo, `(:Agent)-[:HAS_ACTIVE_PROMPT]->(:PromptVersion)`
-para exactamente la vigente, invariante garantizada transaccionalmente
-en cada creación/rollback). Editar crea una versión nueva (nunca pisa
-una vieja); "activar" una versión del historial hace rollback
-reapuntando la relación activa, sin duplicar contenido.
-`createdBy` queda fijo en `"human"` (mismo criterio que
-`CustomerMemoryService` — no hay concepto de usuario/sesión en el
-proyecto).
-
-Solo tiene efecto real en los 6 agentes que ya ejecutan tareas
-(`ceo`/`sales`/`product`/`finance`/`engineering`/`qa`): el contenido
-activo se inyecta como una sección aparte y condicional ("CÓMO DEBES
-RAZONAR...") dentro de `CeoService.systemPrompt(ceoPrompt)` (CEO,
-resuelto por `ChatIntentRouter`/`MissionExecutor`) o de
-`AgentRuntime.buildPrompt(...)` (los 5 delegados, resuelto por
-`AgentRuntime` mismo) — nunca reemplaza las reglas anti-alucinación, el
-FORMATO OBLIGATORIO, ni el `AgentResultSchema.SCHEMA` (que sigue yendo
-por el parámetro `format`, fuera del texto). Deliberadamente **nunca**
-llega a `toolDecisionSystemPrompt` (turno corto de decisión de
-herramienta, contrato de salida binario). Los otros 8 agentes
-(`devops`/`backend`/`frontend-ui`/`interaction-design`/`visual-design`/
-`telemetry`/`growth-content`/`community`) guardan y versionan su
-prompt igual, sin ningún efecto todavía (no ejecutan `AgentTask`
-reales — ver "Proyecto B").
-
-Endpoints: `GET`/`PUT /api/company/agents/{id}/prompt`,
-`GET /api/company/agents/{id}/prompt/versions/{version}`,
-`PUT /api/company/agents/{id}/prompt/versions/{version}/activate`.
-Editable desde el organigrama de `AgentsPage.tsx`: click en cualquier
-tarjeta abre un panel con el prompt activo, motivo del cambio
-(obligatorio al guardar), y el historial completo con botón "Activar"
-por versión.
-
-### Company Financial Policies y Mission.financialCriteria
-
-Separación en 4 capas (documento de diseño:
-`docs/superpowers/specs/2026-09-22-financial-policies-design.md`), de las
-cuales solo las primeras 2 son configurables; las otras 2 son reglas de
-dominio deterministas que **no** se tocan (`netProfitUsd = revenueUsd -
-costUsd`, validación de `Calculation`, gates de evidencia): 1) Company
-Financial Policies (parámetros de la empresa, esta sección), 2)
-`Mission.financialCriteria` (objetivo puntual de una misión, esta
-sección), 3) Agent Prompt (sin cambios, ver arriba), 4) Domain Financial
-Rules (código puro, sin mecanismo de edición).
-
-**Company Financial Policies** (`CompanyPolicyService`, `model/PolicyKey.java`)
-es el mirror exacto de `PromptMemoryService` aplicado a parámetros
-financieros: `(:CompanyPolicy {key})-[:HAS_POLICY_VERSION]->(:PolicyVersion
-{version, value, createdBy, changeReason, createdAt})`,
-`-[:HAS_ACTIVE_POLICY]->` apunta a exactamente una (mismo invariante
-transaccional que `HAS_ACTIVE_PROMPT`). A diferencia del prompt de
-agentes, acá no hay paso de "borrador": `createVersion` crea y activa en
-la misma transacción — editar una política es siempre efectivo de
-inmediato. Catálogo fijo de 7 en el enum `PolicyKey` (agregar una octava
-es cambio de código, no de datos, mismo criterio que
-`TeamMemoryService.TEAMS`): `SEED_CAPITAL_USD` (default seed 50),
-`CHALLENGE_DAYS` (default seed 60), `CONTRADICTION_SEED_CAPITAL_MULTIPLE`
-(default 100, el mismo multiplicador que antes era
-`ContradictionDetector.SEED_CAPITAL_MULTIPLE_THRESHOLD` hardcoded), y los
-4 umbrales de clasificación de venta que antes eran `static final double`
-en `CustomerService` — `SUCCESS_THRESHOLD_GOOD` (50), `_VERY_GOOD` (100),
-`_EXCELLENT` (1.000), `_EXTRAORDINARY` (5.000). `ensureDefaultPolicies()`
-siembra estos 7 valores idempotentemente en `ApplicationReadyEvent`
-(`createdBy='system'`, vs. `'human'` para ediciones reales posteriores —
-mismo criterio que `PromptMemoryService`, deliberadamente distinto solo
-en ese valor de string). `activeValue(PolicyKey)` es el hot path de
-lectura usado por `MissionExecutor`/`CustomerService`. `ContradictionDetector`
-se mantiene como función pura sin dependencia a Neo4j: recibe el
-multiplicador como parámetro explícito
-(`detect(results, seedCapitalUsd, seedCapitalMultipleThreshold)`) — es
-`MissionExecutor` quien resuelve ambos valores desde
-`CompanyPolicyService` antes de llamarlo. Endpoints: `GET
-/api/company/policies` (las 7 con historial completo), `PUT
-/api/company/policies/{key}` (`PolicyCommand{value, changeReason}` —
-`value` debe ser `> 0`, `IllegalArgumentException` → 500 si no), `PUT
-/api/company/policies/{key}/versions/{version}/activate` (rollback,
-reactiva un nodo existente, nunca duplica contenido). Frontend: sección
-"Financial Policies" en `SettingsPage.tsx`, tabla de las 7 con edición
-inline (motivo obligatorio) e historial con botón "Activar" —
-componente `PolicyRow` nuevo, no una generalización forzada de
-`PromptEditor`.
-
-**`Mission.financialCriteria`** es el objetivo financiero puntual de una
-misión concreta — estructurado, opcional, e **inmutable una vez creada
-la misión** (no hay `PUT` para editarlo después; se declara una sola vez
-al arrancar). Propiedades aplanadas y opcionales en el nodo `Mission`
-(mismo criterio que `Mission.environment` — sin nodo aparte, es 1:0..1 y
-pequeño): `financialCriteriaMetric` (string del enum `FinancialMetric`,
-hoy solo `NET_PROFIT`), `financialCriteriaTargetAmount` (double, debe ser
-`> 0`), `financialCriteriaCurrency` (normalizado a mayúsculas, default
-`"USD"` si viene vacío/null), `financialCriteriaDeadline` (string ISO
-`LocalDate`, opcional incluso si el resto está presente — rechazado en
-`MissionService.start` si es anterior a la fecha de creación de la
-misión). Si la misión no declaró objetivo, las 4 propiedades quedan
-ausentes (asignar `null` en Cypher remueve la propiedad).
-`MissionMemoryService.financialCriteria(missionId)` es un método de
-lectura dedicado y liviano (separado de `find()` para no acoplar el mock
-de `MissionExecutorTest` al resto de `MissionResponse`); `find()`/`findAll()`
-también mapean las 4 propiedades a `FinancialCriteriaResponse` dentro de
-`MissionResponse` cuando están presentes. `MissionCommand`/`MissionResponse`
-ganan el campo `financialCriteria` (nullable,
-`FinancialCriteriaCommand`/`FinancialCriteriaResponse`). Una misión
-iniciada por chat en lenguaje libre
-(`ChatIntentRouter.detectFreeMissionStart`) sigue naciendo con
-`financialCriteria = null` — no hay parsing LLM de un objetivo financiero
-desde texto libre, deliberadamente fuera de alcance; el único mecanismo
-para declararlo hoy es el formulario del Command Center.
-
-`MissionExecutor` **ya no tiene un objetivo universal hardcodeado** para
-Max (finance) — el viejo "superar US$50 de utilidad neta" desapareció.
-El texto de la tarea `UNIT_ECONOMICS` se arma 100% en Java, nunca
-interpretado por un LLM: siempre incluye el capital semilla vigente
-(`companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)`, ya no
-`appProperties.seedCapitalUsd()`); si la misión declaró
-`financialCriteria`, se agrega un bloque estructurado ("esta misión
-tiene un objetivo financiero explícito: {metric} ≥ {targetAmount}
-{currency} para {deadline}") con la instrucción explícita de que Max
-debe analizar cómo alcanzarlo **sin alterar los valores que reporte** —
-el criterio orienta el análisis, nunca fuerza ni redondea los números
-que Max calcula (`AgentResultValidator` sigue recalculando cada
-`Calculation` igual que siempre). El `AgentResult` de Max no gana ningún
-campo de "objetivo cumplido" — Max nunca autodeclara cumplimiento; eso
-se evalúa exclusivamente en capa determinista (siguiente párrafo). Si no
-hay `financialCriteria`, no se afirma ningún monto "a superar".
-
-**Evaluación de cumplimiento**, exclusivamente contra resultados reales
-(nunca contra lo que reporta un agente): `GET
-/missions/{id}/net-profit` (`CustomerService.netProfit`, ver "Customer
-Validation" arriba) gana `financialCriteriaEvaluation` en
-`MissionProfitResponse` (nullable, ausente si la misión no declaró
-criterio) — `FinancialCriteriaEvaluation{metric, targetAmount, currency,
-deadline, criterionMet (netProfit >= targetAmount), progressPct
-(netProfit / targetAmount * 100), deadlinePassed (null si no hay
-deadline, puramente informativo)}`. Ningún vencimiento de `deadline`
-cierra, falla ni transiciona la misión automáticamente — coherente con
-que solo el inversionista humano decide el estado final (`POST
-/missions/{id}/decision`). `CustomerService` pierde su dependencia a
-`AppProperties` (gana `CompanyPolicyService` para los umbrales de venta,
-y `MissionMemoryService` para leer `financialCriteria`).
-`ChatIntentRouter` expone `financialCriteria` + su evaluación en el
-lookup determinista ya existente de `MISSION-<id>` (100% Java, mismo
-punto que resuelve `ProductStatusService` — no hace falta `QueryIntent`
-ni topic nuevo).
-
-Frontend: `MissionDetailPage.tsx` muestra `financialCriteria` (si existe)
-y `financialCriteriaEvaluation`; `MissionsPage.tsx` gana un formulario
-"Iniciar misión" (missionId autogenerado `"MISSION-" + Date.now()`,
-mismo criterio que `detectFreeMissionStart`; instrucción; environment;
-sub-sección opcional colapsable "Objetivo financiero").
-
-### Chat Intent Router (`ChatIntentRouter`)
-
-El chat no es `POST /chat → LLM → texto`. `ChatIntentRouter.route()` graba cada turno completo (mensaje + respuesta) en `ConversationMemoryService` sin importar qué camino lo resolvió, y clasifica el mensaje **antes** de tocar Ollama (regex/keywords deterministas, nunca "el modelo revisándose a sí mismo" decidiendo la ruta), en este orden:
-
-1. **Arranque de misión con id explícito** (`(ejecuta|inicia) MISSION-\d+`) → `MissionService.start`/`recordDecision` según corresponda.
-2. **Arranque de misión en lenguaje libre** (`detectFreeMissionStart`: mensaje contiene "mision" + verbo de arranque) → corre **antes** que decisión/consulta para no perder una instrucción real que mencione incidentalmente una keyword de consulta (p. ej. "sin mi aprobación"); genera un id (`"MISSION-" + timestamp`) y pasa la instrucción completa tal cual a `missionService.start(...)` — los agentes ya trabajan sobre texto libre para cualquier misión, no hace falta parsear la instrucción a una estructura rígida.
-3. **Decisión con `MISSION-<id>` explícito** (`aprueba`/`rechaza`/`pide más evidencia`) → llama directo a `MissionService.recordDecision` — misma gobernanza que el endpoint dedicado, nunca una ruta paralela.
-4. **Referencia al foco conversacional** (`handleReference`, ver "Memoria conversacional" abajo): pronombre demostrativo plural o cuantificador de foco (`las dos`/`ambas`/`todas`) sobre las últimas misiones mencionadas — puede ser un **comando** de gobernanza (`COMMAND_APPROVE`/`COMMAND_REJECT`, formas adjetivas: "están aprobadas") o una **consulta** sobre el foco.
-5. **Consulta determinista** (`detectQuery` → `QueryIntent`): `TEAM_DETAILS` (quiénes son los miembros de uno de los 3 equipos reales de Forjai — Engineering, Creative/Product Intelligence, Marketing & Growth —, quién lidera, rol/`roleCode`/capabilities/modelo real de cada uno; resuelto por keyword a un `teamId` concreto internamente, chequeada antes que `AGENT_STATUS` porque "equipo" solo ya dispara ese keyword; un `teamId` fuera de los 3 conocidos nunca llega a Neo4j), `AGENT_STATUS`, `MISSIONS_NEEDING_ATTENTION` (estrictamente `AWAITING_INVESTOR`, filtrado a `environment=PRODUCTION`), `FAILED_MISSIONS` (estrictamente `FAILED`, `PRODUCTION`), `TEST_MISSIONS` (`environment=TEST`), `OPPORTUNITIES`, `COMPANY_PROFIT`, `COMPANY_STATUS` (snapshot agregado — capital, agentes, misiones, oportunidades, prospectos/clientes, ingresos — catch-all al final para pedidos genéricos de resumen). Todas se formatean **100% en Java**, sin pasar por Ollama — contar/enumerar es una tarea determinista, delegarla a un LLM introduce subconteo o alucinación con volumen real de datos.
-6. **General** → `CeoService.chat(ceoName, teamRoster, message, history, companyMemoryQuery)`, con tool-calling real (`query_company_memory`, mismo enum de topics que las consultas deterministas — nunca Cypher libre) y los últimos `HISTORY_LIMIT=20` mensajes (10 turnos) de `Conversation {id:'MAIN'}` para memoria real de la charla (sin resumen/compactación — límite fijo simple).
-
-`ProductStatus` (`DISCOVERY/DESIGN/DEVELOPMENT/QA/PUBLISHED/MONETIZING/BUSINESS_SUCCESS`,
-`model/ProductStatus.java`) es el estado real del *producto*, deliberadamente
-separado de `MissionStatus` (el workflow de análisis/decisión) — nunca se
-infiere uno del otro. `ProductStatusService.resolve(missionId)` lo calcula en
-cada consulta a partir de señales reales (`AgentTask` `OFFER_DESIGN`
-completada → `DESIGN`; `Transaction` real → `MONETIZING`; `netProfit` sobre
-capital semilla → `BUSINESS_SUCCESS`), sin persistir nada nuevo.
-`DEVELOPMENT`/`QA`/`PUBLISHED` quedan modelados pero **inalcanzables** hoy
-(siempre `false` en el servicio) — son el punto de enganche de una futura
-ejecución real de código/infraestructura tras la aprobación del
-inversionista, todavía sin diseñar. Un `MISSION-<id>` explícito en el chat
-que no sea inicio ni decisión se resuelve **100% en Java** contra
-`ProductStatusService` + `MissionMemoryService` (nunca pasa por Ollama) —
-mismo motivo que llevó a esto: el chat afirmó una vez "el desarrollo está en
-curso" sobre una misión `COMPLETED` con agentes `IDLE`, sin ninguna
-evidencia real.
-
-`Mission.environment` (`PRODUCTION`/`TEST`) es una propiedad real y persistida, nunca heurística sobre el nombre del `missionId`; default `PRODUCTION` si se omite en `POST /missions` (`environmentOrDefault()`) — quien inicia una misión de prueba debe marcarla `"TEST"` explícitamente. `find()`/`findAll()` usan `coalesce(m.environment, 'TEST')` al leer (compatibilidad con misiones viejas sin el campo), con la excepción de `MISSION-001` (misión fundacional real) migrada explícitamente a `PRODUCTION`.
-
-### Memoria conversacional (`ConversationMemoryService`)
-
-Un solo hilo global (`Conversation {id:'MAIN'}`, no hay concepto de usuario/sesión), persistido en Neo4j (no en memoria del proceso). `Conversation.lastMentionedType`/`lastMentionedIds` guarda el "foco" — hoy solo tipo `"MISSION"` — actualizado por las consultas que listan misiones (`MISSIONS_NEEDING_ATTENTION`/`FAILED_MISSIONS`/`TEST_MISSIONS`) y por el arranque de misión en lenguaje libre. Una referencia (pronombre + predicado reconocido, p. ej. `esas`+`prueba`→environment, `fallaron`→FAILED, `aprobacion`/`necesita`→AWAITING_INVESTOR) se resuelve consultando el dato **real y actual** de esos `missionId` puntuales (`MissionMemoryService.findByIds`) — nunca el texto de la respuesta anterior. Sin foco → mensaje determinista de "no tengo claro a qué te referís"; predicado no reconocido → cae al chat general con el foco expuesto como topic `LAST_MENTIONED` de `query_company_memory` (nunca revela los datos en texto plano, solo indica qué tipo de entidad está en foco).
-
-`ConversationMemoryService.recentMessages(limit)` alimenta el historial del chat general (distinto del "foco": esto es continuidad de charla libre, no resolución de referencias a entidades).
-
-### Frontend: estructura
-
-`app/frontend/src/`: `api/client.ts` + `api/types.ts` (tipos a mano reflejando los records Java — sin generación automática, mantener sincronizados), `components/Layout.tsx` (sidebar + logo + badge de salud vía polling de `/actuator/health`), `pages/{Dashboard,Chat,Agents,Missions,MissionDetail,Activity,Settings}Page.tsx`, `statusColor.ts` (mapeo de estados a 🟢🟡🔴⚪, un solo lugar), `humanize.ts` (`MARKET_DISCOVERY` → "Market Discovery").
-
-### Identidad de agentes (`Agent.name`/`role`/`personality`)
-
-Identidad plana (sin `RoleVersion`/`AgentVersion`) separada del rol funcional: Alex/CEO, Sofia/Sales, Max/Finance, Luna/Product, Neo/Cloud Architect & Lead Backend (lidera Engineering Team), Vera/QA & Cloud Performance Engineer, Diego/DevOps, Iris/Backend, Mila/Frontend & Game UI, Kael/Interactive Logic & Product Designer (lidera Creative / Product Intelligence), Maya/Visual & Asset Director, Gael/Telemetry & Analytics, Kira/Growth, Content & Community (lidera Marketing & Growth), Nora/Community Manager. **Personalidad es solo UI** — no se inyecta en los prompts de `AgentRuntime`/`CeoService` (excepción: `CeoService.chat` sí agrega el nombre real del CEO y el roster real del equipo al system message de esa llamada específica, para que el CEO no invente su propio nombre o rol al presentarse — ver `docs/HISTORY.md`). `CompanyMemoryService.initializeCompanyAndAgents()` siembra/migra estos campos in-place en cada arranque.
-
-**3 equipos reales** (`TeamMemoryService`, generaliza el servicio original de un solo equipo — ver `docs/superpowers/specs/2026-09-21-creative-marketing-teams-design.md`), capa aparte sobre los `Agent` ya creados (nunca los crea, solo los enriquece): `TEAM-ENGINEERING` (Neo/Vera/Diego/Iris/Mila, líder Neo vía `LEADS` — mismo contenido de roleCode/capabilities que la ronda anterior, sin cambios), `TEAM-CREATIVE-PRODUCT-INTELLIGENCE` (Kael/Maya/Gael, líder Kael) y `TEAM-MARKETING-GROWTH` (Kira/Nora, líder Kira) — exactamente estos 3, lista fija en código (`TeamMemoryService.TEAMS`), sin mecanismo para agregar un cuarto sin cambiar código. Cada miembro cuelga de su `Team` vía `MEMBER_OF` y lleva además `Agent.roleCode` (id programático estable, p. ej. `CLOUD_ARCHITECT_LEAD_BACKEND`, `INTERACTIVE_LOGIC_PRODUCT_DESIGNER`) y `Agent.capabilities` (tags de skill) — solo estos 10 agentes tienen `roleCode`/`capabilities`, no `ceo`/`sales`/`product`/`finance`. **Invariante dura**: crear/asegurar esta estructura (`ensureAllTeams()`) nunca toca `Agent.status` ni crea ninguna `AgentTask` — es 100% organizacional, sin ninguna capacidad de ejecución nueva (eso sería un "Proyecto B" separado, todavía sin diseñar). Consultable desde el chat vía la consulta determinista `TEAM_DETAILS` + `teamId` (ver "Chat Intent Router" más abajo).
-
-### Agent.status ≠ AgentTask.status
-
-`Agent.status` es una propiedad real y persistida en el nodo `Agent` (**no** derivada de la última tarea): solo `WORKING`/`IDLE` — ningún otro valor tiene señal real en el código hoy. `AgentRuntime.executeInternal` hace `memory.setAgentStatus(agentId, "WORKING")` al empezar y `"IDLE"` en un `finally` que envuelve todo el método (vuelve a `IDLE` en éxito, fallo tras reintentos, o cualquier excepción inesperada). `AgentStatusResponse.taskStatus` es el status de la última `AgentTask`, explícitamente separado de `status`. **Límite conocido no resuelto**: si el proceso se reinicia con un agente realmente `WORKING`, no hay reconciliación — queda en `WORKING` hasta su próxima tarea real (mismo tipo de limitación que el DNS rebinding de `WebPageFetcher`).
-
-### Alertas por correo (`AlertMailService`, `empresa.md` §18)
-
-De los 6 tipos de alerta que exige `empresa.md`, solo 2 tienen señal determinista real y disparan correo hoy: misión que llega a `AWAITING_INVESTOR` ("decisión estratégica") y misión que termina en `FAILED` ("fallo crítico") — disparado desde `MissionExecutor.advanceMission`, el único punto que ya centraliza las transiciones de estado.
-
-**Dos cuentas de correo distintas**: `Company.alertEmail` (a quién llegan las alertas, seed `dapine@gmail.com`) y `Company.systemEmail`/`Company.mailPassword` (cuenta y App Password propias de la empresa para *enviar* — texto plano en Neo4j, decisión de alcance MVP). Ambas editables desde `GET`/`PUT /api/company/settings` (`SettingsPage.tsx`); `mailPassword` es write-only, nunca se lee de vuelta. `AlertMailService.send(subject, body, critical)` usa `JavaMailSenderImpl` concreto, actualiza `setUsername`/`setPassword` antes de cada envío (el bean es singleton mutable — el método es `synchronized` para que dos misiones en paralelo no se pisen las credenciales), arma HTML+texto plano vía `MimeMessageHelper` multipart (`AlertEmailTemplate.html` — franja azul para `AWAITING_INVESTOR`, roja para `FAILED`, sin logo embebido, con `<meta charset="UTF-8">`). **Nunca lanza** — cualquier fallo de correo se loguea `WARN` y no interrumpe el flujo de misiones.
-
-`management.health.mail.enabled=false` en `application.yml`: sin esto, `MailHealthIndicator` (autoconfigurado por `spring-boot-starter-mail`) tumba `/actuator/health` a `DOWN` cuando no hay credenciales de cuenta cargadas, rompiendo el badge del Command Center — el correo es best-effort, no debe gatear la salud general de la app.
-
-### Rebrand: "Forjai"
-
-Nombre de marca del proyecto (antes "AI Company") — aplicado a toda la documentación, prompts del sistema reales (`CeoService`/`AgentRuntime`), seed de `Company.name` en Neo4j, y el frontend (logo `Logo.tsx` + wordmark en `Layout.tsx`). **Deliberadamente sin tocar** (identificadores técnicos, no el nombre de marca): paquete Java `com.aicompany.core`, prefijo de eventos Kafka `EMPRESA_*`, nombre del contenedor/servicio Docker (`ai-company-core`/`company-core`), id técnico `Company {id:'AI-COMPANY'}` en Neo4j, y el nombre del repositorio de GitHub.
+- `api/types.ts` refleja a mano los records Java (sin generación): mantenerlos sincronizados.
+- `SpaController` reenvía una **lista explícita** de rutas a `index.html` (no un comodín, que atrapaba `/api/**` mal escritos). Al agregar una pantalla en `App.tsx`, agregar la ruta también ahí.
+- `statusColor.ts` centraliza el mapeo de estados a colores.
 
 ## Al implementar
 
-Cuando avances más allá del núcleo actual, actualiza este archivo: comandos reales de lint/test cuando existan, agentes nuevos incorporados al flujo de misión, y los pendientes de `docs/STATE.md` que se vayan cerrando (Junta AI multiagente, ledger financiero, motor de aprobaciones humanas, scheduler de misiones, herramientas de investigación web, dossiers Markdown). Para cambios que involucren una decisión de alcance acordada con el usuario, un bug real encontrado, o una verificación en vivo — agregalos a `docs/HISTORY.md`, no acá; este archivo describe el estado vigente, no el historial de cómo se llegó a él.
+Actualizar este archivo cuando cambie el estado vigente (comandos, agentes nuevos en el flujo de misión, pendientes de `docs/STATE.md` que se cierren). Decisiones de alcance acordadas con el usuario, bugs reales y verificaciones en vivo van a `docs/HISTORY.md`, no acá.

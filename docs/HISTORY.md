@@ -606,3 +606,95 @@ individual porque cada uno involucra la interacción entre 2+ tasks
 de otro) — exactamente el tipo de defecto que la revisión final de
 todo el branch existe para atrapar. `mvn test` (202/202) y
 `npm run lint && npm run build` verificados en verde después del fix.
+
+### Borrado de misiones desde el Command Center
+
+Pedido del fundador: poder borrar misiones desde el front para ir
+puliendo prompts de agentes sin dejar basura. Alcance acordado:
+cualquier misión que **no esté corriendo** (se rechaza en curso porque
+los threads de `MissionExecutor` seguirían escribiendo sobre nodos
+borrados), no solo las `TEST` — muchas pruebas de prompt se lanzaron
+como `PRODUCTION` por default. Además se bloquean `MISSION-001`
+(fundacional) y cualquier misión con `HAS_CUSTOMER`/`HAS_TRANSACTION`
+reales del fundador (datos que no se regeneran re-ejecutando). Borrado
+real, no soft-delete. Las `Evidence` solo se borran si quedan
+huérfanas, porque `EvidenceDedupKey` comparte nodos entre misiones.
+
+**Bug real encontrado en la verificación en vivo** (invisible a los
+tests unitarios, que mockean `MissionMemoryService`): la primera
+versión de la query que junta los ids de evidencia hacía
+`RETURN taskEvidence + collect(DISTINCT ce.id)` — Neo4j lo rechaza
+(`42I18`, agregación con agrupación implícita). Como todo el borrado
+corre en una sola transacción, el fallo dejó el grafo intacto (rollback
+completo, nada borrado a medias). Fix: extraer el `collect` a un `WITH`
+previo.
+
+**Verificado en vivo** (Docker + Neo4j real) con una misión sintética
+sembrada por Cypher (tarea, evidencia propia, evidencia compartida con
+otra `AgentTask`, `Decision`, `Opportunity`, `Customer` LEAD con su
+evidencia, foco conversacional apuntándola): `DELETE` → 204, segundo
+`DELETE` → 404; borrado todo lo propio; la evidencia compartida y su
+otra tarea sobrevivieron; `Agent` intacto; `lastMentionedIds` quedó en
+`null`. Misión en `WAITING_AGENT_RESULTS` → 500 sin borrar; misión
+`COMPLETED` con `HAS_TRANSACTION` → 500 sin borrar. Datos sintéticos
+limpiados y foco original de la conversación restaurado después.
+`MISSION-001` no existe en esta instancia de Neo4j (→ 404); su
+protección queda cubierta por `MissionServiceTest`. `mvn test`,
+`npm run lint` y `npm run build` en verde.
+
+### Borrado de misiones: también su Activity
+
+Pedido del usuario: al borrar una misión, su Activity también debe
+desaparecer. Activity no se persiste aparte: `ActivityMemoryService`
+la arma al vuelo desde `AgentTask`/`Mission`/`Evidence`/`Decision` y
+muestra la propiedad `missionId` de cada nodo. `deleteMission` solo
+seguía relaciones, y eso dejaba dos huecos: (1) una `Evidence`
+compartida por la dedup sobrevivía (lo cual es correcto) pero conservaba
+el `missionId` de la misión borrada que la había creado; (2) los nodos
+cuya relación con la `Mission` se había perdido quedaban fuera del
+borrado. En el Neo4j real había 22 `Evidence` (colgadas de `Customer`
+LEAD de una `Opportunity` sin `Mission`) de `MISSION-1789884929871` y
+4 `Evidence` + 1 `Decision` + 1 `Opportunity` sueltas de
+`MISSION-DEVGEN-VERIFY-1`, las dos misiones ya inexistentes.
+
+Fix: `deleteMission` ahora también matchea `AgentTask`/`Decision`/
+`Opportunity`/`Evidence` por la propiedad `missionId`, y reasigna el
+`missionId` de la evidencia compartida que sobrevive a una misión que
+todavía la cita. `mvn test` en verde (217).
+
+Restos de `MISSION-1789884929871` (1 `Opportunity`, 7 `Customer` LEAD,
+22 `Evidence`, ninguno citado por otra misión) borrados a mano por
+Cypher con autorización del usuario. Los de `MISSION-DEVGEN-VERIFY-1`
+quedan pendientes.
+
+**Verificado en vivo** (contenedor reconstruido + Neo4j real) con una
+misión sintética sembrada por Cypher: tarea con evidencia propia,
+evidencia compartida con una `AgentTask` real de otra misión,
+`Decision` enlazada, más una `Decision` y una `Opportunity` sueltas
+(solo con `missionId`, sin relación). Tenía 6 ítems en `GET /activity`.
+`DELETE` → 204, 0 ítems en Activity, 0 nodos con ese `missionId`. La
+evidencia compartida sobrevivió reasignada a la otra misión que la
+citaba. Datos sintéticos limpiados después.
+
+### Misiones por equipo + generación real de código (Proyecto B, subproyecto 1)
+
+**Diagnóstico**: `MISSION-1790304372795` ("inicia una misión PRODUCTION exclusivamente para el Engineering Team… crear un videojuego") corrió igual las 5 tareas fijas de discovery (Max, Luna y Sofia recibieron tareas) y terminó en `AWAITING_INVESTOR` sin ningún código. Se dejó intacta como caso de diagnóstico.
+
+**Decisiones** (spec `2026-09-21-development-generation-design.md`, revisión 2026-09-24): `Mission.teamId` explícito y exacto (en el chat solo el id `TEAM-...`); el líder planifica y `TeamPlanValidator` valida en Java; `TeamExecutionStrategy` por tipo de equipo (análisis vs. desarrollo); un commit por agente con él como autor y trailers de misión/tarea; validación estática en dos capas con `validationStatus` calculado por Java; bloque "Estado verificable" generado por Java. Cambios frente al spec original de Proyecto B: disparo por `teamId` (no por `APPROVE`), los 5 miembros vía plan del líder (no 3 tareas fijas), `ownedPaths` en vez de subdirectorios fijos, commit por agente en vez de uno consolidado, fallo de commit = fallo de tarea, termina en `AWAITING_INVESTOR`.
+
+**Bugs reales encontrados en la verificación en vivo** (invisibles a los tests unitarios):
+1. `MISSION-TEAM-VERIFY-1` → `FAILED` en `PLANNING`: Ollama 0.20 corría `qwen3:8b` con `KvSize:4096` (ninguna llamada enviaba `num_ctx`), lo que recorta en silencio prompts de código y de revisión. Fix: `options.num_ctx=16384` solo para `TEAM_PLANNING`/`DEVELOPMENT_TASK`/`STATIC_REVIEW` (entra en la GPU de 8 GB; discovery y chat sin cambios); tope de revisión bajado de 60.000/8.000 a 24.000/6.000 caracteres para que quepa. Confirmado después en los logs de Ollama: `KvSize:16384`.
+2. En esa misma misión Neo repitió 3 veces el mismo error (`entryPoint` fuera de sus `ownedPaths`) porque la corrección no listaba los `ownedPaths`. Fix: el error ahora lista los `ownedPaths` por agente y dice cómo corregirlo.
+3. `git add -- <ruta>` interpretaba magia de pathspec (una ruta `:x` fallaba). Fix: `GIT_LITERAL_PATHSPECS=1` en `GitCommandRunner`.
+4. El test del plan para `ForbiddenClaimsGuard` detectó que "compila sin errores" pasaba como negación; la negación ahora solo cuenta si precede a la afirmación.
+
+**Verificado en vivo** (contenedor reconstruido, Neo4j + Ollama reales), `MISSION-TEAM-VERIFY-2` (`TEST`, `teamId=TEAM-ENGINEERING`) → `AWAITING_INVESTOR`:
+- Plan de Neo aceptado (5 tareas). Ninguna tarea de `sales`/`product`/`finance`.
+- Commits reales en `~/forjai-products/MISSION-TEAM-VERIFY-2`, uno por agente, autor y trailer correctos: Iris `1e2fe77` (9 archivos), Diego `2a6f11e` (5), Neo `e1362be` (4), Mila `7ec4f94` (3). Los `commitSha` de Neo4j coinciden con `git log`.
+- Vera: 20/20 chequeos deterministas en PASS, `validationStatus=STATICALLY_VALIDATED`, verdict `ISSUES_FOUND` (16 MAJOR, 1 MINOR), evidencia `INTERNAL` citando `workspace:MISSION-TEAM-VERIFY-2@7ec4f94…/<ruta>` reales, `notValidatableWithoutExecution` no vacío.
+- Mensaje final con el bloque "Estado verificable" y la frase fija de no ejecución.
+
+**Observaciones abiertas** (no bloquean la mecánica, sí la calidad del resultado):
+- Lo generado por `qwen3:8b` no es un juego de navegador jugable: Neo eligió un stack ASP.NET + React + PostgreSQL/Redis, sin HTML de entrada, sin game loop y sin `.csproj`/`package.json`; el `entryPoint` fue `src/Cloud/Architecture/EntryPoint.cs`. La trazabilidad y los artefactos son reales; la coherencia del producto no.
+- `STATICALLY_VALIDATED` convivía con verdict `ISSUES_FOUND` y 16 MAJOR (Vera clasificó además un error de sintaxis de C# como MINOR). **Decisión del fundador (2026-09-25)**: cualquier finding `MAJOR` (o `BLOCKER`) pasa a `FAILED`, sin importar el verdict (`StaticValidationStatusTest.failedWhenReviewFindsIssuesWithAMajorFinding` y `anyMajorFindingFailsEvenWithNoEvidentIssuesVerdict`); primero se había acotado a `ISSUES_FOUND`+`MAJOR` y el fundador lo amplió a cualquier `MAJOR`. Con esa regla, `MISSION-TEAM-VERIFY-2` habría quedado en `FAILED`; su valor persistido no se recalcula. Sigue abierto que Vera puede subestimar la severidad (el error de sintaxis como MINOR).
+- Los archivos del workspace quedan con dueño root en el host (el contenedor corre como root); para inspeccionar con git usar `git -c safe.directory='*'`.

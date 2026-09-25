@@ -27,6 +27,8 @@ export interface MissionResponse {
   message: string
   updatedAt: string
   financialCriteria: FinancialCriteriaResponse | null
+  // Equipo responsable (TEAM-...) o null en misiones de discovery
+  teamId: string | null
 }
 
 export interface AgentTask {
@@ -37,6 +39,23 @@ export interface AgentTask {
   status: string
   result: string
   updatedAt: string
+  // Misiones por equipo: PLANNING | WORK | VALIDATION (null en discovery)
+  kind: string | null
+  workspacePath: string | null
+  commitSha: string | null
+  files: string[] | null
+  // Solo en la tarea VALIDATION: STATICALLY_VALIDATED | UNVALIDATED | FAILED
+  validationStatus: string | null
+  // JSON de StaticCheck[]
+  staticChecks: string | null
+}
+
+export interface StaticCheck {
+  check: string
+  status: 'PASS' | 'FAIL'
+  detail: string
+  sha: string | null
+  paths: string[]
 }
 
 export interface MissionStatusResponse {
@@ -189,6 +208,7 @@ export interface MissionCommand {
   instruction: string
   environment: string
   financialCriteria: FinancialCriteriaCommand | null
+  teamId: string | null
 }
 
 // Company Financial Policy versionada -- ver GET/PUT /api/company/policies

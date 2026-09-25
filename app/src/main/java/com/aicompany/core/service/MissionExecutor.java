@@ -1,6 +1,5 @@
 package com.aicompany.core.service;
 
-import com.aicompany.core.agent.AgentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.event.CompanyEventPublisher;
@@ -8,6 +7,9 @@ import com.aicompany.core.model.AgentExecutionOutcome;
 import com.aicompany.core.model.FinancialCriteriaResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.PolicyKey;
+import com.aicompany.core.model.TeamExecutionMode;
+import com.aicompany.core.model.TeamExecutionResult;
+import com.aicompany.core.model.TeamMissionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,10 +18,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
@@ -30,25 +29,8 @@ public class MissionExecutor {
     private static final Logger log =
             LoggerFactory.getLogger(MissionExecutor.class);
 
-    /**
-     * Reintentos a nivel de MISIÓN para un agente que ya agotó sus 3
-     * intentos internos (`AgentRuntime.MAX_RESULT_RETRIES`). Deliberadamente
-     * bajo (1): es una segunda oportunidad completa desde cero (turno de
-     * decisión + turno final nuevos), no una corrección incremental como el
-     * reintento interno — si tampoco funciona a la segunda, lo más probable
-     * es un problema real (no un bache pasajero del modelo) y seguir
-     * insistiendo solo alargaría la misión sin cambiar el resultado.
-     */
-    private static final int MAX_AGENT_REPLANS = 1;
-
-    private record AgentDefinition(
-            String agentId,
-            String action,
-            String objective) {
-    }
-
     private final MissionMemoryService memory;
-    private final AgentRuntime runtime;
+    private final AgentTaskBatchRunner batchRunner;
     private final CeoService ceoService;
     private final CompanyMemoryService companyMemory;
     private final PromptMemoryService promptMemory;
@@ -60,10 +42,12 @@ public class MissionExecutor {
     private final CompanyPolicyService companyPolicyService;
     private final OpportunityMemoryService opportunityMemory;
     private final AlertMailService alertMailService;
+    private final TeamWorkPlanner teamWorkPlanner;
+    private final List<TeamExecutionStrategy> teamStrategies;
 
     public MissionExecutor(
             MissionMemoryService memory,
-            AgentRuntime runtime,
+            AgentTaskBatchRunner batchRunner,
             CeoService ceoService,
             CompanyMemoryService companyMemory,
             PromptMemoryService promptMemory,
@@ -75,10 +59,12 @@ public class MissionExecutor {
             ContradictionDetector contradictionDetector,
             CompanyPolicyService companyPolicyService,
             OpportunityMemoryService opportunityMemory,
-            AlertMailService alertMailService) {
+            AlertMailService alertMailService,
+            TeamWorkPlanner teamWorkPlanner,
+            List<TeamExecutionStrategy> teamStrategies) {
 
         this.memory = memory;
-        this.runtime = runtime;
+        this.batchRunner = batchRunner;
         this.ceoService = ceoService;
         this.companyMemory = companyMemory;
         this.promptMemory = promptMemory;
@@ -90,6 +76,8 @@ public class MissionExecutor {
         this.companyPolicyService = companyPolicyService;
         this.opportunityMemory = opportunityMemory;
         this.alertMailService = alertMailService;
+        this.teamWorkPlanner = teamWorkPlanner;
+        this.teamStrategies = teamStrategies;
     }
 
     public CompletableFuture<Void> executeAsync(
@@ -141,12 +129,16 @@ public class MissionExecutor {
             String missionId,
             String instruction) {
 
-        log.info(
-                "MISSION {} - async execution started",
-                missionId
-        );
+        log.info("MISSION {} - async execution started", missionId);
 
         try {
+
+            var teamId = memory.teamId(missionId).orElse(null);
+
+            if (teamId != null) {
+                executeTeamMission(missionId, instruction, teamId);
+                return;
+            }
 
             advanceMission(
                     missionId,
@@ -156,10 +148,7 @@ public class MissionExecutor {
                     "CEO está definiendo el trabajo de la misión."
             );
 
-            log.info(
-                    "MISSION {} -> PLANNING",
-                    missionId
-            );
+            log.info("MISSION {} -> PLANNING", missionId);
 
             advanceMission(
                     missionId,
@@ -169,466 +158,271 @@ public class MissionExecutor {
                     "Asignando tareas paralelas a Sales, Product, Finance, Engineering y QA."
             );
 
-            log.info(
-                    "MISSION {} -> DELEGATING",
-                    missionId
-            );
+            log.info("MISSION {} -> DELEGATING", missionId);
 
             var seedCapitalUsd = companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD);
             var financialCriteria = memory.financialCriteria(missionId).orElse(null);
 
-            var definitions = List.of(
-
-                    new AgentDefinition(
-                            "sales",
-                            "MARKET_DISCOVERY",
-                            "Identificar perfiles de clientes y señales de demanda que deban validarse."
-                    ),
-
-                    new AgentDefinition(
-                            "product",
-                            "OFFER_DESIGN",
-                            "Definir una oferta mínima vendible alineada con las restricciones de capital."
-                    ),
-
-                    new AgentDefinition(
-                            "finance",
-                            "UNIT_ECONOMICS",
-                            financeObjective(seedCapitalUsd, financialCriteria)
-                    ),
-
-                    new AgentDefinition(
-                            "engineering",
-                            "DELIVERY_FEASIBILITY",
-                            "Evaluar la capacidad de entregar la oferta con los recursos tecnológicos disponibles."
-                    ),
-
-                    new AgentDefinition(
-                            "qa",
-                            "QUALITY_RISK_REVIEW",
-                            "Identificar, de forma independiente a los demás agentes (esta tarea corre en paralelo, no tiene acceso a sus resultados), riesgos, huecos de evidencia y supuestos no verificados en la oportunidad de negocio descrita en la misión, antes de comprometer capital."
-                    )
-            );
-
-            var definitionsByAgent =
-                    definitions.stream()
-                            .collect(Collectors.toMap(
-                                    AgentDefinition::agentId,
-                                    definition -> definition
-                            ));
-
-            var futuresByAgent =
-                    new LinkedHashMap<String, CompletableFuture<AgentResult>>();
-
-            for (var definition : definitions) {
-
-                var agentId = definition.agentId();
-                var action = definition.action();
-                var objective = definition.objective();
-
-                var taskId =
-                        missionId
-                                + "-"
-                                + agentId.toUpperCase();
-
-                log.info(
-                        "MISSION {} - creating task {} for agent {}",
-                        missionId,
-                        taskId,
-                        agentId
-                );
-
-                memory.createTask(
-                        taskId,
-                        missionId,
-                        agentId,
-                        action
-                );
-
-                events.publishTask(
-                        "EMPRESA_TASK_CREATED",
-                        taskId,
-                        missionId,
-                        agentId,
-                        "PENDING",
-                        "Tarea creada."
-                );
-
-                var future =
-                        runtime.execute(
-                                taskId,
-                                missionId,
-                                agentId,
-                                action,
-                                instruction
-                                        + "\nObjetivo específico: "
-                                        + objective
-                        );
-
-                futuresByAgent.put(agentId, future);
-            }
-
-            advanceMission(
-                    missionId,
-                    MissionStatus.WAITING_AGENT_RESULTS,
-                    30,
-                    "Trabajo paralelo",
-                    "Los agentes están trabajando en paralelo."
-            );
-
-            log.info(
-                    "MISSION {} -> WAITING_AGENT_RESULTS",
-                    missionId
-            );
-
-            /*
-             * Agent failure != Mission failure: antes, un solo agente que
-             * agotara sus reintentos tumbaba `allOf(...).join()`, que
-             * propagaba la excepción y mandaba TODA la misión a FAILED,
-             * descartando cualquier resultado de los demás agentes que sí
-             * hubieran completado. Ahora se espera a cada agente por
-             * separado (igual se espera a todos antes de seguir — no se
-             * corta ni se acelera nada) y se captura éxito/fallo por
-             * agente en un `AgentExecutionOutcome`. Solo si TODOS los
-             * agentes fallan no hay nada que consolidar y la misión sí
-             * falla; si al menos uno completó, la misión sigue con
-             * resultado parcial y el CEO recibe explícitamente qué agentes
-             * faltan y por qué, para que sea su consolidación (no un
-             * `catch` genérico) la que decida qué hacer con el hueco.
-             */
-            List<AgentExecutionOutcome> outcomes =
-                    new ArrayList<>();
-
-            for (var entry : futuresByAgent.entrySet()) {
-
-                var agentId = entry.getKey();
-
-                try {
-
-                    var result = entry.getValue().join();
-
-                    outcomes.add(
-                            AgentExecutionOutcome.success(agentId, result)
-                    );
-
-                } catch (Exception ex) {
-
-                    var reason =
-                            safeMessage(
-                                    ex,
-                                    "El agente no completó su tarea."
-                            );
-
-                    log.warn(
-                            "MISSION {} - agent {} did not complete, "
-                                    + "continuing with partial results: {}",
-                            missionId,
-                            agentId,
-                            reason
-                    );
-
-                    outcomes.add(
-                            AgentExecutionOutcome.failure(agentId, reason)
-                    );
-                }
-            }
-
-            log.info(
-                    "MISSION {} - all agent tasks settled",
-                    missionId
-            );
-
-            /*
-             * Replanificación automática: un agente que agotó sus 3
-             * intentos internos (ver "Reintento de resultados de agente")
-             * todavía puede recuperarse a nivel de misión — se le da hasta
-             * `MAX_AGENT_REPLANS` oportunidades más de correr su tarea
-             * desde cero (turno de decisión + turno final nuevos, no una
-             * continuación del intento fallido). Es un nivel de reintento
-             * distinto y por encima del interno de `AgentRuntime`: ese ya
-             * se agotó cuando llegamos aquí.
-             */
-            outcomes = replanFailedAgents(
+            var outcomes = batchRunner.run(
                     missionId,
                     instruction,
-                    definitionsByAgent,
-                    outcomes
+                    discoveryDefinitions(seedCapitalUsd, financialCriteria),
+                    () -> {
+                        advanceMission(
+                                missionId,
+                                MissionStatus.WAITING_AGENT_RESULTS,
+                                30,
+                                "Trabajo paralelo",
+                                "Los agentes están trabajando en paralelo."
+                        );
+                        log.info("MISSION {} -> WAITING_AGENT_RESULTS", missionId);
+                    }
             );
 
-            advanceMission(
-                    missionId,
-                    MissionStatus.EVALUATING,
-                    70,
-                    "Evaluación",
-                    "Todos los agentes terminaron. CEO está revisando resultados."
-            );
-
-            var agentResults =
-                    outcomes.stream()
-                            .filter(AgentExecutionOutcome::completed)
-                            .map(AgentExecutionOutcome::result)
-                            .toList();
-
-            var failedAgents =
-                    outcomes.stream()
-                            .filter(outcome -> !outcome.completed())
-                            .toList();
-
-            if (agentResults.isEmpty()) {
-
-                throw new IllegalStateException(
-                        "Los "
-                                + failedAgents.size()
-                                + " agente(s) de la misión fallaron: "
-                                + failedAgents.stream()
-                                        .map(o -> o.agentId() + " (" + o.error() + ")")
-                                        .collect(Collectors.joining("; "))
-                );
-            }
-
-            if (!failedAgents.isEmpty()) {
-
-                log.warn(
-                        "MISSION {} - continuing with partial results, "
-                                + "failed agents={}",
-                        missionId,
-                        failedAgents.stream()
-                                .map(AgentExecutionOutcome::agentId)
-                                .toList()
-                );
-            }
-
-            /*
-             * Flujo Opportunity -> Customer candidato (100% nivel 🟢,
-             * `empresa.md` §5): la misión produjo al menos un resultado,
-             * así que hay una oportunidad de negocio real que registrar.
-             * Los candidatos de cliente que cada agente haya identificado
-             * (campo opcional `AgentResult.customerCandidates`, casi
-             * siempre vacío) quedan como nodos `Customer {status:'LEAD'}`
-             * separados de los clientes reales de `CustomerController`
-             * (canal humano, sin cambios) — ver
-             * `OpportunityMemoryService` para el porqué de esa separación.
-             */
-            opportunityMemory.recordOpportunity(missionId, instruction);
-
-            for (var result : agentResults) {
-
-                opportunityMemory.recordCandidates(
-                        missionId,
-                        result.agent(),
-                        result.customerCandidates()
-                );
-            }
-
-            /*
-             * Recuperamos los resultados estructurados.
-             *
-             * Ya no concatenamos texto libre generado por los agentes.
-             */
-            var structuredResults =
-                    serializeAgentResults(
-                            agentResults
-                    );
-
-            log.info(
-                    "MISSION {} - structured agent results generated agents={}",
-                    missionId,
-                    agentResults.size()
-            );
-
-            var contradictions =
-                    contradictionDetector.detect(
-                            agentResults,
-                            seedCapitalUsd,
-                            companyPolicyService.activeValue(PolicyKey.CONTRADICTION_SEED_CAPITAL_MULTIPLE)
-                    );
-
-            if (!contradictions.isEmpty()) {
-
-                log.warn(
-                        "MISSION {} - contradictions detected: {}",
-                        missionId,
-                        contradictions
-                );
-            }
-
-            var resultsForCeo =
-                    structuredResults;
-
-            if (!contradictions.isEmpty()) {
-
-                resultsForCeo +=
-                        "\n\nCONTRADICCIONES_DETECTADAS "
-                                + "(reglas deterministas, no del modelo; "
-                                + "no las ignores al consolidar):\n- "
-                                + String.join("\n- ", contradictions);
-            }
-
-            if (!failedAgents.isEmpty()) {
-
-                resultsForCeo +=
-                        "\n\nAGENTES_FALLIDOS (no completaron su tarea "
-                                + "tras agotar reintentos; este es un "
-                                + "resultado PARCIAL — decide cómo abordar "
-                                + "el hueco en tu recomendación, no lo "
-                                + "ignores):\n- "
-                                + failedAgents.stream()
-                                        .map(o -> o.agentId() + ": " + o.error())
-                                        .collect(Collectors.joining("\n- "));
-            }
-
-            advanceMission(
-                    missionId,
-                    MissionStatus.CONSOLIDATING,
-                    85,
-                    "Consolidación",
-                    "CEO está consolidando la recomendación."
-            );
-
-            var finalResult =
-                    ceoService.executeMission(
-                            instruction,
-                            resultsForCeo,
-                            promptMemory.activePrompt("ceo"),
-                            companyMemory.agentModel("ceo", defaultCeoModel)
-                    );
-
-            advanceMission(
-                    missionId,
-                    MissionStatus.AWAITING_INVESTOR,
-                    95,
-                    "Recomendación",
-                    finalResult
-            );
-
-            log.info(
-                    "MISSION {} -> AWAITING_INVESTOR",
-                    missionId
-            );
+            consolidateAgentOutcomes(missionId, instruction, outcomes, seedCapitalUsd);
 
         } catch (Exception ex) {
 
-            log.error(
-                    "MISSION {} - execution failed",
-                    missionId,
-                    ex
-            );
+            log.error("MISSION {} - execution failed", missionId, ex);
 
-            safeFail(
-                    missionId,
-                    ex
-            );
+            safeFail(missionId, ex);
         }
     }
 
     /**
-     * Le da a cada agente que agotó sus reintentos internos hasta
-     * {@code MAX_AGENT_REPLANS} oportunidades más de correr su tarea desde
-     * cero antes de aceptarlo como definitivamente fallido. Publica
-     * {@code EMPRESA_MISSION_REPLANNED} (`EMPRESA_AI_NUEVO_TODO_EVIDENCE.md`
-     * §22) por cada intento de replan, con el error anterior como dato —
-     * así queda auditable cuántas veces y por qué se reintentó a este
-     * nivel, no solo a nivel de `AgentRuntime`.
+     * Misión con teamId (spec §2): el líder planifica, el plan se valida
+     * en Java y la estrategia del tipo de equipo ejecuta. Nunca crea las 5
+     * tareas fijas de discovery.
      */
-    private List<AgentExecutionOutcome> replanFailedAgents(
+    private void executeTeamMission(String missionId, String instruction, String teamId) {
+
+        var teamType = TeamMemoryService.teamType(teamId)
+                .orElseThrow(() -> new IllegalStateException("teamId desconocido: " + teamId));
+
+        var mode = TeamExecutionMode.forTeamType(teamType);
+
+        var strategy = teamStrategies.stream()
+                .filter(s -> s.mode() == mode)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No hay estrategia de ejecución para " + mode));
+
+        advanceMission(
+                missionId,
+                MissionStatus.PLANNING,
+                5,
+                "Planificación del equipo",
+                "El líder de " + teamId + " está descomponiendo el trabajo."
+        );
+
+        var planned = teamWorkPlanner.plan(missionId, teamId, instruction, mode);
+
+        advanceMission(
+                missionId,
+                MissionStatus.DELEGATING,
+                10,
+                "Delegación",
+                "Plan del líder validado: " + planned.plan().tasksOrEmpty().size()
+                        + " tareas para " + planned.team().teamName() + "."
+        );
+
+        var context = new TeamMissionContext(missionId, instruction, planned.team(), planned.plan());
+
+        var result = strategy.execute(context, (status, progress, step, message) ->
+                advanceMission(missionId, status, progress, step, message));
+
+        switch (result) {
+            case TeamExecutionResult.AgentOutcomes outcomes -> consolidateAgentOutcomes(
+                    missionId, instruction, outcomes.outcomes(),
+                    companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD));
+            case TeamExecutionResult.Development development ->
+                    consolidateDevelopment(missionId, instruction, development);
+        }
+    }
+
+    /**
+     * El CEO consolida; el bloque "Estado verificable" lo agrega Java al
+     * final, así que los hechos verificables no dependen de la redacción
+     * del modelo (spec §8).
+     */
+    private void consolidateDevelopment(
+            String missionId, String instruction, TeamExecutionResult.Development development) {
+
+        advanceMission(
+                missionId,
+                MissionStatus.CONSOLIDATING,
+                85,
+                "Consolidación",
+                "CEO está consolidando el resultado del equipo."
+        );
+
+        var finalResult = ceoService.executeMission(
+                instruction,
+                development.resultsForCeo(),
+                promptMemory.activePrompt("ceo"),
+                companyMemory.agentModel("ceo", defaultCeoModel)
+        );
+
+        advanceMission(
+                missionId,
+                MissionStatus.AWAITING_INVESTOR,
+                95,
+                "Recomendación",
+                finalResult + "\n\n" + development.verifiableState()
+        );
+
+        log.info("MISSION {} -> AWAITING_INVESTOR (team development)", missionId);
+    }
+
+    /** Las 5 tareas fijas de discovery — misiones SIN teamId, sin cambios. */
+    private List<AgentTaskBatchRunner.AgentTaskDefinition> discoveryDefinitions(
+            double seedCapitalUsd,
+            FinancialCriteriaResponse financialCriteria) {
+
+        return List.of(
+                new AgentTaskBatchRunner.AgentTaskDefinition(
+                        "sales",
+                        "MARKET_DISCOVERY",
+                        "Identificar perfiles de clientes y señales de demanda que deban validarse.",
+                        null
+                ),
+                new AgentTaskBatchRunner.AgentTaskDefinition(
+                        "product",
+                        "OFFER_DESIGN",
+                        "Definir una oferta mínima vendible alineada con las restricciones de capital.",
+                        null
+                ),
+                new AgentTaskBatchRunner.AgentTaskDefinition(
+                        "finance",
+                        "UNIT_ECONOMICS",
+                        financeObjective(seedCapitalUsd, financialCriteria),
+                        null
+                ),
+                new AgentTaskBatchRunner.AgentTaskDefinition(
+                        "engineering",
+                        "DELIVERY_FEASIBILITY",
+                        "Evaluar la capacidad de entregar la oferta con los recursos tecnológicos disponibles.",
+                        null
+                ),
+                new AgentTaskBatchRunner.AgentTaskDefinition(
+                        "qa",
+                        "QUALITY_RISK_REVIEW",
+                        "Identificar, de forma independiente a los demás agentes (esta tarea corre en paralelo, no tiene acceso a sus resultados), riesgos, huecos de evidencia y supuestos no verificados en la oportunidad de negocio descrita en la misión, antes de comprometer capital.",
+                        null
+                )
+        );
+    }
+
+    /**
+     * EVALUATING → CONSOLIDATING → AWAITING_INVESTOR sobre resultados de
+     * AgentRuntime (AgentResult). Lo usan discovery y los equipos de
+     * análisis (AnalysisTeamStrategy).
+     */
+    private void consolidateAgentOutcomes(
             String missionId,
             String instruction,
-            Map<String, AgentDefinition> definitionsByAgent,
-            List<AgentExecutionOutcome> outcomes) {
+            List<AgentExecutionOutcome> outcomes,
+            double seedCapitalUsd) {
 
-        var settled = new ArrayList<AgentExecutionOutcome>();
+        advanceMission(
+                missionId,
+                MissionStatus.EVALUATING,
+                70,
+                "Evaluación",
+                "Todos los agentes terminaron. CEO está revisando resultados."
+        );
 
-        for (var outcome : outcomes) {
+        var agentResults = outcomes.stream()
+                .filter(AgentExecutionOutcome::completed)
+                .map(AgentExecutionOutcome::result)
+                .toList();
 
-            var current = outcome;
-            var replanAttempt = 0;
+        var failedAgents = outcomes.stream()
+                .filter(outcome -> !outcome.completed())
+                .toList();
 
-            while (!current.completed() && replanAttempt < MAX_AGENT_REPLANS) {
-
-                replanAttempt++;
-
-                var agentId = current.agentId();
-                var definition = definitionsByAgent.get(agentId);
-                var taskId = missionId + "-" + agentId.toUpperCase();
-
-                log.warn(
-                        "MISSION {} - replanning agent {} (attempt {} of {}) after: {}",
-                        missionId,
-                        agentId,
-                        replanAttempt,
-                        MAX_AGENT_REPLANS,
-                        current.error()
-                );
-
-                events.publish(
-                        "EMPRESA_MISSION_REPLANNED",
-                        missionId,
-                        taskId,
-                        agentId,
-                        Map.of(
-                                "replanAttempt", replanAttempt,
-                                "previousError",
-                                current.error() == null ? "" : current.error()
-                        )
-                );
-
-                memory.createTask(
-                        taskId,
-                        missionId,
-                        agentId,
-                        definition.action()
-                );
-
-                events.publishTask(
-                        "EMPRESA_TASK_CREATED",
-                        taskId,
-                        missionId,
-                        agentId,
-                        "PENDING",
-                        "Tarea replanificada a nivel de misión (intento "
-                                + replanAttempt
-                                + " de "
-                                + MAX_AGENT_REPLANS
-                                + ")."
-                );
-
-                var future =
-                        runtime.execute(
-                                taskId,
-                                missionId,
-                                agentId,
-                                definition.action(),
-                                instruction
-                                        + "\nObjetivo específico: "
-                                        + definition.objective()
-                        );
-
-                try {
-
-                    var result = future.join();
-
-                    current = AgentExecutionOutcome.success(agentId, result);
-
-                    log.info(
-                            "MISSION {} - agent {} recovered after replan attempt {}",
-                            missionId,
-                            agentId,
-                            replanAttempt
-                    );
-
-                } catch (Exception ex) {
-
-                    current = AgentExecutionOutcome.failure(
-                            agentId,
-                            safeMessage(ex, "El agente no completó su tarea.")
-                    );
-                }
-            }
-
-            settled.add(current);
+        if (agentResults.isEmpty()) {
+            throw new IllegalStateException(
+                    "Los " + failedAgents.size() + " agente(s) de la misión fallaron: "
+                            + failedAgents.stream()
+                                    .map(o -> o.agentId() + " (" + o.error() + ")")
+                                    .collect(Collectors.joining("; "))
+            );
         }
 
-        return settled;
+        if (!failedAgents.isEmpty()) {
+            log.warn("MISSION {} - continuing with partial results, failed agents={}",
+                    missionId, failedAgents.stream().map(AgentExecutionOutcome::agentId).toList());
+        }
+
+        /*
+         * Flujo Opportunity -> Customer candidato (100% nivel 🟢): la misión
+         * produjo al menos un resultado, así que hay una oportunidad que
+         * registrar; los candidatos quedan como Customer {status:'LEAD'}.
+         */
+        opportunityMemory.recordOpportunity(missionId, instruction);
+
+        for (var result : agentResults) {
+            opportunityMemory.recordCandidates(missionId, result.agent(), result.customerCandidates());
+        }
+
+        var structuredResults = serializeAgentResults(agentResults);
+
+        log.info("MISSION {} - structured agent results generated agents={}", missionId, agentResults.size());
+
+        var contradictions = contradictionDetector.detect(
+                agentResults,
+                seedCapitalUsd,
+                companyPolicyService.activeValue(PolicyKey.CONTRADICTION_SEED_CAPITAL_MULTIPLE)
+        );
+
+        if (!contradictions.isEmpty()) {
+            log.warn("MISSION {} - contradictions detected: {}", missionId, contradictions);
+        }
+
+        var resultsForCeo = structuredResults;
+
+        if (!contradictions.isEmpty()) {
+            resultsForCeo += "\n\nCONTRADICCIONES_DETECTADAS "
+                    + "(reglas deterministas, no del modelo; "
+                    + "no las ignores al consolidar):\n- "
+                    + String.join("\n- ", contradictions);
+        }
+
+        if (!failedAgents.isEmpty()) {
+            resultsForCeo += "\n\nAGENTES_FALLIDOS (no completaron su tarea "
+                    + "tras agotar reintentos; este es un "
+                    + "resultado PARCIAL — decide cómo abordar "
+                    + "el hueco en tu recomendación, no lo "
+                    + "ignores):\n- "
+                    + failedAgents.stream()
+                            .map(o -> o.agentId() + ": " + o.error())
+                            .collect(Collectors.joining("\n- "));
+        }
+
+        advanceMission(
+                missionId,
+                MissionStatus.CONSOLIDATING,
+                85,
+                "Consolidación",
+                "CEO está consolidando la recomendación."
+        );
+
+        var finalResult = ceoService.executeMission(
+                instruction,
+                resultsForCeo,
+                promptMemory.activePrompt("ceo"),
+                companyMemory.agentModel("ceo", defaultCeoModel)
+        );
+
+        advanceMission(
+                missionId,
+                MissionStatus.AWAITING_INVESTOR,
+                95,
+                "Recomendación",
+                finalResult
+        );
+
+        log.info("MISSION {} -> AWAITING_INVESTOR", missionId);
     }
 
     private String financeObjective(double seedCapitalUsd, FinancialCriteriaResponse financialCriteria) {

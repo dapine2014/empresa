@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Set;
 
@@ -42,6 +43,14 @@ public class TeamMemoryService {
     public static final Set<String> KNOWN_TEAM_IDS = Set.of(
             TEAM_ENGINEERING, TEAM_CREATIVE_PRODUCT_INTELLIGENCE, TEAM_MARKETING_GROWTH
     );
+
+    /** Tipo real del equipo desde el catálogo fijo en código ({@link #TEAMS}); vacío si el id no existe. */
+    public static Optional<String> teamType(String teamId) {
+        return TEAMS.stream()
+                .filter(team -> team.teamId().equals(teamId))
+                .map(TeamDefinition::teamType)
+                .findFirst();
+    }
 
     private record RoleDefinition(
             String agentId,
