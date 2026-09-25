@@ -42,6 +42,8 @@ ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
   ceo-model: ${OLLAMA_CEO_MODEL:qwen2.5-coder:14b}
   agent-model: ${OLLAMA_AGENT_MODEL:qwen3:8b}
+  # Una llamada más larga que esto se considera colgada: falla y se reintenta.
+  read-timeout: ${OLLAMA_READ_TIMEOUT:15m}
 
 products:
   workspace-root: ${PRODUCTS_WORKSPACE_ROOT:${user.home}/forjai-products}

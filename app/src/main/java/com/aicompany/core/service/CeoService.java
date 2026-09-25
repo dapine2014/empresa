@@ -212,6 +212,14 @@ public class CeoService {
      */
     static final int TEAM_CONTEXT_WINDOW_TOKENS = 16_384;
 
+    /**
+     * Tope de salida de las llamadas de equipo. Verificado en vivo: sin él,
+     * qwen3:8b entró en bucle dentro del JSON y Ollama siguió generando más
+     * de una hora (al llenar el contexto lo desplaza y continúa), bloqueando
+     * la misión. 6144 tokens alcanzan para varios archivos de código.
+     */
+    static final int TEAM_MAX_OUTPUT_TOKENS = 6_144;
+
     private static final java.util.Set<String> TEAM_STRUCTURED_OPERATIONS =
             java.util.Set.of("TEAM_PLANNING", "DEVELOPMENT_TASK", "STATIC_REVIEW");
 
@@ -1264,7 +1272,9 @@ public class CeoService {
         }
 
         if (TEAM_STRUCTURED_OPERATIONS.contains(operation)) {
-            body.put("options", Map.of("num_ctx", TEAM_CONTEXT_WINDOW_TOKENS));
+            body.put("options", Map.of(
+                    "num_ctx", TEAM_CONTEXT_WINDOW_TOKENS,
+                    "num_predict", TEAM_MAX_OUTPUT_TOKENS));
         }
 
         Map<String, Object> response;

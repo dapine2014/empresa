@@ -34,6 +34,9 @@ class CeoServiceContextWindowTest {
         var server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo("http://ollama/api/chat"))
                 .andExpect(jsonPath("$.options.num_ctx").value(CeoService.TEAM_CONTEXT_WINDOW_TOKENS))
+                // Verificado en vivo (MISSION-TEAM-VERIFY-7): sin tope de salida, qwen3:8b generó
+                // durante más de una hora en bucle y bloqueó la misión.
+                .andExpect(jsonPath("$.options.num_predict").value(CeoService.TEAM_MAX_OUTPUT_TOKENS))
                 .andRespond(withSuccess(PLAN_RESPONSE, MediaType.APPLICATION_JSON));
 
         var ceoService = new CeoService(builder.build(), JsonMapper.builder().build(),
