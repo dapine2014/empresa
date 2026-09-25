@@ -63,7 +63,7 @@ class MissionExecutorTest {
     }
 
     private final MissionExecutor executor = new MissionExecutor(
-            memory, runtime, ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events, jsonMapper,
+            memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events, jsonMapper,
             contradictionDetector, companyPolicyService, opportunityMemory, alertMailService
     );
 
@@ -259,7 +259,7 @@ class MissionExecutorTest {
         when(customPolicies.activeValue(PolicyKey.CONTRADICTION_SEED_CAPITAL_MULTIPLE)).thenReturn(100.0);
 
         var executorWithCustomCapital = new MissionExecutor(
-                memory, runtime, ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events,
+                memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events,
                 jsonMapper, contradictionDetector, customPolicies, opportunityMemory, alertMailService
         );
 
