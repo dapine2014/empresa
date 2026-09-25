@@ -7,6 +7,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.validation.DevelopmentPathValidationGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.agent.validation.ForbiddenClaimsGuard;
+import com.aicompany.core.agent.validation.MissingFileClaimGate;
 import com.aicompany.core.agent.validation.RepositoryEvidenceGate;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.service.CeoService;
@@ -38,7 +39,7 @@ class DevelopmentRuntimeTest {
     private final DevelopmentRuntime runtime = new DevelopmentRuntime(
             ceoService, memory, companyMemory, promptMemory, "qwen3:8b", Runnable::run, events,
             new DevelopmentPathValidationGate(), new EvidenceValidationGate(), new RepositoryEvidenceGate(),
-            new ForbiddenClaimsGuard(), JsonMapper.builder().build());
+            new ForbiddenClaimsGuard(), new MissingFileClaimGate(), JsonMapper.builder().build());
 
     {
         when(companyMemory.agentModel(anyString(), anyString())).thenAnswer(inv -> inv.getArgument(1));
@@ -168,5 +169,21 @@ class DevelopmentRuntimeTest {
 
         verify(ceoService).reviewStaticWorkspace(anyString(),
                 argThat(p -> p.contains("web/inventado.js")), anyString(), anyString());
+    }
+
+    @Test
+    void reviewDeclaringAnExistingFileAsMissingIsRetried() throws Exception {
+        var wrong = new StaticReviewResult("ISSUES_FOUND", List.of(), List.of("web/game/main.js"), "Coherente.",
+                List.of("No se puede verificar la ejecución del juego."),
+                List.of(new AgentResult.Evidence("Revisé main.js", validSource, "INTERNAL", true)));
+        when(ceoService.reviewStaticWorkspace(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(wrong)
+                .thenReturn(review("Coherente.", validSource));
+
+        runtime.review("T-QA", "MISSION-1", "qa", "prompt", filesBySha).get();
+
+        verify(ceoService).reviewStaticWorkspace(anyString(),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("sí existe")),
+                anyString(), anyString());
     }
 }

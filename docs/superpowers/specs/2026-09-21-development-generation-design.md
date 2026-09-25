@@ -279,6 +279,9 @@ Reintento hasta 3 intentos con corrección, tras estos gates:
 - **`RepositoryEvidenceGate`** (nuevo): cada evidencia `INTERNAL` debe citar
   `workspace:<missionId>@<sha>/<path>` con un sha real de la misión y un
   archivo existente en ese commit.
+- **`MissingFileClaimGate`** (nuevo, 2026-09-25, tras `MISSION-TEAM-VERIFY-3`):
+  rechaza `missingFiles` o findings que declaren inexistente un archivo que sí
+  está en los commits de la misión.
 - **Guard de afirmaciones prohibidas** (heurística léxica, mismo espíritu que
   `HEDGE_MARKERS`): rechaza `findings`/`architectureConsistency` que afirmen
   que el código compila, se ejecuta, funciona o pasa tests.
