@@ -43,6 +43,9 @@ ollama:
   ceo-model: ${OLLAMA_CEO_MODEL:qwen2.5-coder:14b}
   agent-model: ${OLLAMA_AGENT_MODEL:qwen3:8b}
 
+products:
+  workspace-root: ${PRODUCTS_WORKSPACE_ROOT:${user.home}/forjai-products}
+
 evidence:
   web-search:
     base-url: ${EVIDENCE_WEB_SEARCH_BASE_URL:https://google.serper.dev}

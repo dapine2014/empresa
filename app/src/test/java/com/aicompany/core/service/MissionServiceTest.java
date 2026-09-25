@@ -25,6 +25,7 @@ import static org.mockito.Mockito.*;
 class MissionServiceTest {
 
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
+    private final DevelopmentWorkspaceService workspace = mock(DevelopmentWorkspaceService.class);
 
     @Test
     void startPersistsMissionAndSubmitsItForAsynchronousExecution() {
@@ -40,7 +41,7 @@ class MissionServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(memory.find("MISSION-001")).thenReturn(Optional.of(mission));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
         var response = service.start("MISSION-001", "Investigar una oportunidad", "PRODUCTION", null);
 
         assertEquals(mission, response);
@@ -61,7 +62,7 @@ class MissionServiceTest {
 
         when(memory.find("MISSION-404")).thenReturn(Optional.empty());
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
         var response = service.recordDecision(
                 "MISSION-404",
                 new DecisionCommand(InvestorDecision.APPROVE, "Se ve bien")
@@ -84,7 +85,7 @@ class MissionServiceTest {
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(running));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
 
         assertThrows(IllegalStateException.class, () -> service.recordDecision(
                 "MISSION-001",
@@ -107,7 +108,7 @@ class MissionServiceTest {
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
         var response = service.recordDecision(
                 "MISSION-001",
                 new DecisionCommand(InvestorDecision.APPROVE, "Datos suficientes, aprobado")
@@ -141,7 +142,7 @@ class MissionServiceTest {
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
         service.recordDecision(
                 "MISSION-001",
                 new DecisionCommand(InvestorDecision.REJECT, "No hay evidencia real de demanda")
@@ -165,7 +166,7 @@ class MissionServiceTest {
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
         var response = service.recordDecision(
                 "MISSION-001",
                 new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "Falta validar precios reales")
@@ -194,7 +195,7 @@ class MissionServiceTest {
         );
         when(memory.find("MISSION-001")).thenReturn(Optional.of(failed));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
         var response = service.recordDecision(
                 "MISSION-001",
                 new DecisionCommand(InvestorDecision.REJECT, "Confirmado, no seguir con esto")
@@ -219,7 +220,7 @@ class MissionServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(memory.find("MISSION-001")).thenReturn(Optional.of(mission));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
         service.start("MISSION-001", "Investigar una oportunidad", "PRODUCTION", criteria);
 
         verify(memory).ensureMission("MISSION-001", "Investigar una oportunidad", "PRODUCTION", criteria, null);
@@ -232,7 +233,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
         var criteria = new FinancialCriteriaCommand(FinancialMetric.NET_PROFIT, 0.0, "USD", null);
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.start("MISSION-001", "Investigar", "PRODUCTION", criteria));
@@ -247,7 +248,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
         var criteria = new FinancialCriteriaCommand(FinancialMetric.NET_PROFIT, 1000.0, "USD", LocalDate.now().minusDays(1));
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory);
+        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.start("MISSION-001", "Investigar", "PRODUCTION", criteria));
@@ -269,7 +270,7 @@ class MissionServiceTest {
         var eventPublisher = mock(CompanyEventPublisher.class);
         when(memory.find("MISSION-404")).thenReturn(Optional.empty());
 
-        var service = new MissionService(memory, mock(MissionExecutor.class), eventPublisher, teamMemory);
+        var service = new MissionService(memory, mock(MissionExecutor.class), eventPublisher, teamMemory, workspace);
 
         assertFalse(service.delete("MISSION-404"));
         verify(memory, never()).deleteMission(anyString());
@@ -281,20 +282,21 @@ class MissionServiceTest {
         var memory = mock(MissionMemoryService.class);
         when(memory.find("MISSION-42")).thenReturn(Optional.of(missionIn("MISSION-42", MissionStatus.WAITING_AGENT_RESULTS)));
 
-        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory);
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
 
         assertThrows(IllegalStateException.class, () -> service.delete("MISSION-42"));
         verify(memory, never()).deleteMission(anyString());
     }
 
     @Test
-    void deleteRejectsFoundationalMission() {
+    void deleteRejectsFoundationalMission() throws Exception {
         var memory = mock(MissionMemoryService.class);
         when(memory.find("MISSION-001")).thenReturn(Optional.of(missionIn("MISSION-001", MissionStatus.COMPLETED)));
 
-        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory);
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
 
         assertThrows(IllegalStateException.class, () -> service.delete("MISSION-001"));
+        verify(workspace, never()).deleteWorkspace(anyString());
         verify(memory, never()).deleteMission(anyString());
     }
 
@@ -304,22 +306,23 @@ class MissionServiceTest {
         when(memory.find("MISSION-42")).thenReturn(Optional.of(missionIn("MISSION-42", MissionStatus.AWAITING_INVESTOR)));
         when(memory.hasRealCustomerData("MISSION-42")).thenReturn(true);
 
-        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory);
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
 
         assertThrows(IllegalStateException.class, () -> service.delete("MISSION-42"));
         verify(memory, never()).deleteMission(anyString());
     }
 
     @Test
-    void deleteRemovesFinishedMissionAndPublishesEvent() {
+    void deleteRemovesFinishedMissionAndPublishesEvent() throws Exception {
         var memory = mock(MissionMemoryService.class);
         var eventPublisher = mock(CompanyEventPublisher.class);
         when(memory.find("MISSION-42")).thenReturn(Optional.of(missionIn("MISSION-42", MissionStatus.FAILED)));
         when(memory.hasRealCustomerData("MISSION-42")).thenReturn(false);
 
-        var service = new MissionService(memory, mock(MissionExecutor.class), eventPublisher, teamMemory);
+        var service = new MissionService(memory, mock(MissionExecutor.class), eventPublisher, teamMemory, workspace);
 
         assertTrue(service.delete("MISSION-42"));
+        verify(workspace).deleteWorkspace("MISSION-42");
         verify(memory).deleteMission("MISSION-42");
         verify(eventPublisher).publish(
                 eq("EMPRESA_MISSION_DELETED"), eq("MISSION-42"), any(), eq("human"), any()
@@ -335,7 +338,7 @@ class MissionServiceTest {
     @Test
     void startRejectsAnUnknownTeamIdWithoutPersistingTheMission() {
         var memory = mock(MissionMemoryService.class);
-        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory);
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.start("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-INVENTADO"));
@@ -348,7 +351,7 @@ class MissionServiceTest {
         when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(
                 new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "INACTIVE", "engineering",
                         activeEngineering().members()));
-        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory);
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.start("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-ENGINEERING"));
@@ -364,7 +367,7 @@ class MissionServiceTest {
         var mission = new MissionResponse("MISSION-7", MissionStatus.CREATED, "PRODUCTION", 0, "Creada",
                 "Misión recibida", Instant.now(), null, "TEAM-ENGINEERING");
         when(memory.find("MISSION-7")).thenReturn(Optional.of(mission));
-        var service = new MissionService(memory, executor, mock(CompanyEventPublisher.class), teamMemory);
+        var service = new MissionService(memory, executor, mock(CompanyEventPublisher.class), teamMemory, workspace);
 
         var response = service.start("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-ENGINEERING");
 

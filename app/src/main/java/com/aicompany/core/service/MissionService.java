@@ -27,16 +27,19 @@ public class MissionService {
     private final MissionExecutor executor;
     private final CompanyEventPublisher events;
     private final TeamMemoryService teamMemory;
+    private final DevelopmentWorkspaceService workspace;
 
     public MissionService(
             MissionMemoryService memory,
             MissionExecutor executor,
             CompanyEventPublisher events,
-            TeamMemoryService teamMemory) {
+            TeamMemoryService teamMemory,
+            DevelopmentWorkspaceService workspace) {
         this.memory = memory;
         this.executor = executor;
         this.events = events;
         this.teamMemory = teamMemory;
+        this.workspace = workspace;
     }
 
     public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
@@ -226,6 +229,13 @@ public class MissionService {
         }
 
         memory.deleteMission(missionId);
+
+        try {
+            workspace.deleteWorkspace(missionId);
+        } catch (Exception ex) {
+            // Neo4j ya quedó limpio; el directorio huérfano no debe revertir el borrado.
+            log.warn("MISSION {} - no se pudo borrar el workspace: {}", missionId, ex.getMessage());
+        }
 
         events.publish(
                 "EMPRESA_MISSION_DELETED",
