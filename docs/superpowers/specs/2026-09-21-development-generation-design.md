@@ -1,246 +1,380 @@
-# Proyecto B (subproyecto 1): generación real de código, sin ejecutar ni gastar — diseño
+# Proyecto B (subproyecto 1): misiones por equipo + generación real de código, sin ejecutar ni gastar — diseño
 
-**Fecha**: 2026-09-21
-**Estado**: aprobado por el usuario en brainstorming, pendiente de plan de implementación.
+**Fecha**: 2026-09-21 (versión original) · **Revisión**: 2026-09-24
+**Estado**: revisión 2026-09-24 aprobada por el usuario en brainstorming
+(4 secciones), pendiente de revisión del spec escrito y de actualizar el
+plan (`docs/superpowers/plans/2026-09-21-development-generation.md`).
 
 ## Contexto y objetivo
 
-El spec del Engineering Team (`docs/superpowers/specs/2026-09-20-engineering-team-design.md`)
-dejó explícitamente fuera de alcance la "ejecución real de código/infraestructura"
-("Proyecto B") — un conjunto enorme de capacidades (Git, workspaces, generación
-de código, ejecución sandboxed, builds, tests, CI/CD, artifacts, deployments,
-infraestructura cloud, observabilidad, control de costos, políticas de
-autonomía, controles de seguridad) que nunca se diseñó como una sola pieza a
-propósito: sería especular sobre 15 capacidades a la vez.
+El spec del Engineering Team (`2026-09-20-engineering-team-design.md`) dejó
+fuera de alcance la "ejecución real de código/infraestructura" ("Proyecto
+B"). La versión original de este documento (2026-09-21) acotó su **primer
+subproyecto**: generación real de código por el Engineering Team, persistida
+en un repo Git real por misión — sin ejecutar ese código, sin builds/tests,
+sin infraestructura real, sin gastar dinero.
 
-Este documento es el **primer subproyecto real** de esa lista, acotado
-explícitamente en brainstorming: **generación real de código por los agentes
-del Engineering Team, persistida en un repo Git real por misión — sin
-ejecutar ese código, sin correr builds/tests, sin tocar infraestructura real,
-sin gastar dinero**. Es la base mínima sobre la que se construyen los
-subproyectos siguientes (ejecución sandboxed con build+test real, y más
-adelante deploy/infra), que quedan fuera de este documento.
+**Por qué se revisó (2026-09-24)**: la misión real `MISSION-1790304372795`
+("inicia una misión PRODUCTION exclusivamente para el Engineering Team…
+crear y desarrollar un videojuego propio") corrió igual el flujo fijo de 5
+tareas de discovery de `MissionExecutor` (`sales`/`product`/`finance`/
+`engineering`/`qa`, líneas 180-211 — una `List.of(AgentDefinition…)`
+hardcodeada que ignora la instrucción). Terminó en `AWAITING_INVESTOR` sin
+ningún workspace ni código; el grounding funcionó (Luna: "No hay evidencia de
+que el Engineering Team haya desarrollado un videojuego funcional"), pero la
+misión no hizo lo pedido. Queda como caso de diagnóstico del comportamiento
+anterior — **no se modifica**.
 
-**Relación con lo ya implementado**: el Engineering Team (5 agentes reales,
-`Team`/`MEMBER_OF`/`LEADS`, modelo LLM real por agente) y `ProductStatus`
-(separado de `MissionStatus`, con `DEVELOPMENT`/`QA`/`PUBLISHED` modelados
-pero deliberadamente inalcanzables — siempre `false` en
-`ProductStatusService`) ya están mergeados. Este subproyecto es exactamente
-el que empieza a activar esos hooks: le da a `DEVELOPMENT` su primera señal
-real. `QA`/`PUBLISHED` siguen sin señal — son subproyectos futuros.
+Objetivo revisado: que `Team` sea una **abstracción operacional genérica**.
+Una misión puede declarar el equipo responsable (`teamId`); el líder de ese
+equipo descompone el trabajo entre sus miembros según
+`roleCode`/`capabilities`; y cada equipo ejecuta con su estrategia propia —
+Engineering genera código real (workspace + Git + commits por agente +
+validación estática de Vera), Creative y Marketing producen `AgentResult` con
+el runtime actual. **Criterio de éxito**: ejecutar una misión
+`TEAM-ENGINEERING` y observar evidencia real de que el equipo creó un
+videojuego (repo, archivos, commits por agente, validación), no solo
+`AgentResult` descriptivos.
+
+## Cambios respecto de la versión original (2026-09-21)
+
+| Tema | Original | Revisión 2026-09-24 |
+|---|---|---|
+| Disparador | `APPROVE` de una misión de discovery → `EXECUTING` | `Mission.teamId` declarado al crear la misión; Engineering desarrolla directamente, sin discovery previo. `APPROVE` vuelve a ser terminal como hoy (`COMPLETED`) |
+| Quién trabaja | 3 tareas fijas (Neo/Iris/Mila) | El líder del equipo planifica; en Engineering los 5 miembros reciben tarea |
+| Organización de archivos | Subdirectorios fijos por agente (`architecture/`, `backend/`, `frontend/`) | `ownedPaths` declarados en el plan del líder, sin solapamiento |
+| Commits | Un solo commit consolidado, autor genérico "Engineering Team", best-effort | Un commit por agente, autor = agente, trailers de misión/tarea; si el commit falla, la tarea falla |
+| Artefacto en Neo4j | Nada nuevo | Propiedades en `AgentTask` (`kind`, `workspacePath`, `commitSha`, `files`, …) — sigue sin nodo nuevo |
+| QA | Fuera de alcance | Validación **estática** en dos capas (Java + Vera); `ProductStatus.QA` sigue inalcanzable |
+| Fin de la misión | `EXECUTING → COMPLETED` automático | `AWAITING_INVESTOR` como toda misión; decide el inversionista |
+| `ProductStatus.DEVELOPMENT` | `action` ∈ 3 nombres fijos | `AgentTask` con `kind=WORK`, `COMPLETED` y `commitSha` |
+| Equipos | Solo Engineering | Los 3 equipos reciben misiones por `teamId`; solo Engineering genera código |
+
+Se mantienen de la versión original: `DevelopmentResult` + su schema,
+`DevelopmentRuntime` como espejo de `AgentRuntime` (este último sin tocar),
+`DevelopmentPathValidationGate` sin reintento, `products.workspace-root`,
+Git vía `ProcessBuilder`, y la exclusión de ejecución/infra/gasto.
 
 ## Decisiones de diseño
 
-### 1. Disparador: `APPROVE` deja de ser terminal
+### 1. `Mission.teamId`: explícito, determinista, validado
 
-Hoy, `MissionService.recordDecision` con `APPROVE` sobre una misión en
-`AWAITING_INVESTOR` la deja en `MissionStatus.COMPLETED` (terminal). Pasa a:
+- Propiedad opcional e inmutable del nodo `Mission` (mismo criterio que
+  `environment`/`financialCriteria`). `null` = misión sin equipo → flujo de
+  discovery actual, **sin cambios funcionales**.
+- `MissionCommand`/`MissionResponse` ganan `teamId` (nullable).
+- `MissionService.start` valida antes de persistir: el id está en
+  `TeamMemoryService.TEAMS` (catálogo fijo: `TEAM-ENGINEERING`,
+  `TEAM-CREATIVE-PRODUCT-INTELLIGENCE`, `TEAM-MARKETING-GROWTH`), existe en
+  Neo4j y tiene `status='ACTIVE'`. Si no → `IllegalArgumentException` (500,
+  convención del proyecto). El LLM nunca lee ni escribe `teamId`.
+- **Chat** (`ChatIntentRouter`, ambos caminos de arranque de misión): solo
+  reconoce el token exacto `TEAM-[A-Z-]+` en el mensaje, y solo si es uno de
+  los 3 ids. Un `TEAM-XYZ` desconocido → mensaje determinista de error y la
+  misión **no** arranca (evita que un typo lance discovery). Nunca se infiere
+  el equipo de frases ("Engineering Team", "equipo de ingeniería", "que lo
+  haga ingeniería"…). Ejemplo válido: *"CEO, inicia una misión para
+  TEAM-ENGINEERING para crear un videojuego."* → `teamId=TEAM-ENGINEERING`.
+- **Frontend**: selector "Equipo responsable" en el formulario "Iniciar
+  misión" de `MissionsPage` (Sin equipo / Engineering Team / Creative /
+  Product Intelligence / Marketing & Growth) que envía el `teamId` real
+  (`null` para "Sin equipo").
+
+### 2. Arquitectura: planificador genérico + estrategia por tipo de equipo
+
+`MissionExecutor` sigue siendo el dueño de la máquina de estados,
+`advanceMission`, `safeFail`, eventos, alertas y consolidación. No existe un
+`TeamMissionExecutor` aparte. Única bifurcación, en la resolución de trabajo:
 
 ```
-AWAITING_INVESTOR --APPROVE--> EXECUTING --(las 3 tareas de desarrollo asientan)--> COMPLETED
+MissionExecutor
+  ├─ teamId == null → discoveryDefinitions() (las 5 de hoy, extraídas tal cual)
+  │                   → AgentTaskBatchRunner
+  └─ teamId != null → TeamWorkPlanner → TeamPlanValidator → AgentTasks
+                      → TeamExecutionStrategy (por Team.type)
+                           ├─ AnalysisTeamStrategy    (CREATIVE_PRODUCT_INTELLIGENCE, MARKETING_GROWTH)
+                           └─ DevelopmentTeamStrategy (ENGINEERING)
 ```
 
-`MissionStatus.EXECUTING` es un valor del enum que existe desde el día uno
-sin ningún código que lo use (documentado así en `CLAUDE.md`) — es
-exactamente el punto de enganche que esta feature activa. `REJECT` y
-`REQUEST_MORE_EVIDENCE` no cambian: siguen exactamente igual que hoy.
+- **`AgentTaskBatchRunner`**: el bloque actual de `MissionExecutor` que crea
+  tareas, ejecuta en paralelo vía `AgentRuntime`, espera a cada agente por
+  separado y replanifica (`replanFailedAgents`) se extrae **tal cual** a este
+  componente. Lo usan discovery y `AnalysisTeamStrategy`. Los tests actuales
+  de `MissionExecutorTest` deben pasar sin modificaciones funcionales.
+- **Selección de estrategia**: mapeo fijo en código desde `Team.type` (ya
+  persistido: `ENGINEERING`, `CREATIVE_PRODUCT_INTELLIGENCE`,
+  `MARKETING_GROWTH`) — mismo criterio que `TeamMemoryService.TEAMS`.
+- **Contrato común**: toda estrategia devuelve el texto de resultados para
+  la consolidación del CEO + la lista de agentes fallidos
+  (`AGENTES_FALLIDOS`), para que la consolidación no sepa qué estrategia
+  corrió.
+- **Estados** (sin valores nuevos en `MissionStatus`): `PLANNING` = plan del
+  líder · `DELEGATING` = creación de tareas · `WAITING_AGENT_RESULTS` =
+  ejecución · `EVALUATING` = (desarrollo) commits + validación estática ·
+  `CONSOLIDATING` · `AWAITING_INVESTOR`.
 
-`MissionService.recordDecision` sigue siendo el punto de entrada
-(`POST /missions/{id}/decision`, y el mismo camino desde el chat vía
-`ChatIntentRouter`) — al detectar `APPROVE`, en vez de solo persistir
-`COMPLETED`, dispara la orquestación de desarrollo (mismo patrón que
-`MissionService.start` dispara `MissionExecutor.executeAsync`: persiste el
-cambio de estado y lanza el trabajo async, devuelve de inmediato).
+### 3. `TeamWorkPlanner`: el líder descompone el trabajo
 
-### 2. Tres tareas de desarrollo en paralelo, mismo patrón que discovery
+Genérico para los 3 equipos:
 
-Al entrar en `EXECUTING`, se crean 3 `AgentTask` nuevas (mismo mecanismo
-exacto que las 5 de `DELEGATING`: `memory.createTask`, evento
-`EMPRESA_TASK_CREATED`, ejecución vía un runtime dedicado sobre un pool de
-threads, espera individual con `AgentExecutionOutcome` — nunca
-`allOf(...).join()`):
+1. Resuelve el `Team` desde Neo4j, su líder (`(:Agent)-[:LEADS]->(:Team)`) y
+   el roster real: `agentId`, `name`, `role`, `roleCode`, `capabilities` de
+   cada miembro (`MEMBER_OF`).
+2. Llama a `CeoService.planTeamWork(...)` con el modelo real del líder
+   (`Agent.model`), su prompt versionado activo, `format: TeamPlanSchema`,
+   **sin `tools`** (regla dura existente: nunca `format`+`tools`).
+3. Plan esperado:
+   ```
+   { summary,
+     techStack, entryPoint,                  // exigidos solo por DevelopmentTeamStrategy
+     tasks: [{ agentId, kind: WORK|VALIDATION, action, objective,
+               requiredCapabilities: [...],
+               ownedPaths: [...] }] }       // exigidos solo por DevelopmentTeamStrategy
+   ```
+4. El plan válido se persiste como `AgentTask` del líder
+   (`action=TEAM_PLANNING`, `result` = JSON del plan) — auditable y visible en
+   Activity. Es una tarea distinta de la tarea de trabajo del líder (ids
+   `<missionId>-<AGENTID>-PLAN` y `<missionId>-<AGENTID>`).
 
-| agentId | action | rol |
-|---|---|---|
-| `engineering` | `ARCHITECTURE_DEVELOPMENT` | Neo — arquitectura + andamiaje inicial del backend |
-| `backend` | `BACKEND_DEVELOPMENT` | Iris — lógica de negocio / APIs |
-| `frontend-ui` | `FRONTEND_DEVELOPMENT` | Mila — interfaz |
+### 4. `TeamPlanValidator`: determinista, reglas comunes + reglas por estrategia
 
-Cada tarea recibe como contexto la instrucción original de la misión **más**
-los `AgentResult` ya generados en discovery (en particular `OFFER_DESIGN` de
-`product` y `DELIVERY_FEASIBILITY` de `engineering`) — mismo criterio que ya
-usa `CeoService.executeMission` para consolidar: nunca le pide al modelo que
-re-imagine desde cero algo que la misión ya investigó.
+Reglas comunes (los 3 equipos):
+- Todo `agentId` es miembro del `Team` (un plan de Engineering con `finance`
+  se rechaza).
+- A lo sumo una tarea por agente.
+- **Compatibilidad de capacidades**: cada elemento de `requiredCapabilities`
+  debe coincidir textualmente con una `capability` persistida del agente
+  asignado — la asignación queda anclada a datos reales, el modelo no puede
+  inventar capacidades.
+- `action` con formato `[A-Z_]+`; `objective` no vacío; al menos una tarea
+  `WORK`.
 
-Mismo criterio de "agent failure ≠ mission failure": si alguno de los 3
-falla tras agotar reintentos, la misión sigue con resultado parcial (queda
-registrado qué agente faltó y por qué); solo si los 3 fallan no hay nada que
-escribir a disco y la misión no llega a `COMPLETED` — vuelve a evaluarse
-como fallo, consistente con el resto del proyecto. **Sin replanificación
-automática en esta primera ronda** (`MissionExecutor.replanFailedAgents` es
-específico de discovery; extenderlo a desarrollo es un ajuste pequeño pero
-deliberadamente fuera de esta ronda — YAGNI hasta que un caso real lo pida).
+Reglas de `DevelopmentTeamStrategy`:
+- **Todos** los miembros del equipo reciben exactamente una tarea.
+- Exactamente una tarea `VALIDATION`, asignada a un miembro con la
+  capability `QA` (en Engineering, solo Vera la tiene).
+- Toda tarea `WORK` declara `ownedPaths` no vacíos, relativos y seguros
+  (mismas reglas que `DevelopmentPathValidationGate`), sin solapamiento entre
+  agentes (ningún path es prefijo de otro de un agente distinto).
+- `techStack` y `entryPoint` no vacíos; `entryPoint` cae dentro de los
+  `ownedPaths` de alguna tarea `WORK`.
 
-### 3. Contrato nuevo: `DevelopmentResult`, no `AgentResult`
+Reglas de `AnalysisTeamStrategy`: no admite tareas `VALIDATION`; no exige
+que todos los miembros trabajen.
 
-`AgentResult` (hechos/hipótesis/evidencia/cálculos/`customerCandidates`) es
-el contrato de **discovery** — no tiene sentido para "escribir código".
-Contrato nuevo, deliberadamente separado (mismo criterio que llevó a
-`ProductStatus` a ser un concepto separado de `MissionStatus`):
+Rechazo → reintento hasta 3 intentos con bloque `CORRECCIÓN DEL INTENTO
+ANTERIOR` (mismo patrón que `AgentRuntime`), `EMPRESA_TEAM_PLAN_REJECTED` por
+intento rechazado. Agotados → la misión va a `FAILED` con el motivo exacto.
+**No hay plan por defecto**: un fallback ocultaría que el líder no pudo
+planificar.
+
+### 5. `AnalysisTeamStrategy` (Creative / Product Intelligence, Marketing & Growth)
+
+Las tareas `WORK` del plan corren vía `AgentTaskBatchRunner` + `AgentRuntime`
+actual, sin tocarlo: turno de decisión con `search_web_evidence`, los 3
+gates, reintento, replanificación, `ContradictionDetector`, consolidación del
+CEO. El `objective` de cada tarea viene del plan del líder. Sin capacidades
+de ejecución nuevas para estos equipos en esta ronda.
+
+### 6. `DevelopmentTeamStrategy` (Engineering): código real
+
+**Tareas `WORK` en paralelo** (en Engineering: Neo, Diego, Iris, Mila) vía
+`DevelopmentRuntime` (espejo de `AgentRuntime`: `MAX_RESULT_RETRIES + 1`
+intentos, `setAgentStatus` `WORKING`/`IDLE` con `finally`, eventos
+`EMPRESA_TASK_STARTED`/`RETRY`/`COMPLETED`/`FAILED`), llamando a
+`CeoService.generateDevelopmentArtifact(agentId, prompt, model)` (`format:
+DevelopmentResultSchema.SCHEMA`, sin `tools`). Contexto del prompt: la
+instrucción de la misión, el plan del líder (`summary`, `techStack`,
+`entryPoint`), su tarea, y los `ownedPaths`/`objective` de los demás
+miembros (para saber qué rutas e interfaces esperar). No ve el código de los
+demás — corren en paralelo; los problemas de integración son exactamente lo
+que valida Vera.
+
+Contrato sin cambios:
 
 ```java
-public record DevelopmentResult(
-        String summary,
-        List<GeneratedFile> files
-) {
+public record DevelopmentResult(String summary, List<GeneratedFile> files) {
     public record GeneratedFile(String path, String content) {}
 }
 ```
 
-`DevelopmentResultSchema` (nueva clase, mismo patrón que
-`AgentResultSchema`): JSON Schema formal con `files` como array de objetos
-`{path: string, content: string}`, ambos `required` y con `minLength: 1` —
-mismo criterio ya usado en `AgentResultSchema` para forzar que el modelo no
-devuelva un archivo vacío o sin ruta.
+**Gates de ruta**:
+- `DevelopmentPathValidationGate` (ruta absoluta, con `..`, vacía o solo
+  espacios) → falla la tarea **sin reintento** (asimetría deliberada, igual
+  que `EvidenceValidationGate`).
+- Ruta segura pero **fuera de los `ownedPaths`** del agente → **con
+  reintento** y corrección (error de forma corregible).
 
-### 4. `CeoService` gana un método nuevo, `AgentRuntime` no se toca
+**Workspace**: `products.workspace-root/<missionId>/`
+(`PRODUCTS_WORKSPACE_ROOT`, default `${user.home}/forjai-products`). En
+Docker: volumen `~/forjai-products:/data/forjai-products` en
+`docker-compose.yml` y `PRODUCTS_WORKSPACE_ROOT=/data/forjai-products` — sin
+eso el código se perdería en cada rebuild. La imagen runtime necesita `git`
+(agregarlo en el `Dockerfile` si la base `jre` no lo trae).
 
-`CeoService.generateDevelopmentArtifact(agentId, prompt, model) ->
-DevelopmentResult` — una sola llamada a Ollama (`format:
-DevelopmentResultSchema.SCHEMA`, sin `tools` — no hace falta el turno de
-decisión de herramienta de `executeAgentTask` en esta primera ronda, no se
-busca evidencia web para generar código). Sigue siendo la única función que
-llama a Ollama para esto — `CeoService` sigue siendo "el único cliente de
-Ollama".
+**Commits por agente** (`DevelopmentWorkspaceService`): una vez asentadas
+todas las tareas `WORK`, paso secuencial, por cada agente completado en el
+orden del plan:
+1. `git init` si `<workspace>/.git` no existe.
+2. Escribe sus archivos.
+3. `git add` solo de esas rutas.
+4. `git commit` con autor `<Agent.name> <<agentId>@agents.forjai.local>`,
+   committer `Forjai company-core`, mensaje = `summary` + trailers
+   `Forjai-Mission: <missionId>` y `Forjai-Task: <taskId>`.
 
-**`AgentRuntime` no se modifica.** Clase nueva, `DevelopmentRuntime`, espejo
-deliberado de `AgentRuntime` (mismo reintento de `MAX_RESULT_RETRIES + 1`
-intentos, mismo `memory.setAgentStatus(agentId, "WORKING"/"IDLE")` con
-`finally`, mismos eventos `EMPRESA_TASK_STARTED`/`RETRY`/`COMPLETED`/`FAILED`)
-pero validando/persistiendo un `DevelopmentResult`, no un `AgentResult`. Se
-decidió una clase nueva en vez de generalizar `AgentRuntime` para aceptar un
-contrato pluggable — evita tocar código ya probado en producción (discovery)
-para una necesidad que todavía tiene un solo caso de uso.
+Resultado: un commit por agente, con solo sus archivos, bidireccionalmente
+enlazado a su `AgentTask`.
 
-### 5. Gate de seguridad nuevo y obligatorio: rutas de archivo
+**Si el commit falla, la tarea falla** (cambio frente al "best-effort" de la
+versión original): el commit *es* la evidencia del trabajo. La tarea pasa a
+`FAILED` con motivo ("archivos generados pero sin commit") y ningún texto
+puede afirmar que ese agente entregó código. "Agent failure ≠ mission
+failure" se mantiene: si todas las `WORK` fallan → misión `FAILED`; si parte
+falla → continúa parcial. Sin replanificación de tareas de desarrollo en
+esta ronda.
 
-Cada `GeneratedFile.path` se valida **antes** de escribir nada a disco —
-`DevelopmentPathValidationGate` (nueva clase, mismo espíritu que
-`EvidenceValidationGate`: falla la tarea de inmediato, **sin reintento**,
-si:
+### 7. Validación estática (Vera), después de los commits
 
-- la ruta es absoluta (empieza con `/` o tiene un prefijo de unidad), o
-- contiene un segmento `..` (path traversal), o
-- está vacía o es solo espacios.
+**Capa 1 — `StaticWorkspaceValidator` (Java puro, sin LLM)**. Lista de
+chequeos `{check, status: PASS|FAIL, detail, sha?, paths?}`:
+- Cada archivo de `AgentTask.files` existe **en el commit** de esa tarea
+  (contra Git, no contra el disco).
+- Cada `commitSha` existe en el repo.
+- El autor de cada commit corresponde al `agentId` de su tarea.
+- El trailer `Forjai-Task` de cada commit corresponde a su `taskId`.
+- Ningún archivo del repo cae fuera del workspace ni fuera de algún
+  `ownedPaths`; no hay symlinks.
+- Estructura mínima: cada tarea `WORK` completada aportó ≥1 archivo.
+- El `entryPoint` declarado en el plan existe y no está vacío (se usa la
+  ruta declarada, no una heurística por tecnología).
 
-Motivo del "sin reintento" (asimetría deliberada, mismo criterio que
-`EvidenceValidationGate`): una ruta insegura no es un error de forma que el
-modelo pueda corregir con feedback determinista útil — es una señal de que
-algo salió mal, se prefiere fallar la tarea a intentar tres veces
-escribiendo por fuera del workspace.
+**Capa 2 — revisión de código de Vera**, contrato propio
+`StaticReviewResult` (schema formal, `format` sin `tools`, vía
+`DevelopmentRuntime`/`CeoService` — no toca `AgentRuntime`):
 
-### 6. Workspace: un repo Git real por misión, escritura sin concurrencia riesgosa
+```
+{ verdict: NO_EVIDENT_ISSUES | ISSUES_FOUND,
+  findings: [{ path, severity: BLOCKER|MAJOR|MINOR, description }],
+  missingFiles: [...],
+  architectureConsistency: "...",
+  notValidatableWithoutExecution: [...],   // obligatorio, no vacío
+  evidence: [ AgentResult.Evidence ... ] }
+```
 
-Nueva config `products.workspace-root` (default `${user.home}/forjai-products`,
-override por env var `PRODUCTS_WORKSPACE_ROOT`). Cada misión que llega a
-`EXECUTING` obtiene `products.workspace-root/<missionId>/`.
+Vera recibe el plan del líder, el resultado de la capa 1, y el árbol + el
+contenido real de los archivos leído del repo, con tope (60 KB total, 8 KB
+por archivo; los truncados se marcan y se declaran como revisión parcial).
+Reintento hasta 3 intentos con corrección, tras estos gates:
+- `EvidenceValidationGate` existente, sin cambios.
+- **`RepositoryEvidenceGate`** (nuevo): cada evidencia `INTERNAL` debe citar
+  `workspace:<missionId>@<sha>/<path>` con un sha real de la misión y un
+  archivo existente en ese commit.
+- **Guard de afirmaciones prohibidas** (heurística léxica, mismo espíritu que
+  `HEDGE_MARKERS`): rechaza `findings`/`architectureConsistency` que afirmen
+  que el código compila, se ejecuta, funciona o pasa tests.
 
-Cada uno de los 3 `DevelopmentRuntime` **solo escribe archivos a disco**
-(dentro de su propio subdirectorio de convención — `architecture/` para
-Neo, `backend/` para Iris, `frontend/` para Mila, evitando que dos agentes
-en paralelo escriban el mismo archivo) — ninguno toca Git directamente. Una
-vez que las 3 tareas asentaron (mismo punto donde `MissionExecutor` ya
-espera secuencialmente a los 3 futures, después del bucle de espera, nunca
-durante la ejecución paralela), un paso nuevo y secuencial en
-`MissionExecutor`:
+**`validationStatus` lo calcula Java, no Vera**:
+- `FAILED` — algún chequeo de la capa 1 en `FAIL`, o algún finding `BLOCKER`.
+- `UNVALIDATED` — capa 1 pasa pero la revisión de Vera no se completó
+  (reintentos agotados).
+- `STATICALLY_VALIDATED` — capa 1 pasa y Vera completó sin `BLOCKER`
+  (`MAJOR`/`MINOR` se reportan igual).
 
-1. `git init` en el directorio de la misión si no existe todavía
-   (`Files.exists(workspaceDir.resolve(".git"))`).
-2. `git add -A`.
-3. Un solo commit consolidado (`git commit`), autor
-   `Forjai Engineering Team <engineering@forjai.local>`, mensaje generado
-   a partir de los `summary` de los `DevelopmentResult` que sí completaron.
+Persistido en la `AgentTask` de Vera (`kind=VALIDATION`, `validationStatus`,
+`staticChecks` como JSON, `result` = `StaticReviewResult`). Su evidencia pasa
+por `MissionMemoryService.recordEvidence` como siempre. `ProductStatus.QA`
+**sigue inalcanzable** (QA = validación ejecutada; esto es estático).
 
-Ejecutado vía `ProcessBuilder` (no hay ninguna librería Git ya en el
-classpath del proyecto) — falla la consolidación (no la misión completa) si
-Git no está disponible en el `PATH` del proceso; se loguea `WARN`, mismo
-criterio que `AlertMailService.send` (best-effort, nunca tumba el flujo
-principal por un problema de infraestructura secundaria).
+### 8. Consolidación y "Estado verificable"
 
-### 7. Persistencia: mismo mecanismo de `AgentTask`, nuevo `action`
+El CEO consolida con: `summary` del plan, commits por agente, chequeos de la
+capa 1, veredicto de Vera y `AGENTES_FALLIDOS`. Además, **Java agrega al
+mensaje final de la misión un bloque fijo "Estado verificable"**, no
+redactado por el LLM: ruta del workspace, sha + archivos por agente,
+`validationStatus`, y la frase fija *"Esta fase no ejecuta código: no se
+puede afirmar que el juego compile, se ejecute o pase tests."* Así los hechos
+verificables nunca dependen de la redacción del modelo. La misión termina en
+`AWAITING_INVESTOR`.
 
-Cada `DevelopmentRuntime` completado persiste su resultado exactamente como
-hoy (`MissionMemoryService.createTask`/`updateTask`, `AgentTask.result` como
-JSON del `DevelopmentResult` serializado) — **sin nodo nuevo en Neo4j** para
-"qué archivos se escribieron": el contenido real vive en el filesystem/Git,
-Neo4j solo necesita saber que la tarea ocurrió y con qué resultado, mismo
-nivel de detalle que ya se persiste para discovery. Evita inventar un nodo
-`CodeArtifact` antes de tener un caso de uso concreto que lo necesite
-consultar (YAGNI).
+### 9. Persistencia
 
-### 8. `ProductStatus.DEVELOPMENT` se vuelve alcanzable
+Sin nodos nuevos. Propiedades nuevas:
+- `Mission.teamId`.
+- `AgentTask`: `kind` (`PLANNING` para la tarea `TEAM_PLANNING` del líder;
+  `WORK`/`VALIDATION` para las del plan; ausente en discovery),
+  `workspacePath`, `commitSha`, `files` (lista de rutas), y en la tarea de
+  validación `validationStatus` + `staticChecks`.
 
-`ProductStatusService.isInDevelopment(missionId)` deja de devolver `false`
-fijo — pasa a comprobar si existe alguna `AgentTask` de esta misión con
-`action` en `{"ARCHITECTURE_DEVELOPMENT", "BACKEND_DEVELOPMENT",
-"FRONTEND_DEVELOPMENT"}` y `status="COMPLETED"` — mismo patrón exacto que ya
-usa `isDesigned()` para `OFFER_DESIGN`. `isQaValidated()`/`isPublished()`
-**siguen devolviendo `false`** — no hay señal real todavía para "QA sobre un
-artefacto real" ni "publicado", eso son los subproyectos siguientes de
-Proyecto B.
+`GET /missions/{id}/details` expone estos campos. `ProductStatusService.isInDevelopment`
+pasa a: existe `AgentTask` de la misión con `kind='WORK'`,
+`status='COMPLETED'` y `commitSha` no nulo.
 
-### 9. Nivel de autonomía: sin gate humano nuevo
+### 10. Borrado de misiones
 
-`empresa.md` ya lista "realizar operaciones de desarrollo" y "desplegar
-ambientes de desarrollo" bajo el nivel 🟡 (autónomo con límites) — esta
-feature no gasta dinero real ni toca infraestructura real, así que no
-agrega ningún punto de aprobación humana nuevo más allá del `APPROVE` que
-ya existe (el nivel 🔴 real de este flujo sigue siendo, como siempre, la
-decisión del inversionista).
+`MissionMemoryService.deleteMission` sigue igual en Neo4j. Además,
+`MissionService.delete` borra `products.workspace-root/<missionId>/` del
+disco, validando que la ruta resuelta (normalizada, sin seguir symlinks) esté
+dentro de `workspace-root`. Si el directorio no existe, no pasa nada.
+
+### 11. Eventos nuevos (prefijo `EMPRESA_`, documentar en `docs/EVENTS.md`)
+
+`EMPRESA_TEAM_PLAN_CREATED`, `EMPRESA_TEAM_PLAN_REJECTED` (por intento),
+`EMPRESA_TASK_COMMITTED`, `EMPRESA_STATIC_VALIDATION_COMPLETED`.
+
+### 12. Frontend
+
+- `MissionsPage`: selector "Equipo responsable" (ver §1).
+- `MissionDetailPage`: equipo, plan del líder, por tarea `commitSha` +
+  `files`, `validationStatus` + chequeos de la capa 1, bloque "Estado
+  verificable".
+- `api/types.ts` sincronizado a mano con los records Java.
+
+### 13. Nivel de autonomía
+
+Sin gate humano nuevo: generar código sin ejecutarlo ni gastar cae en 🟡 de
+`empresa.md` ("realizar operaciones de desarrollo"). La decisión 🔴 sigue
+siendo la del inversionista sobre la misión.
 
 ## Testing
 
-- `DevelopmentResultSchema`/`DevelopmentPathValidationGate`: tests unitarios
-  puros (sin Neo4j/Ollama), mismo criterio que `EvidenceValidationGateTest`
-  — casos de ruta absoluta, `..`, vacía, y el caso feliz.
-- `DevelopmentRuntime`: tests con mocks (`CeoService`, `MissionMemoryService`,
-  `CompanyEventPublisher`), mismo patrón exacto que `AgentRuntimeTest` —
-  éxito directo, reintento por rechazo del gate de rutas, agotamiento de
-  reintentos, `Agent.status` WORKING→IDLE incluso en fallo.
-- `MissionExecutor`: casos nuevos para la fase `EXECUTING` — las 3 tareas
-  completan y la misión llega a `COMPLETED`; una falla y la misión sigue con
-  resultado parcial; las 3 fallan y no hay commit. El paso de `git
-  init`/`add`/`commit` se testea con un directorio temporal real (no un
-  mock de `ProcessBuilder` — es la forma más simple y realista de probar
-  que el commit efectivamente ocurre), limpiando el directorio temporal al
-  final del test.
-- `ProductStatusServiceTest`: nuevo caso — `ARCHITECTURE_DEVELOPMENT`
-  completada produce `DEVELOPMENT`; `QUALITY_RISK_REVIEW`/`DELIVERY_FEASIBILITY`
-  (discovery) siguen sin producirlo (ya cubierto, se verifica que sigue
-  cubierto).
-- **Verificación en vivo** (misma convención ya acordada): antes de mergear
-  a producción, correr una misión real de punta a punta hasta `APPROVE` y
-  confirmar que el directorio `products.workspace-root/<missionId>/` existe
-  con un repo Git real, al menos 1 commit, y archivos reales de los 3
-  agentes — documentar en `docs/HISTORY.md`, no solo en tests.
+Unitarios (sin Neo4j/Ollama reales):
+- `TeamPlanValidator`: cada regla común y por estrategia, incluido un plan
+  de Engineering con `finance` (rechazado), capacidad inventada (rechazado),
+  `ownedPaths` solapados, sin `VALIDATION`, miembro omitido.
+- `TeamWorkPlanner`: reintento con corrección; agotado → excepción.
+- `DevelopmentPathValidationGate`: absoluta, `..`, vacía, caso feliz.
+- `DevelopmentRuntime`: mismo patrón que `AgentRuntimeTest` (éxito,
+  reintento por `ownedPaths`, sin reintento por ruta insegura, agotamiento,
+  `WORKING→IDLE` en fallo).
+- `DevelopmentWorkspaceService` y `StaticWorkspaceValidator`: repo Git real
+  en directorio temporal (autor por agente, trailers, un commit por agente,
+  cada chequeo en `PASS` y en `FAIL`).
+- `RepositoryEvidenceGate`, guard de afirmaciones prohibidas, cálculo de
+  `validationStatus`.
+- `MissionExecutor`: sin `teamId` → las mismas 5 tareas de siempre (tests
+  actuales intactos); con `TEAM-ENGINEERING` → nunca se crean tareas para
+  `sales`/`product`/`finance`; plan inválido agotado → `FAILED`; con equipo
+  de análisis → `AgentRuntime` con los objetivos del plan.
+- `MissionService`: `teamId` inexistente/inactivo rechazado.
+- `ChatIntentRouter`: token exacto reconocido; `TEAM-XYZ` desconocido no
+  arranca misión; frases sin token → `teamId=null`.
+- `ProductStatusServiceTest`: `kind=WORK` + `commitSha` → `DEVELOPMENT`.
 
-## Fuera de alcance de esta ronda (documentado, no descartado)
+**Verificación en vivo** (obligatoria antes de dar por terminado; rebuild
+solo sin misiones en curso): una misión real `teamId=TEAM-ENGINEERING` de
+punta a punta; confirmar en el host el repo, commits por agente con el autor
+correcto, `commitSha` de cada tarea igual en Neo4j y en Git, tarea de Vera
+con `validationStatus` y evidencia citando shas reales, y bloque "Estado
+verificable". Documentar en `docs/HISTORY.md`.
 
-- **Ejecutar el código generado** (build/test/run, sandboxed o no) —
-  subproyecto siguiente de Proyecto B.
-- **Deploy real / infraestructura cloud / gasto real** — subproyectos
-  futuros, requieren su propio diseño de políticas de autonomía/costo.
-- **Replanificación automática de tareas de desarrollo fallidas** — se
-  puede sumar reusando `MissionExecutor.replanFailedAgents` cuando haga
-  falta; no se generaliza sin un caso real todavía.
-- **Herramientas de búsqueda web durante generación de código** (ej. Iris
-  buscando documentación real de una librería) — el turno de
-  `generateDevelopmentArtifact` no tiene `tools` en esta ronda; agregarlo
-  es una extensión natural pero no se pidió.
-- **Nodo `CodeArtifact`/consulta del chat sobre qué archivos existen** — el
-  filesystem/Git es la fuente de verdad de los archivos; Neo4j solo sabe
-  que la tarea ocurrió. Una consulta de chat tipo "¿qué generó Iris?" queda
-  para cuando haya un pedido concreto.
-- **Múltiples rondas de desarrollo / iterar sobre código ya generado** — hoy
-  es una sola pasada por misión, disparada una vez por `APPROVE`. Qué pasa
-  si se necesita generar de nuevo (ej. tras feedback) no está diseñado acá.
+## Fuera de alcance de esta ronda
+
+- Compilar/ejecutar/testear el código generado, sandbox — subproyecto
+  siguiente de Proyecto B.
+- Deploy, infraestructura cloud, gasto real.
+- Replanificación de tareas de desarrollo fallidas.
+- Iterar sobre código ya generado (varias rondas).
+- Detección del equipo por lenguaje natural en el chat.
+- Capacidades de ejecución nuevas para Creative y Marketing.
+- Búsqueda web durante la generación de código.
+- Nodo `CodeArtifact` / consultas de chat sobre archivos generados.
