@@ -4,7 +4,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { InvestorDecision } from '../api/types'
+import type { InvestorDecision, StaticCheck } from '../api/types'
+
+function parseChecks(raw: string | null): StaticCheck[] {
+  if (!raw) return []
+  try {
+    return JSON.parse(raw) as StaticCheck[]
+  } catch {
+    return []
+  }
+}
 
 const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED'])
 
@@ -53,6 +62,7 @@ export default function MissionDetailPage() {
         {statusDot(mission.status)} <strong>{mission.status}</strong> — {mission.currentStep} ({mission.progress}%)
         {' — '}
         {mission.environment === 'PRODUCTION' ? '🏢 PRODUCTION' : '🧪 TEST'}
+        {mission.teamId && <>{' — '}👥 {mission.teamId}</>}
       </p>
       <p className="mission-message">{mission.message}</p>
       <DeleteMissionButton
@@ -83,8 +93,11 @@ export default function MissionDetailPage() {
         <thead>
           <tr>
             <th>Agente</th>
+            <th>Tipo</th>
             <th>Acción</th>
             <th>Estado</th>
+            <th>Commit</th>
+            <th>Archivos</th>
             <th>Actualizada</th>
           </tr>
         </thead>
@@ -92,15 +105,37 @@ export default function MissionDetailPage() {
           {tasks.map((task) => (
             <tr key={task.taskId}>
               <td>{task.agentId.toUpperCase()}</td>
+              <td>{task.kind ?? '—'}</td>
               <td>{task.action}</td>
               <td>
                 {statusDot(task.status)} {task.status}
               </td>
+              <td>{task.commitSha ? <code>{task.commitSha.slice(0, 7)}</code> : '—'}</td>
+              <td>{task.files && task.files.length > 0 ? task.files.join(', ') : '—'}</td>
               <td>{new Date(task.updatedAt).toLocaleString()}</td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {tasks
+        .filter((task) => task.validationStatus)
+        .map((task) => (
+          <section key={`${task.taskId}-validation`}>
+            <h2>Validación estática</h2>
+            <p>
+              {statusDot(task.validationStatus ?? '')} <strong>{task.validationStatus}</strong> — revisada por{' '}
+              {task.agentId.toUpperCase()}. Esta fase no ejecuta código.
+            </p>
+            <ul>
+              {parseChecks(task.staticChecks).map((check, index) => (
+                <li key={`${check.check}-${index}`}>
+                  {check.status === 'PASS' ? '🟢' : '🔴'} {check.check}: {check.detail}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
 
       <h2>Decisión del inversionista</h2>
       {!canDecide && (
