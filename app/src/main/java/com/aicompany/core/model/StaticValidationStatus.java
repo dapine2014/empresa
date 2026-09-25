@@ -23,14 +23,10 @@ public enum StaticValidationStatus {
             return UNVALIDATED;
         }
 
-        if (review.hasBlocker()) {
-            return FAILED;
-        }
+        // Decisión del fundador: cualquier BLOCKER o MAJOR hace fallar la validación, sin importar el verdict.
+        var seriousFinding = review.findingsOrEmpty().stream()
+                .anyMatch(f -> f != null && ("BLOCKER".equals(f.severity()) || "MAJOR".equals(f.severity())));
 
-        // Decisión del fundador: ISSUES_FOUND con algún hallazgo MAJOR no es "sin inconsistencias evidentes".
-        var majorIssues = "ISSUES_FOUND".equals(review.verdict()) && review.findingsOrEmpty().stream()
-                .anyMatch(f -> f != null && "MAJOR".equals(f.severity()));
-
-        return majorIssues ? FAILED : STATICALLY_VALIDATED;
+        return seriousFinding ? FAILED : STATICALLY_VALIDATED;
     }
 }

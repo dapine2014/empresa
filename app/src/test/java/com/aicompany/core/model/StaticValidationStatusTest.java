@@ -36,12 +36,13 @@ class StaticValidationStatusTest {
                 StaticValidationStatus.compute(ALL_PASS, review("MAJOR")));
     }
 
+    // Decisión del fundador: cualquier MAJOR hace fallar la validación, sin importar el verdict.
     @Test
-    void aMajorFindingWithNoEvidentIssuesVerdictStaysValidated() {
+    void anyMajorFindingFailsEvenWithNoEvidentIssuesVerdict() {
         var review = new StaticReviewResult("NO_EVIDENT_ISSUES",
                 List.of(new StaticReviewResult.Finding("web/game.js", "MAJOR", "detalle")), List.of(), "coherente",
                 List.of("No se puede verificar la ejecución."), List.of());
-        assertEquals(StaticValidationStatus.STATICALLY_VALIDATED, StaticValidationStatus.compute(ALL_PASS, review));
+        assertEquals(StaticValidationStatus.FAILED, StaticValidationStatus.compute(ALL_PASS, review));
     }
 
     @Test
