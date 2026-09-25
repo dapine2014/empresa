@@ -1,5 +1,11 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.agent.model.DevelopmentResult;
+import com.aicompany.core.agent.model.DevelopmentResultSchema;
+import com.aicompany.core.agent.model.StaticReviewResult;
+import com.aicompany.core.agent.model.StaticReviewResultSchema;
+import com.aicompany.core.agent.model.TeamPlan;
+import com.aicompany.core.agent.model.TeamPlanSchema;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.AgentResultSchema;
 import com.aicompany.core.agent.model.AgentTaskOutcome;
@@ -957,6 +963,88 @@ public class CeoService {
         return callModel(
                 "MISSION_CONSOLIDATION", "ceo", model, messages, null, null
         ).content();
+    }
+
+    /** Plan del líder de un equipo (spec §3): format TeamPlanSchema, sin tools. */
+    public TeamPlan planTeamWork(String agentId, String prompt, String agentPrompt, String model) {
+        return callStructured("TEAM_PLANNING", agentId, prompt, agentPrompt, model,
+                TeamPlanSchema.SCHEMA, TeamPlan.class);
+    }
+
+    /** Código real de una tarea WORK (spec §6): format DevelopmentResultSchema, sin tools. */
+    public DevelopmentResult generateDevelopmentArtifact(String agentId, String prompt, String agentPrompt, String model) {
+        return callStructured("DEVELOPMENT_TASK", agentId, prompt, agentPrompt, model,
+                DevelopmentResultSchema.SCHEMA, DevelopmentResult.class);
+    }
+
+    /** Revisión estática del repo (spec §7, capa 2): format StaticReviewResultSchema, sin tools. */
+    public StaticReviewResult reviewStaticWorkspace(String agentId, String prompt, String agentPrompt, String model) {
+        return callStructured("STATIC_REVIEW", agentId, prompt, agentPrompt, model,
+                StaticReviewResultSchema.SCHEMA, StaticReviewResult.class);
+    }
+
+    /**
+     * Una sola llamada con format y SIN tools (regla dura del proyecto). El
+     * reintento con corrección vive en el llamador (TeamWorkPlanner /
+     * DevelopmentRuntime), igual que el turno final de executeAgentTask.
+     */
+    private <T> T callStructured(
+            String operation, String agentId, String prompt, String agentPrompt, String model,
+            Object schema, Class<T> type) {
+
+        String response = null;
+
+        try {
+
+            var messages = List.<Map<String, Object>>of(
+                    Map.of("role", "system", "content", teamSystemPrompt(agentId, agentPrompt)),
+                    Map.of("role", "user", "content", prompt)
+            );
+
+            response = callModel(operation, agentId, model, messages, schema, null, false).content();
+
+            var result = jsonMapper.readValue(normalizeJsonResponse(response), type);
+
+            log.info("{}_PARSED agent={}", operation, agentId);
+
+            return result;
+
+        } catch (Exception ex) {
+
+            log.error("{}_ERROR agent={} model={} reason={} response={}",
+                    operation, agentId, model, ex.getMessage(), response);
+
+            throw new IllegalStateException(
+                    "El agente " + agentId + " no devolvió un JSON válido para " + operation + ": "
+                            + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()),
+                    ex);
+        }
+    }
+
+    /**
+     * System prompt de un miembro de equipo (no el del CEO). El prompt
+     * versionado del agente entra como sección aparte y nunca reemplaza
+     * estas reglas (mismo criterio que AgentRuntime.buildPrompt).
+     */
+    private String teamSystemPrompt(String agentId, String agentPrompt) {
+
+        var agentPromptBlock = (agentPrompt == null || agentPrompt.isBlank())
+                ? ""
+                : "\nCÓMO DEBES RAZONAR (definido por el fundador para vos, no reemplaza las reglas de abajo):\n"
+                        + agentPrompt + "\n";
+
+        return """
+                Estás trabajando dentro de Forjai como el agente %s, miembro de un equipo real.
+                Forjai es una empresa real operada principalmente por agentes de IA.
+                %s
+                REGLAS:
+                - No inventes archivos, commits, resultados de ejecución, clientes ni evidencia.
+                - En esta fase nadie ejecuta código: nunca afirmes que algo compila, se ejecuta o pasa tests.
+                - Una hipótesis NO es un hecho.
+                - Responde ÚNICAMENTE con JSON válido que cumpla el formato pedido, sin Markdown ni texto adicional.
+
+                Responde en español.
+                """.formatted(agentId, agentPromptBlock);
     }
 
     /**
