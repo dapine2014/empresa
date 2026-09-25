@@ -131,4 +131,49 @@ class TeamWorkPlannerTest {
                 () -> planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS));
         verifyNoInteractions(ceoService);
     }
+
+    // Verificado en vivo: con capabilities=[a, b, c] (List.toString) Neo copiaba todo como un solo texto.
+    @Test
+    void theRosterListsEachCapabilityAsASeparateQuotedItem() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(eq("growth-content"), prompt.capture(), anyString(), anyString())).thenReturn(validPlan());
+
+        planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "Lanzar el juego", TeamExecutionMode.ANALYSIS);
+
+        assertTrue(prompt.getValue().contains("capabilities=[\"SEO\", \"growth\"]"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("Selecciona capabilities individuales del roster."));
+        assertTrue(prompt.getValue().contains("No copies ni concatenes el listado completo de capabilities."));
+    }
+
+    @Test
+    void aReportedParticipationConflictStopsBeforeExecutingWithoutRetrying() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        var conflicted = new TeamPlan("Plan", "", "", validPlan().tasks(), List.of(
+                new TeamPlan.ParticipationConflict("community", "El objetivo no requiere trabajo de comunidad.")));
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(conflicted);
+
+        var ex = assertThrows(IllegalStateException.class,
+                () -> planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS));
+
+        assertTrue(ex.getMessage().contains("incompatibilidad"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("community: El objetivo no requiere trabajo de comunidad."), ex.getMessage());
+        verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+        verify(memory).updateTask(eq("MISSION-5-GROWTH-CONTENT-PLAN"), eq("FAILED"), contains("incompatibilidad"));
+    }
+
+    // Verificado en vivo (MISSION-TEAM-VERIFY-5): un plan válido se perdía por "DESIGN-ARCHITECTURE".
+    // El formato del action es cosmético: se normaliza en Java antes de validar, nunca se inventa.
+    @Test
+    void actionFormatIsNormalizedBeforeValidation() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        var hyphenated = new TeamPlan("Plan", "", "", List.of(
+                new PlannedTask("growth-content", "WORK", "seo-plan inicial", "Plan SEO", List.of("SEO"), List.of())));
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(hyphenated);
+
+        var result = planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS);
+
+        assertEquals("SEO_PLAN_INICIAL", result.plan().tasks().get(0).action());
+        verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+    }
 }

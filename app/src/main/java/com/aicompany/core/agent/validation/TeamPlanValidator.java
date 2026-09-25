@@ -46,6 +46,12 @@ public class TeamPlanValidator {
             errors.add("El plan debe tener al menos una tarea WORK.");
         }
 
+        var leaderHasTask = plan.tasksOrEmpty().stream()
+                .anyMatch(t -> t != null && Objects.equals(t.agentId(), team.leaderAgentId()));
+        if (team.leaderAgentId() != null && !leaderHasTask) {
+            errors.add("El líder del equipo (" + team.leaderAgentId() + ") debe tener una tarea en el plan.");
+        }
+
         if (mode == TeamExecutionMode.ANALYSIS) {
             if (plan.validationTask().isPresent()) {
                 errors.add("Este equipo no admite tareas VALIDATION: usa kind=\"WORK\" en todas.");
@@ -101,8 +107,7 @@ public class TeamPlanValidator {
 
             for (var capability : task.requiredCapabilitiesOrEmpty()) {
                 if (!member.capabilities().contains(capability)) {
-                    errors.add("La capability \"" + capability + "\" no pertenece a " + task.agentId()
-                            + ". Sus capabilities reales son: " + member.capabilities());
+                    errors.add(capabilityError(task.agentId(), capability, member.capabilities()));
                 }
             }
         }
@@ -156,7 +161,17 @@ public class TeamPlanValidator {
                 errors.add("La tarea WORK de " + task.agentId() + " debe declarar ownedPaths.");
             }
 
+            var seenPaths = new HashSet<String>();
             for (var path : task.ownedPathsOrEmpty()) {
+                if (!seenPaths.add(OwnedPaths.normalize(path))) {
+                    errors.add("El ownedPath \"" + path + "\" aparece dos veces en la tarea de " + task.agentId()
+                            + "; cada ruta debe declararse una sola vez.");
+                }
+                if (path != null && path.matches(".*[*?\\[\\]{}].*")) {
+                    errors.add("ownedPath con glob no permitido en " + task.agentId() + ": \"" + path
+                            + "\". Usa rutas literales de archivos o carpetas (p. ej. \"web/ui\").");
+                    continue;
+                }
                 if (!OwnedPaths.isSafe(path)) {
                     errors.add("ownedPath inseguro en " + task.agentId() + ": \"" + path
                             + "\" (sin rutas absolutas, \"..\", \"\\\" ni \".git\").");
@@ -188,5 +203,27 @@ public class TeamPlanValidator {
                     + ownedByAgent + "). Cambia entryPoint por una ruta dentro de esos ownedPaths, o agrega esa "
                     + "ruta exacta a los ownedPaths de la tarea WORK que va a escribir el punto de entrada.");
         }
+    }
+
+    /**
+     * Las capabilities son atómicas: si el modelo mandó varias concatenadas
+     * en un solo string (verificado en vivo con Neo), el error lo dice
+     * explícitamente y sugiere los elementos individuales reales.
+     */
+    private static String capabilityError(String agentId, String capability, List<String> realCapabilities) {
+
+        var parts = capability == null ? List.<String>of()
+                : java.util.Arrays.stream(capability.split(",")).map(String::strip).filter(p -> !p.isEmpty()).toList();
+        var realParts = parts.stream().filter(realCapabilities::contains).toList();
+
+        if (parts.size() > 1 && !realParts.isEmpty()) {
+            return "La capability de " + agentId + " es una lista concatenada en un solo texto (\"" + capability
+                    + "\"). requiredCapabilities es un arreglo de capabilities individuales: elige solo las necesarias, "
+                    + "cada una como un elemento separado, p. ej. " + realParts.stream().limit(2)
+                    .map(p -> "\"" + p + "\"").collect(java.util.stream.Collectors.joining(", ", "[", "]")) + ".";
+        }
+
+        return "La capability \"" + capability + "\" no pertenece a " + agentId
+                + ". Sus capabilities reales son: " + realCapabilities;
     }
 }

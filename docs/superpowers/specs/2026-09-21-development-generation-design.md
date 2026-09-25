@@ -162,6 +162,16 @@ Reglas de `DevelopmentTeamStrategy`:
 Reglas de `AnalysisTeamStrategy`: no admite tareas `VALIDATION`; no exige
 que todos los miembros trabajen.
 
+Ajustes del 2026-09-25 (verificado en vivo con `MISSION-1790325370585`: Neo
+dio dos tareas a Mila y mandó el listado completo de capabilities como un solo
+texto): el roster se presenta con cada capability entre comillas como elemento
+separado; una capability concatenada se rechaza con un error que lo nombra y
+sugiere elementos reales; el líder debe tener tarea; `ownedPaths` literales
+(sin globs) y sin rutas repetidas dentro de una tarea. Si el objetivo no da
+trabajo real a un miembro, el líder no inventa una tarea: lo declara en
+`participationConflicts` y la misión termina en `FAILED` con ese reporte antes
+de ejecutar nada (sin reintento).
+
 Rechazo → reintento hasta 3 intentos con bloque `CORRECCIÓN DEL INTENTO
 ANTERIOR` (mismo patrón que `AgentRuntime`), `EMPRESA_TEAM_PLAN_REJECTED` por
 intento rechazado. Agotados → la misión va a `FAILED` con el motivo exacto.
@@ -204,6 +214,11 @@ public record DevelopmentResult(String summary, List<GeneratedFile> files) {
   que `EvidenceValidationGate`).
 - Ruta segura pero **fuera de los `ownedPaths`** del agente → **con
   reintento** y corrección (error de forma corregible).
+- Ruta **absoluta** (`/src/...`, `C:...`) → **con reintento**, pidiendo una ruta
+  relativa (decisión del fundador del 2026-09-25, tras `MISSION-TEAM-VERIFY-6`,
+  donde Mila escribió `/src/ui/App.tsx` y perdió todo su código). Nunca se
+  escribe: si persiste tras los reintentos, la tarea falla. `..` y `.git` siguen
+  siendo fatales sin reintento.
 
 **Workspace**: `products.workspace-root/<missionId>/`
 (`PRODUCTS_WORKSPACE_ROOT`, default `${user.home}/forjai-products`). En
@@ -269,6 +284,9 @@ Reintento hasta 3 intentos con corrección, tras estos gates:
 - **`RepositoryEvidenceGate`** (nuevo): cada evidencia `INTERNAL` debe citar
   `workspace:<missionId>@<sha>/<path>` con un sha real de la misión y un
   archivo existente en ese commit.
+- **`MissingFileClaimGate`** (nuevo, 2026-09-25, tras `MISSION-TEAM-VERIFY-3`):
+  rechaza `missingFiles` o findings que declaren inexistente un archivo que sí
+  está en los commits de la misión.
 - **Guard de afirmaciones prohibidas** (heurística léxica, mismo espíritu que
   `HEDGE_MARKERS`): rechaza `findings`/`architectureConsistency` que afirmen
   que el código compila, se ejecuta, funciona o pasa tests.

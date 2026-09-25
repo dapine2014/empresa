@@ -166,4 +166,63 @@ class TeamPlanValidatorTest {
         assertTrue(error.contains("web/ui"), error);
         assertTrue(error.contains("engineering=[web/index.html, docs]"), error);
     }
+
+    // Verificado en vivo (MISSION-1790325370585): Neo mandó el listado completo como una sola capability.
+    @Test
+    void aConcatenatedCapabilityListIsRejectedWithASpecificCorrection() {
+        var tasks = validTasks();
+        tasks.set(1, new PlannedTask("frontend-ui", "WORK", "GAME_UI", "HUD",
+                List.of("frontend, Game UI"), List.of("web/ui")));
+        var errors = validateDev(plan(tasks));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("concaten") && e.contains("\"frontend\"")), errors.toString());
+    }
+
+    @Test
+    void individualRealCapabilitiesPass() {
+        var tasks = validTasks();
+        tasks.set(1, new PlannedTask("frontend-ui", "WORK", "GAME_UI", "HUD",
+                List.of("frontend", "Game UI"), List.of("web/ui")));
+        assertEquals(List.of(), validateDev(plan(tasks)));
+    }
+
+    @Test
+    void theSamePathTwiceInOneTaskIsRejected() {
+        var tasks = validTasks();
+        tasks.set(1, new PlannedTask("frontend-ui", "WORK", "GAME_UI", "HUD",
+                List.of("Game UI"), List.of("web/ui/script.js", "web/ui/script.js")));
+        var errors = validateDev(plan(tasks));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("web/ui/script.js") && e.contains("frontend-ui")), errors.toString());
+    }
+
+    @Test
+    void theSamePathInTwoTasksIsRejected() {
+        var tasks = validTasks();
+        tasks.set(0, new PlannedTask("engineering", "WORK", "ARCHITECTURE", "Base",
+                List.of("arquitectura backend"), List.of("web/index.html", ".gitignore")));
+        tasks.set(3, new PlannedTask("devops", "WORK", "DEV_INFRA", "Infra",
+                List.of("infraestructura"), List.of("infra", ".gitignore")));
+        var errors = validateDev(plan(tasks));
+        assertTrue(errors.stream().anyMatch(e -> e.contains(".gitignore") && e.contains("se solapan")), errors.toString());
+    }
+
+    @Test
+    void globsInOwnedPathsAreRejected() {
+        var tasks = validTasks();
+        tasks.set(3, new PlannedTask("devops", "WORK", "DEV_INFRA", "Infra",
+                List.of("infraestructura"), List.of("infra/*.sh")));
+        var errors = validateDev(plan(tasks));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("infra/*.sh")), errors.toString());
+    }
+
+    @Test
+    void theLeaderMustHaveATaskEvenWhenPartialTeamsAreAllowed() {
+        var marketing = new TeamSnapshot("TEAM-MARKETING-GROWTH", "Marketing & Growth", "ACTIVE", "growth-content", List.of(
+                member("growth-content", "Kira", List.of("growth", "SEO")),
+                member("community", "Nora", List.of("Discord", "moderación"))
+        ));
+        var onlyNora = new TeamPlan("Plan", "", "", List.of(
+                new PlannedTask("community", "WORK", "DISCORD", "Discord", List.of("Discord"), List.of())));
+        var errors = validator.validate(onlyNora, marketing, TeamExecutionMode.ANALYSIS);
+        assertTrue(errors.stream().anyMatch(e -> e.contains("líder") && e.contains("growth-content")), errors.toString());
+    }
 }

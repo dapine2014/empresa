@@ -12,8 +12,26 @@ public record TeamPlan(
         String summary,
         String techStack,
         String entryPoint,
-        List<PlannedTask> tasks
+        List<PlannedTask> tasks,
+        List<ParticipationConflict> participationConflicts
 ) {
+
+    /** Planes sin conflictos de participación declarados. */
+    public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks) {
+        this(summary, techStack, entryPoint, tasks, List.of());
+    }
+
+    /**
+     * El líder declara que un miembro no tiene trabajo real para esta misión
+     * aunque la regla de participación completa lo exige: se reporta antes
+     * de ejecutar, en vez de inventar trabajo artificial.
+     */
+    public record ParticipationConflict(String agentId, String reason) {
+    }
+
+    public List<ParticipationConflict> participationConflictsOrEmpty() {
+        return participationConflicts == null ? List.of() : participationConflicts;
+    }
 
     public static final String KIND_WORK = "WORK";
     public static final String KIND_VALIDATION = "VALIDATION";

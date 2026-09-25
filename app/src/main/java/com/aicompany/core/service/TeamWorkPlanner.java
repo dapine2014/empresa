@@ -103,6 +103,12 @@ public class TeamWorkPlanner {
                     continue;
                 }
 
+                plan = normalizeActions(plan);
+
+                if (!plan.participationConflictsOrEmpty().isEmpty()) {
+                    return reportParticipationConflict(missionId, taskId, leaderId, teamId, plan);
+                }
+
                 var errors = validator.validate(plan, team, mode);
 
                 if (errors.isEmpty()) {
@@ -150,7 +156,7 @@ public class TeamWorkPlanner {
 
         var roster = team.members().stream()
                 .map(m -> "- agentId=" + m.agentId() + " | nombre=" + m.name() + " | rol=" + m.role()
-                        + " | roleCode=" + m.roleCode() + " | capabilities=" + m.capabilities())
+                        + " | roleCode=" + m.roleCode() + " | capabilities=" + quotedList(m.capabilities()))
                 .collect(Collectors.joining("\n"));
 
         var common = """
@@ -166,7 +172,10 @@ public class TeamWorkPlanner {
                 REGLAS DEL PLAN:
                 - Usa solo agentId de la lista anterior. Nunca asignes tareas a agentes fuera del equipo.
                 - A lo sumo una tarea por agente.
-                - requiredCapabilities: copia TEXTUALMENTE capabilities de la lista del agente asignado; nunca inventes una.
+                - requiredCapabilities: arreglo de capabilities del agente asignado, cada una como un elemento separado y
+                  copiada TEXTUALMENTE de su lista (p. ej. ["frontend", "UI"]). Nunca inventes una.
+                  Selecciona capabilities individuales del roster.
+                  No copies ni concatenes el listado completo de capabilities.
                 - action: identificador corto en MAYÚSCULAS_CON_GUIONES_BAJOS.
                 - objective: qué debe entregar ese agente, concreto y verificable.
                 """.formatted(leaderName, team.teamName(), team.teamId(), instruction, roster);
@@ -179,7 +188,12 @@ public class TeamWorkPlanner {
         }
 
         return common + """
-                - Este equipo produce CÓDIGO REAL en un repositorio Git: todos los miembros deben recibir exactamente una tarea.
+                - Este equipo produce CÓDIGO REAL en un repositorio Git: cada miembro recibe exactamente una tarea (nunca dos
+                  tareas para el mismo agentId).
+                - No inventes trabajo artificial: si el objetivo no requiere trabajo real de algún miembro, no le crees una
+                  tarea de relleno; decláralo en participationConflicts con agentId y el motivo, y el plan se reportará al
+                  fundador antes de ejecutar nada.
+                - ownedPaths: rutas literales (sin *, ?, [ ]); cada ruta pertenece a una sola tarea y aparece una sola vez.
                 - Exactamente una tarea kind="VALIDATION", asignada al miembro que tenga la capability "QA":
                   revisará el código sin ejecutarlo. Esa tarea lleva ownedPaths [].
                 - Las demás tareas son kind="WORK" y declaran ownedPaths: rutas relativas (carpetas o archivos) que solo
@@ -189,6 +203,61 @@ public class TeamWorkPlanner {
                 - entryPoint: ruta relativa del punto de entrada del proyecto. Esa misma ruta (o su carpeta) DEBE aparecer
                   en los ownedPaths de la tarea WORK que lo va a escribir; si no, el plan se rechaza.
                 """;
+    }
+
+    /**
+     * El líder declaró que la regla de participación choca con el objetivo:
+     * no se reintenta ni se ejecuta nada, se reporta al fundador (la misión
+     * termina en FAILED con el reporte, decidible vía /decision).
+     */
+    private TeamPlanResult reportParticipationConflict(
+            String missionId, String taskId, String leaderId, String teamId, TeamPlan plan) {
+
+        var conflicts = plan.participationConflictsOrEmpty().stream()
+                .filter(java.util.Objects::nonNull)
+                .map(c -> c.agentId() + ": " + c.reason())
+                .collect(Collectors.joining("\n- ", "- ", ""));
+
+        var message = "El líder " + leaderId + " reporta una incompatibilidad entre el objetivo de la misión y la "
+                + "regla de participación de " + teamId + " (no se ejecutó nada):\n" + conflicts;
+
+        memory.updateTask(taskId, "FAILED", message);
+        publishRejected(missionId, taskId, leaderId, 0, message);
+
+        throw new IllegalStateException(message);
+    }
+
+    private static String quotedList(java.util.List<String> values) {
+        return values.stream().map(v -> "\"" + v + "\"").collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    /**
+     * El formato del action es cosmético (verificado en vivo: un plan válido
+     * se perdía por "DESIGN-ARCHITECTURE"): mayúsculas, sin acentos, y todo
+     * lo que no sea letra se vuelve "_". Nunca cambia agentes, capabilities
+     * ni rutas, que siguen validándose de forma estricta.
+     */
+    static TeamPlan normalizeActions(TeamPlan plan) {
+
+        if (plan == null || plan.tasks() == null) {
+            return plan;
+        }
+
+        var tasks = plan.tasks().stream()
+                .map(t -> t == null || t.action() == null ? t : new TeamPlan.PlannedTask(
+                        t.agentId(), t.kind(), normalizeAction(t.action()), t.objective(),
+                        t.requiredCapabilities(), t.ownedPaths()))
+                .toList();
+
+        return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts());
+    }
+
+    private static String normalizeAction(String action) {
+        return java.text.Normalizer.normalize(action, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .toUpperCase(Locale.ROOT)
+                .replaceAll("[^A-Z]+", "_")
+                .replaceAll("^_+|_+$", "");
     }
 
     private String correctionBlock(String feedback) {

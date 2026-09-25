@@ -5,6 +5,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.validation.DevelopmentPathValidationGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.agent.validation.ForbiddenClaimsGuard;
+import com.aicompany.core.agent.validation.MissingFileClaimGate;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.agent.validation.RepositoryEvidenceGate;
 import com.aicompany.core.event.CompanyEventPublisher;
@@ -67,6 +68,7 @@ public class DevelopmentRuntime {
     private final EvidenceValidationGate evidenceGate;
     private final RepositoryEvidenceGate repositoryEvidenceGate;
     private final ForbiddenClaimsGuard forbiddenClaimsGuard;
+    private final MissingFileClaimGate missingFileClaimGate;
     private final JsonMapper jsonMapper;
 
     public DevelopmentRuntime(
@@ -81,6 +83,7 @@ public class DevelopmentRuntime {
             EvidenceValidationGate evidenceGate,
             RepositoryEvidenceGate repositoryEvidenceGate,
             ForbiddenClaimsGuard forbiddenClaimsGuard,
+            MissingFileClaimGate missingFileClaimGate,
             JsonMapper jsonMapper) {
 
         this.ceoService = ceoService;
@@ -94,6 +97,7 @@ public class DevelopmentRuntime {
         this.evidenceGate = evidenceGate;
         this.repositoryEvidenceGate = repositoryEvidenceGate;
         this.forbiddenClaimsGuard = forbiddenClaimsGuard;
+        this.missingFileClaimGate = missingFileClaimGate;
         this.jsonMapper = jsonMapper;
     }
 
@@ -220,7 +224,10 @@ public class DevelopmentRuntime {
 
         for (var file : result.files().stream().filter(Objects::nonNull).toList()) {
 
-            if (file.path().contains("\\")) {
+            if (file.path().startsWith("/") || file.path().matches("^[a-zA-Z]:.*")) {
+                retryable.add("Ruta absoluta \"" + file.path() + "\": usa una ruta relativa al proyecto, p. ej. \""
+                        + file.path().replaceFirst("^([a-zA-Z]:)?[/\\\\]+", "") + "\".");
+            } else if (file.path().contains("\\")) {
                 retryable.add("Usa \"/\" como separador de rutas, no \"\\\": \"" + file.path() + "\".");
             } else if (!OwnedPaths.coveredByAny(ownedPaths, file.path())) {
                 retryable.add("La ruta \"" + file.path() + "\" está fuera de tus ownedPaths " + ownedPaths + ".");
@@ -269,6 +276,11 @@ public class DevelopmentRuntime {
                 .forEach(texts::add);
 
         errors.addAll(forbiddenClaimsGuard.violations(texts));
+
+        // Los archivos del repo son la unión de los commits de la misión (el último contiene todo HEAD).
+        var repositoryFiles = new java.util.HashSet<String>();
+        filesBySha.values().forEach(repositoryFiles::addAll);
+        errors.addAll(missingFileClaimGate.validate(review, repositoryFiles));
 
         return new Verdict(List.of(), errors);
     }

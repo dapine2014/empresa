@@ -15,8 +15,14 @@ public class CoreConfig {
     }
 
     @Bean
-    RestClient ollamaClient(@Value("${ollama.base-url}") String baseUrl) {
-        return RestClient.builder().baseUrl(baseUrl).build();
+    RestClient ollamaClient(
+            @Value("${ollama.base-url}") String baseUrl,
+            @Value("${ollama.read-timeout:15m}") java.time.Duration readTimeout) {
+        // Verificado en vivo: sin timeout, una generación en bucle bloqueó una misión más de una hora.
+        var requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+        requestFactory.setReadTimeout(readTimeout);
+        return RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory).build();
     }
 
     @Bean

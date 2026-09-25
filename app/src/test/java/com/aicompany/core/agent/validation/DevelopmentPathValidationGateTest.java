@@ -21,14 +21,12 @@ class DevelopmentPathValidationGateTest {
         assertTrue(gate.validate(resultWithPath("src/backend/Program.cs")).valid());
     }
 
+    // Decisión del fundador (verificado en vivo con MISSION-TEAM-VERIFY-6: Mila escribió "/src/ui/App.tsx"):
+    // una ruta absoluta es un error de forma corregible; lo reintenta DevelopmentRuntime, no es fatal acá.
     @Test
-    void rejectsAnAbsolutePath() {
-        assertFalse(gate.validate(resultWithPath("/etc/passwd")).valid());
-    }
-
-    @Test
-    void rejectsAWindowsStyleAbsolutePath() {
-        assertFalse(gate.validate(resultWithPath("C:\\Windows\\System32\\evil.dll")).valid());
+    void absolutePathsAreNotFatalHere() {
+        assertTrue(gate.validate(resultWithPath("/src/ui/App.tsx")).valid());
+        assertTrue(gate.validate(resultWithPath("C:\\Windows\\System32\\evil.dll")).valid());
     }
 
     @Test
