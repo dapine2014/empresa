@@ -103,6 +103,8 @@ public class TeamWorkPlanner {
                     continue;
                 }
 
+                plan = normalizeActions(plan);
+
                 if (!plan.participationConflictsOrEmpty().isEmpty()) {
                     return reportParticipationConflict(missionId, taskId, leaderId, teamId, plan);
                 }
@@ -227,6 +229,35 @@ public class TeamWorkPlanner {
 
     private static String quotedList(java.util.List<String> values) {
         return values.stream().map(v -> "\"" + v + "\"").collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    /**
+     * El formato del action es cosmético (verificado en vivo: un plan válido
+     * se perdía por "DESIGN-ARCHITECTURE"): mayúsculas, sin acentos, y todo
+     * lo que no sea letra se vuelve "_". Nunca cambia agentes, capabilities
+     * ni rutas, que siguen validándose de forma estricta.
+     */
+    static TeamPlan normalizeActions(TeamPlan plan) {
+
+        if (plan == null || plan.tasks() == null) {
+            return plan;
+        }
+
+        var tasks = plan.tasks().stream()
+                .map(t -> t == null || t.action() == null ? t : new TeamPlan.PlannedTask(
+                        t.agentId(), t.kind(), normalizeAction(t.action()), t.objective(),
+                        t.requiredCapabilities(), t.ownedPaths()))
+                .toList();
+
+        return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts());
+    }
+
+    private static String normalizeAction(String action) {
+        return java.text.Normalizer.normalize(action, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .toUpperCase(Locale.ROOT)
+                .replaceAll("[^A-Z]+", "_")
+                .replaceAll("^_+|_+$", "");
     }
 
     private String correctionBlock(String feedback) {
