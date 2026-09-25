@@ -11,9 +11,11 @@ import java.util.List;
 /**
  * Gate de seguridad antes de escribir cualquier archivo a disco — mismo
  * espíritu que {@link EvidenceValidationGate}: rechaza de inmediato, SIN
- * reintento (spec §6). Las rutas fuera de los ownedPaths del agente NO son
- * responsabilidad de este gate (son corregibles y se reintentan en
- * {@code DevelopmentRuntime}).
+ * reintento (spec §6), path traversal ("..") y rutas dentro de ".git". Las
+ * rutas absolutas y las que caen fuera de los ownedPaths del agente NO son
+ * responsabilidad de este gate: son errores de forma corregibles y se
+ * reintentan en {@code DevelopmentRuntime} (decisión del fundador tras
+ * MISSION-TEAM-VERIFY-6, donde Mila escribió "/src/ui/App.tsx").
  */
 @Component
 public class DevelopmentPathValidationGate {
@@ -46,11 +48,6 @@ public class DevelopmentPathValidationGate {
 
         if (path == null || path.isBlank()) {
             errors.add("Ruta de archivo vacía.");
-            return;
-        }
-
-        if (path.startsWith("/") || path.matches("^[a-zA-Z]:.*")) {
-            errors.add("Ruta absoluta no permitida: \"" + path + "\"");
             return;
         }
 

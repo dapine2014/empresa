@@ -186,4 +186,28 @@ class DevelopmentRuntimeTest {
                 argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("sí existe")),
                 anyString(), anyString());
     }
+
+    @Test
+    void anAbsolutePathIsRetriedAskingForARelativePath() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("/web/game/main.js"))
+                .thenReturn(dev("web/game/main.js"));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        assertEquals("web/game/main.js", result.files().get(0).path());
+        verify(ceoService).generateDevelopmentArtifact(anyString(),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("ruta relativa")),
+                anyString(), anyString());
+    }
+
+    @Test
+    void persistentAbsolutePathsStillFailAfterRetries() {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("/etc/passwd"));
+
+        assertThrows(ExecutionException.class,
+                () -> runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get());
+        verify(ceoService, times(3)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
+    }
 }

@@ -224,7 +224,10 @@ public class DevelopmentRuntime {
 
         for (var file : result.files().stream().filter(Objects::nonNull).toList()) {
 
-            if (file.path().contains("\\")) {
+            if (file.path().startsWith("/") || file.path().matches("^[a-zA-Z]:.*")) {
+                retryable.add("Ruta absoluta \"" + file.path() + "\": usa una ruta relativa al proyecto, p. ej. \""
+                        + file.path().replaceFirst("^([a-zA-Z]:)?[/\\\\]+", "") + "\".");
+            } else if (file.path().contains("\\")) {
                 retryable.add("Usa \"/\" como separador de rutas, no \"\\\": \"" + file.path() + "\".");
             } else if (!OwnedPaths.coveredByAny(ownedPaths, file.path())) {
                 retryable.add("La ruta \"" + file.path() + "\" está fuera de tus ownedPaths " + ownedPaths + ".");

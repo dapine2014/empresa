@@ -214,6 +214,11 @@ public record DevelopmentResult(String summary, List<GeneratedFile> files) {
   que `EvidenceValidationGate`).
 - Ruta segura pero **fuera de los `ownedPaths`** del agente → **con
   reintento** y corrección (error de forma corregible).
+- Ruta **absoluta** (`/src/...`, `C:...`) → **con reintento**, pidiendo una ruta
+  relativa (decisión del fundador del 2026-09-25, tras `MISSION-TEAM-VERIFY-6`,
+  donde Mila escribió `/src/ui/App.tsx` y perdió todo su código). Nunca se
+  escribe: si persiste tras los reintentos, la tarea falla. `..` y `.git` siguen
+  siendo fatales sin reintento.
 
 **Workspace**: `products.workspace-root/<missionId>/`
 (`PRODUCTS_WORKSPACE_ROOT`, default `${user.home}/forjai-products`). En
