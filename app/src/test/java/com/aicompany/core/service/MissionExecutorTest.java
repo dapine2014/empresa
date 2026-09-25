@@ -64,7 +64,7 @@ class MissionExecutorTest {
 
     private final MissionExecutor executor = new MissionExecutor(
             memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events, jsonMapper,
-            contradictionDetector, companyPolicyService, opportunityMemory, alertMailService
+            contradictionDetector, companyPolicyService, opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of()
     );
 
     @Test
@@ -260,7 +260,7 @@ class MissionExecutorTest {
 
         var executorWithCustomCapital = new MissionExecutor(
                 memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory, "qwen2.5-coder:14b", Runnable::run, events,
-                jsonMapper, contradictionDetector, customPolicies, opportunityMemory, alertMailService
+                jsonMapper, contradictionDetector, customPolicies, opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of()
         );
 
         stubAgent("sales");

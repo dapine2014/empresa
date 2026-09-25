@@ -7,6 +7,9 @@ import com.aicompany.core.model.AgentExecutionOutcome;
 import com.aicompany.core.model.FinancialCriteriaResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.PolicyKey;
+import com.aicompany.core.model.TeamExecutionMode;
+import com.aicompany.core.model.TeamExecutionResult;
+import com.aicompany.core.model.TeamMissionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -39,6 +42,8 @@ public class MissionExecutor {
     private final CompanyPolicyService companyPolicyService;
     private final OpportunityMemoryService opportunityMemory;
     private final AlertMailService alertMailService;
+    private final TeamWorkPlanner teamWorkPlanner;
+    private final List<TeamExecutionStrategy> teamStrategies;
 
     public MissionExecutor(
             MissionMemoryService memory,
@@ -54,7 +59,9 @@ public class MissionExecutor {
             ContradictionDetector contradictionDetector,
             CompanyPolicyService companyPolicyService,
             OpportunityMemoryService opportunityMemory,
-            AlertMailService alertMailService) {
+            AlertMailService alertMailService,
+            TeamWorkPlanner teamWorkPlanner,
+            List<TeamExecutionStrategy> teamStrategies) {
 
         this.memory = memory;
         this.batchRunner = batchRunner;
@@ -69,6 +76,8 @@ public class MissionExecutor {
         this.companyPolicyService = companyPolicyService;
         this.opportunityMemory = opportunityMemory;
         this.alertMailService = alertMailService;
+        this.teamWorkPlanner = teamWorkPlanner;
+        this.teamStrategies = teamStrategies;
     }
 
     public CompletableFuture<Void> executeAsync(
@@ -124,6 +133,13 @@ public class MissionExecutor {
 
         try {
 
+            var teamId = memory.teamId(missionId).orElse(null);
+
+            if (teamId != null) {
+                executeTeamMission(missionId, instruction, teamId);
+                return;
+            }
+
             advanceMission(
                     missionId,
                     MissionStatus.PLANNING,
@@ -171,6 +187,90 @@ public class MissionExecutor {
 
             safeFail(missionId, ex);
         }
+    }
+
+    /**
+     * Misión con teamId (spec §2): el líder planifica, el plan se valida
+     * en Java y la estrategia del tipo de equipo ejecuta. Nunca crea las 5
+     * tareas fijas de discovery.
+     */
+    private void executeTeamMission(String missionId, String instruction, String teamId) {
+
+        var teamType = TeamMemoryService.teamType(teamId)
+                .orElseThrow(() -> new IllegalStateException("teamId desconocido: " + teamId));
+
+        var mode = TeamExecutionMode.forTeamType(teamType);
+
+        var strategy = teamStrategies.stream()
+                .filter(s -> s.mode() == mode)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No hay estrategia de ejecución para " + mode));
+
+        advanceMission(
+                missionId,
+                MissionStatus.PLANNING,
+                5,
+                "Planificación del equipo",
+                "El líder de " + teamId + " está descomponiendo el trabajo."
+        );
+
+        var planned = teamWorkPlanner.plan(missionId, teamId, instruction, mode);
+
+        advanceMission(
+                missionId,
+                MissionStatus.DELEGATING,
+                10,
+                "Delegación",
+                "Plan del líder validado: " + planned.plan().tasksOrEmpty().size()
+                        + " tareas para " + planned.team().teamName() + "."
+        );
+
+        var context = new TeamMissionContext(missionId, instruction, planned.team(), planned.plan());
+
+        var result = strategy.execute(context, (status, progress, step, message) ->
+                advanceMission(missionId, status, progress, step, message));
+
+        switch (result) {
+            case TeamExecutionResult.AgentOutcomes outcomes -> consolidateAgentOutcomes(
+                    missionId, instruction, outcomes.outcomes(),
+                    companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD));
+            case TeamExecutionResult.Development development ->
+                    consolidateDevelopment(missionId, instruction, development);
+        }
+    }
+
+    /**
+     * El CEO consolida; el bloque "Estado verificable" lo agrega Java al
+     * final, así que los hechos verificables no dependen de la redacción
+     * del modelo (spec §8).
+     */
+    private void consolidateDevelopment(
+            String missionId, String instruction, TeamExecutionResult.Development development) {
+
+        advanceMission(
+                missionId,
+                MissionStatus.CONSOLIDATING,
+                85,
+                "Consolidación",
+                "CEO está consolidando el resultado del equipo."
+        );
+
+        var finalResult = ceoService.executeMission(
+                instruction,
+                development.resultsForCeo(),
+                promptMemory.activePrompt("ceo"),
+                companyMemory.agentModel("ceo", defaultCeoModel)
+        );
+
+        advanceMission(
+                missionId,
+                MissionStatus.AWAITING_INVESTOR,
+                95,
+                "Recomendación",
+                finalResult + "\n\n" + development.verifiableState()
+        );
+
+        log.info("MISSION {} -> AWAITING_INVESTOR (team development)", missionId);
     }
 
     /** Las 5 tareas fijas de discovery — misiones SIN teamId, sin cambios. */
