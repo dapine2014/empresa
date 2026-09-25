@@ -208,7 +208,10 @@ public class MissionMemoryService {
      * {@code Opportunity} y sus {@code Customer} LEAD. Las {@code Evidence}
      * solo se borran si quedan huérfanas — por la deduplicación de
      * {@code EvidenceDedupKey} un mismo nodo puede estar citado por tareas
-     * de otras misiones. Nunca toca {@code Agent}/{@code Company}/prompts/
+     * de otras misiones; si sobreviven y esta misión las había creado, su
+     * {@code missionId} se reasigna a una misión que todavía las cita. Todo
+     * se matchea también por la propiedad {@code missionId} (no solo por
+     * relaciones), que es lo que usa Activity. Nunca toca {@code Agent}/{@code Company}/prompts/
      * políticas. También saca la misión del foco conversacional
      * ({@code Conversation.lastMentionedIds}) para que el chat no resuelva
      * una referencia a un id que ya no existe.
@@ -218,34 +221,55 @@ public class MissionMemoryService {
             session.executeWrite(tx -> {
                 var params = Map.<String, Object>of("missionId", missionId);
 
+                // Además de seguir las relaciones, se matchea por la propiedad
+                // missionId: Activity (ActivityMemoryService) filtra por esa
+                // propiedad, y un nodo cuya relación con la misión se perdió
+                // seguiría apareciendo en la línea de tiempo de una misión
+                // que ya no existe.
                 var evidenceIds = tx.run(
-                        "MATCH (m:Mission {id:$missionId}) " +
-                                "OPTIONAL MATCH (m)-[:HAS_TASK]->(:AgentTask)-[:HAS_EVIDENCE]->(te:Evidence) " +
-                                "WITH m, collect(DISTINCT te.id) AS taskEvidence " +
-                                "OPTIONAL MATCH (m)-[:HAS_OPPORTUNITY]->(:Opportunity)-[:HAS_CANDIDATE]->" +
+                        "OPTIONAL MATCH (m:Mission {id:$missionId})-[:HAS_TASK]->(:AgentTask)" +
+                                "-[:HAS_EVIDENCE]->(te:Evidence) " +
+                                "WITH collect(DISTINCT te.id) AS taskEvidence " +
+                                "OPTIONAL MATCH (o:Opportunity {missionId:$missionId})-[:HAS_CANDIDATE]->" +
                                 "(:Customer {status:'LEAD'})-[:HAS_EVIDENCE]->(ce:Evidence) " +
                                 "WITH taskEvidence, collect(DISTINCT ce.id) AS candidateEvidence " +
-                                "RETURN taskEvidence + candidateEvidence AS ids",
+                                "OPTIONAL MATCH (pe:Evidence {missionId:$missionId}) " +
+                                "WITH taskEvidence, candidateEvidence, collect(DISTINCT pe.id) AS propertyEvidence " +
+                                "RETURN taskEvidence + candidateEvidence + propertyEvidence AS ids",
                         params
                 ).single().get("ids").asList(v -> v.asString());
 
-                tx.run("MATCH (m:Mission {id:$missionId})-[:HAS_OPPORTUNITY]->(o:Opportunity)" +
-                                "-[:HAS_CANDIDATE]->(c:Customer {status:'LEAD'}) " +
+                tx.run("MATCH (o:Opportunity {missionId:$missionId})-[:HAS_CANDIDATE]->(c:Customer {status:'LEAD'}) " +
                                 "WHERE NOT EXISTS { (c)<-[:HAS_CANDIDATE|HAS_CUSTOMER]-(other) WHERE other <> o } " +
                                 "DETACH DELETE c",
                         params);
 
-                tx.run("MATCH (m:Mission {id:$missionId}) " +
+                tx.run("OPTIONAL MATCH (m:Mission {id:$missionId}) " +
                                 "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY]->(n) " +
                                 "WITH m, collect(DISTINCT n) AS owned " +
                                 "FOREACH (n IN owned | DETACH DELETE n) " +
-                                "DETACH DELETE m",
+                                "FOREACH (x IN CASE WHEN m IS NULL THEN [] ELSE [m] END | DETACH DELETE x)",
+                        params);
+
+                tx.run("MATCH (n) WHERE (n:AgentTask OR n:Decision OR n:Opportunity) " +
+                                "AND n.missionId = $missionId " +
+                                "DETACH DELETE n",
                         params);
 
                 tx.run("MATCH (e:Evidence) WHERE e.id IN $ids " +
                                 "AND NOT EXISTS { ()-[:HAS_EVIDENCE]->(e) } " +
                                 "DETACH DELETE e",
                         Map.of("ids", evidenceIds));
+
+                // Evidencia compartida (dedup) que sigue citada por otra
+                // misión pero fue creada por esta: se reasigna a una misión
+                // que todavía la cita, para que Activity no la muestre bajo
+                // un id borrado.
+                tx.run("MATCH (e:Evidence {missionId:$missionId})<-[:HAS_EVIDENCE]-(p) " +
+                                "WHERE p.missionId IS NOT NULL AND p.missionId <> $missionId " +
+                                "WITH e, min(p.missionId) AS newOwner " +
+                                "SET e.missionId = newOwner",
+                        params);
 
                 tx.run("MATCH (c:Conversation {id:'MAIN'}) WHERE $missionId IN c.lastMentionedIds " +
                                 "WITH c, [x IN c.lastMentionedIds WHERE x <> $missionId] AS remaining " +

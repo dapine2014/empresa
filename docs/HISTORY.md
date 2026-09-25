@@ -641,3 +641,37 @@ limpiados y foco original de la conversación restaurado después.
 `MISSION-001` no existe en esta instancia de Neo4j (→ 404); su
 protección queda cubierta por `MissionServiceTest`. `mvn test`,
 `npm run lint` y `npm run build` en verde.
+
+### Borrado de misiones: también su Activity
+
+Pedido del usuario: al borrar una misión, su Activity también debe
+desaparecer. Activity no se persiste aparte: `ActivityMemoryService`
+la arma al vuelo desde `AgentTask`/`Mission`/`Evidence`/`Decision` y
+muestra la propiedad `missionId` de cada nodo. `deleteMission` solo
+seguía relaciones, y eso dejaba dos huecos: (1) una `Evidence`
+compartida por la dedup sobrevivía (lo cual es correcto) pero conservaba
+el `missionId` de la misión borrada que la había creado; (2) los nodos
+cuya relación con la `Mission` se había perdido quedaban fuera del
+borrado. En el Neo4j real había 22 `Evidence` (colgadas de `Customer`
+LEAD de una `Opportunity` sin `Mission`) de `MISSION-1789884929871` y
+4 `Evidence` + 1 `Decision` + 1 `Opportunity` sueltas de
+`MISSION-DEVGEN-VERIFY-1`, las dos misiones ya inexistentes.
+
+Fix: `deleteMission` ahora también matchea `AgentTask`/`Decision`/
+`Opportunity`/`Evidence` por la propiedad `missionId`, y reasigna el
+`missionId` de la evidencia compartida que sobrevive a una misión que
+todavía la cita. `mvn test` en verde (217).
+
+Restos de `MISSION-1789884929871` (1 `Opportunity`, 7 `Customer` LEAD,
+22 `Evidence`, ninguno citado por otra misión) borrados a mano por
+Cypher con autorización del usuario. Los de `MISSION-DEVGEN-VERIFY-1`
+quedan pendientes.
+
+**Verificado en vivo** (contenedor reconstruido + Neo4j real) con una
+misión sintética sembrada por Cypher: tarea con evidencia propia,
+evidencia compartida con una `AgentTask` real de otra misión,
+`Decision` enlazada, más una `Decision` y una `Opportunity` sueltas
+(solo con `missionId`, sin relación). Tenía 6 ítems en `GET /activity`.
+`DELETE` → 204, 0 ítems en Activity, 0 nodos con ese `missionId`. La
+evidencia compartida sobrevivió reasignada a la otra misión que la
+citaba. Datos sintéticos limpiados después.
