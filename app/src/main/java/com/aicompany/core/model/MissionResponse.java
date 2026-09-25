@@ -16,5 +16,13 @@ public record MissionResponse(
         String currentStep,
         String message,
         Instant updatedAt,
-        FinancialCriteriaResponse financialCriteria
-) {}
+        FinancialCriteriaResponse financialCriteria,
+        String teamId
+) {
+    /** Misiones sin equipo (discovery) — mantiene compatibles los call-sites existentes. */
+    public MissionResponse(
+            String missionId, MissionStatus status, String environment, int progress,
+            String currentStep, String message, Instant updatedAt, FinancialCriteriaResponse financialCriteria) {
+        this(missionId, status, environment, progress, currentStep, message, updatedAt, financialCriteria, null);
+    }
+}

@@ -26,17 +26,34 @@ public class MissionService {
     private final MissionMemoryService memory;
     private final MissionExecutor executor;
     private final CompanyEventPublisher events;
+    private final TeamMemoryService teamMemory;
 
-    public MissionService(MissionMemoryService memory, MissionExecutor executor, CompanyEventPublisher events) {
+    public MissionService(
+            MissionMemoryService memory,
+            MissionExecutor executor,
+            CompanyEventPublisher events,
+            TeamMemoryService teamMemory) {
         this.memory = memory;
         this.executor = executor;
         this.events = events;
+        this.teamMemory = teamMemory;
     }
 
     public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
-        validateFinancialCriteria(financialCriteria);
+        return start(missionId, instruction, environment, financialCriteria, null);
+    }
 
-        memory.ensureMission(missionId, instruction, environment, financialCriteria);
+    public MissionResponse start(
+            String missionId,
+            String instruction,
+            String environment,
+            FinancialCriteriaCommand financialCriteria,
+            String teamId) {
+
+        validateFinancialCriteria(financialCriteria);
+        validateTeam(teamId);
+
+        memory.ensureMission(missionId, instruction, environment, financialCriteria, teamId);
 
         events.publishMission(
                 "EMPRESA_MISSION_CREATED",
@@ -219,6 +236,33 @@ public class MissionService {
         );
 
         return true;
+    }
+
+    /**
+     * teamId es opcional; si viene, tiene que ser uno de los 3 equipos del
+     * catálogo fijo, existir en Neo4j con status ACTIVE y tener líder y
+     * miembros reales (spec §1). Nunca lo decide ni lo corrige un modelo.
+     */
+    private void validateTeam(String teamId) {
+
+        if (teamId == null) {
+            return;
+        }
+
+        if (!TeamMemoryService.KNOWN_TEAM_IDS.contains(teamId)) {
+            throw new IllegalArgumentException("teamId desconocido: " + teamId
+                    + ". Valores válidos: " + TeamMemoryService.KNOWN_TEAM_IDS);
+        }
+
+        var team = teamMemory.snapshot(teamId);
+
+        if (team == null || !"ACTIVE".equals(team.status())) {
+            throw new IllegalArgumentException("El equipo " + teamId + " no existe o no está ACTIVE en Company Memory.");
+        }
+
+        if (team.leaderAgentId() == null || team.members().isEmpty()) {
+            throw new IllegalArgumentException("El equipo " + teamId + " no tiene líder o miembros en Company Memory.");
+        }
     }
 
     private void validateFinancialCriteria(FinancialCriteriaCommand financialCriteria) {

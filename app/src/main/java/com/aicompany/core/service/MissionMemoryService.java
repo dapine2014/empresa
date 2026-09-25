@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -53,7 +54,8 @@ public class MissionMemoryService {
             String missionId,
             String instruction,
             String environment,
-            FinancialCriteriaCommand financialCriteria) {
+            FinancialCriteriaCommand financialCriteria,
+            String teamId) {
 
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
@@ -71,11 +73,16 @@ public class MissionMemoryService {
                         ? ""
                         : ", m.financialCriteriaMetric=$metric, m.financialCriteriaTargetAmount=$targetAmount, "
                                 + "m.financialCriteriaCurrency=$currency, m.financialCriteriaDeadline=$deadline";
+                // teamId es inmutable: mismo criterio que financialCriteria, un re-arranque
+                // sin teamId nunca borra el ya declarado.
+                var teamIdSet = teamId == null ? "" : ", m.teamId=$teamId";
+                var params = financialCriteriaParams(missionId, instruction, environment, financialCriteria);
+                params.put("teamId", teamId);
                 tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, "
                                 + "m.environment=$environment, m.status='CREATED', m.progress=0, "
                                 + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt"
-                                + financialCriteriaSet,
-                        financialCriteriaParams(missionId, instruction, environment, financialCriteria));
+                                + financialCriteriaSet + teamIdSet,
+                        params);
                 tx.run("MATCH (m:Mission {id:$id}), (c:Company {id:'AI-COMPANY'}) MERGE (c)-[:HAS_MISSION]->(m)", Map.of("id", missionId));
                 tx.run("MATCH (m:Mission {id:$id}), (a:Agent {id:'ceo'}) MERGE (m)-[:LED_BY]->(a)", Map.of("id", missionId));
                 return null;
@@ -334,11 +341,26 @@ public class MissionMemoryService {
         }
     }
 
+    public Optional<String> teamId(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN m.teamId AS teamId", Map.of("id", missionId))
+                    .list(r -> nullableString(r.get("teamId")))
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .findFirst();
+        }
+    }
+
+    private static String nullableString(org.neo4j.driver.Value value) {
+        return value == null || value.isNull() ? null : value.asString();
+    }
+
     public Optional<MissionResponse> find(String missionId) {
         try (var session = driver.session()) {
             var records = session.run("MATCH (m:Mission {id:$id}) RETURN m.status AS status, coalesce(m.environment, 'TEST') AS environment, m.progress AS progress, m.currentStep AS step, m.message AS message, m.updatedAt AS updatedAt, "
                             + "m.financialCriteriaMetric AS financialCriteriaMetric, m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, "
-                            + "m.financialCriteriaCurrency AS financialCriteriaCurrency, m.financialCriteriaDeadline AS financialCriteriaDeadline",
+                            + "m.financialCriteriaCurrency AS financialCriteriaCurrency, m.financialCriteriaDeadline AS financialCriteriaDeadline, "
+                            + "m.teamId AS teamId",
                     Map.of("id", missionId)).list();
             return records.stream().findFirst().map(r -> new MissionResponse(
                     missionId,
@@ -348,7 +370,8 @@ public class MissionMemoryService {
                     r.get("step").asString(),
                     r.get("message").asString(),
                     Instant.parse(r.get("updatedAt").asString()),
-                    mapFinancialCriteria(r)
+                    mapFinancialCriteria(r),
+                    nullableString(r.get("teamId"))
             ));
         }
     }
@@ -370,7 +393,8 @@ public class MissionMemoryService {
                                     "m.financialCriteriaMetric AS financialCriteriaMetric, " +
                                     "m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, " +
                                     "m.financialCriteriaCurrency AS financialCriteriaCurrency, " +
-                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline",
+                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline, " +
+                                    "m.teamId AS teamId",
                             Map.of("ids", missionIds))
                     .list(r -> new MissionResponse(
                             r.get("id").asString(),
@@ -380,7 +404,8 @@ public class MissionMemoryService {
                             r.get("step").asString(),
                             r.get("message").asString(),
                             Instant.parse(r.get("updatedAt").asString()),
-                            mapFinancialCriteria(r)
+                            mapFinancialCriteria(r),
+                            nullableString(r.get("teamId"))
                     ));
         }
     }
@@ -400,7 +425,8 @@ public class MissionMemoryService {
                                     "m.financialCriteriaMetric AS financialCriteriaMetric, " +
                                     "m.financialCriteriaTargetAmount AS financialCriteriaTargetAmount, " +
                                     "m.financialCriteriaCurrency AS financialCriteriaCurrency, " +
-                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline " +
+                                    "m.financialCriteriaDeadline AS financialCriteriaDeadline, " +
+                                    "m.teamId AS teamId " +
                                     "ORDER BY m.updatedAt DESC LIMIT $limit",
                             Map.of("limit", limit))
                     .list(r -> new MissionResponse(
@@ -411,7 +437,8 @@ public class MissionMemoryService {
                             r.get("step").asString(),
                             r.get("message").asString(),
                             Instant.parse(r.get("updatedAt").asString()),
-                            mapFinancialCriteria(r)
+                            mapFinancialCriteria(r),
+                            nullableString(r.get("teamId"))
                     ));
         }
     }
