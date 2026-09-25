@@ -112,4 +112,28 @@ class ProductStatusServiceTest {
 
         assertEquals(ProductStatus.DISCOVERY, service.resolve("MISSION-1"));
     }
+
+    private static AgentTask devTask(String kind, String status, String commitSha) {
+        return new AgentTask("MISSION-9-BACKEND", "MISSION-9", "backend", "GAME_LOGIC", status, "{}",
+                Instant.parse("2026-09-24T00:00:00Z"), kind, "/data/forjai-products/MISSION-9", commitSha,
+                List.of("web/game/main.js"), null, null);
+    }
+
+    @Test
+    void committedWorkTaskMeansDevelopment() {
+        when(missionMemory.tasks("MISSION-9")).thenReturn(List.of(devTask("WORK", "COMPLETED", "a".repeat(40))));
+        when(customerMemory.totalRevenueAndCost("MISSION-9")).thenReturn(new double[]{0.0, 0.0});
+        when(customerMemory.transactionCount("MISSION-9")).thenReturn(0L);
+
+        assertEquals(ProductStatus.DEVELOPMENT, service.resolve("MISSION-9"));
+    }
+
+    @Test
+    void workTaskWithoutCommitIsNotDevelopment() {
+        when(missionMemory.tasks("MISSION-9")).thenReturn(List.of(devTask("WORK", "FAILED", null)));
+        when(customerMemory.totalRevenueAndCost("MISSION-9")).thenReturn(new double[]{0.0, 0.0});
+        when(customerMemory.transactionCount("MISSION-9")).thenReturn(0L);
+
+        assertEquals(ProductStatus.DISCOVERY, service.resolve("MISSION-9"));
+    }
 }

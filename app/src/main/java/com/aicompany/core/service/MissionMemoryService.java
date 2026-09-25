@@ -289,15 +289,52 @@ public class MissionMemoryService {
     }
 
     public void createTask(String taskId, String missionId, String agentId, String action) {
+        createTask(taskId, missionId, agentId, action, null);
+    }
+
+    /** kind: PLANNING | WORK | VALIDATION para misiones de equipo; null en discovery. */
+    public void createTask(String taskId, String missionId, String agentId, String action, String kind) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
+                var params = new HashMap<String, Object>();
+                params.put("taskId", taskId);
+                params.put("missionId", missionId);
+                params.put("agentId", agentId);
+                params.put("action", action);
+                params.put("kind", kind);
+                params.put("updatedAt", Instant.now().toString());
                 tx.run("MATCH (m:Mission {id:$missionId}), (a:Agent {id:$agentId}) " +
                                 "MERGE (t:AgentTask {id:$taskId}) SET t.missionId=$missionId, t.agentId=$agentId, " +
-                                "t.action=$action, t.status='PENDING', t.updatedAt=$updatedAt " +
+                                "t.action=$action, t.kind=$kind, t.status='PENDING', t.updatedAt=$updatedAt " +
                                 "MERGE (m)-[:HAS_TASK]->(t) MERGE (a)-[:ASSIGNED_TASK]->(t) " +
                                 "MERGE (m)-[:INVOLVES_AGENT]->(a)",
-                        Map.of("taskId", taskId, "missionId", missionId, "agentId", agentId,
-                                "action", action, "updatedAt", Instant.now().toString()));
+                        params);
+                return null;
+            });
+        }
+    }
+
+    /** Artefacto real de una tarea de desarrollo: el commit es la prueba del trabajo (spec §6). */
+    public void recordTaskArtifact(String taskId, String workspacePath, String commitSha, List<String> files) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (t:AgentTask {id:$id}) SET t.workspacePath=$workspacePath, t.commitSha=$commitSha, "
+                                + "t.files=$files, t.updatedAt=$updatedAt",
+                        Map.of("id", taskId, "workspacePath", workspacePath, "commitSha", commitSha,
+                                "files", files, "updatedAt", Instant.now().toString()));
+                return null;
+            });
+        }
+    }
+
+    /** Estado calculado por Java + chequeos deterministas, en la tarea VALIDATION (spec §7). */
+    public void recordStaticValidation(String taskId, String validationStatus, String staticChecksJson) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (t:AgentTask {id:$id}) SET t.validationStatus=$validationStatus, "
+                                + "t.staticChecks=$staticChecks, t.updatedAt=$updatedAt",
+                        Map.of("id", taskId, "validationStatus", validationStatus,
+                                "staticChecks", staticChecksJson, "updatedAt", Instant.now().toString()));
                 return null;
             });
         }
@@ -550,12 +587,22 @@ public class MissionMemoryService {
 
     public List<AgentTask> tasks(String missionId) {
         try (var session = driver.session()) {
-            return session.run("MATCH (t:AgentTask {missionId:$missionId}) RETURN t.id AS id, t.agentId AS agentId, t.action AS action, t.status AS status, t.result AS result, t.updatedAt AS updatedAt ORDER BY t.id",
+            return session.run("MATCH (t:AgentTask {missionId:$missionId}) RETURN t.id AS id, t.agentId AS agentId, "
+                                    + "t.action AS action, t.status AS status, t.result AS result, t.updatedAt AS updatedAt, "
+                                    + "t.kind AS kind, t.workspacePath AS workspacePath, t.commitSha AS commitSha, "
+                                    + "t.files AS files, t.validationStatus AS validationStatus, t.staticChecks AS staticChecks "
+                                    + "ORDER BY t.id",
                             Map.of("missionId", missionId))
                     .list(r -> new AgentTask(
                             r.get("id").asString(), missionId,
                             r.get("agentId").asString(), r.get("action").asString(), r.get("status").asString(),
-                            r.get("result").asString(""), Instant.parse(r.get("updatedAt").asString())));
+                            r.get("result").asString(""), Instant.parse(r.get("updatedAt").asString()),
+                            nullableString(r.get("kind")),
+                            nullableString(r.get("workspacePath")),
+                            nullableString(r.get("commitSha")),
+                            r.get("files").isNull() ? null : r.get("files").asList(v -> v.asString()),
+                            nullableString(r.get("validationStatus")),
+                            nullableString(r.get("staticChecks"))));
         }
     }
 }
