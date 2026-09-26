@@ -739,3 +739,15 @@ citaba. Datos sintéticos limpiados después.
 5. Errores distintos en cada intento: un contexto "Interfaz" sin dueño de `DOMAIN`, una tarea repetida para el líder y la capa `INFRASTRUCTURE`, que no existe en el perfil Godot.
 
 Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y rompe otra; los mensajes accionables y la corrección incremental no alcanzan para que converja en 5 intentos. La implementación y sus tests (369) están en verde; lo que no funciona en vivo es que el líder produzca un plan DDD válido. Queda para decisión del fundador cómo reducir las decisiones del modelo en la planificación.
+
+**Continuación, misiones 6 y 7:**
+- **Revisión 2 del spec** (decisión del fundador, opción 1): las capas las asigna Java según el `roleCode` (`RoleLayerCatalog`); el líder decide solo perfil, contextos, glosario y objetivos; `TeamPlanResolver` une las tareas repetidas de un agente.
+- `MISSION-DDD-VERIFY-6` → `AWAITING_INVESTOR`: plan aceptado al tercer intento y primera cadena DDD completa (`DDD_LAYERS` PASS sobre 8 archivos). **Tres bugs reales**, corregidos con TDD:
+  1. `git ls-tree` entrecomillaba los nombres con tildes (`L\303\263gicaCombate.cs`) y hacía fallar tres chequeos sin motivo → `core.quotepath=off` en `GitCommandRunner`.
+  2. `game/project.godot` no se creó porque a la dueña de `game` nadie le dijo que era obligatorio → el prompt de cada tarea lista los archivos de entrada que caen en sus rutas.
+  3. La tarea de Vera quedaba en `PENDING` para siempre si la lectura del repo fallaba antes de la revisión → ahora pasa a `FAILED` con el motivo.
+- `MISSION-DDD-VERIFY-7` → `AWAITING_INVESTOR`: **plan aceptado al primer intento**. Commits de los 4 desarrolladores con autor y trailer correctos; `ENTRY_FILES`, `PROFILE_STRUCTURE` y `DDD_LAYERS` (7 archivos) en PASS. Vera reportó 7 MAJOR reales (propiedad duplicada en `Player`, `NextTurn` incompleto), así que `validationStatus=FAILED`, como corresponde.
+- **Observaciones abiertas (calidad del modelo, no del contrato):**
+  - Neo declaró "UI" como bounded context, que es una capa técnica y no un dominio.
+  - Diego escribió un placeholder (`tests/Combate.Tests/NoFilesWritten.cs`) y Mila solo `project.godot`.
+  - La verificación real (compilar, testear y arrancar) llega con la parte 2 (sandbox).
