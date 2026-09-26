@@ -249,6 +249,9 @@ class DevelopmentTeamStrategyTest {
         strategy.execute(context(), progress);
 
         assertTrue(reviewPrompt.getValue().contains("RESULTADOS REALES DEL SANDBOX"));
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-7): Vera citaba archivos con el sha de otro commit y agotaba
+        // los reintentos. HEAD contiene todos los archivos: se le da el sha literal.
+        assertTrue(reviewPrompt.getValue().contains("\"workspace:M-1@" + SHA_MILA + "/<ruta>\""), reviewPrompt.getValue());
     }
 
     // Review Focus: runner no disponible → UNVALIDATED con el motivo.

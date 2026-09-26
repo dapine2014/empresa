@@ -418,7 +418,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 - notValidatableWithoutExecution: lo que NO puede validarse sin ejecutar (compilación, ejecución,
                   rendimiento, jugabilidad...). Nunca vacío.
                 - evidence: cita los archivos reales que revisaste con sourceType "INTERNAL", verified true y source
-                  exactamente "workspace:%s@<sha>/<ruta>", usando un sha de la lista de commits y una ruta que exista en ese commit.
+                  exactamente "workspace:%s@%s/<ruta>" (siempre ese sha, el HEAD: contiene todos los archivos),
+                  con una ruta que aparezca en CÓDIGO DEL REPOSITORIO.
                 - Revisión DDD: ¿el código usa el lenguaje ubicuo del glosario? ¿Hay entidades, value objects y
                   agregados con sentido? ¿El dominio es anémico (solo datos, sin reglas)? Repórtalo en findings.
                 - NUNCA afirmes que el juego compila, se ejecuta, funciona o pasa tests.
@@ -426,7 +427,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 validation.agentId(), context.team().teamName(), context.missionId(),
                 validation.objective(),
                 context.plan().summary(), dddContext(context.plan()),
-                commits, checkLines, sandboxSummary, headSha, repositoryContext, context.missionId());
+                commits, checkLines, sandboxSummary, headSha, repositoryContext, context.missionId(), headSha);
     }
 
     /** Contenido real del repo con tope explícito; lo truncado u omitido queda marcado (Review Focus). */
