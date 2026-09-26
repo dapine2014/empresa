@@ -153,4 +153,19 @@ class StaticWorkspaceValidatorTest {
         var checks = validator.validate("M-1", work, null, CONTEXTS, ALLOWED);
         assertFalse(find(checks, "STACK_PROFILE").passed());
     }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-6): git devolvía "L\303\263gicaCombate.cs" (entrecomillado) para
+    // nombres con tildes y los chequeos fallaban sin motivo real.
+    @Test
+    void fileNamesWithAccentsAreComparedLiterally() throws Exception {
+        var accents = workspace.commitAgentWork("M-1", "M-1-DEVOPS", "devops", "Diego",
+                new DevelopmentResult("tildes", List.of(
+                        new GeneratedFile("src/Combate.Application/LógicaCombate.cs", "namespace Combate.Application;"))));
+        var items = new ArrayList<>(work);
+        items.add(new CommittedWork("M-1-DEVOPS", "devops", accents.sha(), accents.files()));
+
+        var checks = validate(items, ALLOWED);
+
+        assertTrue(checks.stream().allMatch(StaticCheck::passed), checks.toString());
+    }
 }

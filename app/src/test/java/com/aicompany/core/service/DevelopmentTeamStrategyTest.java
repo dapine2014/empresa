@@ -188,4 +188,34 @@ class DevelopmentTeamStrategyTest {
         assertTrue(reviewPrompt.getValue().contains("anémico"));
         assertTrue(result.resultsForCeo().contains("GODOT_DOTNET_GAME"));
     }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-6): la dueña de "game" no creó game/project.godot porque nadie le
+    // dijo que era obligatorio. El prompt de cada tarea lista los archivos de entrada que caen en sus rutas.
+    @Test
+    void theOwnerOfAnEntryFilesFolderIsToldToCreateIt() throws Exception {
+        stubHappyPath();
+        var neoPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("game/project.godot")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        assertTrue(neoPrompt.getValue().contains("ARCHIVOS OBLIGATORIOS"), neoPrompt.getValue());
+        assertTrue(neoPrompt.getValue().contains("game/project.godot"), neoPrompt.getValue());
+    }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-6): la lectura del repo falló antes de la revisión y la tarea de Vera
+    // quedó en PENDING para siempre.
+    @Test
+    void aFailureBeforeTheReviewMarksTheValidationTaskFailed() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenThrow(new java.io.IOException("git show falló"));
+
+        strategy.execute(context(), progress);
+
+        verify(runtime, never()).review(anyString(), anyString(), anyString(), anyString(), anyMap());
+        verify(memory).updateTask(eq("M-1-QA"), eq("FAILED"), contains("git show falló"));
+    }
 }

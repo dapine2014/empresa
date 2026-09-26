@@ -5,6 +5,7 @@ import com.aicompany.core.agent.model.DevelopmentResult;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.StackProfile;
@@ -165,6 +166,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         StaticReviewResult review = null;
         String reviewError = null;
+        var reviewStarted = false;
 
         try {
 
@@ -182,6 +184,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             var repositoryContext = renderRepositoryContext(contents, REVIEW_TOTAL_BUDGET_CHARS, REVIEW_FILE_BUDGET_CHARS);
 
+            reviewStarted = true;
             review = runtime.review(validationTaskId, missionId, validation.agentId(),
                     buildReviewPrompt(context, validation, committed, checks, headSha, repositoryContext),
                     filesBySha).join();
@@ -189,6 +192,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         } catch (Exception ex) {
             reviewError = safeMessage(ex, "La revisión estática no se completó.");
             log.warn("MISSION {} - static review did not complete: {}", missionId, reviewError);
+
+            // Verificado en vivo: si falla antes de lanzar la revisión, DevelopmentRuntime nunca marca la tarea.
+            if (!reviewStarted) {
+                memory.updateTask(validationTaskId, "FAILED", "No se pudo preparar la revisión: " + reviewError);
+                events.publishTask("EMPRESA_TASK_FAILED", validationTaskId, missionId, validation.agentId(), "FAILED",
+                        reviewError);
+            }
         }
 
         var status = StaticValidationStatus.compute(checks, review);
@@ -256,6 +266,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .map(t -> "- " + t.agentId() + " (" + t.kind() + "): " + t.objective() + " | ownedPaths=" + t.ownedPathsOrEmpty())
                 .collect(Collectors.joining("\n"));
 
+        // Verificado en vivo: la dueña de "game" no creó game/project.godot porque nadie le dijo que era obligatorio.
+        var requiredFiles = plan.profile().map(StackProfile::leaderOwnedPaths).orElse(List.of()).stream()
+                .filter(file -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), file))
+                .toList();
+        var required = requiredFiles.isEmpty() ? "" : "ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no "
+                + "compila ni arranca sin ellos): " + requiredFiles + "\n";
+
         return """
                 MISIÓN DEL EQUIPO %s:
                 %s
@@ -267,7 +284,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 TU TAREA (%s, action=%s):
                 %s
                 Solo puedes escribir archivos dentro de estos ownedPaths: %s
-
+                %s
                 TAREAS DEL RESTO DEL EQUIPO (corren en paralelo; no verás su código, respeta sus rutas e interfaces):
                 %s
 
@@ -281,7 +298,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 """.formatted(
                 context.team().teamName(), context.instruction(),
                 plan.summary(), dddContext(plan),
-                task.agentId(), task.action(), task.objective(), task.ownedPathsOrEmpty(),
+                task.agentId(), task.action(), task.objective(), task.ownedPathsOrEmpty(), required,
                 others);
     }
 
