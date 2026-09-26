@@ -187,6 +187,26 @@ class DevelopmentRuntimeTest {
                 anyString(), anyString());
     }
 
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-3): .csproj con "// nombre" antes del XML.
+    @Test
+    void anInvalidProjectFileIsRetriedWithTheExactError() throws Exception {
+        var bad = new DevelopmentResult("r", List.of(new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj",
+                "// Tareas.Domain.csproj\n<Project Sdk=\"Microsoft.NET.Sdk\"></Project>")));
+        var good = new DevelopmentResult("r", List.of(new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj",
+                "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>")));
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(bad)
+                .thenReturn(good);
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("src/Tareas.Domain"),
+                List.of("src/Tareas.Domain/Tareas.Domain.csproj")).get();
+
+        assertTrue(result.files().get(0).content().startsWith("<Project"));
+        verify(ceoService).generateDevelopmentArtifact(anyString(),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("no es XML válido")),
+                anyString(), anyString());
+    }
+
     @Test
     void anAbsolutePathIsRetriedAskingForARelativePath() throws Exception {
         when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))

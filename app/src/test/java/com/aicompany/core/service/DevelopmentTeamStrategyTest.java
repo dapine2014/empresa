@@ -68,9 +68,9 @@ class DevelopmentTeamStrategyTest {
     }
 
     private void stubHappyPath() throws Exception {
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any()))
@@ -177,7 +177,7 @@ class DevelopmentTeamStrategyTest {
     void workAndReviewPromptsCarryTheProfileContextsAndGlossary() throws Exception {
         stubHappyPath();
         var workPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/Atacar.cs")));
         var reviewPrompt = ArgumentCaptor.forClass(String.class);
         when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
@@ -199,7 +199,7 @@ class DevelopmentTeamStrategyTest {
     void theOwnerOfAnEntryFilesFolderIsToldToCreateIt() throws Exception {
         stubHappyPath();
         var neoPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("game/project.godot")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -283,7 +283,7 @@ class DevelopmentTeamStrategyTest {
     void eachLayerOwnerIsToldToWriteItsProjectFile() throws Exception {
         stubHappyPath();
         var milaPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -292,5 +292,18 @@ class DevelopmentTeamStrategyTest {
 
         assertTrue(milaPrompt.getValue().contains("src/Combate.Application/Combate.Application.csproj"),
                 milaPrompt.getValue());
+    }
+
+    @Test
+    void theExpectedProjectFilesReachTheGenerationGate() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
+                argThat(list -> list.contains("src/Combate.Domain/Combate.Domain.csproj")
+                        && list.contains("game/Game.csproj")));
     }
 }

@@ -100,10 +100,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         createTask(missionId, validation, TeamPlan.KIND_VALIDATION);
 
         var futures = new LinkedHashMap<PlannedTask, CompletableFuture<DevelopmentResult>>();
+        var expectedProjects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
 
         for (var task : work) {
             futures.put(task, runtime.generate(taskId(missionId, task.agentId()), missionId, task.agentId(),
-                    buildWorkPrompt(context, task), task.ownedPathsOrEmpty()));
+                    buildWorkPrompt(context, task), task.ownedPathsOrEmpty(), expectedProjects));
         }
 
         progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30, "Desarrollo en paralelo",

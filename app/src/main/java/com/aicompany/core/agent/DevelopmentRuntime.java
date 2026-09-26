@@ -5,6 +5,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.validation.DevelopmentPathValidationGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.agent.validation.ForbiddenClaimsGuard;
+import com.aicompany.core.agent.validation.ProjectFileGate;
 import com.aicompany.core.agent.validation.MissingFileClaimGate;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.agent.validation.RepositoryEvidenceGate;
@@ -103,12 +104,19 @@ public class DevelopmentRuntime {
 
     public CompletableFuture<DevelopmentResult> generate(
             String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths) {
+        return generate(taskId, missionId, agentId, prompt, ownedPaths, List.of());
+    }
+
+    /** expectedProjects: los .csproj del plan (StackProfile.projectFiles), para validar ProjectReference. */
+    public CompletableFuture<DevelopmentResult> generate(
+            String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths,
+            List<String> expectedProjects) {
 
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
                 (attemptPrompt, model, agentPrompt) ->
                         ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model),
-                result -> verifyGenerated(result, ownedPaths),
+                result -> verifyGenerated(result, ownedPaths, expectedProjects),
                 "GENERATED"));
     }
 
@@ -208,7 +216,7 @@ public class DevelopmentRuntime {
         }
     }
 
-    private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths) {
+    private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects) {
 
         if (result == null || result.files() == null || result.files().isEmpty()) {
             return new Verdict(List.of(), List.of("Debes devolver al menos un archivo en files."));
@@ -233,6 +241,8 @@ public class DevelopmentRuntime {
                 retryable.add("La ruta \"" + file.path() + "\" está fuera de tus ownedPaths " + ownedPaths + ".");
             }
         }
+
+        retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects));
 
         return new Verdict(List.of(), retryable);
     }
