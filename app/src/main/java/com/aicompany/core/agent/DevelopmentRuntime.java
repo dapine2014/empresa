@@ -111,13 +111,23 @@ public class DevelopmentRuntime {
     public CompletableFuture<DevelopmentResult> generate(
             String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths,
             List<String> expectedProjects) {
+        return generate(taskId, missionId, agentId, prompt, ownedPaths, expectedProjects, ownedPaths);
+    }
+
+    /**
+     * requiredPaths: las rutas que deben recibir al menos un archivo. En una corrección son solo las que tienen
+     * errores (verificado en vivo con MISSION-SANDBOX-VERIFY-11); lo que no vuelve sigue en el repositorio.
+     */
+    public CompletableFuture<DevelopmentResult> generate(
+            String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths,
+            List<String> expectedProjects, List<String> requiredPaths) {
 
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
                 (attemptPrompt, model, agentPrompt) -> discardForeignFiles(
                         ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
                         !expectedProjects.isEmpty()),
-                result -> verifyGenerated(result, ownedPaths, expectedProjects),
+                result -> verifyGenerated(result, ownedPaths, expectedProjects, requiredPaths),
                 "GENERATED"));
     }
 
@@ -254,7 +264,8 @@ public class DevelopmentRuntime {
         return new DevelopmentResult(summary, kept);
     }
 
-    private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects) {
+    private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects,
+                                    List<String> requiredPaths) {
 
         var discardedNote = result == null || result.summary() == null || !result.summary().contains(DISCARDED_NOTE)
                 ? "" : " " + result.summary().substring(result.summary().indexOf(DISCARDED_NOTE));
@@ -289,7 +300,7 @@ public class DevelopmentRuntime {
 
         // Verificado en vivo: dueños de dos capas entregaban solo una (o solo el .csproj).
         var paths = result.files().stream().filter(Objects::nonNull).map(f -> f.path()).toList();
-        for (var owned : ownedPaths) {
+        for (var owned : requiredPaths) {
             if (paths.stream().noneMatch(path -> OwnedPaths.coveredByAny(List.of(owned), path))) {
                 retryable.add("No escribiste ningún archivo en \"" + owned + "\": también es tu responsabilidad; "
                         + "devuelve TODOS tus archivos (los de todas tus rutas) en files, no solo los corregidos."

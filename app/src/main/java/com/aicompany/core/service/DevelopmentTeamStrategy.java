@@ -229,7 +229,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                             buildWorkPrompt(context, task) + repairBlock(entry.getValue())
                                     + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
                                     + "commit " + headSha + "); devuelve tus archivos corregidos y completos:"),
-                            task.ownedPathsOrEmpty(), expectedProjects).join();
+                            task.ownedPathsOrEmpty(), expectedProjects,
+                            task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
+                                    .anyMatch(e -> OwnedPaths.coveredByAny(List.of(owned), e.path()))).toList()).join();
                     var record = workspace.commitAgentWork(missionId, id, task.agentId(),
                             agentName(context, task.agentId()), result);
                     memory.recordTaskArtifact(id, workspace.missionWorkspace(missionId).toString(),
@@ -241,8 +243,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     headSha = record.sha();
                     repaired = true;
                 } catch (Exception ex) {
-                    log.warn("MISSION {} - repair of {} failed: {}", missionId, task.agentId(),
-                            safeMessage(ex, "sin detalle"));
+                    // Verificado en vivo (MISSION-SANDBOX-VERIFY-11): el commit anterior sigue siendo válido.
+                    var message = "Corrección fallida (" + safeMessage(ex, "sin detalle") + "); se conserva el commit "
+                            + "anterior.";
+                    memory.updateTask(id, "COMPLETED", message);
+                    log.warn("MISSION {} - repair of {} failed: {}", missionId, task.agentId(), message);
                 }
             }
 
@@ -361,8 +366,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 CORRECCIÓN DEL SANDBOX (compilación real, no una opinión): tu código no compila. Errores del compilador
                 en tus archivos:
                 %s
-                Corrige exactamente estos errores (mira la línea y la columna) sin cambiar lo que ya está bien, y
-                devuelve TODOS tus archivos completos en files.
+                Corrige exactamente estos errores (mira la línea y la columna) sin cambiar lo que ya está bien.
+                Solo puedes cambiar tus archivos: si usas un tipo que no existe en el código de abajo, defínelo en tus
+                propias rutas o usa los tipos que sí existen. Devuelve completos los archivos que corrijas; los que
+                no devuelvas quedan como están.
                 """.formatted(errors.stream().map(e -> "- " + e.display()).collect(Collectors.joining("\n")));
     }
 

@@ -113,6 +113,21 @@ class DevelopmentRuntimeTest {
         verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
     }
 
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-11): en una corrección solo se exigen las rutas con errores;
+    // lo que el agente no devuelve sigue en el repositorio.
+    @Test
+    void aRepairOnlyRequiresThePathsWithErrors() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("src/Tareas.Application/Handler.cs"));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt",
+                List.of("src/Tareas.Application", "src/Tareas.Infrastructure"), List.of(),
+                List.of("src/Tareas.Application")).get();
+
+        assertEquals(1, result.files().size());
+        verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
+    }
+
     // Review Focus: "\" como separador es corregible → reintento, nunca un archivo con "\" en el nombre.
     @Test
     void aBackslashSeparatorIsRetriedNotWritten() throws Exception {

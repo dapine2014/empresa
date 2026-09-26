@@ -406,6 +406,8 @@ class DevelopmentTeamStrategyTest {
         var milaPrompts = ArgumentCaptor.forClass(String.class);
         when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
@@ -447,5 +449,28 @@ class DevelopmentTeamStrategyTest {
         strategy.execute(context(), progress);
 
         verify(sandbox, times(1)).verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"));
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-11): una corrección fallida dejaba la tarea en FAILED aunque su
+    // commit seguía siendo válido.
+    @Test
+    void aFailedRepairKeepsThePreviousCommitAndTheTaskCompleted() throws Exception {
+        stubHappyPath();
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("reintentos agotados")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var inOrder = inOrder(memory);
+        inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), anyString());
+        inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), contains("se conserva el commit"));
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(),
+                contains("propias rutas o usa los tipos que sí existen"), anyList(), anyList(), eq(List.of("src/Combate.Application")));
     }
 }
