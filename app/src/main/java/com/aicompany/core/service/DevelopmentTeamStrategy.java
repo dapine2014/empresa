@@ -298,7 +298,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .collect(Collectors.joining("\n"));
 
         // Verificado en vivo: la dueña de "game" no creó game/project.godot porque nadie le dijo que era obligatorio.
-        var requiredFiles = plan.profile().map(StackProfile::leaderOwnedPaths).orElse(List.of()).stream()
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-2): tampoco escribían el .csproj de su capa.
+        var requiredFiles = plan.profile()
+                .map(p -> java.util.stream.Stream.concat(p.leaderOwnedPaths().stream(),
+                        p.projectFiles(plan.contextNames()).stream()).toList())
+                .orElse(List.of()).stream()
                 .filter(file -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), file))
                 .toList();
         var required = requiredFiles.isEmpty() ? "" : "ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no "

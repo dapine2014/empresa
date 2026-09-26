@@ -79,4 +79,14 @@ class StackProfileTest {
             assertTrue(profile.describe().contains("SANDBOX (sin red)"), profile.name());
         }
     }
+
+    @Test
+    void projectFilesArePerLayerForDotnetAndNoneForFlutter() {
+        assertEquals(List.of("src/Tareas.Domain/Tareas.Domain.csproj", "src/Tareas.Application/Tareas.Application.csproj",
+                        "src/Tareas.Infrastructure/Tareas.Infrastructure.csproj", "src/Tareas.Api/Tareas.Api.csproj",
+                        "tests/Tareas.Tests/Tareas.Tests.csproj"),
+                StackProfile.DOTNET_APP.projectFiles(List.of("Tareas")));
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.projectFiles(List.of("Combate")).contains("game/Game.csproj"));
+        assertTrue(StackProfile.FLUTTER_WEB_APP.projectFiles(List.of("pedidos")).isEmpty());
+    }
 }

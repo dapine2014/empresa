@@ -277,4 +277,20 @@ class DevelopmentTeamStrategyTest {
 
         verifyNoInteractions(sandbox);
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2): ningún agente escribió su .csproj.
+    @Test
+    void eachLayerOwnerIsToldToWriteItsProjectFile() throws Exception {
+        stubHappyPath();
+        var milaPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        assertTrue(milaPrompt.getValue().contains("src/Combate.Application/Combate.Application.csproj"),
+                milaPrompt.getValue());
+    }
 }

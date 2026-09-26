@@ -20,6 +20,10 @@ checked() {
 }
 make_sln() {
   dotnet new sln -n Forjai -o /tmp --force >/dev/null
+  # Verificado en vivo (MISSION-SANDBOX-VERIFY-2): sin proyectos, restore/build/test "pasaban" sin compilar nada.
+  if [ -z "$(find /work -name '*.csproj' -not -path '*/.forjai/*' -print -quit)" ]; then
+    echo "FORJAI: no hay ningún proyecto .csproj en el repositorio."; exit 1
+  fi
   # Un proyecto que MSBuild no puede cargar queda fuera de la solución y el build lo ignoraría: falla acá.
   find /work -name '*.csproj' -not -path '*/.forjai/*' -print0 | xargs -0 -r dotnet sln "$SLN" add > /tmp/sln.log 2>&1 || true
   if grep -qE "Invalid project|error MSB" /tmp/sln.log; then
