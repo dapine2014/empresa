@@ -185,4 +185,59 @@ class TeamPlanResolverTest {
         assertTrue(emptyErrors.stream().anyMatch(e -> e.contains("backend") && e.contains("Capas libres")
                 && e.contains("APPLICATION de Combate")), emptyErrors.toString());
     }
+
+    // Revisión 2 (opción 1, tras MISSION-DDD-VERIFY-4/-5): las capas salen del roleCode, no del modelo.
+    private static final TeamSnapshot REAL_ENGINEERING = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE",
+            "engineering", List.of(
+            new TeamMemberInfo("engineering", "Neo", "rol", "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("arquitectura backend"), "m"),
+            new TeamMemberInfo("qa", "Vera", "rol", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "m"),
+            new TeamMemberInfo("devops", "Diego", "rol", "CLOUD_DB_SRE_DEVOPS", List.of("infraestructura"), "m"),
+            new TeamMemberInfo("backend", "Iris", "rol", "DEV_BACKEND_INTEGRATIONS", List.of("backend"), "m"),
+            new TeamMemberInfo("frontend-ui", "Mila", "rol", "FRONTEND_GAME_UI_SPECIALIST", List.of("Game UI"), "m")));
+
+    private static List<PlannedTask> tasksWithoutAssignments() {
+        return new ArrayList<>(List.of(
+                task("engineering", "WORK"), task("backend", "WORK"), task("frontend-ui", "VALIDATION"),
+                task("devops", "WORK"), task("qa", "WORK")));
+    }
+
+    @Test
+    void layersComeFromTheRoleCodeIgnoringTheModelsAssignments() {
+        var tasks = tasksWithoutAssignments();
+        tasks.set(1, task("backend", "WORK", a("Combate", "GAME")));
+
+        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate", "Inventario"), tasks), REAL_ENGINEERING);
+
+        assertEquals(List.of(), result.errors());
+        assertEquals(List.of("src/Combate.Domain", "src/Inventario.Domain", "src/Combate.Application", "src/Inventario.Application"),
+                of(result.plan(), "backend").ownedPaths());
+        assertEquals(List.of("game"), of(result.plan(), "frontend-ui").ownedPaths());
+        assertEquals(List.of("tests/Combate.Tests", "tests/Inventario.Tests"), of(result.plan(), "devops").ownedPaths());
+        assertEquals(List.of("Solution.sln"), of(result.plan(), "engineering").ownedPaths());
+        assertEquals("WORK", of(result.plan(), "frontend-ui").kind());
+        assertEquals("VALIDATION", of(result.plan(), "qa").kind());
+    }
+
+    @Test
+    void flutterRolesMapToTheirLayers() {
+        var result = resolver.resolve(plan("FLUTTER_WEB_APP", List.of("pedidos"), tasksWithoutAssignments()), REAL_ENGINEERING);
+
+        assertEquals(List.of(), result.errors());
+        assertEquals(List.of("lib/pedidos/presentation"), of(result.plan(), "frontend-ui").ownedPaths());
+        assertEquals(List.of("lib/pedidos/infrastructure", "test/pedidos"), of(result.plan(), "devops").ownedPaths());
+        assertEquals(List.of("pubspec.yaml", "lib/main.dart", "web"), of(result.plan(), "engineering").ownedPaths());
+    }
+
+    @Test
+    void repeatedTasksOfTheSameAgentAreMergedIntoOne() {
+        var tasks = tasksWithoutAssignments();
+        tasks.add(new PlannedTask("engineering", "WORK", "EXTRA", "otra cosa", List.of("y"), List.of()));
+
+        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), REAL_ENGINEERING);
+
+        var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).toList();
+        assertEquals(1, neo.size());
+        assertTrue(neo.get(0).objective().contains("objetivo") && neo.get(0).objective().contains("otra cosa"));
+        assertTrue(neo.get(0).requiredCapabilitiesOrEmpty().containsAll(List.of("x", "y")));
+    }
 }

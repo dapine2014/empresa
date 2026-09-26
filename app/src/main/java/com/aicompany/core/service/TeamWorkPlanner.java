@@ -4,6 +4,7 @@ import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.validation.TeamPlanResolver;
 import com.aicompany.core.agent.validation.TeamPlanValidator;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.RoleLayerCatalog;
 import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.TeamExecutionMode;
 import com.aicompany.core.model.TeamMemberInfo;
@@ -231,24 +232,15 @@ public class TeamWorkPlanner {
                   description. El name define las rutas de sus capas.
                 - ubiquitousLanguage: al menos 3 términos del dominio, cada uno con term y definition.
                 - Cada miembro tiene UNA sola tarea (nunca dos tareas para el mismo agentId).
-                - assignments de cada tarea: las capas que trabaja ese miembro, como {context, layer}, con layer
-                  en MAYÚSCULAS (DOMAIN, APPLICATION, INFRASTRUCTURE, API, PRESENTATION, GAME o TESTS, solo las
-                  que tenga el perfil elegido) y context uno de tus boundedContexts (vacío "" para GAME). Un miembro
-                  puede tener varias capas; una misma capa de un contexto la trabaja un solo miembro. Alguien debe
-                  tener la capa DOMAIN de cada contexto.
-                - kind y ownedPaths los calcula Forjai a partir de assignments: pon kind "WORK" y ownedPaths [] en
-                  todas las tareas. La validación la hace siempre el miembro con la capability QA (su assignments: []).
+                - Las capas de cada miembro las asigna Forjai según su rol (no las decides tú): %s.
+                  Tú decides el objective de cada miembro, coherente con esas capas y con el producto.
+                - kind, ownedPaths y assignments los calcula Forjai: pon kind "WORK", ownedPaths [] y
+                  assignments [] en todas las tareas.
                 - requiredCapabilities: solo capabilities que figuren en la lista de ESE agente (el nombre de una
                   tecnología, como "Godot", no es una capability si no está en su lista).
-                - EJEMPLO de assignments (perfil GODOT_DOTNET_GAME, contexto "Combate"; adáptalo, no lo copies literal):
-                    engineering: [{"context": "Combate", "layer": "APPLICATION"}]
-                    backend: [{"context": "Combate", "layer": "DOMAIN"}]
-                    frontend-ui: [{"context": "", "layer": "GAME"}]
-                    devops: [{"context": "Combate", "layer": "TESTS"}]
-                    qa: []
                 - Reglas de capas: domain no depende de nada fuera de su domain ni de frameworks; application solo de
                   domain; infrastructure/api/presentation/game dependen de application y domain.
-                """.formatted(StackProfile.describeAll());
+                """.formatted(StackProfile.describeAll(), RoleLayerCatalog.describe());
     }
 
     /**

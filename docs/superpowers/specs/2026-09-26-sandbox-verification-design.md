@@ -105,6 +105,29 @@ Decisión del fundador (opción B):
   `domain` de un contexto sin dueño.
 - `TeamPlanValidator` sigue corriendo después, sobre el plan ya resuelto.
 
+### Revisión 2 (2026-09-26): reparto de capas determinista por `roleCode`
+
+Verificado en vivo (`MISSION-DDD-VERIFY-4` y `-5`): aun eligiendo solo capas
+(`assignments`), `qwen3:8b` no convergía (oscilaciones y capas inexistentes).
+Decisión del fundador (opción 1): **las capas las asigna Java según el
+`roleCode` de cada miembro** (catálogo fijo en código, `RoleLayerCatalog`); el
+líder decide solo lo de producto: perfil, bounded contexts, glosario y el
+objetivo de cada miembro.
+
+| `roleCode` | Capas (las que tenga el perfil, en todos los contextos) |
+|---|---|
+| `DEV_BACKEND_INTEGRATIONS` | `DOMAIN`, `APPLICATION` |
+| `FRONTEND_GAME_UI_SPECIALIST` | `GAME`, `PRESENTATION`, `API` |
+| `CLOUD_DB_SRE_DEVOPS` | `INFRASTRUCTURE`, `TESTS` |
+| `CLOUD_ARCHITECT_LEAD_BACKEND` (líder) | archivos de entrada del perfil |
+| miembro con capability `QA` | tarea `VALIDATION` |
+
+Si un miembro tiene un `roleCode` fuera del catálogo, se usan sus `assignments`
+(revisión 1) como respaldo. `TeamPlanResolver` además une en una sola las tareas
+repetidas de un mismo agente (es una corrección mecánica: rutas y tipo los
+calcula Java igual). Las `requiredCapabilities` y los objetivos siguen siendo
+del líder.
+
 ### Chequeo de capas DDD (`DddLayerChecker`, Java, determinista)
 
 Se suma a `StaticWorkspaceValidator` (capa 1), antes del sandbox. Sin

@@ -182,13 +182,15 @@ class TeamWorkPlannerTest {
         return new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND",
                         List.of("arquitectura backend"), "qwen3:8b"),
-                new TeamMemberInfo("qa", "Vera", "QA", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "qwen3:8b")));
+                new TeamMemberInfo("qa", "Vera", "QA", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "qwen3:8b"),
+                new TeamMemberInfo("backend", "Iris", "Backend", "DEV_BACKEND_INTEGRATIONS", List.of("backend"), "qwen3:8b")));
     }
 
     private static TeamPlan dddPlan() {
         return new TeamPlan("Juego", null, null, List.of(
                 new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"),
-                        List.of(), List.of(new TeamPlan.LayerAssignment("Combate", "DOMAIN"))),
+                        List.of(), List.of()),
+                new PlannedTask("backend", "WORK", "DOMAIN_LOGIC", "Reglas del combate", List.of("backend"), List.of()),
                 new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
                 List.of(), "GODOT_DOTNET_GAME",
                 List.of(new TeamPlan.BoundedContext("Combate", "Combate por turnos")),
@@ -231,8 +233,7 @@ class TeamWorkPlannerTest {
         planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         assertTrue(prompt.getValue().contains("UNA sola tarea"), prompt.getValue());
-        assertTrue(prompt.getValue().contains("EJEMPLO"), prompt.getValue());
-        assertTrue(prompt.getValue().contains("assignments"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("DEV_BACKEND_INTEGRATIONS → DOMAIN"), prompt.getValue());
     }
 
     // Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior, cada reintento regeneraba desde cero y
@@ -272,7 +273,9 @@ class TeamWorkPlannerTest {
         var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).findFirst().orElseThrow();
-        assertEquals(List.of("src/Combate.Domain", "Solution.sln", "game/project.godot"), neo.ownedPaths());
+        assertEquals(List.of("Solution.sln", "game/project.godot"), neo.ownedPaths());
+        var iris = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("backend")).findFirst().orElseThrow();
+        assertEquals(List.of("src/Combate.Domain", "src/Combate.Application"), iris.ownedPaths());
     }
 
     @Test
@@ -289,6 +292,6 @@ class TeamWorkPlannerTest {
 
         planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
-        assertTrue(prompt.getAllValues().get(1).contains("no tiene assignments"), prompt.getAllValues().get(1));
+        assertTrue(prompt.getAllValues().get(1).contains("DOMAIN del contexto Combate"), prompt.getAllValues().get(1));
     }
 }

@@ -2,6 +2,7 @@ package com.aicompany.core.agent.validation;
 
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.model.RoleLayerCatalog;
 import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StackProfile.Layer;
 import com.aicompany.core.model.TeamMemberInfo;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -50,11 +52,7 @@ public class TeamPlanResolver {
         var resolved = new ArrayList<PlannedTask>();
         var needFreeLayers = new ArrayList<String>();
 
-        for (var task : plan.tasksOrEmpty()) {
-
-            if (task == null) {
-                continue;
-            }
+        for (var task : mergeRepeatedTasks(plan.tasksOrEmpty())) {
 
             if (Objects.equals(task.agentId(), qaAgentId)) {
                 resolved.add(withKindAndPaths(task, TeamPlan.KIND_VALIDATION, List.of()));
@@ -62,13 +60,20 @@ public class TeamPlanResolver {
             }
 
             var paths = new LinkedHashSet<String>();
+            var roleLayers = team.members().stream()
+                    .filter(m -> m.agentId().equals(task.agentId()))
+                    .findFirst()
+                    .flatMap(m -> RoleLayerCatalog.layersFor(m.roleCode()));
+            var assignments = roleLayers
+                    .map(layers -> roleAssignments(profile.get(), contexts, layers))
+                    .orElse(task.assignmentsOrEmpty());
 
-            for (var assignment : task.assignmentsOrEmpty()) {
+            for (var assignment : assignments) {
                 resolveAssignment(profile.get(), contexts, task.agentId(), assignment, ownerByRoot, errors, needFreeLayers)
                         .ifPresent(paths::add);
             }
 
-            if (task.assignmentsOrEmpty().isEmpty()) {
+            if (roleLayers.isEmpty() && assignments.isEmpty()) {
                 needFreeLayers.add("La tarea de " + task.agentId() + " no tiene assignments: asígnale al menos una capa "
                         + "{context, layer} de " + profile.get().name() + ".");
             }
@@ -131,6 +136,50 @@ public class TeamPlanResolver {
         }
 
         return Optional.of(root);
+    }
+
+    /** Revisión 2: las capas del rol, las que tenga el perfil, en todos los contextos. */
+    private static List<TeamPlan.LayerAssignment> roleAssignments(
+            StackProfile profile, List<String> contexts, List<Layer> roleLayers) {
+
+        var assignments = new ArrayList<TeamPlan.LayerAssignment>();
+        for (var layer : roleLayers) {
+            if (!profile.layers().contains(layer)) {
+                continue;
+            }
+            if (profile.isSharedLayer(layer)) {
+                assignments.add(new TeamPlan.LayerAssignment(null, layer.name()));
+            } else {
+                contexts.forEach(context -> assignments.add(new TeamPlan.LayerAssignment(context, layer.name())));
+            }
+        }
+        return assignments;
+    }
+
+    /** Corrección mecánica: tareas repetidas de un mismo agente se unen (rutas y tipo los calcula Java igual). */
+    private static List<PlannedTask> mergeRepeatedTasks(List<PlannedTask> tasks) {
+
+        var byAgent = new LinkedHashMap<String, PlannedTask>();
+
+        for (var task : tasks) {
+            if (task == null) {
+                continue;
+            }
+            var previous = byAgent.get(task.agentId());
+            if (previous == null) {
+                byAgent.put(task.agentId(), task);
+                continue;
+            }
+            var capabilities = new LinkedHashSet<>(previous.requiredCapabilitiesOrEmpty());
+            capabilities.addAll(task.requiredCapabilitiesOrEmpty());
+            var assignments = new ArrayList<>(previous.assignmentsOrEmpty());
+            assignments.addAll(task.assignmentsOrEmpty());
+            byAgent.put(task.agentId(), new PlannedTask(previous.agentId(), previous.kind(), previous.action(),
+                    previous.objective() + " / " + task.objective(), new ArrayList<>(capabilities),
+                    previous.ownedPathsOrEmpty(), assignments));
+        }
+
+        return new ArrayList<>(byAgent.values());
     }
 
     private static List<String> freeLayers(StackProfile profile, List<String> contexts, HashMap<String, String> ownerByRoot) {
