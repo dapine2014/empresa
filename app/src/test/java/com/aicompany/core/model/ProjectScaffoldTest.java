@@ -72,4 +72,13 @@ class ProjectScaffoldTest {
         assertTrue(sln.contains("\"Tareas.Tests\", \"tests\\Tareas.Tests\\Tareas.Tests.csproj\""), sln);
         assertTrue(StackProfile.DOTNET_APP.isEntryFile("Solution.sln"));
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-13): todo compilaba salvo Program.cs con UseSwagger(); el contrato
+    // del perfil ofrece Swashbuckle y OpenApi (precargados en el sandbox) pero el scaffold no los referenciaba.
+    @Test
+    void theApiProjectReferencesThePackagesTheContractOffers() {
+        var api = byPath(StackProfile.DOTNET_APP, List.of("Tareas")).get("src/Tareas.Api/Tareas.Api.csproj");
+        assertTrue(api.contains("<PackageReference Include=\"Swashbuckle.AspNetCore\" Version=\"6.6.2\" />"), api);
+        assertTrue(api.contains("<PackageReference Include=\"Microsoft.AspNetCore.OpenApi\" Version=\"8.0.31\" />"), api);
+    }
 }

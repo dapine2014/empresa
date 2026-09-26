@@ -36,6 +36,14 @@ public final class ProjectScaffold {
               </ItemGroup>
             """;
 
+    /** Paquetes web precargados en la imagen dotnet-app (ver executionContract()). */
+    private static final String API_PACKAGES = """
+              <ItemGroup>
+                <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+                <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.31" />
+              </ItemGroup>
+            """;
+
     public static List<GeneratedFile> generate(StackProfile profile, List<String> contexts) {
 
         if (profile.ecosystem() != StackProfile.Ecosystem.NUGET) {
@@ -58,7 +66,8 @@ public final class ProjectScaffold {
                 var sdk = layer == Layer.API ? "Microsoft.NET.Sdk.Web" : "Microsoft.NET.Sdk";
                 var extra = layer == Layer.TESTS
                         ? "    <IsPackable>false</IsPackable>\n    <IsTestProject>true</IsTestProject>\n" : "";
-                files.add(project(projectPath(dir), sdk, extra, references, layer == Layer.TESTS ? TEST_PACKAGES : ""));
+                var packages = layer == Layer.TESTS ? TEST_PACKAGES : layer == Layer.API ? API_PACKAGES : "";
+                files.add(project(projectPath(dir), sdk, extra, references, packages));
             }
         }
 
