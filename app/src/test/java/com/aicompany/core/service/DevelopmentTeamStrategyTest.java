@@ -10,6 +10,7 @@ import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.*;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -42,10 +43,15 @@ class DevelopmentTeamStrategyTest {
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "R", List.of("arquitectura backend"), "m"),
                 new TeamMemberInfo("frontend-ui", "Mila", "UI", "R", List.of("Game UI"), "m"),
                 new TeamMemberInfo("qa", "Vera", "QA", "R", List.of("QA"), "m")));
-        var plan = new TeamPlan("Juego de navegador", "HTML5 + JS", "web/index.html", List.of(
-                new PlannedTask("engineering", "WORK", "ARCHITECTURE", "Base", List.of("arquitectura backend"), List.of("web/index.html")),
-                new PlannedTask("frontend-ui", "WORK", "GAME_UI", "HUD", List.of("Game UI"), List.of("web/ui")),
-                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())));
+        var plan = new TeamPlan("Juego de combate", null, null, List.of(
+                new PlannedTask("engineering", "WORK", "ARCHITECTURE", "Base", List.of("arquitectura backend"), List.of("Juego.sln", "game")),
+                new PlannedTask("frontend-ui", "WORK", "GAME_UI", "HUD", List.of("Game UI"), List.of("src/Combate.Application")),
+                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
+                List.of(), "GODOT_DOTNET_GAME",
+                List.of(new TeamPlan.BoundedContext("Combate", "Combate por turnos")),
+                List.of(new TeamPlan.GlossaryTerm("Unidad", "Personaje"),
+                        new TeamPlan.GlossaryTerm("Turno", "Momento de acción"),
+                        new TeamPlan.GlossaryTerm("Daño", "Vida que resta un ataque")));
         return new TeamMissionContext("M-1", "crear un juego", team, plan);
     }
 
@@ -71,8 +77,8 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
-        when(validator.validate(eq("M-1"), anyList(), eq("web/index.html"), anyList()))
-                .thenReturn(List.of(StaticCheck.pass("ENTRY_POINT", "ok", null, List.of("web/index.html"))));
+        when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
+                .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
     }
 
     @Test
@@ -161,5 +167,25 @@ class DevelopmentTeamStrategyTest {
         assertTrue(rendered.contains("[TRUNCADO"));
         assertTrue(rendered.contains("web/c.js (NO INCLUIDO"));
         assertFalse(rendered.contains("c".repeat(50)));
+    }
+
+    @Test
+    void workAndReviewPromptsCarryTheProfileContextsAndGlossary() throws Exception {
+        stubHappyPath();
+        var workPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/Atacar.cs")));
+        var reviewPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        assertTrue(workPrompt.getValue().contains("GODOT_DOTNET_GAME"));
+        assertTrue(workPrompt.getValue().contains("Combate"));
+        assertTrue(workPrompt.getValue().contains("Unidad: Personaje"));
+        assertTrue(reviewPrompt.getValue().contains("lenguaje ubicuo"));
+        assertTrue(reviewPrompt.getValue().contains("anémico"));
+        assertTrue(result.resultsForCeo().contains("GODOT_DOTNET_GAME"));
     }
 }
