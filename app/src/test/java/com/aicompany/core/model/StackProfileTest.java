@@ -65,4 +65,18 @@ class StackProfileTest {
         assertTrue(all.contains("src/<Ctx>.Domain"));
         assertTrue(all.contains("lib/<ctx>/domain"));
     }
+
+    // Verificado en vivo (sandbox parte 2): sin red, solo existen las versiones precargadas en la imagen, y el paso
+    // de arranque espera cosas concretas. Los agentes lo tienen que saber o el sandbox falla con código correcto.
+    @Test
+    void everyProfileDescribesItsExecutionContract() {
+        assertTrue(StackProfile.DOTNET_APP.describe().contains("xunit 2.5.3"));
+        assertTrue(StackProfile.DOTNET_APP.describe().contains("GET /health"));
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.describe().contains("Godot.NET.Sdk/4.3.0"));
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.describe().contains("run/main_scene"));
+        assertTrue(StackProfile.FLUTTER_WEB_APP.describe().contains("cupertino_icons"));
+        for (var profile : StackProfile.values()) {
+            assertTrue(profile.describe().contains("SANDBOX (sin red)"), profile.name());
+        }
+    }
 }
