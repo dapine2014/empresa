@@ -473,4 +473,37 @@ class DevelopmentTeamStrategyTest {
         verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(),
                 contains("propias rutas o usa los tipos que sí existen"), anyList(), anyList(), eq(List.of("src/Combate.Application")));
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): CS0246 por un "using" faltante de un tipo que existe en
+    // otra capa. Forjai lo corrige solo (commit propio) y verifica de nuevo sin gastar una llamada al modelo.
+    @Test
+    void aMissingUsingIsFixedByForjaiWithoutAskingTheAgent() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of(
+                "src/Combate.Domain/Unidad.cs", "src/Combate.Application/X.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Domain/Unidad.cs"))
+                .thenReturn("namespace Combate.Domain;\npublic class Unidad { }\n");
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs"))
+                .thenReturn("using System;\nnamespace Combate.Application;\npublic class X { Unidad u; }\n");
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-AUTOFIX"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("6".repeat(40), List.of("src/Combate.Application/X.cs")));
+        var fail = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("build", "FAIL", 1, 1000,
+                "/work/src/Combate.Application/X.cs(3,35): error CS0246: The type or namespace name 'Unidad' could not "
+                        + "be found (are you missing a using directive or an assembly reference?) [/work/x.csproj]", 0, 0)));
+        var pass = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 2, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(fail))
+                .thenReturn(Optional.of(pass));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-AUTOFIX"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().get(0).content().contains("using System;\nusing Combate.Domain;\n")));
+        verify(sandbox).verify("M-1", "6".repeat(40), "GODOT_DOTNET_GAME");
+        verify(runtime, never()).generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Correcciones automáticas de Forjai: 1"), result.verifiableState());
+    }
 }

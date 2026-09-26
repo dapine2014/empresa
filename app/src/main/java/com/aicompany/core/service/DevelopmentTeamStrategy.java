@@ -7,6 +7,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.agent.validation.CompilerErrorParser;
+import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.MissionStatus;
@@ -192,6 +193,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         SandboxResult sandboxResult = null;
         String sandboxError = null;
         var repairRounds = 0;
+        var autofixRounds = 0;
 
         // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10): si no compila, los errores reales del compilador
         // vuelven al dueño de cada archivo, se commitea la corrección y se verifica de nuevo (hasta MAX_REPAIR_ROUNDS).
@@ -211,7 +213,23 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             sandboxResult = verified.orElse(null);
             sandboxError = verified.isEmpty() ? sandbox.lastError() : null;
 
-            if (sandboxResult == null || sandboxResult.passed() || round == MAX_REPAIR_ROUNDS) {
+            if (sandboxResult == null || sandboxResult.passed()) {
+                break;
+            }
+
+            // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): los "using" faltantes los corrige Forjai sin modelo.
+            if (autofixRounds < MAX_AUTOFIX_ROUNDS) {
+                var autofix = commitMissingUsings(missionId, headSha, profile, plan.contextNames(), sandboxResult);
+                if (autofix != null) {
+                    committed.add(autofix);
+                    headSha = autofix.commitSha();
+                    autofixRounds++;
+                    checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
+                    continue;
+                }
+            }
+
+            if (repairRounds >= MAX_REPAIR_ROUNDS) {
                 break;
             }
 
@@ -324,7 +342,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
-                        repairRounds));
+                        repairRounds, autofixRounds));
     }
 
     private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
@@ -339,6 +357,46 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     static final int MAX_REPAIR_ROUNDS = 2;
+    static final int MAX_AUTOFIX_ROUNDS = 3;
+
+    private static List<CompilerErrorParser.CompilerError> compileErrors(SandboxResult result) {
+        var failed = result.stepsOrEmpty().stream()
+                .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
+                .findFirst();
+        if (failed.isEmpty() || !List.of("restore", "build").contains(failed.get().name())) {
+            return List.of();
+        }
+        return CompilerErrorParser.parse(failed.get().outputTail());
+    }
+
+    /** Commit "Forjai (auto-fix)" con los using faltantes, o null si no hay nada seguro que corregir. */
+    private CommittedWork commitMissingUsings(String missionId, String headSha, StackProfile profile,
+                                              List<String> contexts, SandboxResult result) {
+        var errors = compileErrors(result);
+        if (errors.isEmpty()) {
+            return null;
+        }
+        try {
+            var files = new LinkedHashMap<String, String>();
+            for (var path : workspace.filesAtCommit(missionId, headSha)) {
+                if (path.endsWith(".cs")) {
+                    files.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+                }
+            }
+            var fixes = MissingUsingFixer.fix(profile, contexts, files, errors);
+            if (fixes.isEmpty()) {
+                return null;
+            }
+            var generated = fixes.entrySet().stream()
+                    .map(e -> new DevelopmentResult.GeneratedFile(e.getKey(), e.getValue())).toList();
+            var record = workspace.commitAgentWork(missionId, missionId + "-AUTOFIX", "forjai", "Forjai",
+                    new DevelopmentResult("Forjai agregó using faltantes (CS0246) en " + fixes.keySet(), generated));
+            return new CommittedWork(missionId + "-AUTOFIX", "forjai", record.sha(), record.files());
+        } catch (Exception ex) {
+            log.warn("MISSION {} - automatic using fix failed: {}", missionId, ex.getMessage());
+            return null;
+        }
+    }
 
     /** Errores del compilador del primer paso fallido (restore/build), agrupados por dueño en orden de capas. */
     private static LinkedHashMap<PlannedTask, List<CompilerErrorParser.CompilerError>> compileErrorsByOwner(
@@ -350,7 +408,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (failed.isEmpty() || !List.of("restore", "build").contains(failed.get().name())) {
             return byOwner;
         }
-        var errors = CompilerErrorParser.parse(failed.get().outputTail());
+        var errors = compileErrors(result);
         for (var task : ordered) {
             var own = errors.stream().filter(e -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), e.path())).toList();
             if (!own.isEmpty()) {
@@ -688,7 +746,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private String verifiableState(
             TeamMissionContext context, CommittedWork scaffold, List<CommittedWork> committed, List<StaticCheck> checks,
             StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError,
-            int repairRounds) {
+            int repairRounds, int autofixRounds) {
 
         var passed = checks.stream().filter(StaticCheck::passed).count();
 
@@ -716,6 +774,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("Validación estática: ").append(status.name())
                 .append(" (").append(passed).append("/").append(checks.size()).append(" chequeos deterministas en PASS)\n");
         out.append("Sandbox: ").append(sandboxSummary(sandboxResult, sandboxError)).append("\n");
+        if (autofixRounds > 0) {
+            out.append("Correcciones automáticas de Forjai: ").append(autofixRounds)
+                    .append(" (using faltantes de tipos que existen en otra capa)\n");
+        }
         if (repairRounds > 0) {
             out.append("Rondas de corrección: ").append(repairRounds)
                     .append(" (errores reales del compilador devueltos a los dueños de los archivos)\n");

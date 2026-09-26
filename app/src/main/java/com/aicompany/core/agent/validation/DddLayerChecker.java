@@ -100,7 +100,12 @@ public final class DddLayerChecker {
             return null;
         }
 
-        var target = dependency.target().get();
+        return layerRule(source, dependency.target().get());
+    }
+
+    /** null si la capa {@code source} puede depender de {@code target}; si no, el motivo. */
+    static String layerRule(Location source, Location target) {
+
         var sameContext = Objects.equals(source.context(), target.context());
 
         return switch (source.layer()) {
