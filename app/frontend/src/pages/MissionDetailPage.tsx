@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { InvestorDecision, StaticCheck } from '../api/types'
+import type { InvestorDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -13,6 +13,21 @@ function parseChecks(raw: string | null): StaticCheck[] {
   } catch {
     return []
   }
+}
+
+function parseSandbox(raw: string | null): SandboxResult | null {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as SandboxResult
+  } catch {
+    return null
+  }
+}
+
+function sandboxDot(step: SandboxStep): string {
+  if (step.status === 'PASS') return '🟢'
+  if (step.status === 'SKIPPED') return '⚪'
+  return '🔴'
 }
 
 const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED'])
@@ -122,10 +137,10 @@ export default function MissionDetailPage() {
         .filter((task) => task.validationStatus)
         .map((task) => (
           <section key={`${task.taskId}-validation`}>
-            <h2>Validación estática</h2>
+            <h2>Validación</h2>
             <p>
               {statusDot(task.validationStatus ?? '')} <strong>{task.validationStatus}</strong> — revisada por{' '}
-              {task.agentId.toUpperCase()}. Esta fase no ejecuta código.
+              {task.agentId.toUpperCase()}.
             </p>
             <ul>
               {parseChecks(task.staticChecks).map((check, index) => (
@@ -134,6 +149,26 @@ export default function MissionDetailPage() {
                 </li>
               ))}
             </ul>
+            {(() => {
+              const sandbox = parseSandbox(task.sandboxResult)
+              if (!sandbox) return <p className="hint">El sandbox no corrió: la ejecución no está verificada.</p>
+              return (
+                <>
+                  <h3>Sandbox</h3>
+                  <ul>
+                    {sandbox.steps.map((step) => (
+                      <li key={step.name}>
+                        {sandboxDot(step)} {step.name}: {step.status} ({Math.round(step.durationMs / 1000)} s)
+                        {step.name === 'test' && ` — ${step.testsPassed}/${step.testsPassed + step.testsFailed} tests`}
+                        {(step.status === 'FAIL' || step.status === 'TIMEOUT') && step.outputTail && (
+                          <pre className="mission-message">{step.outputTail.slice(-1500)}</pre>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )
+            })()}
           </section>
         ))}
 

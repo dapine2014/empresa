@@ -44,10 +44,27 @@ export interface AgentTask {
   workspacePath: string | null
   commitSha: string | null
   files: string[] | null
-  // Solo en la tarea VALIDATION: STATICALLY_VALIDATED | UNVALIDATED | FAILED
+  // Solo en la tarea VALIDATION: VERIFIED | STATICALLY_VALIDATED | UNVALIDATED | FAILED
   validationStatus: string | null
   // JSON de StaticCheck[]
   staticChecks: string | null
+  // JSON de SandboxResult (solo en la tarea VALIDATION, si el sandbox corrió)
+  sandboxResult: string | null
+}
+
+export interface SandboxStep {
+  name: string
+  status: 'PASS' | 'FAIL' | 'TIMEOUT' | 'SKIPPED'
+  exitCode: number
+  durationMs: number
+  outputTail: string
+  testsPassed: number
+  testsFailed: number
+}
+
+export interface SandboxResult {
+  overall: 'PASS' | 'FAIL'
+  steps: SandboxStep[]
 }
 
 export interface StaticCheck {
