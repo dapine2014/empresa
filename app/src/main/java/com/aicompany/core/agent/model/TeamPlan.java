@@ -33,6 +33,14 @@ public record TeamPlan(
     public record BoundedContext(String name, String description) {
     }
 
+    /**
+     * Capa de un bounded context que trabaja un miembro (revisión 2026-09-26, opción B): el líder decide
+     * qué capas trabaja cada uno; TeamPlanResolver calcula las rutas. {@code context} es null en capas
+     * compartidas como {@code GAME}.
+     */
+    public record LayerAssignment(String context, String layer) {
+    }
+
     /** Término del lenguaje ubicuo con su definición. */
     public record GlossaryTerm(String term, String definition) {
     }
@@ -77,8 +85,19 @@ public record TeamPlan(
             String action,
             String objective,
             List<String> requiredCapabilities,
-            List<String> ownedPaths
+            List<String> ownedPaths,
+            List<LayerAssignment> assignments
     ) {
+        /** Tareas sin asignaciones de capas (equipos de análisis y planes previos). */
+        public PlannedTask(String agentId, String kind, String action, String objective,
+                           List<String> requiredCapabilities, List<String> ownedPaths) {
+            this(agentId, kind, action, objective, requiredCapabilities, ownedPaths, List.of());
+        }
+
+        public List<LayerAssignment> assignmentsOrEmpty() {
+            return assignments == null ? List.of() : assignments;
+        }
+
         public List<String> requiredCapabilitiesOrEmpty() {
             return requiredCapabilities == null ? List.of() : requiredCapabilities;
         }

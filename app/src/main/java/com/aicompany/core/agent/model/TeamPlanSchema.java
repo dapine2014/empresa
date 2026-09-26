@@ -18,9 +18,17 @@ public final class TeamPlanSchema {
                     "objective", Map.of("type", "string", "minLength", 1),
                     "requiredCapabilities", Map.of(
                             "type", "array", "items", Map.of("type", "string"), "minItems", 1),
-                    "ownedPaths", Map.of("type", "array", "items", Map.of("type", "string"))
+                    "ownedPaths", Map.of("type", "array", "items", Map.of("type", "string")),
+                    "assignments", Map.of("type", "array", "items", Map.of(
+                            "type", "object",
+                            "properties", Map.of(
+                                    "context", Map.of("type", "string"),
+                                    "layer", Map.of("type", "string", "minLength", 1)),
+                            "required", List.of("context", "layer"),
+                            "additionalProperties", false))
             ),
-            "required", List.of("agentId", "kind", "action", "objective", "requiredCapabilities", "ownedPaths"),
+            "required", List.of("agentId", "kind", "action", "objective", "requiredCapabilities", "ownedPaths",
+                    "assignments"),
             "additionalProperties", false
     );
 

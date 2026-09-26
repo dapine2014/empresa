@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.TeamPlan;
+import com.aicompany.core.agent.validation.TeamPlanResolver;
 import com.aicompany.core.agent.validation.TeamPlanValidator;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.StackProfile;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -45,6 +47,7 @@ public class TeamWorkPlanner {
     private final MissionMemoryService memory;
     private final CompanyEventPublisher events;
     private final TeamPlanValidator validator;
+    private final TeamPlanResolver resolver;
     private final JsonMapper jsonMapper;
     private final String defaultAgentModel;
 
@@ -56,6 +59,7 @@ public class TeamWorkPlanner {
             MissionMemoryService memory,
             CompanyEventPublisher events,
             TeamPlanValidator validator,
+            TeamPlanResolver resolver,
             JsonMapper jsonMapper,
             @Value("${ollama.agent-model}") String defaultAgentModel) {
 
@@ -66,6 +70,7 @@ public class TeamWorkPlanner {
         this.memory = memory;
         this.events = events;
         this.validator = validator;
+        this.resolver = resolver;
         this.jsonMapper = jsonMapper;
         this.defaultAgentModel = defaultAgentModel;
     }
@@ -118,7 +123,17 @@ public class TeamWorkPlanner {
                     return reportParticipationConflict(missionId, taskId, leaderId, teamId, plan);
                 }
 
-                var errors = validator.validate(plan, team, mode);
+                var errors = new ArrayList<String>();
+
+                if (mode == TeamExecutionMode.DEVELOPMENT) {
+                    var resolution = resolver.resolve(plan, team);
+                    errors.addAll(resolution.errors());
+                    plan = resolution.plan();
+                }
+
+                if (errors.isEmpty()) {
+                    errors.addAll(validator.validate(plan, team, mode));
+                }
 
                 if (errors.isEmpty()) {
 
@@ -215,21 +230,22 @@ public class TeamWorkPlanner {
                 - boundedContexts: los bounded contexts del producto, cada uno con name (en el formato del perfil) y
                   description. El name define las rutas de sus capas.
                 - ubiquitousLanguage: al menos 3 términos del dominio, cada uno con term y definition.
-                - ownedPaths de cada tarea WORK: carpetas o archivos DENTRO de la estructura del perfil elegido para
-                  alguno de tus contextos (p. ej. src/Combate.Domain), o sus archivos de entrada. Una carpeta padre
-                  como "src" no se acepta.
-                - Cada miembro tiene UNA sola tarea. Si un agente trabaja en varias capas o contextos, pon TODAS esas
-                  carpetas en los ownedPaths de su única tarea; nunca crees dos tareas para el mismo agentId. Cada
-                  carpeta pertenece a un solo agente. Toda tarea WORK declara al menos un ownedPath.
+                - Cada miembro tiene UNA sola tarea (nunca dos tareas para el mismo agentId).
+                - assignments de cada tarea: las capas que trabaja ese miembro, como {context, layer}, con layer
+                  en MAYÚSCULAS (DOMAIN, APPLICATION, INFRASTRUCTURE, API, PRESENTATION, GAME o TESTS, solo las
+                  que tenga el perfil elegido) y context uno de tus boundedContexts (vacío "" para GAME). Un miembro
+                  puede tener varias capas; una misma capa de un contexto la trabaja un solo miembro. Alguien debe
+                  tener la capa DOMAIN de cada contexto.
+                - kind y ownedPaths los calcula Forjai a partir de assignments: pon kind "WORK" y ownedPaths [] en
+                  todas las tareas. La validación la hace siempre el miembro con la capability QA (su assignments: []).
                 - requiredCapabilities: solo capabilities que figuren en la lista de ESE agente (el nombre de una
                   tecnología, como "Godot", no es una capability si no está en su lista).
-                - EJEMPLO de reparto válido (perfil GODOT_DOTNET_GAME, un contexto "Combate"; adáptalo a tu producto y
-                  a tus contextos, no lo copies literal):
-                    engineering (WORK): ["Juego.sln", "src/Combate.Application"]
-                    backend (WORK): ["src/Combate.Domain"]
-                    frontend-ui (WORK): ["game"]
-                    devops (WORK): ["tests/Combate.Tests"]
-                    qa (VALIDATION): []
+                - EJEMPLO de assignments (perfil GODOT_DOTNET_GAME, contexto "Combate"; adáptalo, no lo copies literal):
+                    engineering: [{"context": "Combate", "layer": "APPLICATION"}]
+                    backend: [{"context": "Combate", "layer": "DOMAIN"}]
+                    frontend-ui: [{"context": "", "layer": "GAME"}]
+                    devops: [{"context": "Combate", "layer": "TESTS"}]
+                    qa: []
                 - Reglas de capas: domain no depende de nada fuera de su domain ni de frameworks; application solo de
                   domain; infrastructure/api/presentation/game dependen de application y domain.
                 """.formatted(StackProfile.describeAll());
@@ -276,7 +292,7 @@ public class TeamWorkPlanner {
         var tasks = plan.tasks().stream()
                 .map(t -> t == null || t.action() == null ? t : new TeamPlan.PlannedTask(
                         t.agentId(), t.kind(), normalizeAction(t.action()), t.objective(),
-                        t.requiredCapabilities(), t.ownedPaths()))
+                        t.requiredCapabilities(), t.ownedPaths(), t.assignments()))
                 .toList();
 
         return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts(),

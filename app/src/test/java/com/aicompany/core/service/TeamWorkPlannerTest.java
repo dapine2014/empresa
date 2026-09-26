@@ -2,6 +2,7 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.agent.validation.TeamPlanResolver;
 import com.aicompany.core.agent.validation.TeamPlanValidator;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.TeamExecutionMode;
@@ -28,7 +29,7 @@ class TeamWorkPlannerTest {
 
     private final TeamWorkPlanner planner = new TeamWorkPlanner(
             teamMemory, ceoService, companyMemory, promptMemory, memory, events,
-            new TeamPlanValidator(), JsonMapper.builder().build(), "qwen3:8b");
+            new TeamPlanValidator(), new TeamPlanResolver(), JsonMapper.builder().build(), "qwen3:8b");
 
     {
         when(companyMemory.agentModel(anyString(), anyString())).thenAnswer(inv -> inv.getArgument(1));
@@ -187,7 +188,7 @@ class TeamWorkPlannerTest {
     private static TeamPlan dddPlan() {
         return new TeamPlan("Juego", null, null, List.of(
                 new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"),
-                        List.of("Juego.sln", "src/Combate.Domain")),
+                        List.of(), List.of(new TeamPlan.LayerAssignment("Combate", "DOMAIN"))),
                 new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
                 List.of(), "GODOT_DOTNET_GAME",
                 List.of(new TeamPlan.BoundedContext("Combate", "Combate por turnos")),
@@ -231,7 +232,7 @@ class TeamWorkPlannerTest {
 
         assertTrue(prompt.getValue().contains("UNA sola tarea"), prompt.getValue());
         assertTrue(prompt.getValue().contains("EJEMPLO"), prompt.getValue());
-        assertTrue(prompt.getValue().contains("\"src/Combate.Domain\""), prompt.getValue());
+        assertTrue(prompt.getValue().contains("assignments"), prompt.getValue());
     }
 
     // Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior, cada reintento regeneraba desde cero y
@@ -260,5 +261,34 @@ class TeamWorkPlannerTest {
         assertThrows(IllegalStateException.class,
                 () -> planner.plan("M-1", "TEAM-ENGINEERING", "x", TeamExecutionMode.DEVELOPMENT));
         verify(ceoService, times(5)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+    }
+
+    // Revisión 2026-09-26 (opción B): Java calcula rutas, VALIDATION y archivos de entrada antes de validar.
+    @Test
+    void developmentPlansAreResolvedBeforeValidation() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(dddPlan());
+
+        var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).findFirst().orElseThrow();
+        assertEquals(List.of("src/Combate.Domain", "Solution.sln", "game/project.godot"), neo.ownedPaths());
+    }
+
+    @Test
+    void resolverErrorsAreRetriedWithTheirCorrection() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        var noAssignments = new TeamPlan("Juego", null, null, List.of(
+                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"), List.of()),
+                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
+                List.of(), "GODOT_DOTNET_GAME", dddPlan().boundedContexts(), dddPlan().ubiquitousLanguage());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
+                .thenReturn(noAssignments)
+                .thenReturn(dddPlan());
+
+        planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        assertTrue(prompt.getAllValues().get(1).contains("no tiene assignments"), prompt.getAllValues().get(1));
     }
 }

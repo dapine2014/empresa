@@ -189,6 +189,42 @@ public enum StackProfile {
         return Optional.empty();
     }
 
+    /** Capas que ofrece el perfil (por contexto y compartidas). */
+    public List<Layer> layers() {
+        var layers = new ArrayList<Layer>();
+        contextRoots.forEach(r -> layers.add(r.layer()));
+        sharedRoots.forEach(r -> layers.add(r.layer()));
+        return layers;
+    }
+
+    public boolean isSharedLayer(Layer layer) {
+        return sharedRoots.stream().anyMatch(r -> r.layer() == layer);
+    }
+
+    /** Raíz de la capa para el contexto (ignorado en capas compartidas), o vacío si el perfil no la tiene. */
+    public Optional<String> resolveRoot(String context, Layer layer) {
+        for (var root : sharedRoots) {
+            if (root.layer() == layer) {
+                return Optional.of(root.template());
+            }
+        }
+        for (var root : contextRoots) {
+            if (root.layer() == layer && context != null) {
+                return Optional.of(root.resolve(context));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Archivos de entrada y extras de arranque que recibe el líder (revisión 2026-09-26, opción B). */
+    public List<String> leaderOwnedPaths() {
+        return switch (this) {
+            case DOTNET_APP -> List.of("Solution.sln");
+            case GODOT_DOTNET_GAME -> List.of("Solution.sln", "game/project.godot");
+            case FLUTTER_WEB_APP -> List.of("pubspec.yaml", "lib/main.dart", "web");
+        };
+    }
+
     public String describe() {
         var placeholder = ecosystem == Ecosystem.PUB ? "<ctx>" : "<Ctx>";
         var layers = contextRoots.stream()

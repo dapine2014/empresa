@@ -81,6 +81,30 @@ El prompt de `TeamWorkPlanner` presenta el catálogo de perfiles con su
 estructura y exige elegir uno, declarar contextos y glosario, y repartir las
 tareas por contexto y capa.
 
+### Revisión 2026-09-26: Java decide lo mecánico, el líder decide lo de producto
+
+Verificado en vivo (`MISSION-DDD-VERIFY-1` a `-3`): con `qwen3:8b`, el líder no
+lograba un plan válido en 3 ni en 5 intentos cuando tenía que calcular carpetas
+exclusivas, asignar la única tarea `VALIDATION` y repartir archivos de entrada.
+Decisión del fundador (opción B):
+
+- El líder decide **perfil, bounded contexts, glosario** y, por miembro,
+  `objective`, `requiredCapabilities` y **`assignments`**: una lista de
+  `{context, layer}` con las capas del perfil que trabaja ese miembro (`game`
+  sin contexto en Godot).
+- **`TeamPlanResolver`** (Java, determinista) completa el plan antes de validarlo:
+  - `ownedPaths` = la raíz de cada asignación, calculada desde el catálogo;
+  - la tarea del primer miembro con la capability `QA` pasa a `VALIDATION` (sin
+    rutas) y todas las demás a `WORK`, sin importar lo que haya escrito el modelo;
+  - el líder recibe los archivos de entrada y extras de arranque del perfil
+    (`Solution.sln`; `game/project.godot` si nadie tiene `game`; en Flutter
+    `pubspec.yaml`, `lib/main.dart` y `web`), salvo los que ya cubra otra raíz.
+- El resolver devuelve errores **accionables** (se reintentan con el plan
+  anterior): capa o contexto inexistente, misma capa de un contexto asignada a
+  dos miembros (nombrando a ambos), miembro de trabajo sin asignaciones, y capa
+  `domain` de un contexto sin dueño.
+- `TeamPlanValidator` sigue corriendo después, sobre el plan ya resuelto.
+
 ### Chequeo de capas DDD (`DddLayerChecker`, Java, determinista)
 
 Se suma a `StaticWorkspaceValidator` (capa 1), antes del sandbox. Sin
