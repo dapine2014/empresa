@@ -187,13 +187,14 @@ class DevelopmentRuntimeTest {
                 anyString(), anyString());
     }
 
-    // Verificado en vivo (MISSION-SANDBOX-VERIFY-3): .csproj con "// nombre" antes del XML.
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): los .csproj los genera Forjai; un agente que los
+    // escribe se corrige con reintento.
     @Test
-    void anInvalidProjectFileIsRetriedWithTheExactError() throws Exception {
-        var bad = new DevelopmentResult("r", List.of(new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj",
-                "// Tareas.Domain.csproj\n<Project Sdk=\"Microsoft.NET.Sdk\"></Project>")));
-        var good = new DevelopmentResult("r", List.of(new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj",
-                "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>")));
+    void writingAProjectGeneratedByForjaiIsRetried() throws Exception {
+        var bad = new DevelopmentResult("r", List.of(
+                new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj", "<Project />"),
+                new GeneratedFile("src/Tareas.Domain/Tarea.cs", "namespace Tareas.Domain;")));
+        var good = new DevelopmentResult("r", List.of(new GeneratedFile("src/Tareas.Domain/Tarea.cs", "namespace Tareas.Domain;")));
         when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(bad)
                 .thenReturn(good);
@@ -201,9 +202,29 @@ class DevelopmentRuntimeTest {
         var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("src/Tareas.Domain"),
                 List.of("src/Tareas.Domain/Tareas.Domain.csproj")).get();
 
-        assertTrue(result.files().get(0).content().startsWith("<Project"));
+        assertEquals(1, result.files().size());
         verify(ceoService).generateDevelopmentArtifact(anyString(),
-                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("no es XML válido")),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("los genera Forjai")
+                        && p.contains("resultado COMPLETO")),
+                anyString(), anyString());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): dueños de Infrastructure+Tests entregaban solo una
+    // capa (o solo el .csproj). Cada ownedPath debe recibir al menos un archivo.
+    @Test
+    void anOwnedPathWithoutFilesIsRetried() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("src/Tareas.Infrastructure/Repo.cs"))
+                .thenReturn(new DevelopmentResult("r", List.of(
+                        new GeneratedFile("src/Tareas.Infrastructure/Repo.cs", "x"),
+                        new GeneratedFile("tests/Tareas.Tests/TareaTests.cs", "x"))));
+
+        var result = runtime.generate("T-1", "MISSION-1", "devops", "prompt",
+                List.of("src/Tareas.Infrastructure", "tests/Tareas.Tests")).get();
+
+        assertEquals(2, result.files().size());
+        verify(ceoService).generateDevelopmentArtifact(anyString(),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("tests/Tareas.Tests")),
                 anyString(), anyString());
     }
 

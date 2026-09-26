@@ -9,6 +9,7 @@ import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.ProjectScaffold;
 import com.aicompany.core.model.SandboxResult;
 import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StaticCheck;
@@ -99,8 +100,22 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         createTask(missionId, validation, TeamPlan.KIND_VALIDATION);
 
-        var futures = new LinkedHashMap<PlannedTask, CompletableFuture<DevelopmentResult>>();
         var expectedProjects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
+        CommittedWork scaffold;
+        try {
+            scaffold = commitProjectScaffold(context);
+        } catch (IllegalStateException ex) {
+            // Sin estructura de proyectos no hay nada que generar: ninguna tarea queda colgada en PENDING.
+            for (var task : plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
+                    .toList()) {
+                var id = taskId(missionId, task.agentId());
+                memory.updateTask(id, "FAILED", ex.getMessage());
+                events.publishTask("EMPRESA_TASK_FAILED", id, missionId, task.agentId(), "FAILED", ex.getMessage());
+            }
+            throw ex;
+        }
+
+        var futures = new LinkedHashMap<PlannedTask, CompletableFuture<DevelopmentResult>>();
 
         for (var task : work) {
             futures.put(task, runtime.generate(taskId(missionId, task.agentId()), missionId, task.agentId(),
@@ -248,7 +263,28 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return new TeamExecutionResult.Development(
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
-                verifiableState(context, committed, checks, status, failures, sandboxResult, sandboxError));
+                verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError));
+    }
+
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): qwen3:8b no escribía los .csproj, los rompía o deformaba
+     * ".csproj". Forjai los genera (ProjectScaffold) en un commit propio antes del trabajo de los agentes.
+     */
+    private CommittedWork commitProjectScaffold(TeamMissionContext context) {
+        var plan = context.plan();
+        var files = plan.profile().map(p -> ProjectScaffold.generate(p, plan.contextNames())).orElse(List.of());
+        if (files.isEmpty()) {
+            return null;
+        }
+        try {
+            var record = workspace.commitAgentWork(context.missionId(), context.missionId() + "-SCAFFOLD", "forjai",
+                    "Forjai", new DevelopmentResult("Proyectos .csproj generados por Forjai (reglas DDD del perfil "
+                            + plan.stackProfile() + ")", files));
+            return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai", record.sha(), record.files());
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudo generar la estructura de proyectos: "
+                    + safeMessage(ex, "error de Git"), ex);
+        }
     }
 
     private void createTask(String missionId, PlannedTask task, String kind) {
@@ -299,15 +335,16 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .collect(Collectors.joining("\n"));
 
         // Verificado en vivo: la dueña de "game" no creó game/project.godot porque nadie le dijo que era obligatorio.
-        // Verificado en vivo (MISSION-SANDBOX-VERIFY-2): tampoco escribían el .csproj de su capa.
-        var requiredFiles = plan.profile()
-                .map(p -> java.util.stream.Stream.concat(p.leaderOwnedPaths().stream(),
-                        p.projectFiles(plan.contextNames()).stream()).toList())
-                .orElse(List.of()).stream()
+        var requiredFiles = plan.profile().map(StackProfile::leaderOwnedPaths).orElse(List.of()).stream()
                 .filter(file -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), file))
                 .toList();
         var required = requiredFiles.isEmpty() ? "" : "ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no "
                 + "compila ni arranca sin ellos): " + requiredFiles + "\n";
+        var projects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
+        if (!projects.isEmpty()) {
+            required += "PROYECTOS .csproj: ya existen y los genera Forjai con las referencias DDD correctas; no los "
+                    + "escribas: " + projects + "\n";
+        }
 
         return """
                 MISIÓN DEL EQUIPO %s:
@@ -479,7 +516,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private String verifiableState(
-            TeamMissionContext context, List<CommittedWork> committed, List<StaticCheck> checks,
+            TeamMissionContext context, CommittedWork scaffold, List<CommittedWork> committed, List<StaticCheck> checks,
             StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError) {
 
         var passed = checks.stream().filter(StaticCheck::passed).count();
@@ -489,6 +526,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("Workspace: ").append(workspace.missionWorkspace(context.missionId())).append("\n");
         out.append("Perfil: ").append(context.plan().stackProfile())
                 .append(" | Bounded contexts: ").append(context.plan().contextNames()).append("\n");
+
+        if (scaffold != null) {
+            out.append("- Forjai (scaffold): commit ").append(scaffold.commitSha()).append(" — ")
+                    .append(scaffold.files().size()).append(" proyecto(s) .csproj generados por Java\n");
+        }
 
         for (var c : committed) {
             out.append("- ").append(agentName(context, c.agentId())).append(" (").append(c.agentId()).append("): commit ")

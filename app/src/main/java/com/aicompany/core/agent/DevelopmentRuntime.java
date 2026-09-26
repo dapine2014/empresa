@@ -242,7 +242,17 @@ public class DevelopmentRuntime {
             }
         }
 
-        retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects));
+        // Los .csproj esperados los genera Forjai (ProjectScaffold): el agente no puede pisarlos.
+        retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects, expectedProjects));
+
+        // Verificado en vivo: dueños de dos capas entregaban solo una (o solo el .csproj).
+        var paths = result.files().stream().filter(Objects::nonNull).map(f -> f.path()).toList();
+        for (var owned : ownedPaths) {
+            if (paths.stream().noneMatch(path -> OwnedPaths.coveredByAny(List.of(owned), path))) {
+                retryable.add("No escribiste ningún archivo en \"" + owned + "\": también es tu responsabilidad; "
+                        + "devuelve TODOS tus archivos (los de todas tus rutas) en files, no solo los corregidos.");
+            }
+        }
 
         return new Verdict(List.of(), retryable);
     }
@@ -301,7 +311,8 @@ public class DevelopmentRuntime {
                 CORRECCIÓN DEL INTENTO ANTERIOR
 
                 El resultado anterior fue rechazado por validaciones deterministas.
-                Corrige únicamente estos errores:
+                Corrige estos errores y devuelve el resultado COMPLETO (todos tus archivos o campos, no solo
+                las partes corregidas; lo que no devuelvas se pierde):
                 %s
                 """.formatted(feedback);
     }

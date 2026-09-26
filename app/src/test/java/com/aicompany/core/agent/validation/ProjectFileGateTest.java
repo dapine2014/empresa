@@ -72,4 +72,12 @@ class ProjectFileGateTest {
         assertEquals(List.of(), ProjectFileGate.check(List.of(new GeneratedFile("src/Tareas.Domain/Tarea.cs", "// x")),
                 EXPECTED));
     }
+
+    @Test
+    void aProjectGeneratedByForjaiCannotBeOverwritten() {
+        var file = csproj("src/Tareas.Domain/Tareas.Domain.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var errors = ProjectFileGate.check(List.of(file), EXPECTED, List.of("src/Tareas.Domain/Tareas.Domain.csproj"));
+        assertEquals(1, errors.size());
+        assertTrue(errors.get(0).contains("los genera Forjai"), errors.get(0));
+    }
 }

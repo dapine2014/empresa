@@ -77,6 +77,8 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("5".repeat(40), List.of("game/Game.csproj")));
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
         when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
@@ -278,9 +280,9 @@ class DevelopmentTeamStrategyTest {
         verifyNoInteractions(sandbox);
     }
 
-    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2): ningún agente escribió su .csproj.
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): los .csproj los genera Forjai antes que los agentes.
     @Test
-    void eachLayerOwnerIsToldToWriteItsProjectFile() throws Exception {
+    void forjaiCommitsTheProjectScaffoldBeforeTheAgentsWork() throws Exception {
         stubHappyPath();
         var milaPrompt = ArgumentCaptor.forClass(String.class);
         when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
@@ -288,10 +290,17 @@ class DevelopmentTeamStrategyTest {
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
-        strategy.execute(context(), progress);
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
 
-        assertTrue(milaPrompt.getValue().contains("src/Combate.Application/Combate.Application.csproj"),
-                milaPrompt.getValue());
+        var inOrder = inOrder(workspace, runtime);
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().anyMatch(f -> f.path().equals("game/Game.csproj"))));
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        assertTrue(milaPrompt.getValue().contains("los genera Forjai"), milaPrompt.getValue());
+        assertTrue(milaPrompt.getValue().contains("src/Combate.Application/Combate.Application.csproj"));
+        assertFalse(milaPrompt.getValue().contains("ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no compila ni "
+                + "arranca sin ellos): [src/Combate.Application/Combate.Application.csproj]"));
+        assertTrue(result.verifiableState().contains("Forjai (scaffold)"), result.verifiableState());
     }
 
     @Test

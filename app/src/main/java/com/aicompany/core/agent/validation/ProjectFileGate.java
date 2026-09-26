@@ -26,12 +26,24 @@ public final class ProjectFileGate {
     }
 
     public static List<String> check(List<GeneratedFile> files, List<String> expectedProjects) {
+        return check(files, expectedProjects, List.of());
+    }
+
+    /** generatedByForjai: proyectos que escribe ProjectScaffold; un agente no puede pisarlos. */
+    public static List<String> check(List<GeneratedFile> files, List<String> expectedProjects,
+                                     List<String> generatedByForjai) {
 
         var errors = new ArrayList<String>();
 
         for (var file : files.stream().filter(Objects::nonNull).toList()) {
 
             if (file.path() == null || !file.path().endsWith(".csproj")) {
+                continue;
+            }
+
+            if (generatedByForjai.contains(file.path())) {
+                errors.add("No escribas " + file.path() + ": los .csproj ya existen y los genera Forjai con las "
+                        + "referencias DDD correctas. Devuelve solo código fuente (.cs) y tests.");
                 continue;
             }
 

@@ -269,18 +269,18 @@ public enum StackProfile {
      */
     public String executionContract() {
         return switch (this) {
-            case DOTNET_APP -> "SANDBOX (sin red): net8.0 con <ImplicitUsings>enable</ImplicitUsings>; paquetes "
-                    + "disponibles SOLO en estas versiones: xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0, "
-                    + "xunit.runner.visualstudio 2.5.3, coverlet.collector 6.0.0, Swashbuckle.AspNetCore 6.6.2, "
-                    + "Microsoft.AspNetCore.OpenApi 8.0.31. Un csproj por capa (src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, "
-                    + "tests/<Ctx>.Tests/<Ctx>.Tests.csproj con tests xUnit reales). El proyecto src/<Ctx>.Api "
-                    + "(Microsoft.NET.Sdk.Web) debe responder GET /health con 200. La solución la genera el sandbox.";
-            case GODOT_DOTNET_GAME -> "SANDBOX (sin red): Godot 4.3 .NET, net8.0; paquetes SOLO: Godot.NET.Sdk/4.3.0 "
-                    + "(SDK de game/Game.csproj), xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0, "
-                    + "xunit.runner.visualstudio 2.5.3. Un csproj por capa (src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, "
-                    + "tests/<Ctx>.Tests/<Ctx>.Tests.csproj); game/Game.csproj referencia los csproj de src/; "
-                    + "game/project.godot declara run/main_scene y en [dotnet] project/assembly_name=\"Game\"; cada script C# es una clase partial con el mismo nombre que su archivo. "
-                    + "Tests xUnit reales en tests/<Ctx>.Tests. El juego corre 300 frames headless sin errores.";
+            case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable. Los .csproj de cada capa "
+                    + "(src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, tests/<Ctx>.Tests/<Ctx>.Tests.csproj) los genera Forjai "
+                    + "con las referencias DDD y los paquetes xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0 y "
+                    + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "
+                    + "Microsoft.NET.Sdk.Web: necesita Program.cs (top-level, WebApplication) que responda GET /health "
+                    + "con 200. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. La solución la genera el sandbox.";
+            case GODOT_DOTNET_GAME -> "SANDBOX (sin red): Godot 4.3 .NET, net8.0. Los .csproj (capas en src/, "
+                    + "tests/<Ctx>.Tests con xunit 2.5.3, y game/Game.csproj con Godot.NET.Sdk/4.3.0 que referencia "
+                    + "src/) los genera Forjai: NO los escribas. game/project.godot declara run/main_scene (una escena "
+                    + ".tscn que exista) y en [dotnet] project/assembly_name=\"Game\"; cada script C# es una clase "
+                    + "partial con el mismo nombre que su archivo. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. "
+                    + "El juego corre 300 frames headless sin errores.";
             case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.24 (Dart ^3.5), solo web; dependencias SOLO del "
                     + "SDK (flutter, flutter_test) más cupertino_icons ^1.0.8 y flutter_lints ^4.0.0 (dev). "
                     + "Tests reales con flutter_test en test/<ctx>/; web/index.html estándar de flutter create; "
