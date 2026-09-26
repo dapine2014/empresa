@@ -240,6 +240,26 @@ class TeamPlanResolverTest {
         var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).toList();
         assertEquals(1, neo.size());
         assertTrue(neo.get(0).objective().contains("objetivo") && neo.get(0).objective().contains("otra cosa"));
-        assertTrue(neo.get(0).requiredCapabilitiesOrEmpty().containsAll(List.of("x", "y")));
+        // "x" e "y" no son capabilities reales de Neo: quedan las reales (MISSION-SANDBOX-VERIFY-17).
+        assertEquals(List.of("arquitectura backend"), neo.get(0).requiredCapabilitiesOrEmpty());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-17): 5 intentos perdidos por capabilities ajenas ("APIs" para
+    // Mila, "tests xUnit" para Vera). En desarrollo las capas salen del rol: las capabilities son etiquetas y Java
+    // se queda con las reales del miembro (o su primera real si no acertó ninguna).
+    @Test
+    void developmentCapabilitiesAreReducedToTheMembersRealOnes() {
+        var tasks = new ArrayList<>(List.of(
+                new PlannedTask("engineering", "WORK", "W", "o", List.of("arquitectura backend"), List.of()),
+                new PlannedTask("backend", "WORK", "W", "o", List.of("backend", "inventada"), List.of()),
+                new PlannedTask("frontend-ui", "WORK", "W", "o", List.of("APIs"), List.of()),
+                new PlannedTask("devops", "WORK", "W", "o", List.of("infraestructura"), List.of()),
+                new PlannedTask("qa", "VALIDATION", "W", "o", List.of("tests xUnit"), List.of())));
+
+        var result = resolver.resolve(plan("DOTNET_APP", List.of("Tareas"), tasks), REAL_ENGINEERING);
+
+        assertEquals(List.of("backend"), of(result.plan(), "backend").requiredCapabilities());
+        assertEquals(List.of("Game UI"), of(result.plan(), "frontend-ui").requiredCapabilities());
+        assertEquals(List.of("QA"), of(result.plan(), "qa").requiredCapabilities());
     }
 }

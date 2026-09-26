@@ -98,7 +98,8 @@ public class TeamPlanResolver {
 
         addLeaderFiles(profile.get(), team.leaderAgentId(), ownerByRoot, resolved);
 
-        return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
+        return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(),
+                withRealCapabilities(resolved, team),
                 plan.participationConflicts(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage()),
                 errors);
     }
@@ -231,5 +232,28 @@ public class TeamPlanResolver {
     private static PlannedTask withKindAndPaths(PlannedTask task, String kind, List<String> ownedPaths) {
         return new PlannedTask(task.agentId(), kind, task.action(), task.objective(),
                 task.requiredCapabilities(), List.copyOf(ownedPaths), task.assignments());
+    }
+
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-17): en desarrollo las capas salen del rol, así que las
+     * capabilities son etiquetas; se conservan las reales del miembro o, si no acertó ninguna, su primera real.
+     */
+    private static List<PlannedTask> withRealCapabilities(List<PlannedTask> tasks, TeamSnapshot team) {
+        var result = new ArrayList<PlannedTask>();
+        for (var task : tasks) {
+            var member = team.members().stream().filter(m -> m.agentId().equals(task.agentId())).findFirst();
+            if (member.isEmpty() || member.get().capabilities().isEmpty()) {
+                result.add(task);
+                continue;
+            }
+            var real = task.requiredCapabilitiesOrEmpty().stream()
+                    .filter(member.get().capabilities()::contains)
+                    .distinct()
+                    .toList();
+            var capabilities = real.isEmpty() ? List.of(member.get().capabilities().get(0)) : real;
+            result.add(new PlannedTask(task.agentId(), task.kind(), task.action(), task.objective(),
+                    capabilities, task.ownedPathsOrEmpty(), task.assignments()));
+        }
+        return result;
     }
 }
