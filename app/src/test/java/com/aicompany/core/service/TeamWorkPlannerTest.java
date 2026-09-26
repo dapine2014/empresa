@@ -233,4 +233,32 @@ class TeamWorkPlannerTest {
         assertTrue(prompt.getValue().contains("EJEMPLO"), prompt.getValue());
         assertTrue(prompt.getValue().contains("\"src/Combate.Domain\""), prompt.getValue());
     }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior, cada reintento regeneraba desde cero y
+    // traía errores nuevos. La corrección incluye el plan rechazado para que se corrija de forma incremental.
+    @Test
+    void theRetryIncludesThePreviousPlanToCorrectIncrementally() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(eq("growth-content"), prompt.capture(), anyString(), anyString()))
+                .thenReturn(planWithOutsider())
+                .thenReturn(validPlan());
+
+        planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS);
+
+        var second = prompt.getAllValues().get(1);
+        assertTrue(second.contains("PLAN ANTERIOR"), second);
+        assertTrue(second.contains("\"agentId\":\"finance\""), second);
+        assertTrue(second.contains("corrige SOLO"), second);
+    }
+
+    @Test
+    void developmentPlansGetFiveAttempts() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(planWithOutsider());
+
+        assertThrows(IllegalStateException.class,
+                () -> planner.plan("M-1", "TEAM-ENGINEERING", "x", TeamExecutionMode.DEVELOPMENT));
+        verify(ceoService, times(5)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+    }
 }

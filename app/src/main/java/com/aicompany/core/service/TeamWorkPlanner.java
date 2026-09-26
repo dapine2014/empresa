@@ -32,6 +32,12 @@ public class TeamWorkPlanner {
 
     private static final int MAX_PLAN_RETRIES = 2;
 
+    /**
+     * Los planes de desarrollo tienen más reglas (perfil, contextos, glosario, carpetas exclusivas):
+     * verificado en vivo que 3 intentos no alcanzaban para converger.
+     */
+    private static final int MAX_DEVELOPMENT_PLAN_RETRIES = 4;
+
     private final TeamMemoryService teamMemory;
     private final CeoService ceoService;
     private final CompanyMemoryService companyMemory;
@@ -89,10 +95,12 @@ public class TeamWorkPlanner {
             var leaderPrompt = promptMemory.activePrompt(leaderId);
             var basePrompt = buildPrompt(team, instruction, mode);
             String feedback = null;
+            String previousPlanJson = null;
+            var maxRetries = mode == TeamExecutionMode.DEVELOPMENT ? MAX_DEVELOPMENT_PLAN_RETRIES : MAX_PLAN_RETRIES;
 
-            for (int attempt = 0; attempt <= MAX_PLAN_RETRIES; attempt++) {
+            for (int attempt = 0; attempt <= maxRetries; attempt++) {
 
-                var prompt = feedback == null ? basePrompt : basePrompt + correctionBlock(feedback);
+                var prompt = feedback == null ? basePrompt : basePrompt + correctionBlock(feedback, previousPlanJson);
 
                 TeamPlan plan;
 
@@ -126,11 +134,12 @@ public class TeamWorkPlanner {
                 }
 
                 feedback = "- " + String.join("\n- ", errors);
+                previousPlanJson = toJson(plan);
                 publishRejected(missionId, taskId, leaderId, attempt, feedback);
             }
 
             var message = "El líder " + leaderId + " no produjo un plan válido para " + teamId
-                    + " después de " + (MAX_PLAN_RETRIES + 1) + " intentos:\n" + feedback;
+                    + " después de " + (maxRetries + 1) + " intentos:\n" + feedback;
 
             memory.updateTask(taskId, "FAILED", message);
 
@@ -282,7 +291,20 @@ public class TeamWorkPlanner {
                 .replaceAll("^_+|_+$", "");
     }
 
-    private String correctionBlock(String feedback) {
+    /**
+     * Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior el modelo regeneraba desde cero y traía
+     * errores nuevos en cada intento. Con el plan rechazado a la vista, la corrección es incremental.
+     */
+    private String correctionBlock(String feedback, String previousPlanJson) {
+
+        var previous = previousPlanJson == null ? "" : """
+
+                PLAN ANTERIOR (rechazado):
+                %s
+
+                Toma ESTE plan como base y corrige SOLO los errores indicados; conserva todo lo demás tal cual.
+                """.formatted(previousPlanJson);
+
         return """
 
                 CORRECCIÓN DEL INTENTO ANTERIOR
@@ -290,7 +312,7 @@ public class TeamWorkPlanner {
                 El plan anterior fue rechazado por validaciones deterministas.
                 Corrige únicamente estos errores:
                 %s
-                """.formatted(feedback);
+                """.formatted(feedback) + previous;
     }
 
     private String toJson(TeamPlan plan) {
