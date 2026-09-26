@@ -17,6 +17,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,9 +35,10 @@ class DevelopmentTeamStrategyTest {
     private final StaticWorkspaceValidator validator = mock(StaticWorkspaceValidator.class);
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final MissionProgress progress = mock(MissionProgress.class);
+    private final SandboxRunnerClient sandbox = mock(SandboxRunnerClient.class);
 
     private final DevelopmentTeamStrategy strategy = new DevelopmentTeamStrategy(
-            memory, runtime, workspace, validator, events, JsonMapper.builder().build());
+            memory, runtime, workspace, validator, events, JsonMapper.builder().build(), sandbox);
 
     private static TeamMissionContext context() {
         var team = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
@@ -79,6 +81,11 @@ class DevelopmentTeamStrategyTest {
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
         when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
                 .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(
+                        new SandboxResult.StepResult("build", "PASS", 0, 48000, "", 0, 0),
+                        new SandboxResult.StepResult("test", "PASS", 0, 12000, "", 12, 0),
+                        new SandboxResult.StepResult("smoke", "PASS", 0, 9000, "", 0, 0)))));
     }
 
     @Test
@@ -99,20 +106,17 @@ class DevelopmentTeamStrategyTest {
     }
 
     @Test
-    void aCleanReviewIsStaticallyValidatedAndTheStateCitesRealShas() throws Exception {
+    void aCleanReviewWithAPassingSandboxCitesRealShas() throws Exception {
         stubHappyPath();
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
         var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
 
-        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("STATICALLY_VALIDATED"), anyString());
         verify(memory).recordEvidence(eq("M-1-QA"), eq("M-1"), eq("qa"), anyList());
         assertTrue(result.verifiableState().contains(SHA_NEO));
         assertTrue(result.verifiableState().contains(SHA_MILA));
-        assertTrue(result.verifiableState().contains(
-                "Esta fase no ejecuta código: no se puede afirmar que el juego compile, se ejecute o pase tests."));
-        assertTrue(result.resultsForCeo().contains("STATICALLY_VALIDATED"));
+        assertTrue(result.resultsForCeo().contains("VERIFIED"));
     }
 
     @Test
@@ -217,5 +221,60 @@ class DevelopmentTeamStrategyTest {
 
         verify(runtime, never()).review(anyString(), anyString(), anyString(), anyString(), anyMap());
         verify(memory).updateTask(eq("M-1-QA"), eq("FAILED"), contains("git show falló"));
+    }
+
+    @Test
+    void aPassingSandboxAndCleanReviewIsVerified() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        verify(memory).recordSandboxResult(eq("M-1-QA"), anyString());
+        assertTrue(result.verifiableState().contains("Tests PASS 12/12"));
+        assertTrue(result.verifiableState().contains("Compiló, pasaron 12 tests y arrancó en el sandbox."));
+    }
+
+    @Test
+    void theReviewReceivesTheRealSandboxResults() throws Exception {
+        stubHappyPath();
+        var reviewPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        assertTrue(reviewPrompt.getValue().contains("RESULTADOS REALES DEL SANDBOX"));
+    }
+
+    // Review Focus: runner no disponible → UNVALIDATED con el motivo.
+    @Test
+    void anUnavailableRunnerLeavesTheWorkUnvalidated() throws Exception {
+        stubHappyPath();
+        when(sandbox.verify(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(sandbox.lastError()).thenReturn("sandbox-runner no disponible: Connection refused");
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("UNVALIDATED"), anyString());
+        assertTrue(result.verifiableState().contains("Connection refused"));
+    }
+
+    // Review Focus: si los chequeos deterministas fallaron, no se gasta tiempo compilando.
+    @Test
+    void failedDeterministicChecksSkipTheSandbox() throws Exception {
+        stubHappyPath();
+        when(validator.validate(eq("M-1"), anyList(), any(), anyList(), anyList()))
+                .thenReturn(List.of(StaticCheck.fail("DDD_LAYERS", "violación", null, List.of())));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verifyNoInteractions(sandbox);
     }
 }

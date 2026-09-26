@@ -1,6 +1,7 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.DevelopmentRuntime;
+import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.model.DevelopmentResult;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
@@ -8,6 +9,7 @@ import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.SandboxResult;
 import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StaticCheck;
 import com.aicompany.core.model.StaticValidationStatus;
@@ -35,8 +37,9 @@ import java.util.stream.Collectors;
 /**
  * Engineering (spec §6-8): código real en paralelo → un commit por agente
  * (secuencial, en el orden del plan) → chequeos deterministas → revisión
+ * + sandbox (build, tests y arranque reales, spec 2026-09-26 §4) → revisión
  * estática del validador → reporte para el CEO + "Estado verificable".
- * Nunca ejecuta el código generado.
+ * company-core nunca ejecuta el código: lo hace el sandbox-runner aislado.
  */
 @Service
 public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
@@ -47,7 +50,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     static final int REVIEW_TOTAL_BUDGET_CHARS = 24_000;
     static final int REVIEW_FILE_BUDGET_CHARS = 6_000;
     static final String NO_EXECUTION_DISCLAIMER =
-            "Esta fase no ejecuta código: no se puede afirmar que el juego compile, se ejecute o pase tests.";
+            "No se verificó la ejecución: no se puede afirmar que el producto compile, se ejecute o pase tests.";
+    static final int FAILED_STEP_TAIL_CHARS = 1_500;
 
     private final MissionMemoryService memory;
     private final DevelopmentRuntime runtime;
@@ -55,6 +59,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private final StaticWorkspaceValidator staticValidator;
     private final CompanyEventPublisher events;
     private final JsonMapper jsonMapper;
+    private final SandboxRunnerClient sandbox;
 
     public DevelopmentTeamStrategy(
             MissionMemoryService memory,
@@ -62,7 +67,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             DevelopmentWorkspaceService workspace,
             StaticWorkspaceValidator staticValidator,
             CompanyEventPublisher events,
-            JsonMapper jsonMapper) {
+            JsonMapper jsonMapper,
+            SandboxRunnerClient sandbox) {
 
         this.memory = memory;
         this.runtime = runtime;
@@ -70,6 +76,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         this.staticValidator = staticValidator;
         this.events = events;
         this.jsonMapper = jsonMapper;
+        this.sandbox = sandbox;
     }
 
     @Override
@@ -164,13 +171,35 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var profile = plan.profile().orElse(null);
         var checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
 
+        var headSha = committed.get(committed.size() - 1).commitSha();
+        SandboxResult sandboxResult = null;
+        String sandboxError;
+
+        // Review Focus: si los chequeos deterministas fallaron, no se gastan minutos compilando.
+        if (checks.stream().allMatch(StaticCheck::passed) && profile != null) {
+            progress.advance(MissionStatus.EVALUATING, 80, "Sandbox",
+                    "Compilando, corriendo tests y arrancando el código en el sandbox.");
+            var verified = sandbox.verify(missionId, headSha, profile.name());
+            sandboxResult = verified.orElse(null);
+            sandboxError = verified.isEmpty() ? sandbox.lastError() : null;
+        } else {
+            sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
+        }
+
+        if (sandboxResult != null) {
+            memory.recordSandboxResult(validationTaskId, toJson(sandboxResult));
+            memory.recordEvidence(validationTaskId, missionId, "sandbox", sandboxEvidence(missionId, headSha, sandboxResult));
+            events.publish("EMPRESA_SANDBOX_VERIFICATION_COMPLETED", missionId, validationTaskId, "sandbox",
+                    Map.of("overall", sandboxResult.overall(), "testsPassed", sandboxResult.testsPassed(),
+                            "testsFailed", sandboxResult.testsFailed()));
+        }
+
         StaticReviewResult review = null;
         String reviewError = null;
         var reviewStarted = false;
 
         try {
 
-            var headSha = committed.get(committed.size() - 1).commitSha();
             var filesBySha = new LinkedHashMap<String, Set<String>>();
 
             for (var item : committed) {
@@ -186,7 +215,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             reviewStarted = true;
             review = runtime.review(validationTaskId, missionId, validation.agentId(),
-                    buildReviewPrompt(context, validation, committed, checks, headSha, repositoryContext),
+                    buildReviewPrompt(context, validation, committed, checks, headSha, repositoryContext,
+                            sandboxSummary(sandboxResult, sandboxError)),
                     filesBySha).join();
 
         } catch (Exception ex) {
@@ -201,7 +231,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
         }
 
-        var status = StaticValidationStatus.compute(checks, review);
+        var status = StaticValidationStatus.compute(checks, review, sandboxResult);
 
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
 
@@ -215,8 +245,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 Map.of("validationStatus", status.name(), "failedChecks", failedChecks));
 
         return new TeamExecutionResult.Development(
-                resultsForCeo(context, committed, checks, review, reviewError, status, failures),
-                verifiableState(context, committed, checks, status, failures));
+                resultsForCeo(context, committed, checks, review, reviewError, status, failures,
+                        sandboxSummary(sandboxResult, sandboxError)),
+                verifiableState(context, committed, checks, status, failures, sandboxResult, sandboxError));
     }
 
     private void createTask(String missionId, PlannedTask task, String kind) {
@@ -304,7 +335,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private String buildReviewPrompt(
             TeamMissionContext context, PlannedTask validation, List<CommittedWork> committed,
-            List<StaticCheck> checks, String headSha, String repositoryContext) {
+            List<StaticCheck> checks, String headSha, String repositoryContext, String sandboxSummary) {
 
         var commits = committed.stream()
                 .map(c -> "- " + c.agentId() + ": sha=" + c.commitSha() + " archivos=" + c.files())
@@ -316,7 +347,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         return """
                 Eres el agente %s y validas ESTÁTICAMENTE el código generado por %s para la misión %s.
-                Nadie ejecutó este código.
+                Tú no ejecutas código: la única ejecución es la del sandbox, cuyos resultados reales están abajo.
 
                 OBJETIVO DE TU TAREA: %s
 
@@ -327,6 +358,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 %s
 
                 CHEQUEOS DETERMINISTAS (hechos por Java; no los contradigas):
+                %s
+
+                RESULTADOS REALES DEL SANDBOX (ejecución real; no los contradigas ni afirmes nada más allá de ellos):
                 %s
 
                 CÓDIGO DEL REPOSITORIO (HEAD = %s):
@@ -349,7 +383,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 validation.agentId(), context.team().teamName(), context.missionId(),
                 validation.objective(),
                 context.plan().summary(), dddContext(context.plan()),
-                commits, checkLines, headSha, repositoryContext, context.missionId());
+                commits, checkLines, sandboxSummary, headSha, repositoryContext, context.missionId());
     }
 
     /** Contenido real del repo con tope explícito; lo truncado u omitido queda marcado (Review Focus). */
@@ -387,7 +421,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private String resultsForCeo(
             TeamMissionContext context, List<CommittedWork> committed, List<StaticCheck> checks,
-            StaticReviewResult review, String reviewError, StaticValidationStatus status, List<String> failures) {
+            StaticReviewResult review, String reviewError, StaticValidationStatus status, List<String> failures,
+            String sandboxSummary) {
 
         var out = new StringBuilder();
 
@@ -408,6 +443,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             out.append("- ").append(check.check()).append(": ").append(check.status())
                     .append(" — ").append(check.detail()).append("\n");
         }
+
+        out.append("\nSANDBOX (ejecución real): ").append(sandboxSummary).append("\n");
 
         out.append("\nREVISIÓN ESTÁTICA: ");
         if (review == null) {
@@ -430,15 +467,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     .append(String.join("\n- ", failures)).append("\n");
         }
 
-        out.append("\nREGLA: ").append(NO_EXECUTION_DISCLAIMER)
-                .append(" No afirmes que el juego está terminado ni que funciona.\n");
+        out.append("\nREGLA: ").append(status == StaticValidationStatus.VERIFIED ? verifiedPhraseRule() : NO_EXECUTION_DISCLAIMER)
+                .append(" No afirmes que el producto está terminado ni que funciona más allá de lo probado.\n");
 
         return out.toString();
     }
 
     private String verifiableState(
             TeamMissionContext context, List<CommittedWork> committed, List<StaticCheck> checks,
-            StaticValidationStatus status, List<String> failures) {
+            StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError) {
 
         var passed = checks.stream().filter(StaticCheck::passed).count();
 
@@ -460,9 +497,59 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         out.append("Validación estática: ").append(status.name())
                 .append(" (").append(passed).append("/").append(checks.size()).append(" chequeos deterministas en PASS)\n");
-        out.append(NO_EXECUTION_DISCLAIMER);
+        out.append("Sandbox: ").append(sandboxSummary(sandboxResult, sandboxError)).append("\n");
+
+        if (sandboxResult != null) {
+            sandboxResult.stepsOrEmpty().stream()
+                    .filter(s -> "FAIL".equals(s.status()) || "TIMEOUT".equals(s.status()))
+                    .findFirst()
+                    .ifPresent(s -> {
+                        var output = s.outputTail() == null ? "" : s.outputTail();
+                        out.append("Paso fallido: ").append(s.name()).append("\n")
+                                .append(output.substring(Math.max(0, output.length() - FAILED_STEP_TAIL_CHARS)))
+                                .append("\n");
+                    });
+        }
+
+        if (status == StaticValidationStatus.VERIFIED) {
+            out.append("Compiló, pasaron ").append(sandboxResult.testsPassed())
+                    .append(" tests y arrancó en el sandbox. No garantiza que el producto esté completo ni que no tenga "
+                            + "errores fuera de lo probado.");
+        } else {
+            out.append(NO_EXECUTION_DISCLAIMER);
+        }
 
         return out.toString();
+    }
+
+    private static String verifiedPhraseRule() {
+        return "La validación es VERIFIED: compiló, pasaron sus tests y arrancó en el sandbox; nada más.";
+    }
+
+    static String sandboxSummary(SandboxResult result, String error) {
+        if (result == null) {
+            return "No corrió: " + error;
+        }
+        return result.stepsOrEmpty().stream()
+                .map(s -> {
+                    var label = switch (s.name()) {
+                        case "build" -> "Build";
+                        case "test" -> "Tests";
+                        case "smoke" -> "Arranque";
+                        default -> s.name();
+                    };
+                    var tests = "test".equals(s.name())
+                            ? " " + s.testsPassed() + "/" + (s.testsPassed() + s.testsFailed()) : "";
+                    return label + " " + s.status() + tests + " (" + (s.durationMs() / 1000) + " s)";
+                })
+                .collect(Collectors.joining(" · "));
+    }
+
+    private static List<AgentResult.Evidence> sandboxEvidence(String missionId, String sha, SandboxResult result) {
+        return result.stepsOrEmpty().stream()
+                .map(s -> new AgentResult.Evidence(s.name() + " " + s.status() + " en el sandbox",
+                        "sandbox:" + missionId + "@" + sha + "/" + s.name(), "INTERNAL", true))
+                .toList();
     }
 
     private String toJson(Object value) {

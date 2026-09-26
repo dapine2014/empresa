@@ -328,6 +328,17 @@ public class MissionMemoryService {
     }
 
     /** Estado calculado por Java + chequeos deterministas, en la tarea VALIDATION (spec §7). */
+    /** Resultado real del sandbox, en la tarea VALIDATION (spec 2026-09-26 §4). */
+    public void recordSandboxResult(String taskId, String sandboxJson) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (t:AgentTask {id:$id}) SET t.sandboxResult=$sandbox, t.updatedAt=$updatedAt",
+                        Map.of("id", taskId, "sandbox", sandboxJson, "updatedAt", Instant.now().toString()));
+                return null;
+            });
+        }
+    }
+
     public void recordStaticValidation(String taskId, String validationStatus, String staticChecksJson) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
@@ -590,7 +601,8 @@ public class MissionMemoryService {
             return session.run("MATCH (t:AgentTask {missionId:$missionId}) RETURN t.id AS id, t.agentId AS agentId, "
                                     + "t.action AS action, t.status AS status, t.result AS result, t.updatedAt AS updatedAt, "
                                     + "t.kind AS kind, t.workspacePath AS workspacePath, t.commitSha AS commitSha, "
-                                    + "t.files AS files, t.validationStatus AS validationStatus, t.staticChecks AS staticChecks "
+                                    + "t.files AS files, t.validationStatus AS validationStatus, t.staticChecks AS staticChecks, "
+                                    + "t.sandboxResult AS sandboxResult "
                                     + "ORDER BY t.id",
                             Map.of("missionId", missionId))
                     .list(r -> new AgentTask(
@@ -602,7 +614,8 @@ public class MissionMemoryService {
                             nullableString(r.get("commitSha")),
                             r.get("files").isNull() ? null : r.get("files").asList(v -> v.asString()),
                             nullableString(r.get("validationStatus")),
-                            nullableString(r.get("staticChecks"))));
+                            nullableString(r.get("staticChecks")),
+                            nullableString(r.get("sandboxResult"))));
         }
     }
 }
