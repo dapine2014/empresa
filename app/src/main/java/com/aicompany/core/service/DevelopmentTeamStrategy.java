@@ -115,45 +115,41 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             throw ex;
         }
 
-        var futures = new LinkedHashMap<PlannedTask, CompletableFuture<DevelopmentResult>>();
-
-        for (var task : work) {
-            futures.put(task, runtime.generate(taskId(missionId, task.agentId()), missionId, task.agentId(),
-                    buildWorkPrompt(context, task), task.ownedPathsOrEmpty(), expectedProjects));
-        }
-
-        progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30, "Desarrollo en paralelo",
-                "Los miembros de " + context.team().teamName() + " están generando código.");
-
-        var generated = new LinkedHashMap<PlannedTask, DevelopmentResult>();
+        // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
+        // contra clases que nunca vio y el código no compilaba. Se genera por capas (domain → application →
+        // infrastructure → api/game/presentation → tests) y cada agente ve el código ya commiteado.
+        var ordered = orderByLayer(work, plan);
         var failures = new ArrayList<String>();
-
-        for (var entry : futures.entrySet()) {
-            try {
-                generated.put(entry.getKey(), entry.getValue().join());
-            } catch (Exception ex) {
-                failures.add(entry.getKey().agentId() + ": " + safeMessage(ex, "no generó código"));
-            }
-        }
-
-        progress.advance(MissionStatus.EVALUATING, 60, "Commits por agente",
-                "Registrando un commit por agente en el repositorio de la misión.");
-
         var committed = new ArrayList<CommittedWork>();
+        var generationHead = scaffold == null ? null : scaffold.commitSha();
 
-        for (var entry : generated.entrySet()) {
+        for (int i = 0; i < ordered.size(); i++) {
 
-            var task = entry.getKey();
+            var task = ordered.get(i);
             var id = taskId(missionId, task.agentId());
+
+            progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30 + (40 * i / ordered.size()), "Desarrollo por capas",
+                    agentName(context, task.agentId()) + " (" + (i + 1) + "/" + ordered.size() + ") está generando "
+                            + task.ownedPathsOrEmpty() + ".");
+
+            DevelopmentResult result;
+            try {
+                result = runtime.generate(id, missionId, task.agentId(),
+                        buildWorkPrompt(context, task) + existingCode(missionId, generationHead),
+                        task.ownedPathsOrEmpty(), expectedProjects).join();
+            } catch (Exception ex) {
+                failures.add(task.agentId() + ": " + safeMessage(ex, "no generó código"));
+                continue;
+            }
 
             try {
 
                 var record = workspace.commitAgentWork(missionId, id, task.agentId(),
-                        agentName(context, task.agentId()), entry.getValue());
+                        agentName(context, task.agentId()), result);
 
                 memory.recordTaskArtifact(id, workspace.missionWorkspace(missionId).toString(),
                         record.sha(), record.files());
-                memory.updateTask(id, "COMPLETED", toJson(entry.getValue()));
+                memory.updateTask(id, "COMPLETED", toJson(result));
 
                 events.publish("EMPRESA_TASK_COMMITTED", missionId, id, task.agentId(),
                         Map.of("commitSha", record.sha(), "files", record.files()));
@@ -161,6 +157,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         "Commit " + record.sha());
 
                 committed.add(new CommittedWork(id, task.agentId(), record.sha(), record.files()));
+                generationHead = record.sha();
 
             } catch (Exception ex) {
 
@@ -266,6 +263,62 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError));
     }
 
+    static final int EXISTING_CODE_TOTAL_BUDGET_CHARS = 18_000;
+    static final int EXISTING_CODE_FILE_BUDGET_CHARS = 5_000;
+
+    /** Orden de dependencia de las capas: cada una solo depende de las anteriores (reglas DDD). */
+    private static int layerRank(StackProfile.Layer layer) {
+        return switch (layer) {
+            case DOMAIN -> 0;
+            case APPLICATION -> 1;
+            case INFRASTRUCTURE -> 2;
+            case API, GAME, PRESENTATION -> 3;
+            case TESTS -> 4;
+        };
+    }
+
+    /** Orden estable por la capa más baja de cada tarea; rutas que no son de una capa (entrada) cuentan como 3. */
+    private static List<PlannedTask> orderByLayer(List<PlannedTask> work, TeamPlan plan) {
+        var profile = plan.profile();
+        if (profile.isEmpty()) {
+            return work;
+        }
+        return work.stream()
+                .sorted(java.util.Comparator.comparingInt(task -> task.ownedPathsOrEmpty().stream()
+                        .map(path -> profile.get().locate(path, plan.contextNames())
+                                .map(location -> layerRank(location.layer())).orElse(3))
+                        .min(Integer::compare).orElse(3)))
+                .toList();
+    }
+
+    /** Código real ya commiteado (sin .csproj/.sln, que son de Forjai), con tope explícito. */
+    private String existingCode(String missionId, String headSha) {
+        if (headSha == null) {
+            return "";
+        }
+        try {
+            var contents = new LinkedHashMap<String, String>();
+            for (var path : workspace.filesAtCommit(missionId, headSha).stream().sorted().toList()) {
+                if (path.endsWith(".csproj") || path.endsWith(".sln")) {
+                    continue;
+                }
+                contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+            }
+            if (contents.isEmpty()) {
+                return "";
+            }
+            return """
+
+                    CÓDIGO YA ESCRITO POR EL EQUIPO (capas anteriores, commit %s). Úsalo tal cual: mismos namespaces,
+                    clases, métodos y firmas. No lo reescribas ni lo devuelvas; escribe solo tus archivos.
+                    %s""".formatted(headSha, renderRepositoryContext(contents, EXISTING_CODE_TOTAL_BUDGET_CHARS,
+                    EXISTING_CODE_FILE_BUDGET_CHARS));
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read existing code at {}: {}", missionId, headSha, ex.getMessage());
+            return "";
+        }
+    }
+
     /**
      * Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): qwen3:8b no escribía los .csproj, los rompía o deformaba
      * ".csproj". Forjai los genera (ProjectScaffold) en un commit propio antes del trabajo de los agentes.
@@ -358,7 +411,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 %s
                 Solo puedes escribir archivos dentro de estos ownedPaths: %s
                 %s
-                TAREAS DEL RESTO DEL EQUIPO (corren en paralelo; no verás su código, respeta sus rutas e interfaces):
+                TAREAS DEL RESTO DEL EQUIPO (se generan por capas: domain → application → infrastructure →
+                api/game/presentation → tests; si hay código de capas anteriores, está al final de este mensaje):
                 %s
 
                 REGLAS:

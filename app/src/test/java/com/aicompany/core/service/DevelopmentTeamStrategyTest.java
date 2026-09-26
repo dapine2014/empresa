@@ -80,6 +80,7 @@ class DevelopmentTeamStrategyTest {
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord("5".repeat(40), List.of("game/Game.csproj")));
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
+        when(workspace.filesAtCommit("M-1", "5".repeat(40))).thenReturn(List.of("game/Game.csproj", "Solution.sln"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
         when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
                 .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
@@ -91,16 +92,17 @@ class DevelopmentTeamStrategyTest {
     }
 
     @Test
-    void commitsOnePerAgentInPlanOrderAndRecordsTheArtifact() throws Exception {
+    void commitsOnePerAgentInLayerOrderAndRecordsTheArtifact() throws Exception {
         stubHappyPath();
         when(runtime.review(eq("M-1-QA"), eq("M-1"), eq("qa"), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
         strategy.execute(context(), progress);
 
+        // Decisión del fundador (revisión 3): por capas. Mila tiene APPLICATION y Neo GAME: Mila va primero.
         InOrder inOrder = inOrder(workspace);
-        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any());
         inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any());
         verify(memory).createTask("M-1-QA", "M-1", "qa", "STATIC_REVIEW", "VALIDATION");
         verify(memory).recordTaskArtifact("M-1-FRONTEND-UI", "/data/forjai-products/M-1", SHA_MILA, List.of("web/ui/hud.js"));
         verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), anyString());
@@ -251,7 +253,7 @@ class DevelopmentTeamStrategyTest {
         assertTrue(reviewPrompt.getValue().contains("RESULTADOS REALES DEL SANDBOX"));
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-7): Vera citaba archivos con el sha de otro commit y agotaba
         // los reintentos. HEAD contiene todos los archivos: se le da el sha literal.
-        assertTrue(reviewPrompt.getValue().contains("\"workspace:M-1@" + SHA_MILA + "/<ruta>\""), reviewPrompt.getValue());
+        assertTrue(reviewPrompt.getValue().contains("\"workspace:M-1@" + SHA_NEO + "/<ruta>\""), reviewPrompt.getValue());
     }
 
     // Review Focus: runner no disponible → UNVALIDATED con el motivo.
@@ -321,5 +323,32 @@ class DevelopmentTeamStrategyTest {
         verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
                 argThat(list -> list.contains("src/Combate.Domain/Combate.Domain.csproj")
                         && list.contains("game/Game.csproj")));
+    }
+
+    // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
+    // contra clases que nunca vio y el código no compilaba. Ahora se genera por capas y cada agente ve el código
+    // ya commiteado (sin .csproj/.sln, que son de Forjai).
+    @Test
+    void eachAgentSeesTheCodeAlreadyCommittedByThePreviousLayers() throws Exception {
+        stubHappyPath();
+        var milaPrompt = ArgumentCaptor.forClass(String.class);
+        var neoPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var inOrder = inOrder(runtime, workspace);
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), anyString(), anyString(), any());
+        inOrder.verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+        assertFalse(milaPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), milaPrompt.getValue());
+        assertTrue(neoPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), neoPrompt.getValue());
+        assertTrue(neoPrompt.getValue().contains("### web/ui/hud.js"), neoPrompt.getValue());
+        assertFalse(neoPrompt.getValue().contains("### game/Game.csproj"), neoPrompt.getValue());
     }
 }
