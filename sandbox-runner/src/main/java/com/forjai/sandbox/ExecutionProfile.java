@@ -11,9 +11,10 @@ import java.util.Optional;
  */
 public enum ExecutionProfile {
 
-    DOTNET_APP("localhost/forjai-sandbox/dotnet-app:1"),
-    GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:1"),
-    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:1");
+    DOTNET_APP("localhost/forjai-sandbox/dotnet-app:1", true),
+    GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:1", true),
+    // Verificado en vivo: el SDK de Flutter crea bin/cache/lockfile en cada comando (falla con raíz de solo lectura).
+    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:1", false);
 
     public record Step(String name, int timeoutSeconds) {
     }
@@ -22,9 +23,16 @@ public enum ExecutionProfile {
             new Step("restore", 300), new Step("build", 600), new Step("test", 600), new Step("smoke", 180));
 
     private final String image;
+    private final boolean readOnlyRoot;
 
-    ExecutionProfile(String image) {
+    ExecutionProfile(String image, boolean readOnlyRoot) {
         this.image = image;
+        this.readOnlyRoot = readOnlyRoot;
+    }
+
+    /** Raíz del contenedor de solo lectura. Si es false, igual se descarta al terminar (--rm). */
+    public boolean readOnlyRoot() {
+        return readOnlyRoot;
     }
 
     public String image() {

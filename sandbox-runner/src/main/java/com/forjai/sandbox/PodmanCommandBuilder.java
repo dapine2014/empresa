@@ -1,6 +1,7 @@
 package com.forjai.sandbox;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 /** Argumentos de `podman run` con el aislamiento obligatorio del spec §2. Nunca recibe comandos externos. */
@@ -13,11 +14,11 @@ public class PodmanCommandBuilder {
     }
 
     public List<String> run(ExecutionProfile profile, ExecutionProfile.Step step, Path workDir) {
-        return List.of(
-                "podman", "--url", podmanUrl, "run",
-                "--rm",
-                "--network=none",
-                "--read-only",
+        var args = new ArrayList<>(List.of("podman", "--url", podmanUrl, "run", "--rm", "--network=none"));
+        if (profile.readOnlyRoot()) {
+            args.add("--read-only");
+        }
+        args.addAll(List.of(
                 "--tmpfs", "/tmp:rw,exec,size=2g",
                 "--cap-drop=ALL",
                 "--security-opt=no-new-privileges",
@@ -31,6 +32,7 @@ public class PodmanCommandBuilder {
                 "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
                 "-v", workDir + ":/work:Z",
                 "-w", "/work",
-                profile.image(), "/forjai/run.sh", step.name());
+                profile.image(), "/forjai/run.sh", step.name()));
+        return List.copyOf(args);
     }
 }

@@ -31,4 +31,19 @@ class PodmanCommandBuilderTest {
                 Path.of("/w"));
         assertEquals("restore", args.get(args.size() - 1));
     }
+
+    // Verificado en vivo: el SDK de Flutter crea bin/cache/lockfile en cada comando y falla con la raíz de solo
+    // lectura. Ese perfil corre con la raíz escribible (descartada con --rm), sin perder el resto del aislamiento.
+    @Test
+    void flutterRunsWithAWritableRootButKeepsTheRestOfTheIsolation() {
+        var flutter = builder.run(ExecutionProfile.FLUTTER_WEB_APP, ExecutionProfile.FLUTTER_WEB_APP.steps().get(0),
+                Path.of("/w"));
+        assertFalse(flutter.contains("--read-only"));
+        assertTrue(flutter.containsAll(java.util.List.of("--network=none", "--cap-drop=ALL",
+                "--security-opt=no-new-privileges", "--userns=keep-id", "--memory=4g", "--rm")));
+
+        for (var profile : java.util.List.of(ExecutionProfile.DOTNET_APP, ExecutionProfile.GODOT_DOTNET_GAME)) {
+            assertTrue(builder.run(profile, profile.steps().get(0), Path.of("/w")).contains("--read-only"));
+        }
+    }
 }
