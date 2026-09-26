@@ -253,7 +253,7 @@ class TeamWorkPlannerTest {
         planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         assertTrue(prompt.getValue().contains("UNA sola tarea"), prompt.getValue());
-        assertTrue(prompt.getValue().contains("DEV_BACKEND_INTEGRATIONS → DOMAIN"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("Neo/CLOUD_ARCHITECT_LEAD_BACKEND (líder) → DOMAIN"), prompt.getValue());
     }
 
     // Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior, cada reintento regeneraba desde cero y
@@ -293,13 +293,14 @@ class TeamWorkPlannerTest {
         var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).findFirst().orElseThrow();
-        assertEquals(List.of("Solution.sln", "game/project.godot"), neo.ownedPaths());
+        // Revisión 3: el líder hace DOMAIN; en este equipo nadie tiene GAME, así que también recibe project.godot.
+        assertEquals(List.of("src/Combate.Domain", "game/project.godot"), neo.ownedPaths());
         var iris = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("backend")).findFirst().orElseThrow();
-        assertEquals(List.of("src/Combate.Domain", "src/Combate.Application"), iris.ownedPaths());
+        assertEquals(List.of("src/Combate.Application"), iris.ownedPaths());
     }
 
     @Test
-    void resolverErrorsAreRetriedWithTheirCorrection() {
+    void invalidDevelopmentPlansAreRetriedWithTheirCorrection() {
         when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
         var noAssignments = new TeamPlan("Juego", null, null, List.of(
                 new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"), List.of()),
@@ -312,6 +313,8 @@ class TeamWorkPlannerTest {
 
         planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
-        assertTrue(prompt.getAllValues().get(1).contains("DOMAIN del contexto Combate"), prompt.getAllValues().get(1));
+        // Revisión 3: DOMAIN ya siempre tiene dueño (el líder); el error que queda es la tarea faltante de Iris.
+        assertTrue(prompt.getAllValues().get(1).contains("CORRECCIÓN"), prompt.getAllValues().get(1));
+        assertTrue(prompt.getAllValues().get(1).contains("backend"), prompt.getAllValues().get(1));
     }
 }

@@ -240,8 +240,9 @@ public enum StackProfile {
     /** Archivos de entrada y extras de arranque que recibe el líder (revisión 2026-09-26, opción B). */
     public List<String> leaderOwnedPaths() {
         return switch (this) {
-            case DOTNET_APP -> List.of("Solution.sln");
-            case GODOT_DOTNET_GAME -> List.of("Solution.sln", "game/project.godot");
+            // El .sln lo genera Forjai (ProjectScaffold); game/project.godot cae en la capa GAME.
+            case DOTNET_APP -> List.of();
+            case GODOT_DOTNET_GAME -> List.of("game/project.godot");
             case FLUTTER_WEB_APP -> List.of("pubspec.yaml", "lib/main.dart", "web");
         };
     }

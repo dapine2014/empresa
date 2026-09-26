@@ -65,7 +65,8 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), godotTasks()), ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertEquals(List.of("src/Combate.Application", "Solution.sln"), of(result.plan(), "engineering").ownedPaths());
+        // Revisión 3 (MISSION-SANDBOX-VERIFY-*): el .sln lo genera Forjai; game/project.godot es del dueño de game.
+        assertEquals(List.of("src/Combate.Application"), of(result.plan(), "engineering").ownedPaths());
         assertEquals(List.of("src/Combate.Domain"), of(result.plan(), "backend").ownedPaths());
         assertEquals(List.of("game"), of(result.plan(), "frontend-ui").ownedPaths());
         assertEquals("VALIDATION", of(result.plan(), "qa").kind());
@@ -209,11 +210,11 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate", "Inventario"), tasks), REAL_ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertEquals(List.of("src/Combate.Domain", "src/Inventario.Domain", "src/Combate.Application", "src/Inventario.Application"),
-                of(result.plan(), "backend").ownedPaths());
+        // Revisión 3 (decisión del fundador tras MISSION-SANDBOX-VERIFY-8): el líder hace DOMAIN, Diego TESTS.
+        assertEquals(List.of("src/Combate.Application", "src/Inventario.Application"), of(result.plan(), "backend").ownedPaths());
         assertEquals(List.of("game"), of(result.plan(), "frontend-ui").ownedPaths());
         assertEquals(List.of("tests/Combate.Tests", "tests/Inventario.Tests"), of(result.plan(), "devops").ownedPaths());
-        assertEquals(List.of("Solution.sln"), of(result.plan(), "engineering").ownedPaths());
+        assertEquals(List.of("src/Combate.Domain", "src/Inventario.Domain"), of(result.plan(), "engineering").ownedPaths());
         assertEquals("WORK", of(result.plan(), "frontend-ui").kind());
         assertEquals("VALIDATION", of(result.plan(), "qa").kind());
     }
@@ -224,8 +225,9 @@ class TeamPlanResolverTest {
 
         assertEquals(List.of(), result.errors());
         assertEquals(List.of("lib/pedidos/presentation"), of(result.plan(), "frontend-ui").ownedPaths());
-        assertEquals(List.of("lib/pedidos/infrastructure", "test/pedidos"), of(result.plan(), "devops").ownedPaths());
-        assertEquals(List.of("pubspec.yaml", "lib/main.dart", "web"), of(result.plan(), "engineering").ownedPaths());
+        assertEquals(List.of("test/pedidos"), of(result.plan(), "devops").ownedPaths());
+        assertEquals(List.of("lib/pedidos/application", "lib/pedidos/infrastructure"), of(result.plan(), "backend").ownedPaths());
+        assertEquals(List.of("lib/pedidos/domain", "pubspec.yaml", "lib/main.dart", "web"), of(result.plan(), "engineering").ownedPaths());
     }
 
     @Test
