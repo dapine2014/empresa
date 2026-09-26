@@ -180,7 +180,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         progress.advance(MissionStatus.EVALUATING, 75, "Validación estática",
                 "Chequeos deterministas y revisión estática de " + validation.agentId() + ".");
 
-        var allowedPaths = work.stream().flatMap(t -> t.ownedPathsOrEmpty().stream()).toList();
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): los archivos del scaffold (Forjai) también son permitidos.
+        var allowedPaths = java.util.stream.Stream.concat(
+                work.stream().flatMap(t -> t.ownedPathsOrEmpty().stream()),
+                scaffold == null ? java.util.stream.Stream.<String>empty() : scaffold.files().stream()).toList();
         var profile = plan.profile().orElse(null);
         var checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
 
@@ -244,6 +247,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
         }
 
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): los archivos del scaffold no son trabajo de un agente.
+        review = withoutFindingsOn(review, scaffold == null ? List.of() : scaffold.files());
+
         var status = StaticValidationStatus.compute(checks, review, sandboxResult);
 
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
@@ -261,6 +267,17 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError));
+    }
+
+    private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
+        if (review == null || generatedByForjai.isEmpty()) {
+            return review;
+        }
+        var kept = review.findingsOrEmpty().stream()
+                .filter(f -> f == null || !generatedByForjai.contains(f.path()))
+                .toList();
+        return new StaticReviewResult(review.verdict(), kept, review.missingFiles(), review.architectureConsistency(),
+                review.notValidatableWithoutExecution(), review.evidence());
     }
 
     static final int EXISTING_CODE_TOTAL_BUDGET_CHARS = 18_000;
@@ -474,6 +491,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 - evidence: cita los archivos reales que revisaste con sourceType "INTERNAL", verified true y source
                   exactamente "workspace:%s@%s/<ruta>" (siempre ese sha, el HEAD: contiene todos los archivos),
                   con una ruta que aparezca en CÓDIGO DEL REPOSITORIO.
+                - Los .csproj y el .sln los genera Forjai con las reglas DDD del perfil: no son trabajo de los agentes,
+                  no los revises ni reportes findings sobre ellos.
                 - Revisión DDD: ¿el código usa el lenguaje ubicuo del glosario? ¿Hay entidades, value objects y
                   agregados con sentido? ¿El dominio es anémico (solo datos, sin reglas)? Repórtalo en findings.
                 - NUNCA afirmes que el juego compila, se ejecuta, funciona o pasa tests.

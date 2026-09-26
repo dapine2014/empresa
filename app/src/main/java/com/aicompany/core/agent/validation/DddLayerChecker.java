@@ -55,7 +55,16 @@ public final class DddLayerChecker {
                 continue;
             }
 
+            // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Program.cs de la API es el composition root y registra
+            // la infraestructura de su contexto; el resto de la API no puede depender de ella.
+            var compositionRoot = source.get().layer() == Layer.API && path.endsWith("/Program.cs");
+
             for (var dependency : dependencies(profile, contexts, path, entry.getValue(), contentsByPath)) {
+                if (compositionRoot && dependency.target().isPresent()
+                        && dependency.target().get().layer() == Layer.INFRASTRUCTURE
+                        && Objects.equals(dependency.target().get().context(), source.get().context())) {
+                    continue;
+                }
                 var reason = violation(source.get(), dependency);
                 if (reason != null) {
                     violations.add(new Violation(path, dependency.raw(), reason));

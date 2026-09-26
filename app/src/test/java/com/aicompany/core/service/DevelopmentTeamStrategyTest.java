@@ -351,4 +351,36 @@ class DevelopmentTeamStrategyTest {
         assertTrue(neoPrompt.getValue().contains("### web/ui/hud.js"), neoPrompt.getValue());
         assertFalse(neoPrompt.getValue().contains("### game/Game.csproj"), neoPrompt.getValue());
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Solution.sln (de Forjai) no estaba en ningún ownedPath y
+    // PATHS_WITHIN_OWNED fallaba. Los archivos del scaffold son rutas permitidas.
+    @Test
+    void theScaffoldFilesAreAllowedPaths() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(validator).validate(eq("M-1"), anyList(), any(), anyList(),
+                argThat(allowed -> allowed.contains("game/Game.csproj")));
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Vera marcó MAJOR un .csproj que genera Forjai; eso no es
+    // trabajo de un agente y no puede impedir VERIFIED.
+    @Test
+    void findingsOnFilesGeneratedByForjaiDoNotCount() throws Exception {
+        stubHappyPath();
+        var review = new StaticReviewResult("ISSUES_FOUND",
+                List.of(new StaticReviewResult.Finding("game/Game.csproj", "MAJOR", "referencia indebida")),
+                List.of(), "ok", List.of("x"), cleanReview().evidence());
+        var reviewPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(review));
+
+        strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(reviewPrompt.getValue().contains("los genera Forjai"), reviewPrompt.getValue());
+    }
 }

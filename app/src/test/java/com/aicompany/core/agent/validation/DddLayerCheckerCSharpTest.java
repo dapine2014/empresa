@@ -70,4 +70,16 @@ class DddLayerCheckerCSharpTest {
         assertTrue(check.detail().contains("src/Combate.Domain/Unidad.cs"));
         assertTrue(DddLayerChecker.toCheck(List.of(), 4).passed());
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Program.cs de la API es el composition root y tiene que
+    // registrar la infraestructura; un controller no.
+    @Test
+    void theApiProgramIsTheCompositionRootButControllersAreNot() {
+        var files = new LinkedHashMap<String, String>();
+        files.put("src/Tareas.Api/Program.cs", "using Tareas.Infrastructure;\nusing Tareas.Application;");
+        files.put("src/Tareas.Api/Controllers/TareasController.cs", "using Tareas.Infrastructure;");
+        var violations = DddLayerChecker.check(StackProfile.DOTNET_APP, List.of("Tareas"), files);
+        assertEquals(1, violations.size(), violations.toString());
+        assertEquals("src/Tareas.Api/Controllers/TareasController.cs", violations.get(0).file());
+    }
 }
