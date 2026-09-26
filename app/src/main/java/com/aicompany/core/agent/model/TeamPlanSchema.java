@@ -3,7 +3,7 @@ package com.aicompany.core.agent.model;
 import java.util.List;
 import java.util.Map;
 
-/** JSON Schema formal de {@link TeamPlan}. techStack/entryPoint pueden ir vacíos (equipos de análisis). */
+/** JSON Schema formal de {@link TeamPlan}. stackProfile vacío y listas vacías en equipos de análisis. */
 public final class TeamPlanSchema {
 
     private TeamPlanSchema() {
@@ -18,28 +18,55 @@ public final class TeamPlanSchema {
                     "objective", Map.of("type", "string", "minLength", 1),
                     "requiredCapabilities", Map.of(
                             "type", "array", "items", Map.of("type", "string"), "minItems", 1),
-                    "ownedPaths", Map.of("type", "array", "items", Map.of("type", "string"))
+                    "ownedPaths", Map.of("type", "array", "items", Map.of("type", "string")),
+                    "assignments", Map.of("type", "array", "items", Map.of(
+                            "type", "object",
+                            "properties", Map.of(
+                                    "context", Map.of("type", "string"),
+                                    "layer", Map.of("type", "string", "minLength", 1)),
+                            "required", List.of("context", "layer"),
+                            "additionalProperties", false))
             ),
-            "required", List.of("agentId", "kind", "action", "objective", "requiredCapabilities", "ownedPaths"),
+            "required", List.of("agentId", "kind", "action", "objective", "requiredCapabilities", "ownedPaths",
+                    "assignments"),
             "additionalProperties", false
     );
+
+    private static final Map<String, Object> PARTICIPATION_CONFLICTS_SCHEMA = Map.of("type", "array", "items", Map.of(
+            "type", "object",
+            "properties", Map.of(
+                    "agentId", Map.of("type", "string", "minLength", 1),
+                    "reason", Map.of("type", "string", "minLength", 1)),
+            "required", List.of("agentId", "reason"),
+            "additionalProperties", false));
+
+    private static final Map<String, Object> CONTEXT_SCHEMA = Map.of(
+            "type", "object",
+            "properties", Map.of(
+                    "name", Map.of("type", "string", "minLength", 1),
+                    "description", Map.of("type", "string", "minLength", 1)),
+            "required", List.of("name", "description"),
+            "additionalProperties", false);
+
+    private static final Map<String, Object> TERM_SCHEMA = Map.of(
+            "type", "object",
+            "properties", Map.of(
+                    "term", Map.of("type", "string", "minLength", 1),
+                    "definition", Map.of("type", "string", "minLength", 1)),
+            "required", List.of("term", "definition"),
+            "additionalProperties", false);
 
     public static final Map<String, Object> SCHEMA = Map.of(
             "type", "object",
             "properties", Map.of(
                     "summary", Map.of("type", "string", "minLength", 1),
-                    "techStack", Map.of("type", "string"),
-                    "entryPoint", Map.of("type", "string"),
+                    "stackProfile", Map.of("type", "string"),
+                    "boundedContexts", Map.of("type", "array", "items", CONTEXT_SCHEMA),
+                    "ubiquitousLanguage", Map.of("type", "array", "items", TERM_SCHEMA),
                     "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1),
-                    "participationConflicts", Map.of("type", "array", "items", Map.of(
-                            "type", "object",
-                            "properties", Map.of(
-                                    "agentId", Map.of("type", "string", "minLength", 1),
-                                    "reason", Map.of("type", "string", "minLength", 1)),
-                            "required", List.of("agentId", "reason"),
-                            "additionalProperties", false))
+                    "participationConflicts", PARTICIPATION_CONFLICTS_SCHEMA
             ),
-            "required", List.of("summary", "techStack", "entryPoint", "tasks"),
+            "required", List.of("summary", "stackProfile", "boundedContexts", "ubiquitousLanguage", "tasks"),
             "additionalProperties", false
     );
 }

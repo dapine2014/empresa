@@ -5,8 +5,10 @@ import com.aicompany.core.agent.model.DevelopmentResult;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StaticCheck;
 import com.aicompany.core.model.StaticValidationStatus;
 import com.aicompany.core.model.TeamExecutionMode;
@@ -159,10 +161,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 "Chequeos deterministas y revisión estática de " + validation.agentId() + ".");
 
         var allowedPaths = work.stream().flatMap(t -> t.ownedPathsOrEmpty().stream()).toList();
-        var checks = staticValidator.validate(missionId, committed, plan.entryPoint(), allowedPaths);
+        var profile = plan.profile().orElse(null);
+        var checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
 
         StaticReviewResult review = null;
         String reviewError = null;
+        var reviewStarted = false;
 
         try {
 
@@ -180,6 +184,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             var repositoryContext = renderRepositoryContext(contents, REVIEW_TOTAL_BUDGET_CHARS, REVIEW_FILE_BUDGET_CHARS);
 
+            reviewStarted = true;
             review = runtime.review(validationTaskId, missionId, validation.agentId(),
                     buildReviewPrompt(context, validation, committed, checks, headSha, repositoryContext),
                     filesBySha).join();
@@ -187,6 +192,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         } catch (Exception ex) {
             reviewError = safeMessage(ex, "La revisión estática no se completó.");
             log.warn("MISSION {} - static review did not complete: {}", missionId, reviewError);
+
+            // Verificado en vivo: si falla antes de lanzar la revisión, DevelopmentRuntime nunca marca la tarea.
+            if (!reviewStarted) {
+                memory.updateTask(validationTaskId, "FAILED", "No se pudo preparar la revisión: " + reviewError);
+                events.publishTask("EMPRESA_TASK_FAILED", validationTaskId, missionId, validation.agentId(), "FAILED",
+                        reviewError);
+            }
         }
 
         var status = StaticValidationStatus.compute(checks, review);
@@ -225,6 +237,26 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .orElse(agentId);
     }
 
+    private static String dddContext(TeamPlan plan) {
+        var profile = plan.profile().map(StackProfile::describe).orElse("- (sin perfil)");
+        var contexts = plan.boundedContextsOrEmpty().stream()
+                .map(c -> "- " + c.name() + ": " + c.description())
+                .collect(Collectors.joining("\n"));
+        var glossary = plan.ubiquitousLanguageOrEmpty().stream()
+                .map(t -> "- " + t.term() + ": " + t.definition())
+                .collect(Collectors.joining("\n"));
+        return """
+                PERFIL DE STACK (metodología DDD obligatoria):
+                %s
+                BOUNDED CONTEXTS:
+                %s
+                LENGUAJE UBICUO (usa estos términos en el código):
+                %s
+                REGLAS DE CAPAS: domain no depende de nada fuera de su domain ni de frameworks; application solo de
+                domain; infrastructure/api/presentation/game dependen de application y domain.
+                """.formatted(profile, contexts, glossary);
+    }
+
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
 
         var plan = context.plan();
@@ -234,19 +266,25 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .map(t -> "- " + t.agentId() + " (" + t.kind() + "): " + t.objective() + " | ownedPaths=" + t.ownedPathsOrEmpty())
                 .collect(Collectors.joining("\n"));
 
+        // Verificado en vivo: la dueña de "game" no creó game/project.godot porque nadie le dijo que era obligatorio.
+        var requiredFiles = plan.profile().map(StackProfile::leaderOwnedPaths).orElse(List.of()).stream()
+                .filter(file -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), file))
+                .toList();
+        var required = requiredFiles.isEmpty() ? "" : "ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no "
+                + "compila ni arranca sin ellos): " + requiredFiles + "\n";
+
         return """
                 MISIÓN DEL EQUIPO %s:
                 %s
 
                 PLAN DEL LÍDER:
                 %s
-                Tecnología: %s
-                Punto de entrada: %s
+                %s
 
                 TU TAREA (%s, action=%s):
                 %s
                 Solo puedes escribir archivos dentro de estos ownedPaths: %s
-
+                %s
                 TAREAS DEL RESTO DEL EQUIPO (corren en paralelo; no verás su código, respeta sus rutas e interfaces):
                 %s
 
@@ -259,8 +297,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 FORMATO: {"summary": "...", "files": [{"path": "...", "content": "..."}]}
                 """.formatted(
                 context.team().teamName(), context.instruction(),
-                plan.summary(), plan.techStack(), plan.entryPoint(),
-                task.agentId(), task.action(), task.objective(), task.ownedPathsOrEmpty(),
+                plan.summary(), dddContext(plan),
+                task.agentId(), task.action(), task.objective(), task.ownedPathsOrEmpty(), required,
                 others);
     }
 
@@ -283,7 +321,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 OBJETIVO DE TU TAREA: %s
 
                 PLAN DEL LÍDER: %s
-                Tecnología: %s | Punto de entrada: %s
+                %s
 
                 COMMITS POR AGENTE:
                 %s
@@ -304,11 +342,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                   rendimiento, jugabilidad...). Nunca vacío.
                 - evidence: cita los archivos reales que revisaste con sourceType "INTERNAL", verified true y source
                   exactamente "workspace:%s@<sha>/<ruta>", usando un sha de la lista de commits y una ruta que exista en ese commit.
+                - Revisión DDD: ¿el código usa el lenguaje ubicuo del glosario? ¿Hay entidades, value objects y
+                  agregados con sentido? ¿El dominio es anémico (solo datos, sin reglas)? Repórtalo en findings.
                 - NUNCA afirmes que el juego compila, se ejecuta, funciona o pasa tests.
                 """.formatted(
                 validation.agentId(), context.team().teamName(), context.missionId(),
                 validation.objective(),
-                context.plan().summary(), context.plan().techStack(), context.plan().entryPoint(),
+                context.plan().summary(), dddContext(context.plan()),
                 commits, checkLines, headSha, repositoryContext, context.missionId());
     }
 
@@ -354,8 +394,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("MISIÓN DE EQUIPO: ").append(context.team().teamName())
                 .append(" (").append(context.team().teamId()).append(")\n");
         out.append("PLAN DEL LÍDER: ").append(context.plan().summary())
-                .append(" | Tecnología: ").append(context.plan().techStack())
-                .append(" | Punto de entrada: ").append(context.plan().entryPoint()).append("\n\n");
+                .append(" | Perfil: ").append(context.plan().stackProfile())
+                .append(" | Bounded contexts: ").append(context.plan().contextNames()).append("\n\n");
 
         out.append("COMMITS POR AGENTE:\n");
         for (var c : committed) {
@@ -405,6 +445,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var out = new StringBuilder();
         out.append("ESTADO VERIFICABLE (generado por Forjai, no por un modelo)\n");
         out.append("Workspace: ").append(workspace.missionWorkspace(context.missionId())).append("\n");
+        out.append("Perfil: ").append(context.plan().stackProfile())
+                .append(" | Bounded contexts: ").append(context.plan().contextNames()).append("\n");
 
         for (var c : committed) {
             out.append("- ").append(agentName(context, c.agentId())).append(" (").append(c.agentId()).append("): commit ")

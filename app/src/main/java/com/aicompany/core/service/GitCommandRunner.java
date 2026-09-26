@@ -28,6 +28,9 @@ public class GitCommandRunner {
         command.add("git");
         command.add("-c");
         command.add("safe.directory=*");
+        // Verificado en vivo: sin esto git devuelve "L\303\263gica.cs" entrecomillado para nombres con tildes.
+        command.add("-c");
+        command.add("core.quotepath=off");
         command.addAll(List.of(args));
 
         var builder = new ProcessBuilder(command).directory(dir.toFile());

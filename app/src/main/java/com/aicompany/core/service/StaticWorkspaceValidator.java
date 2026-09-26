@@ -1,6 +1,9 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.agent.validation.DddLayerChecker;
 import com.aicompany.core.agent.validation.OwnedPaths;
+import com.aicompany.core.agent.validation.ProfileStructureChecker;
+import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StaticCheck;
 import org.springframework.stereotype.Component;
 
@@ -8,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
 
@@ -30,7 +34,8 @@ public class StaticWorkspaceValidator {
     }
 
     public List<StaticCheck> validate(
-            String missionId, List<CommittedWork> work, String entryPoint, List<String> allowedPaths) {
+            String missionId, List<CommittedWork> work, StackProfile profile, List<String> contexts,
+            List<String> allowedPaths) {
 
         var checks = new ArrayList<StaticCheck>();
         var dir = workspace.missionWorkspace(missionId);
@@ -46,7 +51,7 @@ public class StaticWorkspaceValidator {
             validateCommit(dir, item, checks);
         }
 
-        validateHead(dir, entryPoint, allowedPaths, checks);
+        validateHead(dir, profile, contexts, allowedPaths, checks);
 
         return checks;
     }
@@ -106,7 +111,8 @@ public class StaticWorkspaceValidator {
         }
     }
 
-    private void validateHead(Path dir, String entryPoint, List<String> allowedPaths, List<StaticCheck> checks) {
+    private void validateHead(
+            Path dir, StackProfile profile, List<String> contexts, List<String> allowedPaths, List<StaticCheck> checks) {
 
         List<String> entries;
 
@@ -119,6 +125,7 @@ public class StaticWorkspaceValidator {
 
         var symlinks = new ArrayList<String>();
         var outside = new ArrayList<String>();
+        var paths = new ArrayList<String>();
 
         for (var entry : entries) {
 
@@ -131,6 +138,7 @@ public class StaticWorkspaceValidator {
 
             var mode = entry.substring(0, space);
             var path = entry.substring(tab + 1);
+            paths.add(path);
 
             if ("120000".equals(mode)) {
                 symlinks.add(path);
@@ -151,23 +159,28 @@ public class StaticWorkspaceValidator {
                 : StaticCheck.fail("PATHS_WITHIN_OWNED",
                         "Archivos fuera de los ownedPaths del plan: " + outside, null, outside));
 
-        if (entryPoint == null || entryPoint.isBlank()) {
-            checks.add(StaticCheck.fail("ENTRY_POINT", "El plan no declaró entryPoint.", null, List.of()));
+        if (profile == null) {
+            checks.add(StaticCheck.fail("STACK_PROFILE", "El plan no declaró un stackProfile del catálogo.",
+                    null, List.of()));
             return;
         }
 
-        var normalizedEntryPoint = OwnedPaths.normalize(entryPoint);
+        checks.addAll(ProfileStructureChecker.check(profile, contexts, paths));
 
+        var contents = new LinkedHashMap<String, String>();
         try {
-            var content = git.run(dir, "show", "HEAD:" + normalizedEntryPoint);
-            checks.add(content.isBlank()
-                    ? StaticCheck.fail("ENTRY_POINT", "El entryPoint " + normalizedEntryPoint + " está vacío.",
-                            null, List.of(normalizedEntryPoint))
-                    : StaticCheck.pass("ENTRY_POINT", "entryPoint " + normalizedEntryPoint + " presente",
-                            null, List.of(normalizedEntryPoint)));
+            for (var path : paths) {
+                if (path.endsWith(profile.sourceExtension()) || path.equals("pubspec.yaml")) {
+                    contents.put(path, git.run(dir, "show", "HEAD:" + path));
+                }
+            }
         } catch (IOException ex) {
-            checks.add(StaticCheck.fail("ENTRY_POINT", "El entryPoint " + normalizedEntryPoint + " no existe en HEAD.",
-                    null, List.of(normalizedEntryPoint)));
+            checks.add(StaticCheck.fail("DDD_LAYERS", "No se pudo leer el código para el chequeo DDD: "
+                    + ex.getMessage(), null, List.of()));
+            return;
         }
+
+        var analyzed = (int) contents.keySet().stream().filter(p -> p.endsWith(profile.sourceExtension())).count();
+        checks.add(DddLayerChecker.toCheck(DddLayerChecker.check(profile, contexts, contents), analyzed));
     }
 }

@@ -2,6 +2,7 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.agent.validation.TeamPlanResolver;
 import com.aicompany.core.agent.validation.TeamPlanValidator;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.TeamExecutionMode;
@@ -28,7 +29,7 @@ class TeamWorkPlannerTest {
 
     private final TeamWorkPlanner planner = new TeamWorkPlanner(
             teamMemory, ceoService, companyMemory, promptMemory, memory, events,
-            new TeamPlanValidator(), JsonMapper.builder().build(), "qwen3:8b");
+            new TeamPlanValidator(), new TeamPlanResolver(), JsonMapper.builder().build(), "qwen3:8b");
 
     {
         when(companyMemory.agentModel(anyString(), anyString())).thenAnswer(inv -> inv.getArgument(1));
@@ -175,5 +176,122 @@ class TeamWorkPlannerTest {
 
         assertEquals("SEO_PLAN_INICIAL", result.plan().tasks().get(0).action());
         verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+    }
+
+    private static TeamSnapshot engineering() {
+        return new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+                new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND",
+                        List.of("arquitectura backend"), "qwen3:8b"),
+                new TeamMemberInfo("qa", "Vera", "QA", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "qwen3:8b"),
+                new TeamMemberInfo("backend", "Iris", "Backend", "DEV_BACKEND_INTEGRATIONS", List.of("backend"), "qwen3:8b")));
+    }
+
+    private static TeamPlan dddPlan() {
+        return new TeamPlan("Juego", null, null, List.of(
+                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"),
+                        List.of(), List.of()),
+                new PlannedTask("backend", "WORK", "DOMAIN_LOGIC", "Reglas del combate", List.of("backend"), List.of()),
+                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
+                List.of(), "GODOT_DOTNET_GAME",
+                List.of(new TeamPlan.BoundedContext("Combate", "Combate por turnos")),
+                List.of(new TeamPlan.GlossaryTerm("Unidad", "Personaje"),
+                        new TeamPlan.GlossaryTerm("Turno", "Momento de acción"),
+                        new TeamPlan.GlossaryTerm("Daño", "Vida que resta un ataque")));
+    }
+
+    @Test
+    void theDevelopmentPromptPresentsTheStackCatalogAndDddRules() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
+
+        var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        assertTrue(prompt.getValue().contains("GODOT_DOTNET_GAME"));
+        assertTrue(prompt.getValue().contains("src/<Ctx>.Domain"));
+        assertTrue(prompt.getValue().contains("boundedContexts"));
+        assertTrue(prompt.getValue().contains("ubiquitousLanguage"));
+        assertEquals("GODOT_DOTNET_GAME", result.plan().stackProfile());
+    }
+
+    @Test
+    void normalizingActionsKeepsTheDddFields() {
+        var normalized = TeamWorkPlanner.normalizeActions(dddPlan());
+        assertEquals("GODOT_DOTNET_GAME", normalized.stackProfile());
+        assertEquals(List.of("Combate"), normalized.contextNames());
+        assertEquals(3, normalized.ubiquitousLanguageOrEmpty().size());
+    }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-1): con "reparte por contexto y capa", qwen3:8b armó una tarea
+    // por capa, repitiendo agentes y carpetas. El prompt aclara una sola tarea por agente y da un ejemplo.
+    @Test
+    void theDevelopmentPromptExplainsOneTaskPerAgentAcrossLayersWithAnExample() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
+
+        planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        assertTrue(prompt.getValue().contains("UNA sola tarea"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("DEV_BACKEND_INTEGRATIONS → DOMAIN"), prompt.getValue());
+    }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior, cada reintento regeneraba desde cero y
+    // traía errores nuevos. La corrección incluye el plan rechazado para que se corrija de forma incremental.
+    @Test
+    void theRetryIncludesThePreviousPlanToCorrectIncrementally() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(eq("growth-content"), prompt.capture(), anyString(), anyString()))
+                .thenReturn(planWithOutsider())
+                .thenReturn(validPlan());
+
+        planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS);
+
+        var second = prompt.getAllValues().get(1);
+        assertTrue(second.contains("PLAN ANTERIOR"), second);
+        assertTrue(second.contains("\"agentId\":\"finance\""), second);
+        assertTrue(second.contains("corrige SOLO"), second);
+    }
+
+    @Test
+    void developmentPlansGetFiveAttempts() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(planWithOutsider());
+
+        assertThrows(IllegalStateException.class,
+                () -> planner.plan("M-1", "TEAM-ENGINEERING", "x", TeamExecutionMode.DEVELOPMENT));
+        verify(ceoService, times(5)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+    }
+
+    // Revisión 2026-09-26 (opción B): Java calcula rutas, VALIDATION y archivos de entrada antes de validar.
+    @Test
+    void developmentPlansAreResolvedBeforeValidation() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(dddPlan());
+
+        var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).findFirst().orElseThrow();
+        assertEquals(List.of("Solution.sln", "game/project.godot"), neo.ownedPaths());
+        var iris = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("backend")).findFirst().orElseThrow();
+        assertEquals(List.of("src/Combate.Domain", "src/Combate.Application"), iris.ownedPaths());
+    }
+
+    @Test
+    void resolverErrorsAreRetriedWithTheirCorrection() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        var noAssignments = new TeamPlan("Juego", null, null, List.of(
+                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"), List.of()),
+                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
+                List.of(), "GODOT_DOTNET_GAME", dddPlan().boundedContexts(), dddPlan().ubiquitousLanguage());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
+                .thenReturn(noAssignments)
+                .thenReturn(dddPlan());
+
+        planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        assertTrue(prompt.getAllValues().get(1).contains("DOMAIN del contexto Combate"), prompt.getAllValues().get(1));
     }
 }

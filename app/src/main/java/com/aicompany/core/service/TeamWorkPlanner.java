@@ -1,8 +1,11 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.agent.model.TeamPlan;
+import com.aicompany.core.agent.validation.TeamPlanResolver;
 import com.aicompany.core.agent.validation.TeamPlanValidator;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.RoleLayerCatalog;
+import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.TeamExecutionMode;
 import com.aicompany.core.model.TeamMemberInfo;
 import com.aicompany.core.model.TeamPlanResult;
@@ -14,6 +17,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -31,6 +35,12 @@ public class TeamWorkPlanner {
 
     private static final int MAX_PLAN_RETRIES = 2;
 
+    /**
+     * Los planes de desarrollo tienen más reglas (perfil, contextos, glosario, carpetas exclusivas):
+     * verificado en vivo que 3 intentos no alcanzaban para converger.
+     */
+    private static final int MAX_DEVELOPMENT_PLAN_RETRIES = 4;
+
     private final TeamMemoryService teamMemory;
     private final CeoService ceoService;
     private final CompanyMemoryService companyMemory;
@@ -38,6 +48,7 @@ public class TeamWorkPlanner {
     private final MissionMemoryService memory;
     private final CompanyEventPublisher events;
     private final TeamPlanValidator validator;
+    private final TeamPlanResolver resolver;
     private final JsonMapper jsonMapper;
     private final String defaultAgentModel;
 
@@ -49,6 +60,7 @@ public class TeamWorkPlanner {
             MissionMemoryService memory,
             CompanyEventPublisher events,
             TeamPlanValidator validator,
+            TeamPlanResolver resolver,
             JsonMapper jsonMapper,
             @Value("${ollama.agent-model}") String defaultAgentModel) {
 
@@ -59,6 +71,7 @@ public class TeamWorkPlanner {
         this.memory = memory;
         this.events = events;
         this.validator = validator;
+        this.resolver = resolver;
         this.jsonMapper = jsonMapper;
         this.defaultAgentModel = defaultAgentModel;
     }
@@ -88,10 +101,12 @@ public class TeamWorkPlanner {
             var leaderPrompt = promptMemory.activePrompt(leaderId);
             var basePrompt = buildPrompt(team, instruction, mode);
             String feedback = null;
+            String previousPlanJson = null;
+            var maxRetries = mode == TeamExecutionMode.DEVELOPMENT ? MAX_DEVELOPMENT_PLAN_RETRIES : MAX_PLAN_RETRIES;
 
-            for (int attempt = 0; attempt <= MAX_PLAN_RETRIES; attempt++) {
+            for (int attempt = 0; attempt <= maxRetries; attempt++) {
 
-                var prompt = feedback == null ? basePrompt : basePrompt + correctionBlock(feedback);
+                var prompt = feedback == null ? basePrompt : basePrompt + correctionBlock(feedback, previousPlanJson);
 
                 TeamPlan plan;
 
@@ -109,7 +124,17 @@ public class TeamWorkPlanner {
                     return reportParticipationConflict(missionId, taskId, leaderId, teamId, plan);
                 }
 
-                var errors = validator.validate(plan, team, mode);
+                var errors = new ArrayList<String>();
+
+                if (mode == TeamExecutionMode.DEVELOPMENT) {
+                    var resolution = resolver.resolve(plan, team);
+                    errors.addAll(resolution.errors());
+                    plan = resolution.plan();
+                }
+
+                if (errors.isEmpty()) {
+                    errors.addAll(validator.validate(plan, team, mode));
+                }
 
                 if (errors.isEmpty()) {
 
@@ -125,11 +150,12 @@ public class TeamWorkPlanner {
                 }
 
                 feedback = "- " + String.join("\n- ", errors);
+                previousPlanJson = toJson(plan);
                 publishRejected(missionId, taskId, leaderId, attempt, feedback);
             }
 
             var message = "El líder " + leaderId + " no produjo un plan válido para " + teamId
-                    + " después de " + (MAX_PLAN_RETRIES + 1) + " intentos:\n" + feedback;
+                    + " después de " + (maxRetries + 1) + " intentos:\n" + feedback;
 
             memory.updateTask(taskId, "FAILED", message);
 
@@ -183,7 +209,7 @@ public class TeamWorkPlanner {
         if (mode == TeamExecutionMode.ANALYSIS) {
             return common + """
                     - kind: siempre "WORK" (este equipo no tiene tareas de validación).
-                    - techStack y entryPoint: déjalos como "" y ownedPaths como [].
+                    - stackProfile: "" ; boundedContexts: [] ; ubiquitousLanguage: [] ; ownedPaths: [].
                     """;
         }
 
@@ -199,10 +225,22 @@ public class TeamWorkPlanner {
                 - Las demás tareas son kind="WORK" y declaran ownedPaths: rutas relativas (carpetas o archivos) que solo
                   ese agente puede escribir. Los ownedPaths de agentes distintos no pueden solaparse.
                   Nunca uses rutas absolutas, "..", "\\" ni ".git".
-                - techStack: la tecnología elegida; debe permitir un MVP pequeño y completo con la capacidad real del equipo.
-                - entryPoint: ruta relativa del punto de entrada del proyecto. Esa misma ruta (o su carpeta) DEBE aparecer
-                  en los ownedPaths de la tarea WORK que lo va a escribir; si no, el plan se rechaza.
-                """;
+                - Metodología obligatoria: DDD.
+                - stackProfile: elige EXACTAMENTE uno de estos perfiles del catálogo (no existen otros):
+                %s
+                - boundedContexts: los bounded contexts del producto, cada uno con name (en el formato del perfil) y
+                  description. El name define las rutas de sus capas.
+                - ubiquitousLanguage: al menos 3 términos del dominio, cada uno con term y definition.
+                - Cada miembro tiene UNA sola tarea (nunca dos tareas para el mismo agentId).
+                - Las capas de cada miembro las asigna Forjai según su rol (no las decides tú): %s.
+                  Tú decides el objective de cada miembro, coherente con esas capas y con el producto.
+                - kind, ownedPaths y assignments los calcula Forjai: pon kind "WORK", ownedPaths [] y
+                  assignments [] en todas las tareas.
+                - requiredCapabilities: solo capabilities que figuren en la lista de ESE agente (el nombre de una
+                  tecnología, como "Godot", no es una capability si no está en su lista).
+                - Reglas de capas: domain no depende de nada fuera de su domain ni de frameworks; application solo de
+                  domain; infrastructure/api/presentation/game dependen de application y domain.
+                """.formatted(StackProfile.describeAll(), RoleLayerCatalog.describe());
     }
 
     /**
@@ -246,10 +284,11 @@ public class TeamWorkPlanner {
         var tasks = plan.tasks().stream()
                 .map(t -> t == null || t.action() == null ? t : new TeamPlan.PlannedTask(
                         t.agentId(), t.kind(), normalizeAction(t.action()), t.objective(),
-                        t.requiredCapabilities(), t.ownedPaths()))
+                        t.requiredCapabilities(), t.ownedPaths(), t.assignments()))
                 .toList();
 
-        return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts());
+        return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts(),
+                plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage());
     }
 
     private static String normalizeAction(String action) {
@@ -260,7 +299,20 @@ public class TeamWorkPlanner {
                 .replaceAll("^_+|_+$", "");
     }
 
-    private String correctionBlock(String feedback) {
+    /**
+     * Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior el modelo regeneraba desde cero y traía
+     * errores nuevos en cada intento. Con el plan rechazado a la vista, la corrección es incremental.
+     */
+    private String correctionBlock(String feedback, String previousPlanJson) {
+
+        var previous = previousPlanJson == null ? "" : """
+
+                PLAN ANTERIOR (rechazado):
+                %s
+
+                Toma ESTE plan como base y corrige SOLO los errores indicados; conserva todo lo demás tal cual.
+                """.formatted(previousPlanJson);
+
         return """
 
                 CORRECCIÓN DEL INTENTO ANTERIOR
@@ -268,7 +320,7 @@ public class TeamWorkPlanner {
                 El plan anterior fue rechazado por validaciones deterministas.
                 Corrige únicamente estos errores:
                 %s
-                """.formatted(feedback);
+                """.formatted(feedback) + previous;
     }
 
     private String toJson(TeamPlan plan) {
