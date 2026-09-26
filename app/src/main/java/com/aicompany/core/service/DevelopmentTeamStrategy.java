@@ -256,7 +256,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     for (int attempt = 0; attempt < REPAIR_ATTEMPTS && result == null; attempt++) {
                         var candidate = runtime.generate(id, missionId, task.agentId(), basePrompt + insist,
                                 task.ownedPathsOrEmpty(), expectedProjects, required).join();
-                        if (unchanged(candidate, current)) {
+                        // Verificado en vivo (MISSION-SANDBOX-VERIFY-16): se compara TODO lo devuelto contra HEAD.
+                        var returned = candidate == null || candidate.files() == null ? List.<String>of()
+                                : candidate.files().stream().filter(Objects::nonNull)
+                                        .map(DevelopmentResult.GeneratedFile::path).toList();
+                        if (unchanged(candidate, headContents(missionId, headSha, returned))) {
                             insist = "\n\nATENCIÓN: devolviste tus archivos SIN CAMBIOS y el compilador sigue fallando en "
                                     + "las líneas indicadas arriba. Cambia esas líneas.";
                         } else {
@@ -444,6 +448,18 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
             } catch (Exception ex) {
                 log.debug("MISSION {} - could not read {}: {}", missionId, path, ex.getMessage());
+            }
+        }
+        return contents;
+    }
+
+    private Map<String, String> headContents(String missionId, String headSha, List<String> paths) {
+        var contents = new LinkedHashMap<String, String>();
+        for (var path : paths) {
+            try {
+                contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+            } catch (Exception ex) {
+                log.debug("MISSION {} - {} is not at {}: {}", missionId, path, headSha, ex.getMessage());
             }
         }
         return contents;

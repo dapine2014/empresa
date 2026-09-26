@@ -565,4 +565,28 @@ class DevelopmentTeamStrategyTest {
         assertTrue(prompt.contains("otras definiciones de 'Estado'"), prompt);
         assertTrue(prompt.contains("línea 4: public enum Estado { A }"), prompt);
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-16): Neo devolvió el archivo con errores sin cambios y otro suyo
+    // también sin cambios; la comparación solo miraba el primero y git fallaba con "nothing to commit".
+    @Test
+    void unchangedDetectionComparesEveryReturnedFileAgainstHead() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of(
+                "src/Combate.Application/X.cs", "src/Combate.Application/Y.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs")).thenReturn("x\n");
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/Y.cs")).thenReturn("y\n");
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        var repairPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
+                        new GeneratedFile("src/Combate.Application/X.cs", "x\n"),
+                        new GeneratedFile("src/Combate.Application/Y.cs", "y\n")))));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        assertTrue(repairPrompts.getAllValues().get(1).contains("SIN CAMBIOS"), repairPrompts.getAllValues().get(1));
+    }
 }
