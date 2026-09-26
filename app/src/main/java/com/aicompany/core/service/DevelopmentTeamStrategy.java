@@ -6,6 +6,7 @@ import com.aicompany.core.agent.model.DevelopmentResult;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.agent.validation.CompilerErrorParser;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.MissionStatus;
@@ -189,17 +190,68 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         var headSha = committed.get(committed.size() - 1).commitSha();
         SandboxResult sandboxResult = null;
-        String sandboxError;
+        String sandboxError = null;
+        var repairRounds = 0;
 
-        // Review Focus: si los chequeos deterministas fallaron, no se gastan minutos compilando.
-        if (checks.stream().allMatch(StaticCheck::passed) && profile != null) {
-            progress.advance(MissionStatus.EVALUATING, 80, "Sandbox",
-                    "Compilando, corriendo tests y arrancando el código en el sandbox.");
+        // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10): si no compila, los errores reales del compilador
+        // vuelven al dueño de cada archivo, se commitea la corrección y se verifica de nuevo (hasta MAX_REPAIR_ROUNDS).
+        for (int round = 0; ; round++) {
+
+            // Review Focus: si los chequeos deterministas fallaron, no se gastan minutos compilando.
+            if (!checks.stream().allMatch(StaticCheck::passed) || profile == null) {
+                sandboxResult = null;
+                sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
+                break;
+            }
+
+            progress.advance(MissionStatus.EVALUATING, 80, "Sandbox", round == 0
+                    ? "Compilando, corriendo tests y arrancando el código en el sandbox."
+                    : "Ronda de corrección " + round + ": verificando de nuevo en el sandbox.");
             var verified = sandbox.verify(missionId, headSha, profile.name());
             sandboxResult = verified.orElse(null);
             sandboxError = verified.isEmpty() ? sandbox.lastError() : null;
-        } else {
-            sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
+
+            if (sandboxResult == null || sandboxResult.passed() || round == MAX_REPAIR_ROUNDS) {
+                break;
+            }
+
+            var errorsByTask = compileErrorsByOwner(sandboxResult, ordered);
+            if (errorsByTask.isEmpty()) {
+                break;
+            }
+
+            var repaired = false;
+            for (var entry : errorsByTask.entrySet()) {
+                var task = entry.getKey();
+                var id = taskId(missionId, task.agentId());
+                try {
+                    var result = runtime.generate(id, missionId, task.agentId(),
+                            buildWorkPrompt(context, task) + repairBlock(entry.getValue())
+                                    + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
+                                    + "commit " + headSha + "); devuelve tus archivos corregidos y completos:"),
+                            task.ownedPathsOrEmpty(), expectedProjects).join();
+                    var record = workspace.commitAgentWork(missionId, id, task.agentId(),
+                            agentName(context, task.agentId()), result);
+                    memory.recordTaskArtifact(id, workspace.missionWorkspace(missionId).toString(),
+                            record.sha(), record.files());
+                    memory.updateTask(id, "COMPLETED", toJson(result));
+                    events.publish("EMPRESA_TASK_COMMITTED", missionId, id, task.agentId(),
+                            Map.of("commitSha", record.sha(), "files", record.files(), "repairRound", round + 1));
+                    committed.add(new CommittedWork(id, task.agentId(), record.sha(), record.files()));
+                    headSha = record.sha();
+                    repaired = true;
+                } catch (Exception ex) {
+                    log.warn("MISSION {} - repair of {} failed: {}", missionId, task.agentId(),
+                            safeMessage(ex, "sin detalle"));
+                }
+            }
+
+            if (!repaired) {
+                break;
+            }
+
+            repairRounds++;
+            checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
         }
 
         if (sandboxResult != null) {
@@ -266,7 +318,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return new TeamExecutionResult.Development(
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
-                verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError));
+                verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
+                        repairRounds));
     }
 
     private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
@@ -278,6 +331,39 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .toList();
         return new StaticReviewResult(review.verdict(), kept, review.missingFiles(), review.architectureConsistency(),
                 review.notValidatableWithoutExecution(), review.evidence());
+    }
+
+    static final int MAX_REPAIR_ROUNDS = 2;
+
+    /** Errores del compilador del primer paso fallido (restore/build), agrupados por dueño en orden de capas. */
+    private static LinkedHashMap<PlannedTask, List<CompilerErrorParser.CompilerError>> compileErrorsByOwner(
+            SandboxResult result, List<PlannedTask> ordered) {
+        var byOwner = new LinkedHashMap<PlannedTask, List<CompilerErrorParser.CompilerError>>();
+        var failed = result.stepsOrEmpty().stream()
+                .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
+                .findFirst();
+        if (failed.isEmpty() || !List.of("restore", "build").contains(failed.get().name())) {
+            return byOwner;
+        }
+        var errors = CompilerErrorParser.parse(failed.get().outputTail());
+        for (var task : ordered) {
+            var own = errors.stream().filter(e -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), e.path())).toList();
+            if (!own.isEmpty()) {
+                byOwner.put(task, own);
+            }
+        }
+        return byOwner;
+    }
+
+    private static String repairBlock(List<CompilerErrorParser.CompilerError> errors) {
+        return """
+
+                CORRECCIÓN DEL SANDBOX (compilación real, no una opinión): tu código no compila. Errores del compilador
+                en tus archivos:
+                %s
+                Corrige exactamente estos errores (mira la línea y la columna) sin cambiar lo que ya está bien, y
+                devuelve TODOS tus archivos completos en files.
+                """.formatted(errors.stream().map(e -> "- " + e.display()).collect(Collectors.joining("\n")));
     }
 
     static final int EXISTING_CODE_TOTAL_BUDGET_CHARS = 18_000;
@@ -310,6 +396,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     /** Código real ya commiteado (sin .csproj/.sln, que son de Forjai), con tope explícito. */
     private String existingCode(String missionId, String headSha) {
+        return repositoryCode(missionId, headSha, "CÓDIGO YA ESCRITO POR EL EQUIPO (capas anteriores, commit " + headSha
+                + "). Úsalo tal cual: mismos namespaces, clases, métodos y firmas. No lo reescribas ni lo devuelvas; "
+                + "escribe solo tus archivos.");
+    }
+
+    private String repositoryCode(String missionId, String headSha, String header) {
         if (headSha == null) {
             return "";
         }
@@ -324,12 +416,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             if (contents.isEmpty()) {
                 return "";
             }
-            return """
-
-                    CÓDIGO YA ESCRITO POR EL EQUIPO (capas anteriores, commit %s). Úsalo tal cual: mismos namespaces,
-                    clases, métodos y firmas. No lo reescribas ni lo devuelvas; escribe solo tus archivos.
-                    %s""".formatted(headSha, renderRepositoryContext(contents, EXISTING_CODE_TOTAL_BUDGET_CHARS,
-                    EXISTING_CODE_FILE_BUDGET_CHARS));
+            return "\n\n" + header + "\n" + renderRepositoryContext(contents, EXISTING_CODE_TOTAL_BUDGET_CHARS,
+                    EXISTING_CODE_FILE_BUDGET_CHARS);
         } catch (Exception ex) {
             log.warn("MISSION {} - could not read existing code at {}: {}", missionId, headSha, ex.getMessage());
             return "";
@@ -592,7 +680,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private String verifiableState(
             TeamMissionContext context, CommittedWork scaffold, List<CommittedWork> committed, List<StaticCheck> checks,
-            StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError) {
+            StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError,
+            int repairRounds) {
 
         var passed = checks.stream().filter(StaticCheck::passed).count();
 
@@ -620,6 +709,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("Validación estática: ").append(status.name())
                 .append(" (").append(passed).append("/").append(checks.size()).append(" chequeos deterministas en PASS)\n");
         out.append("Sandbox: ").append(sandboxSummary(sandboxResult, sandboxError)).append("\n");
+        if (repairRounds > 0) {
+            out.append("Rondas de corrección: ").append(repairRounds)
+                    .append(" (errores reales del compilador devueltos a los dueños de los archivos)\n");
+        }
 
         if (sandboxResult != null) {
             sandboxResult.stepsOrEmpty().stream()

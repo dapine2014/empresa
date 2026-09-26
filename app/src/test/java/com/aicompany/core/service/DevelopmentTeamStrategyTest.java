@@ -383,4 +383,69 @@ class DevelopmentTeamStrategyTest {
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
         assertTrue(reviewPrompt.getValue().contains("los genera Forjai"), reviewPrompt.getValue());
     }
+
+    private static SandboxResult buildFailure(String path) {
+        return new SandboxResult("FAIL", List.of(
+                new SandboxResult.StepResult("restore", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("build", "FAIL", 1, 2000,
+                        "/work/" + path + "(3,5): error CS1002: ; expected [/work/x.csproj]\nBuild FAILED.", 0, 0),
+                new SandboxResult.StepResult("test", "SKIPPED", 0, 0, "", 0, 0)));
+    }
+
+    // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10: todo pasaba salvo una línea que no compilaba).
+    @Test
+    void aCompileErrorGoesBackToTheFileOwnerAndTheSandboxRunsAgain() throws Exception {
+        stubHappyPath();
+        var pass = Optional.of(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("build", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 3, 0),
+                new SandboxResult.StepResult("smoke", "PASS", 0, 1000, "", 0, 0))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")))
+                .thenReturn(pass);
+        var milaPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(sandbox, times(2)).verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"));
+        assertEquals(2, milaPrompts.getAllValues().size());
+        var repair = milaPrompts.getAllValues().get(1);
+        assertTrue(repair.contains("CORRECCIÓN DEL SANDBOX"), repair);
+        assertTrue(repair.contains("src/Combate.Application/X.cs(3,5): CS1002: ; expected"), repair);
+        verify(workspace, times(2)).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), anyString(), anyString(), any());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Rondas de corrección: 1"), result.verifiableState());
+    }
+
+    @Test
+    void theCorrectionCycleStopsAfterTheMaximumRounds() throws Exception {
+        stubHappyPath();
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(sandbox, times(1 + DevelopmentTeamStrategy.MAX_REPAIR_ROUNDS))
+                .verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"));
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"), anyString());
+    }
+
+    @Test
+    void errorsInFilesWithoutAnOwnerAreNotRepaired() throws Exception {
+        stubHappyPath();
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Otro/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(sandbox, times(1)).verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"));
+    }
 }
