@@ -15,12 +15,33 @@ services:
       SERVER_PORT: 8081
       EVIDENCE_WEB_SEARCH_API_KEY: ${EVIDENCE_WEB_SEARCH_API_KEY}
       PRODUCTS_WORKSPACE_ROOT: /data/forjai-products
+      SANDBOX_RUNNER_URL: http://sandbox-runner:8090
+      SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN}
     volumes:
       - ${HOME}/forjai-products:/data/forjai-products
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "8081:8081"
+    networks:
+      - ai-company-net
+
+  sandbox-runner:
+    build:
+      context: ./sandbox-runner
+    container_name: forjai-sandbox-runner
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN}
+      SANDBOX_PRODUCTS_ROOT: ${HOME}/forjai-products
+      SANDBOX_WORK_ROOT: ${HOME}/forjai-sandbox-work
+      SANDBOX_PODMAN_URL: unix:///run/podman/podman.sock
+      HOME: /tmp
+    volumes:
+      - ${HOME}/forjai-products:${HOME}/forjai-products:ro
+      - ${HOME}/forjai-sandbox-work:${HOME}/forjai-sandbox-work
+      - /run/user/${UID:-1000}/podman/podman.sock:/run/podman/podman.sock
     networks:
       - ai-company-net
 
