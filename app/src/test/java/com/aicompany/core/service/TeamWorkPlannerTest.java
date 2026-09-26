@@ -176,4 +176,46 @@ class TeamWorkPlannerTest {
         assertEquals("SEO_PLAN_INICIAL", result.plan().tasks().get(0).action());
         verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
     }
+
+    private static TeamSnapshot engineering() {
+        return new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+                new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND",
+                        List.of("arquitectura backend"), "qwen3:8b"),
+                new TeamMemberInfo("qa", "Vera", "QA", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "qwen3:8b")));
+    }
+
+    private static TeamPlan dddPlan() {
+        return new TeamPlan("Juego", null, null, List.of(
+                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"),
+                        List.of("Juego.sln", "src/Combate.Domain")),
+                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
+                List.of(), "GODOT_DOTNET_GAME",
+                List.of(new TeamPlan.BoundedContext("Combate", "Combate por turnos")),
+                List.of(new TeamPlan.GlossaryTerm("Unidad", "Personaje"),
+                        new TeamPlan.GlossaryTerm("Turno", "Momento de acción"),
+                        new TeamPlan.GlossaryTerm("Daño", "Vida que resta un ataque")));
+    }
+
+    @Test
+    void theDevelopmentPromptPresentsTheStackCatalogAndDddRules() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
+
+        var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        assertTrue(prompt.getValue().contains("GODOT_DOTNET_GAME"));
+        assertTrue(prompt.getValue().contains("src/<Ctx>.Domain"));
+        assertTrue(prompt.getValue().contains("boundedContexts"));
+        assertTrue(prompt.getValue().contains("ubiquitousLanguage"));
+        assertEquals("GODOT_DOTNET_GAME", result.plan().stackProfile());
+    }
+
+    @Test
+    void normalizingActionsKeepsTheDddFields() {
+        var normalized = TeamWorkPlanner.normalizeActions(dddPlan());
+        assertEquals("GODOT_DOTNET_GAME", normalized.stackProfile());
+        assertEquals(List.of("Combate"), normalized.contextNames());
+        assertEquals(3, normalized.ubiquitousLanguageOrEmpty().size());
+    }
 }

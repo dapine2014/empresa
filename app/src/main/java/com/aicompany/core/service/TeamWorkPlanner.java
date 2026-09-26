@@ -3,6 +3,7 @@ package com.aicompany.core.service;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.validation.TeamPlanValidator;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.TeamExecutionMode;
 import com.aicompany.core.model.TeamMemberInfo;
 import com.aicompany.core.model.TeamPlanResult;
@@ -183,7 +184,7 @@ public class TeamWorkPlanner {
         if (mode == TeamExecutionMode.ANALYSIS) {
             return common + """
                     - kind: siempre "WORK" (este equipo no tiene tareas de validación).
-                    - techStack y entryPoint: déjalos como "" y ownedPaths como [].
+                    - stackProfile: "" ; boundedContexts: [] ; ubiquitousLanguage: [] ; ownedPaths: [].
                     """;
         }
 
@@ -199,10 +200,18 @@ public class TeamWorkPlanner {
                 - Las demás tareas son kind="WORK" y declaran ownedPaths: rutas relativas (carpetas o archivos) que solo
                   ese agente puede escribir. Los ownedPaths de agentes distintos no pueden solaparse.
                   Nunca uses rutas absolutas, "..", "\\" ni ".git".
-                - techStack: la tecnología elegida; debe permitir un MVP pequeño y completo con la capacidad real del equipo.
-                - entryPoint: ruta relativa del punto de entrada del proyecto. Esa misma ruta (o su carpeta) DEBE aparecer
-                  en los ownedPaths de la tarea WORK que lo va a escribir; si no, el plan se rechaza.
-                """;
+                - Metodología obligatoria: DDD.
+                - stackProfile: elige EXACTAMENTE uno de estos perfiles del catálogo (no existen otros):
+                %s
+                - boundedContexts: los bounded contexts del producto, cada uno con name (en el formato del perfil) y
+                  description. El name define las rutas de sus capas.
+                - ubiquitousLanguage: al menos 3 términos del dominio, cada uno con term y definition.
+                - ownedPaths de cada tarea WORK: carpetas o archivos DENTRO de la estructura del perfil elegido para
+                  alguno de tus contextos (p. ej. src/Combate.Domain), o sus archivos de entrada. Reparte el trabajo por
+                  contexto y capa. Una carpeta padre como "src" no se acepta.
+                - Reglas de capas: domain no depende de nada fuera de su domain ni de frameworks; application solo de
+                  domain; infrastructure/api/presentation/game dependen de application y domain.
+                """.formatted(StackProfile.describeAll());
     }
 
     /**
@@ -249,7 +258,8 @@ public class TeamWorkPlanner {
                         t.requiredCapabilities(), t.ownedPaths()))
                 .toList();
 
-        return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts());
+        return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts(),
+                plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage());
     }
 
     private static String normalizeAction(String action) {
