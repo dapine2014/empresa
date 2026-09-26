@@ -2,6 +2,7 @@ package com.aicompany.core.agent.validation;
 
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.TeamExecutionMode;
 import com.aicompany.core.model.TeamMemberInfo;
 import com.aicompany.core.model.TeamSnapshot;
@@ -143,14 +144,6 @@ public class TeamPlanValidator {
             }
         }
 
-        if (plan.techStack() == null || plan.techStack().isBlank()) {
-            errors.add("techStack no puede estar vacío en un equipo de desarrollo.");
-        }
-
-        if (plan.entryPoint() == null || plan.entryPoint().isBlank()) {
-            errors.add("entryPoint no puede estar vacío en un equipo de desarrollo.");
-        }
-
         var work = plan.workTasks().stream()
                 .filter(t -> membersById.containsKey(t.agentId()))
                 .toList();
@@ -194,14 +187,54 @@ public class TeamPlanValidator {
             }
         }
 
-        if (plan.entryPoint() != null && !plan.entryPoint().isBlank()
-                && work.stream().noneMatch(t -> OwnedPaths.coveredByAny(t.ownedPathsOrEmpty(), plan.entryPoint()))) {
-            var ownedByAgent = work.stream()
-                    .map(t -> t.agentId() + "=" + t.ownedPathsOrEmpty())
-                    .collect(java.util.stream.Collectors.joining(", "));
-            errors.add("entryPoint \"" + plan.entryPoint() + "\" no cae dentro de los ownedPaths de ninguna tarea WORK ("
-                    + ownedByAgent + "). Cambia entryPoint por una ruta dentro de esos ownedPaths, o agrega esa "
-                    + "ruta exacta a los ownedPaths de la tarea WORK que va a escribir el punto de entrada.");
+        var profile = plan.profile();
+
+        if (profile.isEmpty()) {
+            errors.add("stackProfile debe ser uno de los perfiles del catálogo: "
+                    + java.util.Arrays.toString(StackProfile.values()) + " (recibido: \"" + plan.stackProfile() + "\").");
+            return;
+        }
+
+        validateContextsAndGlossary(plan, profile.get(), errors);
+
+        var contexts = plan.contextNames();
+        for (var task : work) {
+            for (var path : task.ownedPathsOrEmpty()) {
+                if (path != null && OwnedPaths.isSafe(path) && !profile.get().isWithinStructure(path, contexts)) {
+                    errors.add("El ownedPath \"" + path + "\" de " + task.agentId() + " está fuera de la estructura "
+                            + "de " + profile.get().name() + ". Rutas permitidas: " + profile.get().allowedRoots(contexts)
+                            + " y los archivos de entrada del perfil.");
+                }
+            }
+        }
+    }
+
+
+    private static void validateContextsAndGlossary(TeamPlan plan, StackProfile profile, List<String> errors) {
+
+        if (plan.boundedContextsOrEmpty().isEmpty()) {
+            errors.add("boundedContexts debe declarar al menos un bounded context del producto (DDD).");
+        }
+
+        var seen = new HashSet<String>();
+        for (var context : plan.boundedContextsOrEmpty()) {
+            if (context == null || !profile.isValidContextName(context.name())) {
+                errors.add("El bounded context \"" + (context == null ? null : context.name()) + "\" no cumple el formato de "
+                        + profile.name() + ": " + profile.contextNameRule() + ". El nombre define las rutas de sus capas.");
+            } else if (!seen.add(context.name())) {
+                errors.add("El bounded context \"" + context.name() + "\" está repetido.");
+            }
+            if (context != null && (context.description() == null || context.description().isBlank())) {
+                errors.add("El bounded context \"" + context.name() + "\" necesita una descripción.");
+            }
+        }
+
+        var terms = plan.ubiquitousLanguageOrEmpty().stream()
+                .filter(t -> t != null && t.term() != null && !t.term().isBlank()
+                        && t.definition() != null && !t.definition().isBlank())
+                .count();
+        if (terms < 3) {
+            errors.add("ubiquitousLanguage debe tener al menos 3 términos del dominio con su definición (hay " + terms + ").");
         }
     }
 

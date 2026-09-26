@@ -13,12 +13,47 @@ public record TeamPlan(
         String techStack,
         String entryPoint,
         List<PlannedTask> tasks,
-        List<ParticipationConflict> participationConflicts
+        List<ParticipationConflict> participationConflicts,
+        String stackProfile,
+        List<BoundedContext> boundedContexts,
+        List<GlossaryTerm> ubiquitousLanguage
 ) {
 
-    /** Planes sin conflictos de participación declarados. */
+    /** Planes sin conflictos ni campos DDD (equipos de análisis y planes previos). */
     public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks) {
-        this(summary, techStack, entryPoint, tasks, List.of());
+        this(summary, techStack, entryPoint, tasks, List.of(), null, List.of(), List.of());
+    }
+
+    public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks,
+                    List<ParticipationConflict> participationConflicts) {
+        this(summary, techStack, entryPoint, tasks, participationConflicts, null, List.of(), List.of());
+    }
+
+    /** Bounded context DDD del producto (spec 2026-09-26 §1). El nombre define las rutas. */
+    public record BoundedContext(String name, String description) {
+    }
+
+    /** Término del lenguaje ubicuo con su definición. */
+    public record GlossaryTerm(String term, String definition) {
+    }
+
+    public List<BoundedContext> boundedContextsOrEmpty() {
+        return boundedContexts == null ? List.of() : boundedContexts;
+    }
+
+    public List<GlossaryTerm> ubiquitousLanguageOrEmpty() {
+        return ubiquitousLanguage == null ? List.of() : ubiquitousLanguage;
+    }
+
+    public List<String> contextNames() {
+        return boundedContextsOrEmpty().stream()
+                .filter(Objects::nonNull)
+                .map(BoundedContext::name)
+                .toList();
+    }
+
+    public Optional<com.aicompany.core.model.StackProfile> profile() {
+        return com.aicompany.core.model.StackProfile.parse(stackProfile);
     }
 
     /**
