@@ -167,4 +167,22 @@ class TeamPlanResolverTest {
         assertEquals(List.of(), result.errors());
         assertSame(original, result.plan());
     }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-4): Neo oscilaba entre "DOMAIN duplicada" y "backend sin capas".
+    // Ambos errores listan las capas libres para que haya una salida concreta.
+    @Test
+    void duplicateAndEmptyAssignmentErrorsListTheFreeLayers() {
+        var duplicate = godotTasks();
+        duplicate.set(0, task("engineering", "WORK", a("Combate", "DOMAIN")));
+        var dupErrors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), duplicate), ENGINEERING).errors();
+        assertTrue(dupErrors.stream().anyMatch(e -> e.contains("Capas libres") && e.contains("APPLICATION de Combate")),
+                dupErrors.toString());
+
+        var empty = godotTasks();
+        empty.set(1, task("backend", "WORK"));
+        empty.set(0, task("engineering", "WORK", a("Combate", "DOMAIN")));
+        var emptyErrors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), empty), ENGINEERING).errors();
+        assertTrue(emptyErrors.stream().anyMatch(e -> e.contains("backend") && e.contains("Capas libres")
+                && e.contains("APPLICATION de Combate")), emptyErrors.toString());
+    }
 }

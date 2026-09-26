@@ -48,6 +48,7 @@ public class TeamPlanResolver {
 
         var ownerByRoot = new HashMap<String, String>();
         var resolved = new ArrayList<PlannedTask>();
+        var needFreeLayers = new ArrayList<String>();
 
         for (var task : plan.tasksOrEmpty()) {
 
@@ -63,12 +64,12 @@ public class TeamPlanResolver {
             var paths = new LinkedHashSet<String>();
 
             for (var assignment : task.assignmentsOrEmpty()) {
-                resolveAssignment(profile.get(), contexts, task.agentId(), assignment, ownerByRoot, errors)
+                resolveAssignment(profile.get(), contexts, task.agentId(), assignment, ownerByRoot, errors, needFreeLayers)
                         .ifPresent(paths::add);
             }
 
             if (task.assignmentsOrEmpty().isEmpty()) {
-                errors.add("La tarea de " + task.agentId() + " no tiene assignments: asígnale al menos una capa "
+                needFreeLayers.add("La tarea de " + task.agentId() + " no tiene assignments: asígnale al menos una capa "
                         + "{context, layer} de " + profile.get().name() + ".");
             }
 
@@ -82,6 +83,14 @@ public class TeamPlanResolver {
             }
         }
 
+        if (!needFreeLayers.isEmpty()) {
+            var free = freeLayers(profile.get(), contexts, ownerByRoot);
+            var suffix = free.isEmpty()
+                    ? " No quedan capas libres: reparte de nuevo las capas entre los miembros."
+                    : " Capas libres: " + free + ".";
+            needFreeLayers.forEach(error -> errors.add(error + suffix));
+        }
+
         addLeaderFiles(profile.get(), team.leaderAgentId(), ownerByRoot, resolved);
 
         return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
@@ -91,7 +100,7 @@ public class TeamPlanResolver {
 
     private static Optional<String> resolveAssignment(
             StackProfile profile, List<String> contexts, String agentId, TeamPlan.LayerAssignment assignment,
-            HashMap<String, String> ownerByRoot, List<String> errors) {
+            HashMap<String, String> ownerByRoot, List<String> errors, List<String> needFreeLayers) {
 
         if (assignment == null) {
             return Optional.empty();
@@ -116,11 +125,28 @@ public class TeamPlanResolver {
 
         if (owner != null && !owner.equals(agentId)) {
             var what = shared ? "La capa " + layer.get() : "La capa " + layer.get() + " del contexto " + assignment.context();
-            errors.add(what + " está asignada a " + owner + " y a " + agentId + ": asígnala a uno solo.");
+            needFreeLayers.add(what + " está asignada a " + owner + " y a " + agentId
+                    + ": déjala en uno solo y da al otro una capa libre.");
             return Optional.empty();
         }
 
         return Optional.of(root);
+    }
+
+    private static List<String> freeLayers(StackProfile profile, List<String> contexts, HashMap<String, String> ownerByRoot) {
+        var free = new ArrayList<String>();
+        for (var layer : profile.layers()) {
+            if (profile.isSharedLayer(layer)) {
+                profile.resolveRoot(null, layer).filter(root -> !ownerByRoot.containsKey(root))
+                        .ifPresent(root -> free.add(layer.name()));
+                continue;
+            }
+            for (var context : contexts) {
+                profile.resolveRoot(context, layer).filter(root -> !ownerByRoot.containsKey(root))
+                        .ifPresent(root -> free.add(layer.name() + " de " + context));
+            }
+        }
+        return free;
     }
 
     private static void addLeaderFiles(
