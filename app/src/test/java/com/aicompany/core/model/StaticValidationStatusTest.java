@@ -106,4 +106,14 @@ class StaticValidationStatusTest {
         assertEquals(StaticValidationStatus.UNVALIDATED,
                 StaticValidationStatus.compute(ALL_PASS, review("MINOR"), null));
     }
+
+    // Decisión del fundador (2026-09-26, tras MISSION-SANDBOX-VERIFY-14): con ejecución real exitosa, un MAJOR de
+    // la revisión queda como deuda de diseño reportada; solo un BLOCKER impide VERIFIED.
+    @Test
+    void withAPassingSandboxOnlyABlockerPreventsVerified() {
+        assertEquals(StaticValidationStatus.VERIFIED,
+                StaticValidationStatus.compute(ALL_PASS, review("MAJOR"), sandbox("PASS", 3)));
+        assertEquals(StaticValidationStatus.FAILED,
+                StaticValidationStatus.compute(ALL_PASS, review("BLOCKER"), sandbox("PASS", 3)));
+    }
 }
