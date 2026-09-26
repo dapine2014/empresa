@@ -147,11 +147,65 @@ public final class DddLayerChecker {
         return Optional.empty();
     }
 
-    /** Dart: se completa en Task 6. */
+    /** Dart: `import`/`export`; `package:<app>/...` → `lib/...`; relativos resueltos contra el archivo. */
     static final class DartImports {
+
+        private static final Pattern DART_IMPORT = Pattern.compile(
+                "^\\s*(?:import|export)\\s+['\"]([^'\"]+)['\"]", Pattern.MULTILINE);
+
+        private static final Pattern PUBSPEC_NAME = Pattern.compile("^name:\\s*([a-z0-9_]+)\\s*$", Pattern.MULTILINE);
+
         static List<Dependency> dependencies(
                 StackProfile profile, List<String> contexts, String path, String content, Map<String, String> all) {
-            return List.of();
+
+            var appPackage = appPackage(all);
+            var result = new ArrayList<Dependency>();
+            var matcher = DART_IMPORT.matcher(content == null ? "" : content);
+
+            while (matcher.find()) {
+                var uri = matcher.group(1);
+                var forbidden = profile.forbiddenDomainDependencies().stream().anyMatch(uri::startsWith);
+                var targetPath = resolve(uri, path, appPackage);
+                var target = targetPath == null ? Optional.<Location>empty() : profile.locate(targetPath, contexts);
+                result.add(new Dependency(uri, target, forbidden));
+            }
+
+            return result;
+        }
+
+        private static String appPackage(Map<String, String> all) {
+            var pubspec = all.get("pubspec.yaml");
+            if (pubspec == null) {
+                return null;
+            }
+            var matcher = PUBSPEC_NAME.matcher(pubspec);
+            return matcher.find() ? matcher.group(1) : null;
+        }
+
+        private static String resolve(String uri, String fromPath, String appPackage) {
+
+            if (appPackage != null && uri.startsWith("package:" + appPackage + "/")) {
+                return "lib/" + uri.substring(("package:" + appPackage + "/").length());
+            }
+
+            if (uri.contains(":")) {
+                return null;
+            }
+
+            var base = fromPath.contains("/") ? fromPath.substring(0, fromPath.lastIndexOf('/')) : "";
+            var segments = new ArrayList<String>(base.isEmpty() ? List.of() : List.of(base.split("/")));
+
+            for (var segment : uri.split("/")) {
+                if (segment.equals("..")) {
+                    if (!segments.isEmpty()) {
+                        segments.remove(segments.size() - 1);
+                    }
+                } else if (!segment.equals(".") && !segment.isEmpty()) {
+                    segments.add(segment);
+                }
+            }
+
+            return OwnedPaths.normalize(String.join("/", segments));
         }
     }
 }
