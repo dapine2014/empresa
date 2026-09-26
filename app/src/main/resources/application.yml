@@ -67,3 +67,8 @@ management:
   health:
     mail:
       enabled: false
+sandbox:
+  runner:
+    url: ${SANDBOX_RUNNER_URL:http://localhost:8090}
+    token: ${SANDBOX_RUNNER_TOKEN:}
+    timeout: ${SANDBOX_RUNNER_TIMEOUT:30m}

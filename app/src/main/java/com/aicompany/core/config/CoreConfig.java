@@ -29,4 +29,16 @@ public class CoreConfig {
     AppProperties appProperties(@Value("${company.name}") String name, @Value("${company.seed-capital-usd}") double seedCapitalUsd, @Value("${company.challenge-days}") int challengeDays) {
         return new AppProperties(name, seedCapitalUsd, challengeDays);
     }
+
+    @Bean
+    com.aicompany.core.service.SandboxRunnerClient sandboxRunnerClient(
+            @Value("${sandbox.runner.url}") String url,
+            @Value("${sandbox.runner.token:}") String token,
+            @Value("${sandbox.runner.timeout:30m}") java.time.Duration timeout) {
+        var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+        factory.setReadTimeout(timeout);
+        return new com.aicompany.core.service.SandboxRunnerClient(
+                RestClient.builder().baseUrl(url).requestFactory(factory).build(), token);
+    }
 }
