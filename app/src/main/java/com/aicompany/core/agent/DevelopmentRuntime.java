@@ -136,8 +136,9 @@ public class DevelopmentRuntime {
 
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
-                (attemptPrompt, model, agentPrompt) ->
+                (attemptPrompt, model, agentPrompt) -> MissingFileClaimGate.withoutExistingMissingFiles(
                         ceoService.reviewStaticWorkspace(agentId, attemptPrompt, agentPrompt, model),
+                        filesBySha.values().stream().flatMap(Set::stream).collect(java.util.stream.Collectors.toSet())),
                 review -> verifyReview(review, missionId, filesBySha),
                 "COMPLETED"));
     }

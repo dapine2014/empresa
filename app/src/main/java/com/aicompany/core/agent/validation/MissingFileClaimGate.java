@@ -28,6 +28,23 @@ public class MissingFileClaimGate {
             "\\bno (existe|existen|esta presente|estan presentes|se encuentra|se encuentran|fue incluido|fueron incluidos)\\b"
                     + "|\\binexistente(s)?\\b|\\bfalta(n)? (el|los) archivo(s)?\\b|\\bausente(s)?\\b");
 
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-15): el validador agotaba los reintentos declarando faltantes
+     * archivos que existen y la revisión se perdía. Esos nombres se quitan de missingFiles (no es una opinión, es
+     * un dato que Java ya conoce); los findings que afirman inexistencia siguen rechazándose en validate().
+     */
+    public static StaticReviewResult withoutExistingMissingFiles(StaticReviewResult review, Set<String> repositoryFiles) {
+        if (review == null || review.missingFiles() == null) {
+            return review;
+        }
+        var reallyMissing = review.missingFiles().stream()
+                .filter(Objects::nonNull)
+                .filter(path -> !repositoryFiles.contains(OwnedPaths.normalize(path)))
+                .toList();
+        return new StaticReviewResult(review.verdict(), review.findings(), reallyMissing,
+                review.architectureConsistency(), review.notValidatableWithoutExecution(), review.evidence());
+    }
+
     public List<String> validate(StaticReviewResult review, Set<String> repositoryFiles) {
 
         var errors = new ArrayList<String>();

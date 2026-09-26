@@ -128,6 +128,20 @@ class DevelopmentRuntimeTest {
         verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
     }
 
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-15): Vera agotaba los reintentos declarando faltantes archivos
+    // que existen y la revisión se perdía. Esos nombres se quitan de missingFiles sin rechazar la revisión.
+    @Test
+    void existingFilesAreDroppedFromMissingFilesWithoutRetrying() throws Exception {
+        var claimed = new StaticReviewResult("NO_EVIDENT_ISSUES", List.of(), List.of("web/game/main.js", "web/falta.js"),
+                "ok", List.of("x"), List.of(new AgentResult.Evidence("main", validSource, "INTERNAL", true)));
+        when(ceoService.reviewStaticWorkspace(anyString(), anyString(), anyString(), anyString())).thenReturn(claimed);
+
+        var result = runtime.review("T-QA", "MISSION-1", "qa", "prompt", filesBySha).get();
+
+        assertEquals(List.of("web/falta.js"), result.missingFiles());
+        verify(ceoService, times(1)).reviewStaticWorkspace(anyString(), anyString(), anyString(), anyString());
+    }
+
     // Review Focus: "\" como separador es corregible → reintento, nunca un archivo con "\" en el nombre.
     @Test
     void aBackslashSeparatorIsRetriedNotWritten() throws Exception {
@@ -203,8 +217,11 @@ class DevelopmentRuntimeTest {
     }
 
     @Test
-    void reviewDeclaringAnExistingFileAsMissingIsRetried() throws Exception {
-        var wrong = new StaticReviewResult("ISSUES_FOUND", List.of(), List.of("web/game/main.js"), "Coherente.",
+    void reviewClaimingAnExistingFileDoesNotExistIsRetried() throws Exception {
+        // missingFiles con archivos existentes ya no se reintenta (se limpia, MISSION-SANDBOX-VERIFY-15); un finding
+        // que afirma inexistencia sí.
+        var wrong = new StaticReviewResult("ISSUES_FOUND", List.of(new StaticReviewResult.Finding("web/game/main.js",
+                "BLOCKER", "El archivo web/game/main.js no existe.")), List.of(), "Coherente.",
                 List.of("No se puede verificar la ejecución del juego."),
                 List.of(new AgentResult.Evidence("Revisé main.js", validSource, "INTERNAL", true)));
         when(ceoService.reviewStaticWorkspace(anyString(), anyString(), anyString(), anyString()))
@@ -214,7 +231,7 @@ class DevelopmentRuntimeTest {
         runtime.review("T-QA", "MISSION-1", "qa", "prompt", filesBySha).get();
 
         verify(ceoService).reviewStaticWorkspace(anyString(),
-                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("sí existe")),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("afirma que no existe")),
                 anyString(), anyString());
     }
 

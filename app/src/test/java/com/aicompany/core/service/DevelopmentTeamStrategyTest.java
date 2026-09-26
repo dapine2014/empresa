@@ -540,4 +540,29 @@ class DevelopmentTeamStrategyTest {
         var second = repairPrompts.getAllValues().get(1);
         assertTrue(second.contains("devolviste tus archivos SIN CAMBIOS"), second);
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-15): CS0102 señalaba la propiedad Estado, pero el conflicto era un
+    // enum Estado anidado 26 líneas más abajo que Neo nunca vio. Se muestran todas las definiciones del nombre.
+    @Test
+    void aDuplicateDefinitionShowsEveryDeclarationOfTheName() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of("src/Combate.Application/X.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs"))
+                .thenReturn("class Tarea {\n  public Estado Estado { get; }\n  void M() { }\n  public enum Estado { A }\n}\n");
+        var fail = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("build", "FAIL", 1, 1000,
+                "/work/src/Combate.Application/X.cs(2,17): error CS0102: The type 'Tarea' already contains a definition "
+                        + "for 'Estado' [/work/x.csproj]", 0, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(fail));
+        var repairPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var prompt = repairPrompts.getAllValues().get(0);
+        assertTrue(prompt.contains("otras definiciones de 'Estado'"), prompt);
+        assertTrue(prompt.contains("línea 4: public enum Estado { A }"), prompt);
+    }
 }

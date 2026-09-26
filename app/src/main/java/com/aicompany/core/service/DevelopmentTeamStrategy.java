@@ -456,14 +456,35 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 && Objects.equals(current.get(f.path()), f.content()));
     }
 
+    private static final java.util.regex.Pattern DUPLICATE_DEFINITION =
+            java.util.regex.Pattern.compile("already contains a definition for '([A-Za-z_][A-Za-z0-9_]*)'");
+
     private static String errorLine(CompilerErrorParser.CompilerError error, Map<String, String> current) {
         var content = current.get(error.path());
         if (content == null) {
             return "";
         }
         var lines = content.split("\\R", -1);
-        return error.line() >= 1 && error.line() <= lines.length
+        var out = error.line() >= 1 && error.line() <= lines.length
                 ? "\n    línea " + error.line() + ": " + lines[error.line() - 1].strip() : "";
+
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-15): CS0102 señala una sola línea; el conflicto está en otra.
+        var duplicate = DUPLICATE_DEFINITION.matcher(error.message());
+        if (duplicate.find()) {
+            var name = duplicate.group(1);
+            var declaration = java.util.regex.Pattern.compile(
+                    "\\b(class|interface|record|enum|struct)\\s+" + name + "\\b|\\b" + name + "\\s*[{;=(]");
+            var others = new StringBuilder();
+            for (int i = 0; i < lines.length; i++) {
+                if (i + 1 != error.line() && declaration.matcher(lines[i]).find()) {
+                    others.append("\n      línea ").append(i + 1).append(": ").append(lines[i].strip());
+                }
+            }
+            if (!others.isEmpty()) {
+                out += "\n    otras definiciones de '" + name + "' en el mismo archivo (renombra o mueve una):" + others;
+            }
+        }
+        return out;
     }
 
     private static String repairBlock(List<CompilerErrorParser.CompilerError> errors, Map<String, String> current) {
