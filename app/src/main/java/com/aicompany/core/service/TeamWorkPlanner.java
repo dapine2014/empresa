@@ -207,8 +207,20 @@ public class TeamWorkPlanner {
                   description. El name define las rutas de sus capas.
                 - ubiquitousLanguage: al menos 3 términos del dominio, cada uno con term y definition.
                 - ownedPaths de cada tarea WORK: carpetas o archivos DENTRO de la estructura del perfil elegido para
-                  alguno de tus contextos (p. ej. src/Combate.Domain), o sus archivos de entrada. Reparte el trabajo por
-                  contexto y capa. Una carpeta padre como "src" no se acepta.
+                  alguno de tus contextos (p. ej. src/Combate.Domain), o sus archivos de entrada. Una carpeta padre
+                  como "src" no se acepta.
+                - Cada miembro tiene UNA sola tarea. Si un agente trabaja en varias capas o contextos, pon TODAS esas
+                  carpetas en los ownedPaths de su única tarea; nunca crees dos tareas para el mismo agentId. Cada
+                  carpeta pertenece a un solo agente. Toda tarea WORK declara al menos un ownedPath.
+                - requiredCapabilities: solo capabilities que figuren en la lista de ESE agente (el nombre de una
+                  tecnología, como "Godot", no es una capability si no está en su lista).
+                - EJEMPLO de reparto válido (perfil GODOT_DOTNET_GAME, un contexto "Combate"; adáptalo a tu producto y
+                  a tus contextos, no lo copies literal):
+                    engineering (WORK): ["Juego.sln", "src/Combate.Application"]
+                    backend (WORK): ["src/Combate.Domain"]
+                    frontend-ui (WORK): ["game"]
+                    devops (WORK): ["tests/Combate.Tests"]
+                    qa (VALIDATION): []
                 - Reglas de capas: domain no depende de nada fuera de su domain ni de frameworks; application solo de
                   domain; infrastructure/api/presentation/game dependen de application y domain.
                 """.formatted(StackProfile.describeAll());

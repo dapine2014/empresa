@@ -218,4 +218,19 @@ class TeamWorkPlannerTest {
         assertEquals(List.of("Combate"), normalized.contextNames());
         assertEquals(3, normalized.ubiquitousLanguageOrEmpty().size());
     }
+
+    // Verificado en vivo (MISSION-DDD-VERIFY-1): con "reparte por contexto y capa", qwen3:8b armó una tarea
+    // por capa, repitiendo agentes y carpetas. El prompt aclara una sola tarea por agente y da un ejemplo.
+    @Test
+    void theDevelopmentPromptExplainsOneTaskPerAgentAcrossLayersWithAnExample() {
+        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
+
+        planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+
+        assertTrue(prompt.getValue().contains("UNA sola tarea"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("EJEMPLO"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("\"src/Combate.Domain\""), prompt.getValue());
+    }
 }
