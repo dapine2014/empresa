@@ -407,7 +407,7 @@ class DevelopmentTeamStrategyTest {
         when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
         when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList()))
-                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
@@ -423,9 +423,15 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains("Rondas de corrección: 1"), result.verifiableState());
     }
 
+    private static DevelopmentResult corrected(String path) {
+        return new DevelopmentResult("corregido", List.of(new GeneratedFile(path, "corregido")));
+    }
+
     @Test
     void theCorrectionCycleStopsAfterTheMaximumRounds() throws Exception {
         stubHappyPath();
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
@@ -505,5 +511,33 @@ class DevelopmentTeamStrategyTest {
         verify(runtime, never()).generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList());
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
         assertTrue(result.verifiableState().contains("Correcciones automáticas de Forjai: 1"), result.verifiableState());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-14): quedaba un solo error y la corrección devolvió el archivo
+    // idéntico. La corrección muestra la línea exacta y, si no cambia nada, se le repite dentro de la misma ronda.
+    @Test
+    void aRepairShowsTheFailingLineAndInsistsIfTheAgentChangesNothing() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of("src/Combate.Application/X.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs"))
+                .thenReturn("linea1\nlinea2\n    var t = lista._tareas;\n");
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        var repairPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
+                        new DevelopmentResult.GeneratedFile("src/Combate.Application/X.cs",
+                                "linea1\nlinea2\n    var t = lista._tareas;\n")))))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("cambiado", List.of(
+                        new DevelopmentResult.GeneratedFile("src/Combate.Application/X.cs", "arreglado\n")))));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var first = repairPrompts.getAllValues().get(0);
+        assertTrue(first.contains("línea 3: var t = lista._tareas;"), first);
+        var second = repairPrompts.getAllValues().get(1);
+        assertTrue(second.contains("devolviste tus archivos SIN CAMBIOS"), second);
     }
 }

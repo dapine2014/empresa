@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -243,13 +244,28 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 var task = entry.getKey();
                 var id = taskId(missionId, task.agentId());
                 try {
-                    var result = runtime.generate(id, missionId, task.agentId(),
-                            buildWorkPrompt(context, task) + repairBlock(entry.getValue())
-                                    + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
-                                    + "commit " + headSha + "); devuelve tus archivos corregidos y completos:"),
-                            task.ownedPathsOrEmpty(), expectedProjects,
-                            task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
-                                    .anyMatch(e -> OwnedPaths.coveredByAny(List.of(owned), e.path()))).toList()).join();
+                    var current = currentContents(missionId, headSha, entry.getValue());
+                    var required = task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
+                            .anyMatch(e -> OwnedPaths.coveredByAny(List.of(owned), e.path()))).toList();
+                    var basePrompt = buildWorkPrompt(context, task) + repairBlock(entry.getValue(), current)
+                            + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
+                            + "commit " + headSha + "); devuelve tus archivos corregidos y completos:");
+                    DevelopmentResult result = null;
+                    var insist = "";
+                    // Verificado en vivo (MISSION-SANDBOX-VERIFY-14): la corrección devolvía el archivo idéntico.
+                    for (int attempt = 0; attempt < REPAIR_ATTEMPTS && result == null; attempt++) {
+                        var candidate = runtime.generate(id, missionId, task.agentId(), basePrompt + insist,
+                                task.ownedPathsOrEmpty(), expectedProjects, required).join();
+                        if (unchanged(candidate, current)) {
+                            insist = "\n\nATENCIÓN: devolviste tus archivos SIN CAMBIOS y el compilador sigue fallando en "
+                                    + "las líneas indicadas arriba. Cambia esas líneas.";
+                        } else {
+                            result = candidate;
+                        }
+                    }
+                    if (result == null) {
+                        throw new IllegalStateException("devolvió los archivos sin cambios");
+                    }
                     var record = workspace.commitAgentWork(missionId, id, task.agentId(),
                             agentName(context, task.agentId()), result);
                     memory.recordTaskArtifact(id, workspace.missionWorkspace(missionId).toString(),
@@ -418,7 +434,39 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return byOwner;
     }
 
-    private static String repairBlock(List<CompilerErrorParser.CompilerError> errors) {
+    static final int REPAIR_ATTEMPTS = 2;
+
+    private Map<String, String> currentContents(String missionId, String headSha,
+                                                List<CompilerErrorParser.CompilerError> errors) {
+        var contents = new LinkedHashMap<String, String>();
+        for (var path : errors.stream().map(CompilerErrorParser.CompilerError::path).distinct().toList()) {
+            try {
+                contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+            } catch (Exception ex) {
+                log.debug("MISSION {} - could not read {}: {}", missionId, path, ex.getMessage());
+            }
+        }
+        return contents;
+    }
+
+    /** true si todos los archivos devueltos que ya existían quedaron idénticos. */
+    private static boolean unchanged(DevelopmentResult result, Map<String, String> current) {
+        return result != null && result.files() != null && !result.files().isEmpty()
+                && result.files().stream().allMatch(f -> f != null && current.containsKey(f.path())
+                && Objects.equals(current.get(f.path()), f.content()));
+    }
+
+    private static String errorLine(CompilerErrorParser.CompilerError error, Map<String, String> current) {
+        var content = current.get(error.path());
+        if (content == null) {
+            return "";
+        }
+        var lines = content.split("\\R", -1);
+        return error.line() >= 1 && error.line() <= lines.length
+                ? "\n    línea " + error.line() + ": " + lines[error.line() - 1].strip() : "";
+    }
+
+    private static String repairBlock(List<CompilerErrorParser.CompilerError> errors, Map<String, String> current) {
         return """
 
                 CORRECCIÓN DEL SANDBOX (compilación real, no una opinión): tu código no compila. Errores del compilador
@@ -428,7 +476,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 Solo puedes cambiar tus archivos: si usas un tipo que no existe en el código de abajo, defínelo en tus
                 propias rutas o usa los tipos que sí existen. Devuelve completos los archivos que corrijas; los que
                 no devuelvas quedan como están.
-                """.formatted(errors.stream().map(e -> "- " + e.display()).collect(Collectors.joining("\n")));
+                """.formatted(errors.stream().map(e -> "- " + e.display() + errorLine(e, current))
+                        .collect(Collectors.joining("\n")));
     }
 
     static final int EXISTING_CODE_TOTAL_BUDGET_CHARS = 18_000;
