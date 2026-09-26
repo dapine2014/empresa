@@ -726,3 +726,16 @@ citaba. Datos sintéticos limpiados después.
 - **Decisión del fundador**: todo Engineering vuelve a `qwen3:8b`.
 
 **Bug real** (`MISSION-TEAM-VERIFY-7`): el reintento de Diego (`qwen3:8b`) generó más de una hora con la GPU al 95%, sin terminar. Las llamadas de equipo no tenían tope de salida (`num_predict`) y el `RestClient` de Ollama no tenía timeout, así que un bucle del modelo dentro del JSON bloqueaba la misión indefinidamente: al llenar el contexto, Ollama lo desplaza y sigue generando. Se destrabó reiniciando el contenedor `ollama` con autorización del fundador; la tarea de Diego falló con error de I/O y la misión siguió con resultado parcial. **Fix**: `num_predict=6144` en las 3 llamadas de equipo (`CeoServiceContextWindowTest`) y timeout de lectura configurable, `ollama.read-timeout` (`OLLAMA_READ_TIMEOUT`, default `15m`), para todas las llamadas (`OllamaClientTimeoutTest`, con un servidor HTTP local lento).
+
+### DDD y perfiles de stack (sandbox, parte 1)
+
+**Implementado** (plan `2026-09-26-sandbox-verification-part1-catalog-ddd.md`): catálogo fijo `StackProfile` (`DOTNET_APP`, `GODOT_DOTNET_GAME`, `FLUTTER_WEB_APP`) con la estructura DDD de cada perfil; `TeamPlan` con `stackProfile`, `boundedContexts` y `ubiquitousLanguage`; `ProfileStructureChecker` (`ENTRY_FILES`, `PROFILE_STRUCTURE`) y `DddLayerChecker` (`DDD_LAYERS`, en Java, lee `using` de C# e `import` de Dart) integrados en la capa 1, en reemplazo de `ENTRY_POINT`; prompts de desarrollo y revisión de Vera con perfil, contextos, glosario y revisión DDD. Los chequeos de capas están verificados con tests unitarios sobre repos Git reales: un `domain` que importa `Godot` hace fallar `DDD_LAYERS`.
+
+**Verificación en vivo: la planificación no converge con `qwen3:8b`.** Cinco misiones reales (`MISSION-DDD-VERIFY-1` a `-5`, juego Godot con C#) terminaron en `FAILED` en `PLANNING`, y cada ronda de ajustes corrigió un problema y dejó ver el siguiente:
+1. Una tarea por capa, con agentes y carpetas repetidos. Ajuste: el prompt pide una sola tarea por agente y da un ejemplo.
+2. Cada reintento regeneraba el plan desde cero con errores nuevos. Ajuste acordado con el fundador: corrección incremental (el plan anterior va en la corrección) y 5 intentos en desarrollo.
+3. Se trabó 4 intentos en "2 tareas VALIDATION" y un solapamiento sin resolver. Decisión del fundador (opción B): `TeamPlanResolver`, donde Java calcula rutas, asigna la validación al miembro QA y reparte los archivos de entrada a partir de las capas (`assignments`) que decide el líder; spec §1 revisado.
+4. Oscilaba entre "DOMAIN duplicada" y "backend sin capas". Ajuste: los errores listan las capas libres.
+5. Errores distintos en cada intento: un contexto "Interfaz" sin dueño de `DOMAIN`, una tarea repetida para el líder y la capa `INFRASTRUCTURE`, que no existe en el perfil Godot.
+
+Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y rompe otra; los mensajes accionables y la corrección incremental no alcanzan para que converja en 5 intentos. La implementación y sus tests (369) están en verde; lo que no funciona en vivo es que el líder produzca un plan DDD válido. Queda para decisión del fundador cómo reducir las decisiones del modelo en la planificación.
