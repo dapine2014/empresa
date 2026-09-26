@@ -21,7 +21,11 @@ class ProjectScaffoldTest {
     void generatesExactlyTheProjectFilesTheProfileRequires() {
         for (var profile : StackProfile.values()) {
             var contexts = profile == StackProfile.FLUTTER_WEB_APP ? List.of("tareas") : List.of("Tareas", "Usuarios");
-            assertEquals(profile.projectFiles(contexts).stream().sorted().toList(),
+            var expected = new java.util.ArrayList<>(profile.projectFiles(contexts));
+            if (profile.ecosystem() == StackProfile.Ecosystem.NUGET) {
+                expected.add("Solution.sln");
+            }
+            assertEquals(expected.stream().sorted().toList(),
                     byPath(profile, contexts).keySet().stream().sorted().toList(), profile.name());
         }
     }
@@ -57,5 +61,15 @@ class ProjectScaffoldTest {
             assertEquals(List.of(), ProjectFileGate.check(ProjectScaffold.generate(profile, contexts),
                     profile.projectFiles(contexts), List.of()), profile.name());
         }
+    }
+
+    // Revisión 3: el líder nunca escribía el .sln; lo genera Forjai con todos los proyectos (ENTRY_FILES lo exige).
+    @Test
+    void theSolutionListsEveryProject() {
+        var sln = byPath(StackProfile.DOTNET_APP, List.of("Tareas")).get("Solution.sln");
+        assertTrue(sln.startsWith("\nMicrosoft Visual Studio Solution File, Format Version 12.00"), sln);
+        assertTrue(sln.contains("\"Tareas.Domain\", \"src\\Tareas.Domain\\Tareas.Domain.csproj\""), sln);
+        assertTrue(sln.contains("\"Tareas.Tests\", \"tests\\Tareas.Tests\\Tareas.Tests.csproj\""), sln);
+        assertTrue(StackProfile.DOTNET_APP.isEntryFile("Solution.sln"));
     }
 }

@@ -72,7 +72,34 @@ public final class ProjectScaffold {
                     "    <EnableDynamicLoading>true</EnableDynamicLoading>\n", references, ""));
         }
 
+        files.add(solution(files));
         return files;
+    }
+
+    /** Solution.sln con todos los proyectos (GUIDs deterministas por ruta). El sandbox genera la suya igual. */
+    private static GeneratedFile solution(List<GeneratedFile> projects) {
+        var csharp = "{9A19103F-16F7-4668-BE54-9A1E7A4F7556}";
+        var out = new StringBuilder("\nMicrosoft Visual Studio Solution File, Format Version 12.00\n# Visual Studio Version 17\n");
+        var guids = new ArrayList<String>();
+        for (var project : projects) {
+            var name = project.path().substring(project.path().lastIndexOf('/') + 1).replace(".csproj", "");
+            var guid = "{" + java.util.UUID.nameUUIDFromBytes(project.path().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    .toString().toUpperCase(java.util.Locale.ROOT) + "}";
+            guids.add(guid);
+            out.append("Project(\"").append(csharp).append("\") = \"").append(name).append("\", \"")
+                    .append(project.path().replace('/', '\\')).append("\", \"").append(guid).append("\"\nEndProject\n");
+        }
+        out.append("Global\n\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\n")
+                .append("\t\tDebug|Any CPU = Debug|Any CPU\n\t\tRelease|Any CPU = Release|Any CPU\n\tEndGlobalSection\n")
+                .append("\tGlobalSection(ProjectConfigurationPlatforms) = postSolution\n");
+        for (var guid : guids) {
+            for (var config : List.of("Debug", "Release")) {
+                out.append("\t\t").append(guid).append(".").append(config).append("|Any CPU.ActiveCfg = ").append(config).append("|Any CPU\n");
+                out.append("\t\t").append(guid).append(".").append(config).append("|Any CPU.Build.0 = ").append(config).append("|Any CPU\n");
+            }
+        }
+        out.append("\tEndGlobalSection\nEndGlobal\n");
+        return new GeneratedFile("Solution.sln", out.toString());
     }
 
     private static String projectPath(String dir) {

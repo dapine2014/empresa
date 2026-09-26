@@ -531,7 +531,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         if (scaffold != null) {
             out.append("- Forjai (scaffold): commit ").append(scaffold.commitSha()).append(" — ")
-                    .append(scaffold.files().size()).append(" proyecto(s) .csproj generados por Java\n");
+                    .append(scaffold.files().size()).append(" archivo(s) de proyecto (.csproj y .sln) generados por Java\n");
         }
 
         for (var c : committed) {
