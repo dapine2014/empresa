@@ -364,7 +364,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 REGLAS:
                 - Escribe código fuente REAL y completo para tu parte, no pseudocódigo ni placeholders.
                 - Rutas relativas con "/" como separador; nunca rutas absolutas, "..", "\\" ni ".git".
-                - Nadie va a ejecutar este código en esta fase: no afirmes en summary que compila o funciona.
+                - Forjai compila, corre los tests y arranca este código en un sandbox sin red: escribe código C#/Dart
+                  válido y completo. En summary no afirmes que compila o funciona; eso lo dice el sandbox.
                 - summary: qué archivos escribiste y qué hace cada uno.
 
                 FORMATO: {"summary": "...", "files": [{"path": "...", "content": "..."}]}

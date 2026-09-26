@@ -203,26 +203,22 @@ class DevelopmentRuntimeTest {
                 anyString(), anyString());
     }
 
-    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): los .csproj los genera Forjai; un agente que los
-    // escribe se corrige con reintento.
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-4 y -6): Diego escribía .csproj aun prohibido (incluso uno
+    // inventado) y agotaba los reintentos. Los proyectos son de Forjai: se descartan, no se reintenta.
     @Test
-    void writingAProjectGeneratedByForjaiIsRetried() throws Exception {
-        var bad = new DevelopmentResult("r", List.of(
-                new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj", "<Project />"),
-                new GeneratedFile("src/Tareas.Domain/Tarea.cs", "namespace Tareas.Domain;")));
-        var good = new DevelopmentResult("r", List.of(new GeneratedFile("src/Tareas.Domain/Tarea.cs", "namespace Tareas.Domain;")));
+    void projectFilesWrittenByTheAgentAreDiscardedWithoutRetrying() throws Exception {
         when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(bad)
-                .thenReturn(good);
+                .thenReturn(new DevelopmentResult("r", List.of(
+                        new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj", "<Project />"),
+                        new GeneratedFile("src/Tareas.Domain/Inventado.csproj", "roto"),
+                        new GeneratedFile("src/Tareas.Domain/Tarea.cs", "namespace Tareas.Domain;"))));
 
         var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("src/Tareas.Domain"),
                 List.of("src/Tareas.Domain/Tareas.Domain.csproj")).get();
 
-        assertEquals(1, result.files().size());
-        verify(ceoService).generateDevelopmentArtifact(anyString(),
-                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("los genera Forjai")
-                        && p.contains("resultado COMPLETO")),
-                anyString(), anyString());
+        assertEquals(List.of("src/Tareas.Domain/Tarea.cs"), result.files().stream().map(GeneratedFile::path).toList());
+        assertTrue(result.summary().contains("Inventado.csproj"), result.summary());
+        verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
     }
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): dueños de Infrastructure+Tests entregaban solo una

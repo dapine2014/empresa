@@ -115,7 +115,8 @@ public class DevelopmentRuntime {
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
                 (attemptPrompt, model, agentPrompt) -> discardForeignFiles(
-                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model), ownedPaths),
+                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
+                        !expectedProjects.isEmpty()),
                 result -> verifyGenerated(result, ownedPaths, expectedProjects),
                 "GENERATED"));
     }
@@ -216,7 +217,8 @@ public class DevelopmentRuntime {
         }
     }
 
-    static final String DISCARDED_NOTE = "[Forjai descartó archivos fuera de tus rutas (son de otro agente): ";
+    static final String DISCARDED_NOTE = "[Forjai descartó archivos que no te corresponden (de otro agente, o "
+            + ".csproj que genera Forjai): ";
 
     /**
      * Verificado en vivo (MISSION-SANDBOX-VERIFY-5): el líder, dueño solo de Solution.sln, escribía todo el
@@ -224,7 +226,8 @@ public class DevelopmentRuntime {
      * otro agente: se descarta y queda anotado en el summary. Rutas absolutas o con "\" siguen yendo a
      * verifyGenerated para corregirse con reintento.
      */
-    static DevelopmentResult discardForeignFiles(DevelopmentResult result, List<String> ownedPaths) {
+    static DevelopmentResult discardForeignFiles(DevelopmentResult result, List<String> ownedPaths,
+                                                 boolean projectsByForjai) {
         if (result == null || result.files() == null) {
             return result;
         }
@@ -236,7 +239,9 @@ public class DevelopmentRuntime {
             var unsafe = path == null || java.util.Arrays.stream(path.split("[/\\\\]"))
                     .anyMatch(segment -> segment.equals("..") || segment.equalsIgnoreCase(".git"));
             var wellFormed = !unsafe && !path.startsWith("/") && !path.matches("^[a-zA-Z]:.*") && !path.contains("\\");
-            if (wellFormed && !OwnedPaths.coveredByAny(ownedPaths, path)) {
+            // Verificado en vivo (MISSION-SANDBOX-VERIFY-4 y -6): los .csproj son de Forjai (ProjectScaffold).
+            var projectFile = projectsByForjai && path != null && path.endsWith(".csproj");
+            if (wellFormed && (projectFile || !OwnedPaths.coveredByAny(ownedPaths, path))) {
                 discarded.add(path);
             } else {
                 kept.add(file);

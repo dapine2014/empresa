@@ -297,6 +297,10 @@ class DevelopmentTeamStrategyTest {
                 argThat(r -> r.files().stream().anyMatch(f -> f.path().equals("game/Game.csproj"))));
         inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
         assertTrue(milaPrompt.getValue().contains("los genera Forjai"), milaPrompt.getValue());
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-6): la regla vieja "nadie va a ejecutar este código" era falsa
+        // con el sandbox y se filtró textual dentro de Tarea.cs.
+        assertFalse(milaPrompt.getValue().contains("Nadie va a ejecutar este código"), milaPrompt.getValue());
+        assertTrue(milaPrompt.getValue().contains("sandbox"), milaPrompt.getValue());
         assertTrue(milaPrompt.getValue().contains("src/Combate.Application/Combate.Application.csproj"));
         assertFalse(milaPrompt.getValue().contains("ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no compila ni "
                 + "arranca sin ellos): [src/Combate.Application/Combate.Application.csproj]"));
