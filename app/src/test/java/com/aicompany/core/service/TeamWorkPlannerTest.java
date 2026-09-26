@@ -163,6 +163,26 @@ class TeamWorkPlannerTest {
         verify(memory).updateTask(eq("MISSION-5-GROWTH-CONTENT-PLAN"), eq("FAILED"), contains("incompatibilidad"));
     }
 
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-1): en el reintento, Neo copió los errores del validador a
+    // participationConflicts (sobre agentes con tarea y sobre él mismo) y la misión se cortó sin corregir.
+    // Un conflicto solo vale para un miembro real, que no sea el líder y sin tarea en el plan.
+    @Test
+    void aContradictoryParticipationConflictIsCorrectedInsteadOfStoppingTheMission() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        var prompt = ArgumentCaptor.forClass(String.class);
+        var contradictory = new TeamPlan("Plan", "", "", validPlan().tasks(), List.of(
+                new TeamPlan.ParticipationConflict("growth-content", "El líder debe tener una tarea en el plan.")));
+        when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
+                .thenReturn(contradictory)
+                .thenReturn(validPlan());
+
+        var result = planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS);
+
+        assertNotNull(result.plan());
+        verify(ceoService, times(2)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+        assertTrue(prompt.getAllValues().get(1).contains("participationConflicts"), prompt.getAllValues().get(1));
+    }
+
     // Verificado en vivo (MISSION-TEAM-VERIFY-5): un plan válido se perdía por "DESIGN-ARCHITECTURE".
     // El formato del action es cosmético: se normaliza en Java antes de validar, nunca se inventa.
     @Test
