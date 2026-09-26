@@ -114,8 +114,8 @@ public class DevelopmentRuntime {
 
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
-                (attemptPrompt, model, agentPrompt) ->
-                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model),
+                (attemptPrompt, model, agentPrompt) -> discardForeignFiles(
+                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model), ownedPaths),
                 result -> verifyGenerated(result, ownedPaths, expectedProjects),
                 "GENERATED"));
     }
@@ -216,10 +216,47 @@ public class DevelopmentRuntime {
         }
     }
 
+    static final String DISCARDED_NOTE = "[Forjai descartó archivos fuera de tus rutas (son de otro agente): ";
+
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-5): el líder, dueño solo de Solution.sln, escribía todo el
+     * proyecto y agotaba los reintentos. Un archivo relativo bien formado fuera de los ownedPaths pertenece a
+     * otro agente: se descarta y queda anotado en el summary. Rutas absolutas o con "\" siguen yendo a
+     * verifyGenerated para corregirse con reintento.
+     */
+    static DevelopmentResult discardForeignFiles(DevelopmentResult result, List<String> ownedPaths) {
+        if (result == null || result.files() == null) {
+            return result;
+        }
+        var kept = new ArrayList<DevelopmentResult.GeneratedFile>();
+        var discarded = new ArrayList<String>();
+        for (var file : result.files()) {
+            var path = file == null ? null : file.path();
+            // Nunca se descarta una ruta insegura: ".." o ".git" tienen que llegar al gate que falla sin reintento.
+            var unsafe = path == null || java.util.Arrays.stream(path.split("[/\\\\]"))
+                    .anyMatch(segment -> segment.equals("..") || segment.equalsIgnoreCase(".git"));
+            var wellFormed = !unsafe && !path.startsWith("/") && !path.matches("^[a-zA-Z]:.*") && !path.contains("\\");
+            if (wellFormed && !OwnedPaths.coveredByAny(ownedPaths, path)) {
+                discarded.add(path);
+            } else {
+                kept.add(file);
+            }
+        }
+        if (discarded.isEmpty()) {
+            return result;
+        }
+        var summary = (result.summary() == null ? "" : result.summary()) + "\n" + DISCARDED_NOTE + discarded + "]";
+        return new DevelopmentResult(summary, kept);
+    }
+
     private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects) {
 
+        var discardedNote = result == null || result.summary() == null || !result.summary().contains(DISCARDED_NOTE)
+                ? "" : " " + result.summary().substring(result.summary().indexOf(DISCARDED_NOTE));
+
         if (result == null || result.files() == null || result.files().isEmpty()) {
-            return new Verdict(List.of(), List.of("Debes devolver al menos un archivo en files."));
+            return new Verdict(List.of(), List.of("Debes devolver al menos un archivo en files dentro de tus rutas "
+                    + ownedPaths + "." + discardedNote));
         }
 
         var gate = pathGate.validate(result);
@@ -250,7 +287,8 @@ public class DevelopmentRuntime {
         for (var owned : ownedPaths) {
             if (paths.stream().noneMatch(path -> OwnedPaths.coveredByAny(List.of(owned), path))) {
                 retryable.add("No escribiste ningún archivo en \"" + owned + "\": también es tu responsabilidad; "
-                        + "devuelve TODOS tus archivos (los de todas tus rutas) en files, no solo los corregidos.");
+                        + "devuelve TODOS tus archivos (los de todas tus rutas) en files, no solo los corregidos."
+                        + discardedNote);
             }
         }
 

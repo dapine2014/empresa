@@ -97,6 +97,22 @@ class DevelopmentRuntimeTest {
                 anyString(), anyString());
     }
 
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-5): Neo, dueño solo de Solution.sln, escribía todo el proyecto
+    // y agotaba los 3 intentos. Lo ajeno pertenece a otro agente: se descarta (y se informa), no se reintenta.
+    @Test
+    void filesOutsideOwnedPathsAreDiscardedWhenTheOwnWorkIsPresent() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("todo", List.of(
+                        new GeneratedFile("Solution.sln", "sln"),
+                        new GeneratedFile("src/Tareas.Domain/Tarea.cs", "ajeno"))));
+
+        var result = runtime.generate("T-1", "MISSION-1", "engineering", "prompt", List.of("Solution.sln")).get();
+
+        assertEquals(List.of("Solution.sln"), result.files().stream().map(GeneratedFile::path).toList());
+        assertTrue(result.summary().contains("src/Tareas.Domain/Tarea.cs"), result.summary());
+        verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
+    }
+
     // Review Focus: "\" como separador es corregible → reintento, nunca un archivo con "\" en el nombre.
     @Test
     void aBackslashSeparatorIsRetriedNotWritten() throws Exception {
