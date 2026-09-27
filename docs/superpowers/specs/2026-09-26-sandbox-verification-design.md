@@ -288,6 +288,27 @@ createdAt, decidedAt})`. Endpoints: `GET /api/company/dependencies`,
 `PUT /api/company/dependencies/{id}/approve`,
 `PUT /api/company/dependencies/{id}/reject`. Sin pantalla en esta ola.
 
+### Revisión 2026-09-27 (parte 3, aprobada por el fundador)
+
+Desde la parte 2 los `.csproj` los genera Forjai (`ProjectScaffold`) y los agentes no pueden escribirlos, así que la
+detección por `PackageReference` escritos por el modelo ya no aplica. Cambios sobre lo anterior (el resto se mantiene):
+
+- **Pedido de paquetes**: .NET — `DevelopmentResult` gana `packages: [{name, version}]` opcional; Forjai los agrega
+  como `PackageReference` al `.csproj` de la capa del agente (commit "Forjai"). Flutter — se leen del `pubspec.yaml`
+  (lo escribe el dueño de la capa más externa). Solo versiones exactas en ambos (rango, `^`, `*` o `latest` → error
+  corregible con reintento). Los paquetes que ya trae cada imagen cuentan como aprobados (`approvedBy='baseline'`).
+- **`FETCH_DEPENDENCIES`** es un job del `sandbox-runner`: contenedor en una red Podman interna cuya única salida es un
+  proxy con lista blanca (squid) hacia `api.nuget.org`, `pub.dev` y `storage.googleapis.com`; solo corre la
+  restauración sobre un proyecto mínimo, resuelve transitivos y descarga a `~/forjai-deps/staging/<job>`. Devuelve por
+  paquete (incluidos los transitivos): licencia (`.nuspec` o texto de `LICENSE`) y si trae código que se ejecuta al
+  compilar.
+- **OSV y política** los aplica `company-core` (tiene salida a internet). Aprobado por política → el runner lo promueve
+  de `staging` a `~/forjai-deps/nuget` o `~/forjai-deps/pub`.
+- **Uso en `VERIFY`**: .NET monta la caché aprobada de solo lectura como feed adicional; Flutter monta
+  `~/forjai-deps/pub` (sembrada una vez con la caché de la imagen) como `PUB_CACHE`. `VERIFY` sigue siempre sin red.
+- **Verificación en vivo**: una misión con un paquete MIT sin vulnerabilidades (p. ej. `Newtonsoft.Json`) termina
+  `VERIFIED`; un control con un paquete vulnerable o con código en el build queda `PENDING_APPROVAL`.
+
 ## 4. Integración, estado final, evidencia y verificación
 
 ### Orden en `DevelopmentTeamStrategy`
