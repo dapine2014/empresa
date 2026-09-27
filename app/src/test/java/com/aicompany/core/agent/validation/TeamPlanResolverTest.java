@@ -146,7 +146,7 @@ class TeamPlanResolverTest {
     }
 
     @Test
-    void flutterLeaderGetsTheBootstrapFiles() {
+    void flutterBootstrapFilesGoToThePresentationOwner() {
         var tasks = new ArrayList<>(List.of(
                 task("engineering", "WORK", a("pedidos", "APPLICATION")),
                 task("backend", "WORK", a("pedidos", "DOMAIN")),
@@ -157,8 +157,10 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("FLUTTER_WEB_APP", List.of("pedidos"), tasks), ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertTrue(of(result.plan(), "engineering").ownedPaths().containsAll(List.of("pubspec.yaml", "lib/main.dart", "web")));
-        assertEquals(List.of("lib/pedidos/presentation"), of(result.plan(), "frontend-ui").ownedPaths());
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): el composition root va con la capa más externa.
+        assertEquals(List.of("lib/pedidos/application"), of(result.plan(), "engineering").ownedPaths());
+        assertEquals(List.of("lib/pedidos/presentation", "pubspec.yaml", "lib/main.dart", "web"),
+                of(result.plan(), "frontend-ui").ownedPaths());
     }
 
     @Test
@@ -224,10 +226,13 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("FLUTTER_WEB_APP", List.of("pedidos"), tasksWithoutAssignments()), REAL_ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertEquals(List.of("lib/pedidos/presentation"), of(result.plan(), "frontend-ui").ownedPaths());
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): main.dart es el composition root y lo escribía el líder
+        // primero, sin pantalla todavía. Los archivos de entrada van al dueño de la capa más externa (va último).
+        assertEquals(List.of("lib/pedidos/presentation", "pubspec.yaml", "lib/main.dart", "web"),
+                of(result.plan(), "frontend-ui").ownedPaths());
         assertEquals(List.of("test/pedidos"), of(result.plan(), "devops").ownedPaths());
         assertEquals(List.of("lib/pedidos/application", "lib/pedidos/infrastructure"), of(result.plan(), "backend").ownedPaths());
-        assertEquals(List.of("lib/pedidos/domain", "pubspec.yaml", "lib/main.dart", "web"), of(result.plan(), "engineering").ownedPaths());
+        assertEquals(List.of("lib/pedidos/domain"), of(result.plan(), "engineering").ownedPaths());
     }
 
     @Test

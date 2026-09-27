@@ -45,6 +45,8 @@ public class MissingFileClaimGate {
                 review.architectureConsistency(), review.notValidatableWithoutExecution(), review.evidence());
     }
 
+    private static final Pattern FILE_WORD = Pattern.compile("\\b(archivo|archivos|fichero|ficheros)\\b");
+
     public List<String> validate(StaticReviewResult review, Set<String> repositoryFiles) {
 
         var errors = new ArrayList<String>();
@@ -74,19 +76,29 @@ public class MissingFileClaimGate {
                 continue;
             }
 
-            if (!NON_EXISTENCE.matcher(normalize(finding.description())).find()) {
-                continue;
-            }
-
+            var text = normalize(finding.description());
             var mentioned = new LinkedHashSet<String>();
 
-            if (finding.path() != null && repositoryFiles.contains(OwnedPaths.normalize(finding.path()))) {
-                mentioned.add(OwnedPaths.normalize(finding.path()));
+            // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): la frase solo cuenta si está pegada al archivo.
+            var claims = NON_EXISTENCE.matcher(text);
+            while (claims.find()) {
+                var before = text.substring(Math.max(0, claims.start() - 25), claims.start());
+                if (FILE_WORD.matcher(before).find() && finding.path() != null
+                        && repositoryFiles.contains(OwnedPaths.normalize(finding.path()))) {
+                    mentioned.add(OwnedPaths.normalize(finding.path()));
+                }
+                for (var file : repositoryFiles) {
+                    var at = text.lastIndexOf(normalize(file), claims.start());
+                    if (at < 0) {
+                        continue;
+                    }
+                    var between = text.substring(at + file.length(), claims.start());
+                    var nearFile = between.length() <= 40 && between.chars().noneMatch(c -> c == '.' || c == ';' || c == ':' || c == ',');
+                    if (nearFile || FILE_WORD.matcher(before).find()) {
+                        mentioned.add(file);
+                    }
+                }
             }
-
-            repositoryFiles.stream()
-                    .filter(file -> finding.description().contains(file))
-                    .forEach(mentioned::add);
 
             if (!mentioned.isEmpty()) {
                 errors.add("El finding \"" + finding.description() + "\" afirma que no existe(n) " + mentioned
