@@ -142,13 +142,15 @@ class CompanyControllerTest {
 
     @Test
     void chatDelegatesEntirelyToTheIntentRouter() {
-        when(router.route("¿Cuál es el siguiente paso?")).thenReturn("Validar demanda.");
+        when(router.routeReplies("¿Cuál es el siguiente paso?"))
+                .thenReturn(List.of(new com.aicompany.core.model.ChatReply("ceo", "Alex", "Validar demanda.")));
 
         var response = controller.chat(new ChatRequest("¿Cuál es el siguiente paso?"));
 
-        assertEquals("CEO", response.agent());
+        assertEquals("Alex", response.agent());
         assertEquals("Validar demanda.", response.response());
-        verify(router).route("¿Cuál es el siguiente paso?");
+        assertEquals(1, response.replies().size());
+        verify(router).routeReplies("¿Cuál es el siguiente paso?");
     }
 
     @Test
