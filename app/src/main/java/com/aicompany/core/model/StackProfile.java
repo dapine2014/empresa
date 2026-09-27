@@ -268,6 +268,11 @@ public enum StackProfile {
      * precargadas en la imagen, y el paso de arranque busca algo concreto. Debe coincidir con
      * sandbox/images/<perfil>/ (Dockerfile y run.sh).
      */
+    /** Parte 3: cómo pide un agente .NET un paquete que no trae la imagen. */
+    static final String PACKAGE_RULE = "Si necesitas un paquete NuGet que no está en la lista, decláralo en "
+            + "\"packages\": [{\"name\": \"...\", \"version\": \"x.y.z\"}] con versión exacta; Forjai lo agrega a tu "
+            + ".csproj si pasa los chequeos (vulnerabilidades, licencia, código en el build).";
+
     public String executionContract() {
         return switch (this) {
             case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable. Los .csproj de cada capa "
@@ -275,15 +280,17 @@ public enum StackProfile {
                     + "con las referencias DDD y los paquetes xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0 y "
                     + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "
                     + "Microsoft.NET.Sdk.Web: necesita Program.cs (top-level, WebApplication) que responda GET /health "
-                    + "con 200. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. La solución la genera el sandbox.";
+                    + "con 200. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. La solución la genera el sandbox. "
+                    + PACKAGE_RULE;
             case GODOT_DOTNET_GAME -> "SANDBOX (sin red): Godot 4.3 .NET, net8.0. Los .csproj (capas en src/, "
                     + "tests/<Ctx>.Tests con xunit 2.5.3, y game/Game.csproj con Godot.NET.Sdk/4.3.0 que referencia "
                     + "src/) los genera Forjai: NO los escribas. game/project.godot declara run/main_scene (una escena "
                     + ".tscn que exista) y en [dotnet] project/assembly_name=\"Game\"; cada script C# es una clase "
                     + "partial con el mismo nombre que su archivo. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. "
-                    + "El juego corre 300 frames headless sin errores.";
+                    + "El juego corre 300 frames headless sin errores. " + PACKAGE_RULE;
             case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.24 (Dart ^3.5), solo web; dependencias SOLO del "
-                    + "SDK (flutter, flutter_test) más cupertino_icons ^1.0.8 y flutter_lints ^4.0.0 (dev). "
+                    + "SDK (flutter, flutter_test) más cupertino_icons 1.0.8 y flutter_lints 4.0.0 (dev). Otras dependencias de pub.dev: en pubspec.yaml "
+                    + "con versión exacta (p. ej. equatable: 2.0.5, sin ^); se aprueban si pasan los chequeos. "
                     + "Tests reales con flutter_test en test/<ctx>/; web/index.html estándar de flutter create; "
                     + "la app debe renderizar sin errores en Chrome headless.";
         };

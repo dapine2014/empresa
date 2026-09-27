@@ -295,4 +295,19 @@ class DevelopmentRuntimeTest {
                 () -> runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get());
         verify(ceoService, times(3)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
     }
+
+    @Test
+    void aNonExactPackageVersionIsRetried() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("r", List.of(new GeneratedFile("web/game/a.cs", "x")),
+                        List.of(new DevelopmentResult.PackageRequest("Newtonsoft.Json", "13.*"))))
+                .thenReturn(new DevelopmentResult("r", List.of(new GeneratedFile("web/game/a.cs", "x")),
+                        List.of(new DevelopmentResult.PackageRequest("Newtonsoft.Json", "13.0.3"))));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        assertEquals("13.0.3", result.packages().get(0).version());
+        verify(ceoService).generateDevelopmentArtifact(anyString(),
+                argThat(p -> p.contains("CORRECCIÓN") && p.contains("versión exacta")), anyString(), anyString());
+    }
 }

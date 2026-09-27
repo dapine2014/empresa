@@ -7,9 +7,11 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.agent.validation.CompilerErrorParser;
+import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.DependencyRef;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.ProjectScaffold;
 import com.aicompany.core.model.SandboxResult;
@@ -53,6 +55,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     // Debe entrar en CeoService.TEAM_CONTEXT_WINDOW_TOKENS (16k) junto con el prompt y la respuesta.
     static final int REVIEW_TOTAL_BUDGET_CHARS = 24_000;
     static final int REVIEW_FILE_BUDGET_CHARS = 6_000;
+    static final int REMOTE_REVIEW_TOTAL_BUDGET_CHARS = 120_000;
+    static final int REMOTE_REVIEW_FILE_BUDGET_CHARS = 30_000;
     static final String NO_EXECUTION_DISCLAIMER =
             "No se verificó la ejecución: no se puede afirmar que el producto compile, se ejecute o pase tests.";
     static final int FAILED_STEP_TAIL_CHARS = 1_500;
@@ -64,6 +68,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private final CompanyEventPublisher events;
     private final JsonMapper jsonMapper;
     private final SandboxRunnerClient sandbox;
+    private final DependencyService dependencies;
 
     public DevelopmentTeamStrategy(
             MissionMemoryService memory,
@@ -72,7 +77,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             StaticWorkspaceValidator staticValidator,
             CompanyEventPublisher events,
             JsonMapper jsonMapper,
-            SandboxRunnerClient sandbox) {
+            SandboxRunnerClient sandbox,
+            DependencyService dependencies) {
 
         this.memory = memory;
         this.runtime = runtime;
@@ -81,6 +87,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         this.events = events;
         this.jsonMapper = jsonMapper;
         this.sandbox = sandbox;
+        this.dependencies = dependencies;
     }
 
     @Override
@@ -125,6 +132,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var failures = new ArrayList<String>();
         var committed = new ArrayList<CommittedWork>();
         var generationHead = scaffold == null ? null : scaffold.commitSha();
+        var packagesByTask = new LinkedHashMap<PlannedTask, List<DevelopmentResult.PackageRequest>>();
 
         for (int i = 0; i < ordered.size(); i++) {
 
@@ -161,6 +169,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
                 committed.add(new CommittedWork(id, task.agentId(), record.sha(), record.files()));
                 generationHead = record.sha();
+                if (!result.packagesOrEmpty().isEmpty()) {
+                    packagesByTask.put(task, result.packagesOrEmpty());
+                }
 
             } catch (Exception ex) {
 
@@ -179,6 +190,22 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             throw new IllegalStateException("Ninguna tarea de desarrollo produjo un commit: " + String.join("; ", failures));
         }
+
+        // Parte 3: dependencias gobernadas. .NET: los paquetes pedidos entran al .csproj de la capa del agente
+        // (commit de Forjai); Flutter: salen del pubspec.yaml. Lo que no está aprobado se descarga aislado y pasa
+        // la política; si queda algo pendiente, VERIFY no corre.
+        var dependencyCommit = commitRequestedPackages(context, packagesByTask);
+        if (dependencyCommit != null) {
+            committed.add(dependencyCommit);
+        }
+        var profileForDeps = plan.profile().orElse(null);
+        var pubspec = profileForDeps == StackProfile.FLUTTER_WEB_APP
+                ? readOrNull(missionId, committed.get(committed.size() - 1).commitSha(), "pubspec.yaml") : null;
+        var requestedRefs = profileForDeps == null ? List.<DependencyRef>of() : dependencyRefs(profileForDeps,
+                packagesByTask.values().stream().flatMap(List::stream).toList(), pubspec);
+        var dependencyOutcome = requestedRefs.isEmpty()
+                ? new DependencyService.Outcome(List.of(), List.of(), null)
+                : dependencies.resolve(missionId, "engineering", requestedRefs);
 
         progress.advance(MissionStatus.EVALUATING, 75, "Validación estática",
                 "Chequeos deterministas y revisión estática de " + validation.agentId() + ".");
@@ -204,6 +231,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             if (!checks.stream().allMatch(StaticCheck::passed) || profile == null) {
                 sandboxResult = null;
                 sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
+                break;
+            }
+
+            if (!dependencyOutcome.pending().isEmpty() || dependencyOutcome.error() != null) {
+                sandboxResult = null;
+                sandboxError = "Dependencias pendientes de aprobación (🔴): "
+                        + dependencyOutcome.pending().stream().map(DependencyRef::id).toList()
+                        + (dependencyOutcome.error() == null ? "" : " — " + dependencyOutcome.error());
                 break;
             }
 
@@ -322,7 +357,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
             }
 
-            var repositoryContext = renderRepositoryContext(contents, REVIEW_TOTAL_BUDGET_CHARS, REVIEW_FILE_BUDGET_CHARS);
+            var repositoryContext = renderRepositoryContext(contents,
+                    reviewBudget(validatorModel(context, validation.agentId())).total(),
+                    reviewBudget(validatorModel(context, validation.agentId())).perFile());
 
             reviewStarted = true;
             review = runtime.review(validationTaskId, missionId, validation.agentId(),
@@ -362,7 +399,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
-                        repairRounds, autofixRounds));
+                        repairRounds, autofixRounds, dependencyOutcome));
     }
 
     private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
@@ -374,6 +411,75 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .toList();
         return new StaticReviewResult(review.verdict(), kept, review.missingFiles(), review.architectureConsistency(),
                 review.notValidatableWithoutExecution(), review.evidence());
+    }
+
+    /** Parte 3: paquetes pedidos (.NET, del resultado de cada agente) o del pubspec.yaml (Flutter). */
+    static List<DependencyRef> dependencyRefs(StackProfile profile, List<DevelopmentResult.PackageRequest> requested,
+                                              String pubspec) {
+        if (profile.ecosystem() == StackProfile.Ecosystem.PUB) {
+            return pubspec == null ? List.of() : DependencyManifest.pubspec(pubspec).deps();
+        }
+        return requested.stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).distinct().toList();
+    }
+
+    /** Regenera y commitea (autor Forjai) solo los .csproj de las capas que pidieron paquetes. */
+    private CommittedWork commitRequestedPackages(TeamMissionContext context,
+                                                  Map<PlannedTask, List<DevelopmentResult.PackageRequest>> packagesByTask) {
+        var plan = context.plan();
+        var profile = plan.profile().orElse(null);
+        if (profile == null || profile.ecosystem() != StackProfile.Ecosystem.NUGET || packagesByTask.isEmpty()) {
+            return null;
+        }
+        var byProject = new LinkedHashMap<String, List<DependencyRef>>();
+        for (var entry : packagesByTask.entrySet()) {
+            // Verificado en vivo (MISSION-DEPS-VERIFY-4): va a todos los proyectos de las capas del agente.
+            for (var project : projectsOf(profile, plan.contextNames(), entry.getKey().ownedPathsOrEmpty())) {
+                byProject.computeIfAbsent(project, k -> new ArrayList<>()).addAll(
+                        entry.getValue().stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).toList());
+            }
+        }
+        if (byProject.isEmpty()) {
+            return null;
+        }
+        var files = ProjectScaffold.generate(profile, plan.contextNames(), byProject).stream()
+                .filter(f -> byProject.containsKey(f.path()))
+                .toList();
+        try {
+            var id = context.missionId() + "-DEPENDENCIES";
+            var record = workspace.commitAgentWork(context.missionId(), id, "forjai", "Forjai",
+                    new DevelopmentResult("Forjai agregó los paquetes pedidos a " + byProject.keySet(), files));
+            return new CommittedWork(id, "forjai", record.sha(), record.files());
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not commit requested packages: {}", context.missionId(), ex.getMessage());
+            return null;
+        }
+    }
+
+    static List<String> projectsOf(StackProfile profile, List<String> contexts, List<String> ownedPaths) {
+        return profile.projectFiles(contexts).stream()
+                .filter(project -> OwnedPaths.coveredByAny(ownedPaths, project))
+                .toList();
+    }
+
+    record ReviewBudget(int total, int perFile) {
+    }
+
+    /**
+     * Verificado en vivo (MISSION-DEPS-VERIFY-4): el tope pensado para los 16K de contexto de qwen3:8b dejaba archivos
+     * fuera de la revisión con modelos remotos de contexto grande.
+     */
+    static ReviewBudget reviewBudget(String validatorModel) {
+        return validatorModel != null && validatorModel.startsWith("nvidia")
+                ? new ReviewBudget(REMOTE_REVIEW_TOTAL_BUDGET_CHARS, REMOTE_REVIEW_FILE_BUDGET_CHARS)
+                : new ReviewBudget(REVIEW_TOTAL_BUDGET_CHARS, REVIEW_FILE_BUDGET_CHARS);
+    }
+
+    private String readOrNull(String missionId, String sha, String path) {
+        try {
+            return workspace.readFileAtCommit(missionId, sha, path);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     static final int MAX_REPAIR_ROUNDS = 2;
@@ -606,6 +712,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return missionId + "-" + agentId.toUpperCase(Locale.ROOT);
     }
 
+    private static String validatorModel(TeamMissionContext context, String agentId) {
+        return context.team().members().stream()
+                .filter(m -> m.agentId().equals(agentId))
+                .map(TeamMemberInfo::model)
+                .findFirst()
+                .orElse(null);
+    }
+
     private static String agentName(TeamMissionContext context, String agentId) {
         return context.team().members().stream()
                 .filter(m -> m.agentId().equals(agentId))
@@ -832,7 +946,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private String verifiableState(
             TeamMissionContext context, CommittedWork scaffold, List<CommittedWork> committed, List<StaticCheck> checks,
             StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError,
-            int repairRounds, int autofixRounds) {
+            int repairRounds, int autofixRounds, DependencyService.Outcome dependencyOutcome) {
 
         var passed = checks.stream().filter(StaticCheck::passed).count();
 
@@ -860,6 +974,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("Validación estática: ").append(status.name())
                 .append(" (").append(passed).append("/").append(checks.size()).append(" chequeos deterministas en PASS)\n");
         out.append("Sandbox: ").append(sandboxSummary(sandboxResult, sandboxError)).append("\n");
+        if (!dependencyOutcome.approvedNow().isEmpty() || !dependencyOutcome.pending().isEmpty()) {
+            out.append("Dependencias: ").append(dependencyOutcome.approvedNow().size())
+                    .append(" aprobada(s) por política ").append(dependencyOutcome.approvedNow().stream().map(DependencyRef::id).toList())
+                    .append(", ").append(dependencyOutcome.pending().size()).append(" pendiente(s) de aprobación (🔴)\n");
+        }
         if (autofixRounds > 0) {
             out.append("Correcciones automáticas de Forjai: ").append(autofixRounds)
                     .append(" (using faltantes de tipos que existen en otra capa)\n");

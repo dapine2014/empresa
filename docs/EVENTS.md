@@ -50,3 +50,9 @@ EMPRESA_TASK_COMMITTED (`DevelopmentTeamStrategy`, `agentId` = autor del commit)
 EMPRESA_STATIC_VALIDATION_COMPLETED (`DevelopmentTeamStrategy`, `agentId` = validador del plan, capability `QA`): terminó la validación estática (chequeos deterministas + revisión del validador). `data: {validationStatus, failedChecks}` — `validationStatus` ∈ `VERIFIED|STATICALLY_VALIDATED|UNVALIDATED|FAILED`, calculado por Java. Solo `VERIFIED` implica que compiló, pasó ≥1 test y arrancó en el sandbox.
 
 EMPRESA_SANDBOX_VERIFICATION_COMPLETED (`DevelopmentTeamStrategy`, `agentId` = `sandbox`, `taskId` = la tarea VALIDATION): el `sandbox-runner` terminó un job `VERIFY` sobre el HEAD del workspace de la misión. `data: {overall, testsPassed, testsFailed}` — `overall` ∈ `PASS|FAIL`. No se publica si el runner no respondió ni si los chequeos deterministas fallaron (el sandbox no corre).
+
+EMPRESA_DEPENDENCY_REQUESTED (`DependencyService`, `agentId` = quien pidió el paquete): un paquete (pedido o transitivo) no pasó la política y quedó `PENDING_APPROVAL` (🔴). `data: {dependency, reasons}` — `dependency` = `ECOSISTEMA:nombre@versión`.
+
+EMPRESA_DEPENDENCY_APPROVED (`DependencyService` con `approvedBy=policy`, o `DependencyController` con `agentId=human` y `approvedBy=founder`): el paquete quedó aprobado y promovido a la caché. `data: {dependency, approvedBy}`.
+
+EMPRESA_DEPENDENCY_REJECTED (`DependencyController`, `agentId=human`): el fundador rechazó el paquete. `data: {dependency}`.

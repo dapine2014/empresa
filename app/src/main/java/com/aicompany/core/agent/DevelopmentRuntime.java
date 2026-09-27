@@ -5,6 +5,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.validation.DevelopmentPathValidationGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.agent.validation.ForbiddenClaimsGuard;
+import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.ProjectFileGate;
 import com.aicompany.core.agent.validation.MissingFileClaimGate;
 import com.aicompany.core.agent.validation.OwnedPaths;
@@ -295,6 +296,13 @@ public class DevelopmentRuntime {
                 retryable.add("La ruta \"" + file.path() + "\" está fuera de tus ownedPaths " + ownedPaths + ".");
             }
         }
+
+        // Parte 3: paquetes pedidos solo con versión exacta; pubspec.yaml con dependencias exactas de pub.dev.
+        retryable.addAll(DependencyManifest.validateRequests(result.packagesOrEmpty()));
+        result.files().stream()
+                .filter(f -> f != null && "pubspec.yaml".equals(f.path()))
+                .findFirst()
+                .ifPresent(f -> retryable.addAll(DependencyManifest.pubspec(f.content()).errors()));
 
         // Los .csproj esperados los genera Forjai (ProjectScaffold): el agente no puede pisarlos.
         retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects, expectedProjects));

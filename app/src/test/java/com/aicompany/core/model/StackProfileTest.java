@@ -89,4 +89,10 @@ class StackProfileTest {
         assertTrue(StackProfile.GODOT_DOTNET_GAME.projectFiles(List.of("Combate")).contains("game/Game.csproj"));
         assertTrue(StackProfile.FLUTTER_WEB_APP.projectFiles(List.of("pedidos")).isEmpty());
     }
+
+    @Test
+    void theDotnetContractExplainsHowToRequestAPackage() {
+        assertTrue(StackProfile.DOTNET_APP.executionContract().contains("\"packages\""));
+        assertTrue(StackProfile.FLUTTER_WEB_APP.executionContract().contains("versión exacta"));
+    }
 }

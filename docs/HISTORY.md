@@ -795,3 +795,22 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 - **`MISSION-SANDBOX-VERIFY-23` (Flutter) → `VERIFIED`**: build web, 35/35 tests, la app en el DOM de Chrome headless.
 
 **Observaciones abiertas**: el presupuesto de la revisión de Vera (24.000 caracteres) está pensado para los 16K de contexto de `qwen3:8b` y deja archivos fuera con kimi-k3; el ciclo de corrección no cubre tests fallidos, arranque ni violaciones `DDD_LAYERS`; el proveedor remoto no admite `tools` (los demás agentes siguen en Ollama).
+
+### Dependencias gobernadas (sandbox, parte 3)
+
+**Revisión del spec** (aprobada por el fundador, 2026-09-27): como los `.csproj` los genera Forjai desde la parte 2, los agentes .NET piden paquetes en `DevelopmentResult.packages`; en Flutter salen del `pubspec.yaml`. OSV y la política corren en `company-core`; la descarga aislada, en el runner.
+
+**Prueba de infraestructura antes del plan**: proxy squid con lista blanca en una red Podman interna (GitHub bloqueado); `dotnet restore` y `flutter pub get` por el proxy; licencia en `<license type="expression">` del `.nuspec`; caché NuGet de solo lectura como `fallbackPackageFolders` con `--read-only`; pub offline funciona con overlay `:O` y falla con `:ro` (pub escribe en su caché).
+
+**Bugs reales en vivo**:
+1. SELinux: la caché montada `:ro` sin etiqueta daba `Permission denied` en `/deps/nuget`; se usa la etiqueta compartida `:z` (la leen muchos contenedores y el runner escribe al promover).
+2. La restauración arrancaba antes de que squid escuchara → el runner espera "Accepting HTTP Socket connections" en los logs del proxy.
+3. `NU1301` intermitente (2 de 3): los logs del proxy, que ahora se adjuntan a un fetch fallido, mostraron `TCP_TUNNEL/503 HIER_NONE`. Al conectarlo a la red interna, Podman pone el DNS de esa red (sin salida) primero en `resolv.conf`. Fix: `dns_nameservers` fijo en `squid.conf`; 4 de 4 en PASS.
+4. El paquete pedido iba solo al primer `.csproj` del agente (Iris lo usaba en Infrastructure; Vera lo marcó BLOCKER) → va a todos los proyectos de sus capas.
+5. El presupuesto de revisión de Vera (24.000 caracteres, pensado para `qwen3:8b`) dejaba archivos fuera con kimi-k3 → depende del modelo del validador (remoto: 120.000/30.000).
+
+**Verificado en vivo**:
+- `MISSION-DEPS-VERIFY-1` → **`VERIFIED`**: `Newtonsoft.Json 13.0.3` pedido en `packages`, descargado por el proxy, aprobado por política (MIT, OSV limpio), `VERIFY` sin red con 29/29 tests.
+- `MISSION-DEPS-VERIFY-4` (control) → `Newtonsoft.Json 12.0.1` `PENDING_APPROVAL` por `GHSA-5crp-9r3c-p9vr` (HIGH) y el sandbox no corrió.
+- Aprobación manual por la API: `approve` promovió la 12.0.1 desde su staging; `reject` la dejó `REJECTED` por `founder` (se borró a mano de la caché después de la prueba).
+- `MISSION-DEPS-VERIFY-5` → **`VERIFIED`** con 42/42 tests, tras las correcciones 4 y 5.

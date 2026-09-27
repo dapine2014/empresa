@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class PodmanCommandBuilderTest {
 
-    private final PodmanCommandBuilder builder = new PodmanCommandBuilder("unix:///run/podman/podman.sock");
+    private final PodmanCommandBuilder builder = new PodmanCommandBuilder("unix:///run/podman/podman.sock", Path.of("/home/u/forjai-deps"));
 
     @Test
     void everyRunCarriesTheMandatoryIsolation() {
@@ -45,5 +45,16 @@ class PodmanCommandBuilderTest {
         for (var profile : java.util.List.of(ExecutionProfile.DOTNET_APP, ExecutionProfile.GODOT_DOTNET_GAME)) {
             assertTrue(builder.run(profile, profile.steps().get(0), Path.of("/w")).contains("--read-only"));
         }
+    }
+
+    // Parte 3: la caché aprobada entra a VERIFY sin red. NuGet de solo lectura; pub con overlay (:O), verificado
+    // en vivo: pub get --offline escribe en su caché y falla con :ro.
+    @Test
+    void verifyMountsTheApprovedDependencyCaches() {
+        var dotnet = builder.run(ExecutionProfile.DOTNET_APP, ExecutionProfile.DOTNET_APP.steps().get(0), Path.of("/w"));
+        assertTrue(dotnet.contains("/home/u/forjai-deps/nuget:/deps/nuget:ro,z"), dotnet.toString());
+        var flutter = builder.run(ExecutionProfile.FLUTTER_WEB_APP, ExecutionProfile.FLUTTER_WEB_APP.steps().get(0), Path.of("/w"));
+        assertTrue(flutter.contains("/home/u/forjai-deps/pub:/opt/pub-cache:O"), flutter.toString());
+        assertTrue(flutter.contains("--network=none"));
     }
 }

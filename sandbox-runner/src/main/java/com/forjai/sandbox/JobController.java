@@ -15,14 +15,20 @@ import java.util.Map;
 @RestController
 public class JobController {
 
-    public record JobRequest(String jobType, String missionId, String commitSha, String stackProfile) {
+    public record JobRequest(String jobType, String missionId, String commitSha, String stackProfile,
+                             DependencyRequest dependencies) {
     }
 
     private final VerifyJobRunner runner;
+    private final DependencyFetcher fetcher;
+    private final DependencyPromoter promoter;
     private final String token;
 
-    public JobController(VerifyJobRunner runner, @Value("${sandbox.token}") String token) {
+    public JobController(VerifyJobRunner runner, DependencyFetcher fetcher, DependencyPromoter promoter,
+                         @Value("${sandbox.token}") String token) {
         this.runner = runner;
+        this.fetcher = fetcher;
+        this.promoter = promoter;
         this.token = token;
     }
 
@@ -35,6 +41,19 @@ public class JobController {
                 || !MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8),
                         requestToken.getBytes(StandardCharsets.UTF_8))) {
             return ResponseEntity.status(401).body(Map.of("error", "token inválido"));
+        }
+
+        if ("FETCH_DEPENDENCIES".equals(request.jobType()) && request.dependencies() != null) {
+            return ResponseEntity.ok(fetcher.fetch(request.dependencies().ecosystem(), request.dependencies().packages()));
+        }
+
+        if ("PROMOTE_DEPENDENCIES".equals(request.jobType()) && request.dependencies() != null) {
+            try {
+                return ResponseEntity.ok(Map.of("promoted", promoter.promote(request.dependencies().ecosystem(),
+                        request.dependencies().jobId(), request.dependencies().packages())));
+            } catch (IllegalArgumentException | IllegalStateException ex) {
+                return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+            }
         }
 
         if (!"VERIFY".equals(request.jobType())) {

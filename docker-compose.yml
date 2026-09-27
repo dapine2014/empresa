@@ -38,10 +38,12 @@ services:
       SANDBOX_PRODUCTS_ROOT: ${HOME}/forjai-products
       SANDBOX_WORK_ROOT: ${HOME}/forjai-sandbox-work
       SANDBOX_PODMAN_URL: unix:///run/podman/podman.sock
+      SANDBOX_DEPS_ROOT: ${HOME}/forjai-deps
       HOME: /tmp
     volumes:
       - ${HOME}/forjai-products:${HOME}/forjai-products:ro
       - ${HOME}/forjai-sandbox-work:${HOME}/forjai-sandbox-work
+      - ${HOME}/forjai-deps:${HOME}/forjai-deps
       - /run/user/${UID:-1000}/podman/podman.sock:/run/podman/podman.sock
     networks:
       - ai-company-net
