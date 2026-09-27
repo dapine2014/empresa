@@ -62,7 +62,14 @@ public class OpenAiCompatibleClient {
                         .body(Map.class);
                 var choices = response == null ? null : (List<Map<String, Object>>) response.get("choices");
                 if (choices == null || choices.isEmpty()) {
-                    throw new IllegalStateException("Respuesta sin choices del modelo remoto " + model + ".");
+                    // Verificado en vivo (MISSION-SANDBOX-VERIFY-19): intermitente, el siguiente intento funcionó.
+                    var excerpt = String.valueOf(response);
+                    last = new IllegalStateException("Respuesta sin choices del modelo remoto " + model + ": "
+                            + excerpt.substring(0, Math.min(300, excerpt.length())));
+                    log.warn("REMOTE_MODEL_RETRY model={} attempt={} reason=sin choices response={}", model, attempt,
+                            excerpt.substring(0, Math.min(300, excerpt.length())));
+                    sleep();
+                    continue;
                 }
                 var message = (Map<String, Object>) choices.get(0).get("message");
                 var content = message == null ? null : message.get("content");

@@ -77,4 +77,33 @@ class OpenAiCompatibleClientTest {
         assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
         server.verify();
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-19): la API a veces responde 200 sin choices (intermitente: el
+    // intento siguiente funcionó). Se reintenta como un 5xx y el error final muestra qué devolvió.
+    @Test
+    void aResponseWithoutChoicesIsRetriedAndReported() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(withSuccess("{\"error\":{\"message\":\"upstream timeout\"}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertTrue(client.chat("m", MESSAGES, true, 100).contains("summary"));
+        server.verify();
+    }
+
+    @Test
+    void persistentMissingChoicesFailWithTheResponseExcerpt() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(times(OpenAiCompatibleClient.MAX_ATTEMPTS), requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(withSuccess("{\"error\":{\"message\":\"upstream timeout\"}}", MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        var ex = assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
+        assertTrue(ex.getMessage().contains("upstream timeout"), ex.getMessage());
+    }
 }
