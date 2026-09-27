@@ -198,6 +198,33 @@ class TeamWorkPlannerTest {
         verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
     }
 
+    // Verificado en vivo (MISSION-E2E-ENG, kimi-k3): Neo declaró a Mila sin trabajo ("una API .NET no tiene UI") y la
+    // misión se cortó, aunque el reparto fijo le da la capa API en DOTNET_APP. Java lo sabe: es un error que se corrige.
+    @Test
+    void aConflictForAMemberThatOwnsALayerOfTheProfileIsCorrectedNotReported() {
+        var team = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+                new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("arq"), "m"),
+                new TeamMemberInfo("frontend-ui", "Mila", "Frontend", "FRONTEND_GAME_UI_SPECIALIST", List.of("ui"), "m")));
+        var plan = new TeamPlan("API de facturas", null, null, List.of(
+                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arq"), List.of(), List.of())),
+                List.of(new TeamPlan.ParticipationConflict("frontend-ui", "Una API .NET no tiene interfaz de usuario.")),
+                "DOTNET_APP", List.of(), List.of());
+
+        var errors = TeamWorkPlanner.invalidParticipationConflicts(plan, team);
+
+        assertEquals(1, errors.size(), errors::toString);
+        assertTrue(errors.get(0).contains("frontend-ui") && errors.get(0).contains("API"), errors.get(0));
+    }
+
+    @Test
+    void aConflictOutsideDevelopmentPlansIsStillReported() {
+        var plan = new TeamPlan("Plan", null, null, List.of(
+                new PlannedTask("growth-content", "WORK", "SEO", "SEO", List.of("SEO"), List.of())),
+                List.of(new TeamPlan.ParticipationConflict("community", "No hay trabajo de comunidad.")));
+
+        assertTrue(TeamWorkPlanner.invalidParticipationConflicts(plan, marketing("ACTIVE")).isEmpty());
+    }
+
     private static TeamSnapshot engineering() {
         return new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND",
