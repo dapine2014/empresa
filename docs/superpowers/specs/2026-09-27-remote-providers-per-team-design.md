@@ -67,8 +67,25 @@ Antes de asignar, por grupo y con su key, sobre tareas reales:
 
 - Asignación con `PUT /api/company/agents/{id}/model` (reversible por agente).
 - Verificación en vivo: una misión de discovery completa, una misión de Creative o Marketing, y un chat con Alex que use
-  `query_company_memory`. Si un proveedor falla (key inválida, límite), el agente falla con el motivo; la regla "agent
+  `query_company_memory`, y un chat con menciones (`@Kira @Sofia …`). Si un proveedor falla (key inválida, límite), el agente falla con el motivo; la regla "agent
   failure ≠ mission failure" sigue aplicando.
+
+## 5. Chat con varios agentes (decisión del fundador)
+
+- **Por defecto responde Alex** (como hoy). Con menciones `@Nombre` o `@agentId` (p. ej. `@Kira`, `@growth-content`)
+  responden los agentes mencionados, en el orden en que aparecen; Alex solo si también se lo menciona. La mención se
+  resuelve contra los agentes reales de Neo4j (nombre o id, sin distinguir mayúsculas ni tildes); una mención que no
+  existe devuelve un mensaje determinista con la lista de agentes (nunca se adivina).
+- **Prioridad**: los comandos de gobernanza (`ejecuta/inicia MISSION-…`, arranque de misión en lenguaje libre,
+  `aprueba/rechaza …`) se resuelven primero, como hoy; después las menciones; después las consultas deterministas y Alex.
+- **Qué puede hacer un agente en el chat**: responder con su identidad (nombre, rol, personalidad) y su prompt activo,
+  con su propio modelo y key, y consultar `query_company_memory` (solo lectura). No lanza misiones, no aprueba ni
+  rechaza, no contacta a nadie: si se le pide, lo indica y remite a Alex o a los comandos. Las acciones 🔴 siguen siendo
+  del fundador. (La personalidad entra en el prompt solo en este chat; en las tareas sigue siendo solo UI.)
+- **Historial compartido**: un solo hilo (`Conversation MAIN`); cada mensaje se graba con el `agentId` de quien habla.
+  Cada agente recibe los últimos mensajes con los de los demás etiquetados por nombre (`[Kira (Growth…)]: …`).
+- **API y Command Center**: `POST /api/company/chat` devuelve además `replies: [{agentId, name, text}]` (se conservan
+  `agent` y `response` por compatibilidad); la pantalla de Chat muestra quién responde en cada mensaje.
 
 ## Privacidad
 
@@ -77,7 +94,9 @@ con Alex. Aceptado por el fundador al elegir NVIDIA para estas áreas.
 
 ## Testing
 
-- Unitarios: traducción de mensajes con `tool_calls` y `tool_call_id`; parseo de `tool_calls` con argumentos como texto;
+- Unitarios: resolución de menciones (nombre/id, tildes, desconocida, varias, sin mención → Alex); prioridad de los
+  comandos de gobernanza sobre las menciones; historial etiquetado por hablante; traducción de mensajes con
+  `tool_calls` y `tool_call_id`; parseo de `tool_calls` con argumentos como texto;
   varias llamadas → la primera; proveedor por prefijo; prefijo desconocido y key faltante con mensaje claro; guard
   `format` + `tools` también en remoto.
 - En vivo: lo de la sección 4.
