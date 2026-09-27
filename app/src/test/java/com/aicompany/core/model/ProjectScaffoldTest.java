@@ -81,4 +81,15 @@ class ProjectScaffoldTest {
         assertTrue(api.contains("<PackageReference Include=\"Swashbuckle.AspNetCore\" Version=\"6.6.2\" />"), api);
         assertTrue(api.contains("<PackageReference Include=\"Microsoft.AspNetCore.OpenApi\" Version=\"8.0.31\" />"), api);
     }
+
+    @Test
+    void requestedPackagesAreAddedToTheirLayersProject() {
+        var files = ProjectScaffold.generate(StackProfile.DOTNET_APP, List.of("Tareas"),
+                Map.of("src/Tareas.Infrastructure/Tareas.Infrastructure.csproj",
+                        List.of(new DependencyRef("NUGET", "Newtonsoft.Json", "13.0.3")))).stream()
+                .collect(Collectors.toMap(GeneratedFile::path, GeneratedFile::content));
+        assertTrue(files.get("src/Tareas.Infrastructure/Tareas.Infrastructure.csproj")
+                .contains("<PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />"));
+        assertFalse(files.get("src/Tareas.Domain/Tareas.Domain.csproj").contains("Newtonsoft"));
+    }
 }

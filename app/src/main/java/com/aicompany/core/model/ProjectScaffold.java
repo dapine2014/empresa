@@ -45,6 +45,15 @@ public final class ProjectScaffold {
             """;
 
     public static List<GeneratedFile> generate(StackProfile profile, List<String> contexts) {
+        return generate(profile, contexts, Map.of());
+    }
+
+    /**
+     * Parte 3: packagesByProject (ruta del .csproj → paquetes aprobados pedidos por el dueño de esa capa) se agrega
+     * como PackageReference después de los paquetes del perfil.
+     */
+    public static List<GeneratedFile> generate(StackProfile profile, List<String> contexts,
+                                               Map<String, List<DependencyRef>> packagesByProject) {
 
         if (profile.ecosystem() != StackProfile.Ecosystem.NUGET) {
             return List.of();
@@ -67,7 +76,9 @@ public final class ProjectScaffold {
                 var extra = layer == Layer.TESTS
                         ? "    <IsPackable>false</IsPackable>\n    <IsTestProject>true</IsTestProject>\n" : "";
                 var packages = layer == Layer.TESTS ? TEST_PACKAGES : layer == Layer.API ? API_PACKAGES : "";
-                files.add(project(projectPath(dir), sdk, extra, references, packages));
+                var path = projectPath(dir);
+                files.add(project(path, sdk, extra, references,
+                        packages + requestedPackages(packagesByProject.getOrDefault(path, List.of()))));
             }
         }
 
@@ -78,7 +89,8 @@ public final class ProjectScaffold {
                     .map(ProjectScaffold::projectPath)
                     .toList();
             files.add(project("game/Game.csproj", "Godot.NET.Sdk/4.3.0",
-                    "    <EnableDynamicLoading>true</EnableDynamicLoading>\n", references, ""));
+                    "    <EnableDynamicLoading>true</EnableDynamicLoading>\n", references,
+                    requestedPackages(packagesByProject.getOrDefault("game/Game.csproj", List.of()))));
         }
 
         files.add(solution(files));
@@ -109,6 +121,15 @@ public final class ProjectScaffold {
         }
         out.append("\tEndGlobalSection\nEndGlobal\n");
         return new GeneratedFile("Solution.sln", out.toString());
+    }
+
+    private static String requestedPackages(List<DependencyRef> packages) {
+        if (packages.isEmpty()) {
+            return "";
+        }
+        return "  <ItemGroup>\n" + packages.stream()
+                .map(p -> "    <PackageReference Include=\"" + p.name() + "\" Version=\"" + p.version() + "\" />")
+                .collect(Collectors.joining("\n")) + "\n  </ItemGroup>\n";
     }
 
     private static String projectPath(String dir) {
