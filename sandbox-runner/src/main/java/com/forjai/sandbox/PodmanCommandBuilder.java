@@ -8,9 +8,11 @@ import java.util.List;
 public class PodmanCommandBuilder {
 
     private final String podmanUrl;
+    private final Path depsRoot;
 
-    public PodmanCommandBuilder(String podmanUrl) {
+    public PodmanCommandBuilder(String podmanUrl, Path depsRoot) {
         this.podmanUrl = podmanUrl;
+        this.depsRoot = depsRoot;
     }
 
     public List<String> run(ExecutionProfile profile, ExecutionProfile.Step step, Path workDir) {
@@ -31,8 +33,15 @@ public class PodmanCommandBuilder {
                 "-e", "DOTNET_CLI_HOME=/tmp",
                 "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
                 "-v", workDir + ":/work:Z",
-                "-w", "/work",
-                profile.image(), "/forjai/run.sh", step.name()));
+                "-w", "/work"));
+        // Parte 3: caché aprobada sin red. NuGet de solo lectura (fallbackPackageFolders); pub con overlay: verificado
+        // en vivo que pub get --offline escribe en su caché y falla con :ro.
+        if (profile == ExecutionProfile.FLUTTER_WEB_APP) {
+            args.addAll(List.of("-v", depsRoot.resolve("pub") + ":/opt/pub-cache:O"));
+        } else {
+            args.addAll(List.of("-v", depsRoot.resolve("nuget") + ":/deps/nuget:ro,z"));
+        }
+        args.addAll(List.of(profile.image(), "/forjai/run.sh", step.name()));
         return List.copyOf(args);
     }
 }

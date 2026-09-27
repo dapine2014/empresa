@@ -3,7 +3,6 @@
 set -euo pipefail
 cd /work
 mkdir -p .forjai
-export NUGET_PACKAGES=/opt/nuget-packages
 # NuGet lee la config de usuario de $HOME (tmpfs): feed offline, también para resolver SDKs de MSBuild.
 mkdir -p "$HOME/.nuget/NuGet" && cp /forjai/NuGet.Config "$HOME/.nuget/NuGet/NuGet.Config"
 SLN=/tmp/Forjai.sln
@@ -31,7 +30,7 @@ make_sln() {
   fi
 }
 case "$1" in
-  restore) make_sln; checked dotnet restore "$SLN" --source /opt/nuget-packages ;;
+  restore) make_sln; checked dotnet restore "$SLN" ;;
   build)   make_sln; checked dotnet build "$SLN" --no-restore -c Debug ;;
   test)    make_sln; checked dotnet test "$SLN" --no-build -c Debug --logger "trx;LogFileName=results.trx" --results-directory /work/.forjai ;;
   smoke)

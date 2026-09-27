@@ -5,6 +5,7 @@ sandbox:
   products-root: ${SANDBOX_PRODUCTS_ROOT:${user.home}/forjai-products}
   work-root: ${SANDBOX_WORK_ROOT:${user.home}/forjai-sandbox-work}
   podman-url: ${SANDBOX_PODMAN_URL:unix:///run/podman/podman.sock}
+  deps-root: ${SANDBOX_DEPS_ROOT:${user.home}/forjai-deps}
 management:
   endpoints:
     web:

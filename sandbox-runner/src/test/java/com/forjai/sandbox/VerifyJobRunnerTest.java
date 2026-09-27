@@ -21,7 +21,7 @@ class VerifyJobRunnerTest {
     private final List<List<String>> calls = new ArrayList<>();
 
     private VerifyJobRunner runner(ProcessExecutor executor) {
-        return new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s"), executor);
+        return new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s", java.nio.file.Path.of("/deps")), executor);
     }
 
     /** Checkout siempre OK (simula git archive + tar); los pasos de podman responden según `stepResult`. */
