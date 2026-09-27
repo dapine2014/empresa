@@ -1248,14 +1248,6 @@ public class CeoService {
         }
     }
 
-    /** El proveedor remoto se usa solo en llamadas de equipo, que nunca llevan tools (sin traducción de tool calls). */
-    void rejectToolsForRemoteModels(String operation, String model, List<Map<String, Object>> tools) {
-        if (remoteModel(model).isPresent() && tools != null && !tools.isEmpty()) {
-            throw new IllegalArgumentException("callModel: el modelo remoto " + model + " no admite tools todavía "
-                    + "(operation=" + operation + "); usa un modelo de Ollama para ese agente.");
-        }
-    }
-
     @SuppressWarnings("unchecked")
     private ModelMessage callModel(
             String operation,
@@ -1292,7 +1284,6 @@ public class CeoService {
             Boolean think) {
 
         rejectFormatCombinedWithTools(operation, format, tools);
-        rejectToolsForRemoteModels(operation, model, tools);
 
         var startedAt = System.nanoTime();
 
@@ -1306,10 +1297,12 @@ public class CeoService {
             var remoteModel = remoteRef.get().model();
             var maxTokens = TEAM_STRUCTURED_OPERATIONS.contains(operation)
                     ? REMOTE_TEAM_MAX_OUTPUT_TOKENS : REMOTE_MAX_OUTPUT_TOKENS;
-            var content = remote.chat(remoteModel, messages, format != null, maxTokens);
-            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={}",
-                    operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000, content.length());
-            return new ModelMessage(content, List.of());
+            // Spec 2026-09-27 §2: herramientas traducidas por el cliente; el guard format+tools ya corrió arriba.
+            var reply = remote.complete(remoteModel, messages, tools, format != null, maxTokens);
+            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={}",
+                    operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
+                    reply.content().length(), reply.toolCalls().size());
+            return new ModelMessage(reply.content(), reply.toolCalls());
         }
 
         var body = new java.util.LinkedHashMap<String, Object>();

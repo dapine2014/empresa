@@ -106,4 +106,65 @@ class OpenAiCompatibleClientTest {
         var ex = assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
         assertTrue(ex.getMessage().contains("upstream timeout"), ex.getMessage());
     }
+
+    private static final String TOOL_CALLS = """
+            {"choices":[{"message":{"content":"","tool_calls":[
+              {"id":"call-1","type":"function","function":{"name":"search_web_evidence","arguments":"{\\"query\\":\\"x\\"}"}},
+              {"id":"call-2","type":"function","function":{"name":"search_web_evidence","arguments":"%s"}}]}}]}""";
+
+    // Verificado en vivo (2026-09-27): los 4 candidatos piden herramientas en formato OpenAI (arguments como texto).
+    @Test
+    void toolsAreSentAndToolCallsComeBackInOllamaFormat() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.tools[0].function.name").value("search_web_evidence"))
+                .andExpect(jsonPath("$.response_format").doesNotExist())
+                .andRespond(withSuccess(TOOL_CALLS.formatted("{\\\"query\\\":\\\"y\\\"}"), MediaType.APPLICATION_JSON));
+
+        var reply = new OpenAiCompatibleClient(builder.build(), "k", Duration.ZERO).complete("m", MESSAGES,
+                List.of(Map.of("type", "function", "function", Map.of("name", "search_web_evidence"))), false, 4096);
+
+        assertEquals(2, reply.toolCalls().size());
+        assertEquals(Map.of("name", "search_web_evidence", "arguments", Map.of("query", "x")),
+                reply.toolCalls().get(0).get("function"));
+    }
+
+    // Review Focus: arguments que no son JSON → esa llamada se descarta, sin excepción.
+    @Test
+    void toolCallsWithInvalidArgumentsAreDropped() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(withSuccess(TOOL_CALLS.formatted("no-json"), MediaType.APPLICATION_JSON));
+
+        var reply = new OpenAiCompatibleClient(builder.build(), "k", Duration.ZERO).complete("m", MESSAGES,
+                List.of(Map.of("type", "function", "function", Map.of("name", "search_web_evidence"))), false, 4096);
+
+        assertEquals(1, reply.toolCalls().size());
+    }
+
+    // El historial con tool_calls de Ollama se traduce: id + arguments como texto + tool_call_id en el mensaje tool.
+    @Test
+    void anOllamaToolRoundTripIsTranslated() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.messages[2].tool_calls[0].id").value("call_0"))
+                .andExpect(jsonPath("$.messages[2].tool_calls[0].type").value("function"))
+                .andExpect(jsonPath("$.messages[2].tool_calls[0].function.arguments").value("{\"query\":\"x\"}"))
+                .andExpect(jsonPath("$.messages[3].role").value("tool"))
+                .andExpect(jsonPath("$.messages[3].tool_call_id").value("call_0"))
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var history = List.<Map<String, Object>>of(
+                Map.of("role", "system", "content", "sys"),
+                Map.of("role", "user", "content", "hola"),
+                Map.of("role", "assistant", "content", "", "tool_calls", List.of(Map.of("function",
+                        Map.of("name", "search_web_evidence", "arguments", Map.of("query", "x"))))),
+                Map.of("role", "tool", "content", "resultado"));
+
+        new OpenAiCompatibleClient(builder.build(), "k", Duration.ZERO).complete("m", history, null, true, 100);
+        server.verify();
+    }
 }
