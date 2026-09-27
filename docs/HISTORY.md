@@ -814,3 +814,21 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 - `MISSION-DEPS-VERIFY-4` (control) → `Newtonsoft.Json 12.0.1` `PENDING_APPROVAL` por `GHSA-5crp-9r3c-p9vr` (HIGH) y el sandbox no corrió.
 - Aprobación manual por la API: `approve` promovió la 12.0.1 desde su staging; `reject` la dejó `REJECTED` por `founder` (se borró a mano de la caché después de la prueba).
 - `MISSION-DEPS-VERIFY-5` → **`VERIFIED`** con 42/42 tests, tras las correcciones 4 y 5.
+
+### Proveedores remotos por grupo y chat con menciones
+
+**Decisión del fundador** (2026-09-27): cada grupo de agentes usa un modelo de NVIDIA con su propia key (reparte los límites de la cuenta gratuita); Engineering no cambia (kimi-k3, `NVIDIA_API_KEY`). Proveedores pagos (Anthropic, OpenAI) quedan para cuando haya ingresos, con tope de gasto. En el chat responde Alex por defecto y cualquier agente con `@Nombre`.
+
+**Implementado**: proveedores con nombre (`nvidia`, `nvidia-discovery`, `nvidia-creative`, `nvidia-ceo`) por prefijo de `Agent.model`; herramientas en el proveedor remoto (traducción Ollama ↔ OpenAI de `tool_calls`/`tool_call_id`); `MentionResolver` + `ChatIntentRouter.routeReplies` (gobernanza → menciones → consultas deterministas / Alex), `CeoService.agentChat` (identidad, personalidad, prompt activo, solo lectura) y `replies` en la API y el Command Center.
+
+**Bug real en vivo**: con `@Kira @Alex` cada uno escribía también la respuesta del otro → regla "responde solo por ti" en los dos prompts.
+
+**Prueba de modelos** (misiones `MODEL-TRIAL-*`, `TEST`, tareas reales con los gates reales):
+- Discovery: `nemotron-3-super` → Max `FAILED` incluso tras el replan (2× `DIVIDE`, luego no citó 9 fuentes); `nemotron-3-ultra` → 3/3 `COMPLETED` con evidencia citada (20 s – 6,5 min por tarea).
+- Creative y Marketing: `kimi-k3` → 2/2, pero plan rechazado por `summary` vacío, la llamada a la herramienta llega como texto y una vez devolvió solo `!!!!`; `glm-5.3` → 2/2, herramientas nativas (varias búsquedas), evidencia más concreta, lento (hasta 8,6 min); `gpt-oss-20b` (pedido por el fundador) → 2/2 rápido (1–1,5 min) pero evidencia genérica y plan poco enfocado.
+- CEO: `nemotron-3-ultra` → chat en 3–14 s, dice "no tengo ese dato" cuando no lo tiene, consolidaciones honestas; `kimi-k3` → `!!!!` en 2 de 4 mensajes del chat (no reproducible con un prompt corto, donde además no llamó la herramienta e inventó una venta).
+- **Elección del fundador**: CEO y Discovery → `nemotron-3-ultra`; Creative y Marketing → `glm-5.3`. Los 14 agentes quedan en NVIDIA.
+
+**Verificado en vivo**: `PROVIDERS-VERIFY-DISC` → Sofia, Neo y Vera `COMPLETED` con 5 evidencias cada uno, **Luna y Max `FAILED`** por cálculos (márgenes en % y punto de equilibrio escritos como `SUBTRACT`: el validador solo admite `ADD`/`SUBTRACT`); `PROVIDERS-VERIFY-CREATIVE` → Kael, Maya y Gael `COMPLETED` (Gael tras un replan, por la misma causa: una tasa de activación); misiones de Marketing en la prueba de modelos; `@Kira @Sofia` → dos respuestas, cada una con su modelo (Kira llamó `query_company_memory` por la API remota); `Necesito más evidencia sobre MISSION-DEPS-VERIFY-3 @Kira` → decisión registrada, Kira no responde (gobernanza gana).
+
+**Observaciones abiertas**: `nemotron-3-ultra` casi nunca llama `query_company_memory` en el chat (responde con el historial) y una vez afirmó haberla consultado sin hacerlo; el validador de cálculos solo acepta `ADD`/`SUBTRACT` y Max (con ambos candidatos) intenta `MULTIPLY`/`DIVIDE`; el mercado de Forjai no es solo Colombia (el sesgo de las pruebas venía de la instrucción, no de los prompts).
