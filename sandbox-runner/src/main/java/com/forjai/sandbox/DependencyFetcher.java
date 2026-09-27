@@ -21,13 +21,22 @@ public class DependencyFetcher {
     private final String network;
     private final String proxyImage;
     private final ProcessExecutor executor;
+    private final int readinessAttempts;
+    private final java.time.Duration readinessDelay;
 
     public DependencyFetcher(Path depsRoot, String podmanUrl, String network, String proxyImage, ProcessExecutor executor) {
+        this(depsRoot, podmanUrl, network, proxyImage, executor, 30, java.time.Duration.ofSeconds(1));
+    }
+
+    public DependencyFetcher(Path depsRoot, String podmanUrl, String network, String proxyImage, ProcessExecutor executor,
+                             int readinessAttempts, java.time.Duration readinessDelay) {
         this.depsRoot = depsRoot;
         this.podmanUrl = podmanUrl;
         this.network = network;
         this.proxyImage = proxyImage;
         this.executor = executor;
+        this.readinessAttempts = readinessAttempts;
+        this.readinessDelay = readinessDelay;
     }
 
     public FetchedPackage.FetchResult fetch(String ecosystem, List<DependencyRequest.Package> packages) {
@@ -57,6 +66,12 @@ public class DependencyFetcher {
                 return new FetchedPackage.FetchResult(jobId, "FAIL", tail("El proxy de salida no arrancó: " + out), List.of());
             }
             podman(List.of("network", "connect", network, proxy), out);
+
+            // Verificado en vivo (MISSION-DEPS-VERIFY-2): la restauración arrancaba antes de que squid escuchara.
+            if (!proxyReady(proxy)) {
+                return new FetchedPackage.FetchResult(jobId, "FAIL",
+                        tail("El proxy de salida no quedó listo a tiempo: " + out), List.of());
+            }
 
             var restore = executor.run(restoreCommand(ecosystem, jobDir, proxy), jobDir, RESTORE_TIMEOUT_SECONDS);
             out.append(restore.output());
@@ -108,6 +123,22 @@ public class DependencyFetcher {
             Files.writeString(dir.resolve("pubspec.yaml"), "name: fetch\nenvironment:\n  sdk: ^3.5.0\n"
                     + "dependencies:\n  flutter:\n    sdk: flutter\n" + deps);
         }
+    }
+
+    private boolean proxyReady(String proxy) {
+        for (int attempt = 0; attempt < readinessAttempts; attempt++) {
+            var logs = executor.run(List.of("podman", "--url", podmanUrl, "logs", proxy), depsRoot, 30);
+            if (logs.output() != null && logs.output().contains("Accepting HTTP Socket connections")) {
+                return true;
+            }
+            try {
+                Thread.sleep(readinessDelay.toMillis());
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
     }
 
     private ProcessExecutor.Execution podman(List<String> args, StringBuilder out) {
