@@ -281,11 +281,36 @@ public class ChatIntentRouter {
                         data.message(), this::answerMemoryTopic, promptMemory.activePrompt(agentId),
                         companyMemory.agentModel(agentId, defaultCeoModel));
             }
-            return new ChatReply(agentId, name, flagValidationOverclaim(text, data));
+            return new ChatReply(agentId, name, flagValidationOverclaim("ceo".equals(agentId) ? text : cutForeignSpeakers(text, agentId, agents), data));
         } catch (Exception ex) {
             return new ChatReply(agentId, name, name + " no pudo responder: "
                     + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
         }
+    }
+
+    /**
+     * Verificado en vivo: con "Responde solo por ti" en el prompt, Sofia igual escribió una sección "**Max (…):**" con
+     * números inventados. Java corta la respuesta en la primera línea que arranca con el nombre de otro agente.
+     */
+    private static String cutForeignSpeakers(String text, String speakerId, List<Map<String, Object>> agents) {
+        if (text == null) {
+            return null;
+        }
+        var lines = text.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            var line = lines[i].strip().replaceFirst("^[#*>\\-\\s]+", "");
+            for (var agent : agents) {
+                var otherName = String.valueOf(agent.get("name"));
+                if (speakerId.equals(agent.get("id")) || otherName.isBlank()) {
+                    continue;
+                }
+                if (line.matches("(?i)" + Pattern.quote(otherName) + "\\s*(\\(|:|\\*).*")) {
+                    var kept = String.join("\n", java.util.Arrays.copyOfRange(lines, 0, i)).strip();
+                    return kept + "\n\n(" + otherName + " responde por sí misma/o; Forjai recortó lo que se escribió en su nombre.)";
+                }
+            }
+        }
+        return text;
     }
 
     /** Mensaje para el modelo (con los datos reales antepuestos, si los hay) y si alguno de esos resultados está validado. */
@@ -310,8 +335,12 @@ public class ChatIntentRouter {
             var tasks = missionMemory.tasks(missionId);
             var own = tasks.stream().filter(t -> speakerId.equals(t.agentId())).toList();
             var shown = own.isEmpty() ? tasks : own;
+            var others = tasks.stream().filter(t -> !speakerId.equals(t.agentId()))
+                    .map(t -> t.agentId() + " / " + t.action() + " (" + t.status() + ")")
+                    .collect(Collectors.joining(", "));
             blocks.add(formatMissionDetails(mission.get(), shown)
-                    + (own.isEmpty() ? "" : "\n(Solo tus resultados: los demás agentes responden por sí mismos.)"));
+                    + (own.isEmpty() ? "" : "\nOtras tareas de la misión (sus resultados los cuentan esos agentes, no tú): "
+                            + (others.isEmpty() ? "ninguna" : others) + "."));
             anyValidated |= shown.stream().anyMatch(t -> t.result() != null && t.result().contains("\"VALIDATED\""));
         }
         return blocks.isEmpty()
@@ -321,7 +350,8 @@ public class ChatIntentRouter {
     }
 
     private static final Pattern VALIDATION_CLAIM = Pattern.compile(
-            "(?<!no )(?<!sin )(?<!no esta )(?<!no estan )\\bvalidad[oa]s?\\b|\\bdemanda (comprobada|confirmada|probada)\\b");
+            "(?<!no )(?<!sin )(?<!no esta )(?<!no estan )\\b(validad[oa]s?|valido|valide|validamos|validaron)\\b"
+                    + "|\\bdemanda (comprobada|confirmada|probada)\\b");
 
     static final String VALIDATION_OVERCLAIM_NOTE = "⚠️ Nota de Forjai: los resultados registrados de esta misión están en "
             + "NOT_VALIDATED; nada de lo anterior está validado con clientes o transacciones reales.";

@@ -1256,6 +1256,56 @@ class ChatIntentRouterTest {
         assertEquals("Un proceso validado.", router.routeReplies("@Sofia ¿cómo trabajas?").get(0).text());
     }
 
+    // Verificado en vivo tras el filtro: Max dijo "la misión solo completó finanzas" porque no veía que había otras tareas.
+    @Test
+    void anAgentSeesThatOtherAgentsWorkedOnTheMissionWithoutTheirContent() {
+        stubAgents();
+        stubMissionWithTwoAgents();
+        var message = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(ceoService.agentChat(any(), any(), anyList(), message.capture(), any(), any(), any())).thenReturn("ok");
+
+        router.routeReplies("@Sofia resume MISSION-8");
+
+        assertTrue(message.getValue().contains("finance / UNIT_ECONOMICS (COMPLETED)"), message.getValue());
+        assertFalse(message.getValue().contains("Cobrar 39 USD al mes"), message.getValue());
+    }
+
+    // Verificado en vivo: "La misión validó que existe demanda real" con todo en NOT_VALIDATED.
+    @Test
+    void aValidationVerbAlsoGetsTheNote() {
+        stubAgents();
+        stubMissionWithTwoAgents();
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any()))
+                .thenReturn("La misión validó que existe demanda real.");
+
+        assertTrue(router.routeReplies("@Sofia resume MISSION-8").get(0).text().contains("NOT_VALIDATED"));
+    }
+
+    // Verificado en vivo: Sofia escribió también "**Max (Chief Finance AI):** ..." con números inventados.
+    @Test
+    void whatAnAgentWritesInTheNameOfAnotherAgentIsCutByJava() {
+        stubAgents();
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn(
+                "**Sofia (Sales):**\nMi hallazgo es X.\n\n**Kira (Growth):**\nY yo propongo Y.");
+
+        var text = router.routeReplies("@Sofia ¿qué opinas?").get(0).text();
+
+        assertTrue(text.contains("Mi hallazgo es X."), text);
+        assertFalse(text.contains("Y yo propongo Y."), text);
+        assertTrue(text.contains("Kira responde por sí misma/o"), text);
+    }
+
+    @Test
+    void theCeoMayStillSummarizeWhatEachAgentDid() {
+        stubAgents();
+        when(ceoService.chat(any(), any(), anyList(), any(), any(), any(), any()))
+                .thenReturn("Resumen del equipo:\nSofia: encontró demanda.\nKira: propuso contenido.");
+
+        var text = router.routeReplies("@Alex ¿qué hizo el equipo?").get(0).text();
+
+        assertEquals("Resumen del equipo:\nSofia: encontró demanda.\nKira: propuso contenido.", text);
+    }
+
     // Review Focus: la gobernanza gana sobre las menciones.
     @Test
     void governanceWinsOverMentions() {
