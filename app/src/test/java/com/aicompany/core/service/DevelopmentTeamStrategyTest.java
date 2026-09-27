@@ -36,9 +36,10 @@ class DevelopmentTeamStrategyTest {
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final MissionProgress progress = mock(MissionProgress.class);
     private final SandboxRunnerClient sandbox = mock(SandboxRunnerClient.class);
+    private final DependencyService dependencies = mock(DependencyService.class);
 
     private final DevelopmentTeamStrategy strategy = new DevelopmentTeamStrategy(
-            memory, runtime, workspace, validator, events, JsonMapper.builder().build(), sandbox);
+            memory, runtime, workspace, validator, events, JsonMapper.builder().build(), sandbox, dependencies);
 
     private static TeamMissionContext context() {
         var team = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
@@ -77,6 +78,8 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+        when(dependencies.resolve(anyString(), anyString(), anyList()))
+                .thenReturn(new DependencyService.Outcome(List.of(), List.of(), null));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord("5".repeat(40), List.of("game/Game.csproj")));
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
@@ -588,5 +591,60 @@ class DevelopmentTeamStrategyTest {
         strategy.execute(context(), progress);
 
         assertTrue(repairPrompts.getAllValues().get(1).contains("SIN CAMBIOS"), repairPrompts.getAllValues().get(1));
+    }
+
+    // Parte 3: los paquetes pedidos por un agente .NET entran al .csproj de su capa (commit de Forjai) antes de verificar.
+    @Test
+    void requestedNugetPackagesAreAddedToTheScaffoldBeforeVerifying() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("r",
+                        List.of(new GeneratedFile("src/Combate.Application/X.cs", "x")),
+                        List.of(new DevelopmentResult.PackageRequest("Newtonsoft.Json", "13.0.3")))));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-DEPENDENCIES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
+                        List.of("src/Combate.Application/Combate.Application.csproj")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-DEPENDENCIES"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().size() == 1 && r.files().get(0).content()
+                        .contains("<PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />")));
+        verify(dependencies).resolve(eq("M-1"), eq("engineering"),
+                eq(List.of(new DependencyRef("NUGET", "Newtonsoft.Json", "13.0.3"))));
+        verify(sandbox).verify("M-1", "7".repeat(40), "GODOT_DOTNET_GAME");
+    }
+
+    @Test
+    void pendingDependenciesSkipTheSandboxAndLeaveItUnvalidated() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("r",
+                        List.of(new GeneratedFile("src/Combate.Application/X.cs", "x")),
+                        List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")))));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-DEPENDENCIES"), anyString(), anyString(), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40), List.of("x.csproj")));
+        when(dependencies.resolve(anyString(), anyString(), anyList()))
+                .thenReturn(new DependencyService.Outcome(List.of(new DependencyRef("NUGET", "A", "1.0.0")), List.of(), null));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(sandbox, never()).verify(anyString(), anyString(), anyString());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("UNVALIDATED"), anyString());
+        assertTrue(result.verifiableState().contains("Dependencias pendientes de aprobación (🔴): [NUGET:a@1.0.0]"),
+                result.verifiableState());
+    }
+
+    @Test
+    void flutterDependenciesComeFromThePubspec() {
+        var refs = DevelopmentTeamStrategy.dependencyRefs(StackProfile.FLUTTER_WEB_APP, List.of(),
+                "dependencies:\n  flutter:\n    sdk: flutter\n  equatable: 2.0.5\n");
+        assertEquals(List.of(new DependencyRef("PUB", "equatable", "2.0.5")), refs);
+        assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0")), DevelopmentTeamStrategy.dependencyRefs(
+                StackProfile.DOTNET_APP, List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")), null));
     }
 }
