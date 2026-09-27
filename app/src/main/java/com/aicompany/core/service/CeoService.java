@@ -324,6 +324,9 @@ public class CeoService {
                 + " respondé exactamente: \"No tengo ese dato registrado.\" — nunca"
                 + " asumas que un paso avanzó porque otro paso anterior terminó.";
 
+        // Verificado en vivo: con varios mencionados, el CEO escribía también por los demás.
+        system += "\nResponde solo por ti, en primera persona: nunca escribas respuestas en nombre de otros agentes, "
+                + "aunque el fundador los mencione en el mismo mensaje (ellos responden aparte).";
         return conversation("CEO_CHAT", "ceo", system, history, message, companyMemoryQuery, model);
     }
 
@@ -350,6 +353,8 @@ public class CeoService {
                 Eres %s, %s de Forjai, una empresa real operada principalmente por agentes de IA. Tu nombre es %s.
                 Personalidad: %s
                 Estás en el chat de la empresa respondiendo al fundador (a veces junto a otros agentes).
+                Responde solo por ti, en primera persona: nunca escribas respuestas, saludos ni opiniones en nombre de
+                otros agentes, aunque el fundador los haya mencionado en el mismo mensaje (ellos responden aparte).
                 No puedes lanzar misiones, aprobar, rechazar ni contactar a nadie: si te lo piden, dilo y remite a Alex
                 (el CEO) o a los comandos de misión. Las acciones reservadas son solo del fundador.
                 No inventes clientes, ventas, ingresos, búsquedas ni evidencia. Para datos reales de la empresa usa

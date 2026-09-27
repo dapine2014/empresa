@@ -44,6 +44,8 @@ class CeoServiceAgentChatTest {
         assertTrue(system.contains("No puedes lanzar misiones, aprobar, rechazar ni contactar"), system);
         assertTrue(system.contains("Piensa en canales orgánicos."), system);
         assertFalse(system.contains("Eres el CEO de Forjai"), system);
+        // Verificado en vivo (chat "@Kira @Alex preséntense"): cada uno escribía también por el otro.
+        assertTrue(system.contains("Responde solo por ti"), system);
         var toolNames = ((List<Map<String, Object>>) tools.getValue()).stream()
                 .map(t -> ((Map<String, Object>) t.get("function")).get("name")).toList();
         assertEquals(List.of("query_company_memory"), toolNames);
