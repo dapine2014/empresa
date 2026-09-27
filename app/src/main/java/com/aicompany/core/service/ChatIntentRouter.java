@@ -266,41 +266,72 @@ public class ChatIntentRouter {
 
         var agent = agents.stream().filter(a -> agentId.equals(a.get("id"))).findFirst().orElseThrow();
         var name = String.valueOf(agent.get("name"));
+        var data = missionData(message, agentId);
 
         try {
+            String text;
             if ("ceo".equals(agentId)) {
-                return ceoReply(ceoService.chat(name, companyMemory.teamRosterDescription(), historyFor("ceo", agents),
-                        withMissionData(message), this::answerMemoryTopic, promptMemory.activePrompt("ceo"),
-                        companyMemory.agentModel("ceo", defaultCeoModel)));
+                text = ceoService.chat(name, companyMemory.teamRosterDescription(), historyFor("ceo", agents),
+                        data.message(), this::answerMemoryTopic, promptMemory.activePrompt("ceo"),
+                        companyMemory.agentModel("ceo", defaultCeoModel));
+            } else {
+                var speaker = new CeoService.ChatSpeaker(agentId, name, String.valueOf(agent.get("role")),
+                        String.valueOf(agent.get("personality")));
+                text = ceoService.agentChat(speaker, companyMemory.teamRosterDescription(), historyFor(agentId, agents),
+                        data.message(), this::answerMemoryTopic, promptMemory.activePrompt(agentId),
+                        companyMemory.agentModel(agentId, defaultCeoModel));
             }
-            var speaker = new CeoService.ChatSpeaker(agentId, name, String.valueOf(agent.get("role")),
-                    String.valueOf(agent.get("personality")));
-            return new ChatReply(agentId, name, ceoService.agentChat(speaker, companyMemory.teamRosterDescription(),
-                    historyFor(agentId, agents), withMissionData(message), this::answerMemoryTopic, promptMemory.activePrompt(agentId),
-                    companyMemory.agentModel(agentId, defaultCeoModel)));
+            return new ChatReply(agentId, name, flagValidationOverclaim(text, data));
         } catch (Exception ex) {
             return new ChatReply(agentId, name, name + " no pudo responder: "
                     + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
         }
     }
 
+    /** Mensaje para el modelo (con los datos reales antepuestos, si los hay) y si alguno de esos resultados está validado. */
+    private record MissionData(String message, boolean injected, boolean anyValidated) {
+    }
+
     /**
      * Verificado en vivo (MISSION-E2E-DISC): los agentes mencionados no veían sus propios resultados y el modelo casi
-     * nunca pide la herramienta. Si el mensaje nombra una misión que existe, Java antepone sus datos reales.
+     * nunca pide la herramienta. Si el mensaje nombra una misión que existe, Java antepone sus datos reales; a un agente
+     * con tareas en esa misión, solo las suyas (con todas, Max resumía también lo de Sofia).
      */
-    private String withMissionData(String message) {
+    private MissionData missionData(String message, String speakerId) {
         var matcher = MISSION_ID.matcher(message);
         var blocks = new ArrayList<String>();
+        var anyValidated = false;
         while (matcher.find()) {
             var missionId = matcher.group(1).toUpperCase(Locale.ROOT);
-            if (missionMemory.find(missionId).isPresent()) {
-                blocks.add(formatMissionDetails(missionId));
+            var mission = missionMemory.find(missionId);
+            if (mission.isEmpty()) {
+                continue;
             }
+            var tasks = missionMemory.tasks(missionId);
+            var own = tasks.stream().filter(t -> speakerId.equals(t.agentId())).toList();
+            var shown = own.isEmpty() ? tasks : own;
+            blocks.add(formatMissionDetails(mission.get(), shown)
+                    + (own.isEmpty() ? "" : "\n(Solo tus resultados: los demás agentes responden por sí mismos.)"));
+            anyValidated |= shown.stream().anyMatch(t -> t.result() != null && t.result().contains("\"VALIDATED\""));
         }
         return blocks.isEmpty()
-                ? message
-                : CeoService.JAVA_MEMORY_DATA_MARKER + "\n" + String.join("\n\n", blocks) + "\n\nMENSAJE DEL FUNDADOR:\n"
-                        + message;
+                ? new MissionData(message, false, false)
+                : new MissionData(CeoService.JAVA_MEMORY_DATA_MARKER + "\n" + String.join("\n\n", blocks)
+                        + "\n\nMENSAJE DEL FUNDADOR:\n" + message, true, anyValidated);
+    }
+
+    private static final Pattern VALIDATION_CLAIM = Pattern.compile(
+            "(?<!no )(?<!sin )(?<!no esta )(?<!no estan )\\bvalidad[oa]s?\\b|\\bdemanda (comprobada|confirmada|probada)\\b");
+
+    static final String VALIDATION_OVERCLAIM_NOTE = "⚠️ Nota de Forjai: los resultados registrados de esta misión están en "
+            + "NOT_VALIDATED; nada de lo anterior está validado con clientes o transacciones reales.";
+
+    /** Verificado en vivo: "demanda validada" sobre un resultado NOT_VALIDATED. Lo marca Java, no el modelo. */
+    private String flagValidationOverclaim(String text, MissionData data) {
+        if (text == null || !data.injected() || data.anyValidated()) {
+            return text;
+        }
+        return VALIDATION_CLAIM.matcher(normalize(text)).find() ? text + "\n\n" + VALIDATION_OVERCLAIM_NOTE : text;
     }
 
     /** Resultado real de cada tarea de la misión, armado en Java desde el AgentResult guardado (nunca por el modelo). */
@@ -309,9 +340,12 @@ public class ChatIntentRouter {
         if (mission.isEmpty()) {
             return "No tengo ese dato registrado. No existe ninguna misión con id " + missionId + " en Company Memory.";
         }
-        var tasks = missionMemory.tasks(missionId);
+        return formatMissionDetails(mission.get(), missionMemory.tasks(missionId));
+    }
+
+    private String formatMissionDetails(MissionResponse mission, List<AgentTask> tasks) {
         var lines = new ArrayList<String>();
-        lines.add(formatMissionStatus(mission.get(), tasks));
+        lines.add(formatMissionStatus(mission, tasks));
         for (var task : tasks) {
             lines.add("- " + task.agentId() + " / " + task.action() + " (" + task.status() + "): "
                     + summarizeTaskResult(task.result()));

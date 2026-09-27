@@ -1197,6 +1197,65 @@ class ChatIntentRouterTest {
         verify(conversationMemory).recordMessage("user", "@Sofia ¿qué encontraste en MISSION-7?");
     }
 
+    // Verificado en vivo (MISSION-E2E-DISC): Max resumió también lo de Sofia con los datos inyectados, y Sofia escribió
+    // "demanda validada" con su resultado en NOT_VALIDATED.
+    private void stubMissionWithTwoAgents() {
+        var mission = new MissionResponse("MISSION-8", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "Recomendación",
+                "ok", Instant.now(), null);
+        when(missionMemory.find("MISSION-8")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-8")).thenReturn(List.of(
+                new AgentTask("T1", "MISSION-8", "sales", "MARKET_DISCOVERY", "COMPLETED",
+                        "{\"verificationStatus\":\"NOT_VALIDATED\",\"recommendation\":\"Vender perfiles de Google\"}", Instant.now()),
+                new AgentTask("T2", "MISSION-8", "finance", "UNIT_ECONOMICS", "COMPLETED",
+                        "{\"verificationStatus\":\"NOT_VALIDATED\",\"recommendation\":\"Cobrar 39 USD al mes\"}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-8")).thenReturn(ProductStatus.DESIGN);
+    }
+
+    @Test
+    void aMentionedAgentWithTasksReceivesOnlyItsOwnResults() {
+        stubAgents();
+        stubMissionWithTwoAgents();
+        var message = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(ceoService.agentChat(any(), any(), anyList(), message.capture(), any(), any(), any())).thenReturn("resumen");
+
+        router.routeReplies("@Sofia resume MISSION-8");
+
+        assertTrue(message.getValue().contains("Vender perfiles de Google"), message.getValue());
+        assertFalse(message.getValue().contains("Cobrar 39 USD al mes"), message.getValue());
+    }
+
+    @Test
+    void claimingValidationOverNotValidatedResultsGetsANoteFromJava() {
+        stubAgents();
+        stubMissionWithTwoAgents();
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any()))
+                .thenReturn("Demanda validada en canales reales.");
+
+        var reply = router.routeReplies("@Sofia resume MISSION-8").get(0);
+
+        assertTrue(reply.text().startsWith("Demanda validada en canales reales."), reply.text());
+        assertTrue(reply.text().contains("NOT_VALIDATED"), reply.text());
+    }
+
+    @Test
+    void sayingItIsNotValidatedGetsNoNote() {
+        stubAgents();
+        stubMissionWithTwoAgents();
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any()))
+                .thenReturn("La demanda no está validada todavía.");
+
+        assertEquals("La demanda no está validada todavía.", router.routeReplies("@Sofia resume MISSION-8").get(0).text());
+    }
+
+    @Test
+    void withoutMissionDataTheValidationWordIsNotChecked() {
+        stubAgents();
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("Un proceso validado.");
+
+        assertEquals("Un proceso validado.", router.routeReplies("@Sofia ¿cómo trabajas?").get(0).text());
+    }
+
     // Review Focus: la gobernanza gana sobre las menciones.
     @Test
     void governanceWinsOverMentions() {
