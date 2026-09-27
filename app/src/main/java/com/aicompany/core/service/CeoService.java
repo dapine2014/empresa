@@ -21,6 +21,9 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
+import java.text.Normalizer;
+import java.util.Locale;
+import java.util.regex.Pattern;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -367,6 +370,27 @@ public class CeoService {
         return conversation("AGENT_CHAT", speaker.agentId(), system, history, message, companyMemoryQuery, model);
     }
 
+    static final String UNBACKED_MEMORY_CLAIM_NOTE =
+            "⚠️ Nota de Forjai: esta respuesta dice haber consultado la memoria de la empresa, pero en este turno no "
+                    + "se consultó. Los datos salen del historial de la conversación y pueden estar desactualizados.";
+
+    private static final Pattern MEMORY_CLAIM = Pattern.compile(
+            "query_company_memory|company memory|segun (la )?memoria|(consulte|revise) (la )?memoria");
+
+    /** Sin llamada real a la herramienta, una respuesta que dice haber consultado la memoria se marca (Java, no el modelo). */
+    private String flagUnbackedMemoryClaim(String operation, String actor, String content) {
+        if (content == null) {
+            return null;
+        }
+        var normalized = Normalizer.normalize(content, Normalizer.Form.NFD).replaceAll("\\p{M}", "")
+                .toLowerCase(Locale.ROOT);
+        if (!MEMORY_CLAIM.matcher(normalized).find()) {
+            return content;
+        }
+        log.warn("UNBACKED_MEMORY_CLAIM operation={} actor={}", operation, actor);
+        return content + "\n\n" + UNBACKED_MEMORY_CLAIM_NOTE;
+    }
+
     /** Dos turnos: uno con query_company_memory disponible y, si la pidió, el final con el resultado real. */
     private String conversation(String operation, String actor, String system, List<ConversationTurn> history,
                                 String message, Function<String, String> companyMemoryQuery, String model) {
@@ -386,7 +410,7 @@ public class CeoService {
                         : detectInlineCompanyMemoryTopic(turn.content());
 
         if (topic == null) {
-            return turn.content();
+            return flagUnbackedMemoryClaim(operation, actor, turn.content());
         }
 
         log.info("CEO_CHAT_TOOL_CALL topic={}", topic);

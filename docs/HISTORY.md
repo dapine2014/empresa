@@ -834,3 +834,5 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 **`MULTIPLY`/`DIVIDE`** (decisión del fundador tras esa verificación): el validador los recalcula en Java con redondeo a 2 decimales (sumar/restar siguen exactos; división por 0 rechazada) y el prompt pide un porcentaje en dos pasos. `CALC-VERIFY-DISC` → **5/5 `COMPLETED` sin rechazos de cálculo**: Max encadenó 13 cálculos (margen unitario → `DIVIDE` → `MULTIPLY` por 100, punto de equilibrio con `DIVIDE`), Luna y Neo también.
 
 **Observaciones abiertas**: `nemotron-3-ultra` casi nunca llama `query_company_memory` en el chat (responde con el historial) y una vez afirmó haberla consultado sin hacerlo; el mercado de Forjai no es solo Colombia (el sesgo de las pruebas venía de la instrucción, no de los prompts).
+
+**Control de afirmaciones sobre la memoria** (2026-09-27): como `nemotron-3-ultra` escribió "Según Company Memory (query_company_memory …)" sin llamar la herramienta, `CeoService` detecta en Java (regex sin tildes) una respuesta que dice haber consultado la memoria cuando en ese turno no hubo llamada y le agrega una nota visible; con llamada real no se toca.
