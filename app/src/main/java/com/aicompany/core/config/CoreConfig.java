@@ -55,4 +55,14 @@ public class CoreConfig {
                 RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build(), apiKey,
                 java.time.Duration.ofSeconds(10));
     }
+
+    /** Vulnerabilidades conocidas (parte 3 del sandbox): https://api.osv.dev. */
+    @Bean
+    com.aicompany.core.service.OsvClient osvClient(
+            @Value("${dependencies.osv-url:https://api.osv.dev}") String baseUrl) {
+        var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+        factory.setReadTimeout(java.time.Duration.ofSeconds(20));
+        return new com.aicompany.core.service.OsvClient(RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build());
+    }
 }
