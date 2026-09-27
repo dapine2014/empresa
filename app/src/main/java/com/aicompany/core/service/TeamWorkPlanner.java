@@ -271,9 +271,33 @@ public class TeamWorkPlanner {
                 errors.add("participationConflicts: " + agentId + " tiene una tarea en el plan; un conflicto solo "
                         + "es para un miembro sin trabajo real. Corrige los errores en el plan y deja "
                         + "participationConflicts vacío.");
+            } else {
+                ownedLayersInProfile(plan, team, agentId).ifPresent(layers -> errors.add(
+                        "participationConflicts: " + agentId + " sí tiene trabajo real: según el reparto fijo de capas "
+                                + "es dueño de " + layers + " en " + plan.stackProfile() + ". Asígnale esa tarea y deja "
+                                + "participationConflicts vacío."));
             }
         }
         return errors;
+    }
+
+    /**
+     * Verificado en vivo (MISSION-E2E-ENG): el líder declaró a Mila sin trabajo en una API .NET aunque
+     * {@link com.aicompany.core.model.RoleLayerCatalog} le da la capa API. Con perfil de stack, Java sabe qué capas
+     * le tocan a cada rol: si el miembro es dueño de alguna del perfil, su conflicto no es legítimo.
+     */
+    private static java.util.Optional<java.util.List<com.aicompany.core.model.StackProfile.Layer>> ownedLayersInProfile(
+            TeamPlan plan, TeamSnapshot team, String agentId) {
+        var profile = plan.profile();
+        if (profile.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        var roleCode = team.members().stream().filter(m -> agentId.equals(m.agentId()))
+                .map(TeamMemberInfo::roleCode).findFirst().orElse(null);
+        var owned = com.aicompany.core.model.RoleLayerCatalog.layersFor(roleCode).orElse(java.util.List.of()).stream()
+                .filter(profile.get().layers()::contains)
+                .toList();
+        return owned.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(owned);
     }
 
     private TeamPlanResult reportParticipationConflict(
