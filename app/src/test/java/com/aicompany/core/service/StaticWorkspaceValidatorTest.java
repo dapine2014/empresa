@@ -26,7 +26,8 @@ class StaticWorkspaceValidatorTest {
     private StaticWorkspaceValidator validator;
     private final List<CommittedWork> work = new ArrayList<>();
 
-    private static final List<String> ALLOWED = List.of("Juego.sln", "game", "src/Combate.Domain", "src/Combate.Application");
+    private static final List<String> ALLOWED = List.of("Juego.sln", "game", "src/Combate.Domain", "src/Combate.Application",
+            "tests/Combate.Tests");
     private static final List<String> CONTEXTS = List.of("Combate");
     private static final StackProfile PROFILE = StackProfile.GODOT_DOTNET_GAME;
 
@@ -39,11 +40,15 @@ class StaticWorkspaceValidatorTest {
                 new DevelopmentResult("base", List.of(
                         new GeneratedFile("Juego.sln", "Microsoft Visual Studio Solution File"),
                         new GeneratedFile("game/project.godot", "config_version=5"),
+                        new GeneratedFile("game/Game.csproj", "<Project Sdk=\"Godot.NET.Sdk/4.3.0\" />"),
                         new GeneratedFile("game/Main.cs", "using Godot;\nusing Combate.Application;"))));
         work.add(new CommittedWork("M-1-ENGINEERING", "engineering", neo.sha(), neo.files()));
 
         var iris = workspace.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
                 new DevelopmentResult("dominio", List.of(
+                        new GeneratedFile("src/Combate.Domain/Combate.Domain.csproj", "<Project />"),
+                        new GeneratedFile("src/Combate.Application/Combate.Application.csproj", "<Project />"),
+                        new GeneratedFile("tests/Combate.Tests/Combate.Tests.csproj", "<Project />"),
                         new GeneratedFile("src/Combate.Domain/Unidad.cs", "namespace Combate.Domain;\npublic class Unidad {}"))));
         work.add(new CommittedWork("M-1-BACKEND", "backend", iris.sha(), iris.files()));
     }

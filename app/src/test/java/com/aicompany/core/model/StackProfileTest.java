@@ -65,4 +65,28 @@ class StackProfileTest {
         assertTrue(all.contains("src/<Ctx>.Domain"));
         assertTrue(all.contains("lib/<ctx>/domain"));
     }
+
+    // Verificado en vivo (sandbox parte 2): sin red, solo existen las versiones precargadas en la imagen, y el paso
+    // de arranque espera cosas concretas. Los agentes lo tienen que saber o el sandbox falla con código correcto.
+    @Test
+    void everyProfileDescribesItsExecutionContract() {
+        assertTrue(StackProfile.DOTNET_APP.describe().contains("xunit 2.5.3"));
+        assertTrue(StackProfile.DOTNET_APP.describe().contains("GET /health"));
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.describe().contains("Godot.NET.Sdk/4.3.0"));
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.describe().contains("run/main_scene"));
+        assertTrue(StackProfile.FLUTTER_WEB_APP.describe().contains("cupertino_icons"));
+        for (var profile : StackProfile.values()) {
+            assertTrue(profile.describe().contains("SANDBOX (sin red)"), profile.name());
+        }
+    }
+
+    @Test
+    void projectFilesArePerLayerForDotnetAndNoneForFlutter() {
+        assertEquals(List.of("src/Tareas.Domain/Tareas.Domain.csproj", "src/Tareas.Application/Tareas.Application.csproj",
+                        "src/Tareas.Infrastructure/Tareas.Infrastructure.csproj", "src/Tareas.Api/Tareas.Api.csproj",
+                        "tests/Tareas.Tests/Tareas.Tests.csproj"),
+                StackProfile.DOTNET_APP.projectFiles(List.of("Tareas")));
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.projectFiles(List.of("Combate")).contains("game/Game.csproj"));
+        assertTrue(StackProfile.FLUTTER_WEB_APP.projectFiles(List.of("pedidos")).isEmpty());
+    }
 }

@@ -223,10 +223,19 @@ public class CeoService {
     private static final java.util.Set<String> TEAM_STRUCTURED_OPERATIONS =
             java.util.Set.of("TEAM_PLANNING", "DEVELOPMENT_TASK", "STATIC_REVIEW");
 
+    /**
+     * Prefijo de Agent.model para la API remota compatible con OpenAI (hoy NVIDIA). Decisión del fundador
+     * (2026-09-26): Engineering con "nvidia:moonshotai/kimi-k3" tras 18 misiones con qwen3:8b sin build verde.
+     */
+    static final String REMOTE_MODEL_PREFIX = "nvidia:";
+    static final int REMOTE_TEAM_MAX_OUTPUT_TOKENS = 16_384;
+    static final int REMOTE_MAX_OUTPUT_TOKENS = 4_096;
+
     private final JsonMapper jsonMapper;
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
     private final MeterRegistry meterRegistry;
+    private final OpenAiCompatibleClient remote;
 
     public CeoService(
             RestClient ollama,
@@ -234,12 +243,24 @@ public class CeoService {
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
             MeterRegistry meterRegistry) {
+        this(ollama, jsonMapper, evidenceAcquisitionService, events, meterRegistry, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public CeoService(
+            RestClient ollama,
+            JsonMapper jsonMapper,
+            EvidenceAcquisitionService evidenceAcquisitionService,
+            CompanyEventPublisher events,
+            MeterRegistry meterRegistry,
+            OpenAiCompatibleClient remote) {
 
         this.ollama = ollama;
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
         this.events = events;
         this.meterRegistry = meterRegistry;
+        this.remote = remote;
     }
 
     /**
@@ -1215,6 +1236,14 @@ public class CeoService {
         }
     }
 
+    /** El proveedor remoto se usa solo en llamadas de equipo, que nunca llevan tools (sin traducción de tool calls). */
+    void rejectToolsForRemoteModels(String operation, String model, List<Map<String, Object>> tools) {
+        if (model != null && model.startsWith(REMOTE_MODEL_PREFIX) && tools != null && !tools.isEmpty()) {
+            throw new IllegalArgumentException("callModel: el modelo remoto " + model + " no admite tools todavía "
+                    + "(operation=" + operation + "); usa un modelo de Ollama para ese agente.");
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private ModelMessage callModel(
             String operation,
@@ -1251,8 +1280,22 @@ public class CeoService {
             Boolean think) {
 
         rejectFormatCombinedWithTools(operation, format, tools);
+        rejectToolsForRemoteModels(operation, model, tools);
 
         var startedAt = System.nanoTime();
+
+        if (model != null && model.startsWith(REMOTE_MODEL_PREFIX)) {
+            if (remote == null) {
+                throw new IllegalStateException("No hay cliente remoto configurado para " + model + ".");
+            }
+            var remoteModel = model.substring(REMOTE_MODEL_PREFIX.length());
+            var maxTokens = TEAM_STRUCTURED_OPERATIONS.contains(operation)
+                    ? REMOTE_TEAM_MAX_OUTPUT_TOKENS : REMOTE_MAX_OUTPUT_TOKENS;
+            var content = remote.chat(remoteModel, messages, format != null, maxTokens);
+            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={}",
+                    operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000, content.length());
+            return new ModelMessage(content, List.of());
+        }
 
         var body = new java.util.LinkedHashMap<String, Object>();
         body.put("model", model);

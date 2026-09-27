@@ -120,13 +120,13 @@ public class TeamWorkPlanner {
 
                 plan = normalizeActions(plan);
 
-                if (!plan.participationConflictsOrEmpty().isEmpty()) {
+                var errors = new ArrayList<String>(invalidParticipationConflicts(plan, team));
+
+                if (errors.isEmpty() && !plan.participationConflictsOrEmpty().isEmpty()) {
                     return reportParticipationConflict(missionId, taskId, leaderId, teamId, plan);
                 }
 
-                var errors = new ArrayList<String>();
-
-                if (mode == TeamExecutionMode.DEVELOPMENT) {
+                if (errors.isEmpty() && mode == TeamExecutionMode.DEVELOPMENT) {
                     var resolution = resolver.resolve(plan, team);
                     errors.addAll(resolution.errors());
                     plan = resolution.plan();
@@ -248,6 +248,34 @@ public class TeamWorkPlanner {
      * no se reintenta ni se ejecuta nada, se reporta al fundador (la misión
      * termina en FAILED con el reporte, decidible vía /decision).
      */
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-1): en un reintento el líder copió los errores del validador
+     * a participationConflicts y la misión se cortó sin corregir. Un conflicto solo es válido para un miembro
+     * real, que no sea el líder y que no tenga tarea en el plan; si no, es un error más que se corrige.
+     */
+    static java.util.List<String> invalidParticipationConflicts(TeamPlan plan, TeamSnapshot team) {
+        var members = team.members().stream().map(TeamMemberInfo::agentId).collect(java.util.stream.Collectors.toSet());
+        var withTask = plan.tasksOrEmpty().stream()
+                .filter(java.util.Objects::nonNull)
+                .map(TeamPlan.PlannedTask::agentId)
+                .collect(java.util.stream.Collectors.toSet());
+        var errors = new ArrayList<String>();
+        for (var conflict : plan.participationConflictsOrEmpty()) {
+            var agentId = conflict == null ? null : conflict.agentId();
+            if (agentId == null || !members.contains(agentId)) {
+                errors.add("participationConflicts: \"" + agentId + "\" no es miembro del equipo.");
+            } else if (agentId.equals(team.leaderAgentId())) {
+                errors.add("participationConflicts: el líder (" + agentId + ") no puede declararse sin trabajo; "
+                        + "los errores de validación se corrigen en el plan, no se declaran como conflicto.");
+            } else if (withTask.contains(agentId)) {
+                errors.add("participationConflicts: " + agentId + " tiene una tarea en el plan; un conflicto solo "
+                        + "es para un miembro sin trabajo real. Corrige los errores en el plan y deja "
+                        + "participationConflicts vacío.");
+            }
+        }
+        return errors;
+    }
+
     private TeamPlanResult reportParticipationConflict(
             String missionId, String taskId, String leaderId, String teamId, TeamPlan plan) {
 

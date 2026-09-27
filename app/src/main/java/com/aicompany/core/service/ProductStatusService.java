@@ -97,11 +97,12 @@ public class ProductStatusService {
     }
 
     /**
-     * Punto de enganche del Proyecto B — QA real sobre un producto que ya
-     * existe, distinto de {@code QUALITY_RISK_REVIEW}.
+     * QA = la validación quedó VERIFIED: compiló, pasó tests y arrancó en el
+     * sandbox (spec 2026-09-26 §4). Distinto de {@code QUALITY_RISK_REVIEW}.
      */
     private boolean isQaValidated(String missionId) {
-        return false;
+        return missionMemory.tasks(missionId).stream()
+                .anyMatch(t -> "VALIDATION".equals(t.kind()) && "VERIFIED".equals(t.validationStatus()));
     }
 
     /**

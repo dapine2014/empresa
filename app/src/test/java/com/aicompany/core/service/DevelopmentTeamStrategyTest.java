@@ -17,6 +17,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,9 +35,10 @@ class DevelopmentTeamStrategyTest {
     private final StaticWorkspaceValidator validator = mock(StaticWorkspaceValidator.class);
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final MissionProgress progress = mock(MissionProgress.class);
+    private final SandboxRunnerClient sandbox = mock(SandboxRunnerClient.class);
 
     private final DevelopmentTeamStrategy strategy = new DevelopmentTeamStrategy(
-            memory, runtime, workspace, validator, events, JsonMapper.builder().build());
+            memory, runtime, workspace, validator, events, JsonMapper.builder().build(), sandbox);
 
     private static TeamMissionContext context() {
         var team = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
@@ -66,32 +68,41 @@ class DevelopmentTeamStrategyTest {
     }
 
     private void stubHappyPath() throws Exception {
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("5".repeat(40), List.of("game/Game.csproj")));
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
+        when(workspace.filesAtCommit("M-1", "5".repeat(40))).thenReturn(List.of("game/Game.csproj", "Solution.sln"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
         when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
                 .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(
+                        new SandboxResult.StepResult("build", "PASS", 0, 48000, "", 0, 0),
+                        new SandboxResult.StepResult("test", "PASS", 0, 12000, "", 12, 0),
+                        new SandboxResult.StepResult("smoke", "PASS", 0, 9000, "", 0, 0)))));
     }
 
     @Test
-    void commitsOnePerAgentInPlanOrderAndRecordsTheArtifact() throws Exception {
+    void commitsOnePerAgentInLayerOrderAndRecordsTheArtifact() throws Exception {
         stubHappyPath();
         when(runtime.review(eq("M-1-QA"), eq("M-1"), eq("qa"), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
         strategy.execute(context(), progress);
 
+        // Decisión del fundador (revisión 3): por capas. Mila tiene APPLICATION y Neo GAME: Mila va primero.
         InOrder inOrder = inOrder(workspace);
-        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any());
         inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any());
         verify(memory).createTask("M-1-QA", "M-1", "qa", "STATIC_REVIEW", "VALIDATION");
         verify(memory).recordTaskArtifact("M-1-FRONTEND-UI", "/data/forjai-products/M-1", SHA_MILA, List.of("web/ui/hud.js"));
         verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), anyString());
@@ -99,20 +110,17 @@ class DevelopmentTeamStrategyTest {
     }
 
     @Test
-    void aCleanReviewIsStaticallyValidatedAndTheStateCitesRealShas() throws Exception {
+    void aCleanReviewWithAPassingSandboxCitesRealShas() throws Exception {
         stubHappyPath();
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
         var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
 
-        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("STATICALLY_VALIDATED"), anyString());
         verify(memory).recordEvidence(eq("M-1-QA"), eq("M-1"), eq("qa"), anyList());
         assertTrue(result.verifiableState().contains(SHA_NEO));
         assertTrue(result.verifiableState().contains(SHA_MILA));
-        assertTrue(result.verifiableState().contains(
-                "Esta fase no ejecuta código: no se puede afirmar que el juego compile, se ejecute o pase tests."));
-        assertTrue(result.resultsForCeo().contains("STATICALLY_VALIDATED"));
+        assertTrue(result.resultsForCeo().contains("VERIFIED"));
     }
 
     @Test
@@ -173,7 +181,7 @@ class DevelopmentTeamStrategyTest {
     void workAndReviewPromptsCarryTheProfileContextsAndGlossary() throws Exception {
         stubHappyPath();
         var workPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/Atacar.cs")));
         var reviewPrompt = ArgumentCaptor.forClass(String.class);
         when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
@@ -195,7 +203,7 @@ class DevelopmentTeamStrategyTest {
     void theOwnerOfAnEntryFilesFolderIsToldToCreateIt() throws Exception {
         stubHappyPath();
         var neoPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("game/project.godot")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -217,5 +225,368 @@ class DevelopmentTeamStrategyTest {
 
         verify(runtime, never()).review(anyString(), anyString(), anyString(), anyString(), anyMap());
         verify(memory).updateTask(eq("M-1-QA"), eq("FAILED"), contains("git show falló"));
+    }
+
+    @Test
+    void aPassingSandboxAndCleanReviewIsVerified() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        verify(memory).recordSandboxResult(eq("M-1-QA"), anyString());
+        assertTrue(result.verifiableState().contains("Tests PASS 12/12"));
+        assertTrue(result.verifiableState().contains("Compiló, pasaron 12 tests y arrancó en el sandbox."));
+    }
+
+    @Test
+    void theReviewReceivesTheRealSandboxResults() throws Exception {
+        stubHappyPath();
+        var reviewPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        assertTrue(reviewPrompt.getValue().contains("RESULTADOS REALES DEL SANDBOX"));
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-7): Vera citaba archivos con el sha de otro commit y agotaba
+        // los reintentos. HEAD contiene todos los archivos: se le da el sha literal.
+        assertTrue(reviewPrompt.getValue().contains("\"workspace:M-1@" + SHA_NEO + "/<ruta>\""), reviewPrompt.getValue());
+    }
+
+    // Review Focus: runner no disponible → UNVALIDATED con el motivo.
+    @Test
+    void anUnavailableRunnerLeavesTheWorkUnvalidated() throws Exception {
+        stubHappyPath();
+        when(sandbox.verify(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(sandbox.lastError()).thenReturn("sandbox-runner no disponible: Connection refused");
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("UNVALIDATED"), anyString());
+        assertTrue(result.verifiableState().contains("Connection refused"));
+    }
+
+    // Review Focus: si los chequeos deterministas fallaron, no se gasta tiempo compilando.
+    @Test
+    void failedDeterministicChecksSkipTheSandbox() throws Exception {
+        stubHappyPath();
+        when(validator.validate(eq("M-1"), anyList(), any(), anyList(), anyList()))
+                .thenReturn(List.of(StaticCheck.fail("DDD_LAYERS", "violación", null, List.of())));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verifyNoInteractions(sandbox);
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): los .csproj los genera Forjai antes que los agentes.
+    @Test
+    void forjaiCommitsTheProjectScaffoldBeforeTheAgentsWork() throws Exception {
+        stubHappyPath();
+        var milaPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        var inOrder = inOrder(workspace, runtime);
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().anyMatch(f -> f.path().equals("game/Game.csproj"))));
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        assertTrue(milaPrompt.getValue().contains("los genera Forjai"), milaPrompt.getValue());
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-6): la regla vieja "nadie va a ejecutar este código" era falsa
+        // con el sandbox y se filtró textual dentro de Tarea.cs.
+        assertFalse(milaPrompt.getValue().contains("Nadie va a ejecutar este código"), milaPrompt.getValue());
+        assertTrue(milaPrompt.getValue().contains("sandbox"), milaPrompt.getValue());
+        assertTrue(milaPrompt.getValue().contains("src/Combate.Application/Combate.Application.csproj"));
+        assertFalse(milaPrompt.getValue().contains("ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no compila ni "
+                + "arranca sin ellos): [src/Combate.Application/Combate.Application.csproj]"));
+        assertTrue(result.verifiableState().contains("Forjai (scaffold)"), result.verifiableState());
+    }
+
+    @Test
+    void theExpectedProjectFilesReachTheGenerationGate() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
+                argThat(list -> list.contains("src/Combate.Domain/Combate.Domain.csproj")
+                        && list.contains("game/Game.csproj")));
+    }
+
+    // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
+    // contra clases que nunca vio y el código no compilaba. Ahora se genera por capas y cada agente ve el código
+    // ya commiteado (sin .csproj/.sln, que son de Forjai).
+    @Test
+    void eachAgentSeesTheCodeAlreadyCommittedByThePreviousLayers() throws Exception {
+        stubHappyPath();
+        var milaPrompt = ArgumentCaptor.forClass(String.class);
+        var neoPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var inOrder = inOrder(runtime, workspace);
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), anyString(), anyString(), any());
+        inOrder.verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+        assertFalse(milaPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), milaPrompt.getValue());
+        assertTrue(neoPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), neoPrompt.getValue());
+        assertTrue(neoPrompt.getValue().contains("### web/ui/hud.js"), neoPrompt.getValue());
+        assertFalse(neoPrompt.getValue().contains("### game/Game.csproj"), neoPrompt.getValue());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Solution.sln (de Forjai) no estaba en ningún ownedPath y
+    // PATHS_WITHIN_OWNED fallaba. Los archivos del scaffold son rutas permitidas.
+    @Test
+    void theScaffoldFilesAreAllowedPaths() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(validator).validate(eq("M-1"), anyList(), any(), anyList(),
+                argThat(allowed -> allowed.contains("game/Game.csproj")));
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Vera marcó MAJOR un .csproj que genera Forjai; eso no es
+    // trabajo de un agente y no puede impedir VERIFIED.
+    @Test
+    void findingsOnFilesGeneratedByForjaiDoNotCount() throws Exception {
+        stubHappyPath();
+        var review = new StaticReviewResult("ISSUES_FOUND",
+                List.of(new StaticReviewResult.Finding("game/Game.csproj", "MAJOR", "referencia indebida")),
+                List.of(), "ok", List.of("x"), cleanReview().evidence());
+        var reviewPrompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(review));
+
+        strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(reviewPrompt.getValue().contains("los genera Forjai"), reviewPrompt.getValue());
+    }
+
+    private static SandboxResult buildFailure(String path) {
+        return new SandboxResult("FAIL", List.of(
+                new SandboxResult.StepResult("restore", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("build", "FAIL", 1, 2000,
+                        "/work/" + path + "(3,5): error CS1002: ; expected [/work/x.csproj]\nBuild FAILED.", 0, 0),
+                new SandboxResult.StepResult("test", "SKIPPED", 0, 0, "", 0, 0)));
+    }
+
+    // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10: todo pasaba salvo una línea que no compilaba).
+    @Test
+    void aCompileErrorGoesBackToTheFileOwnerAndTheSandboxRunsAgain() throws Exception {
+        stubHappyPath();
+        var pass = Optional.of(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("build", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 3, 0),
+                new SandboxResult.StepResult("smoke", "PASS", 0, 1000, "", 0, 0))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")))
+                .thenReturn(pass);
+        var milaPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(sandbox, times(2)).verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"));
+        assertEquals(2, milaPrompts.getAllValues().size());
+        var repair = milaPrompts.getAllValues().get(1);
+        assertTrue(repair.contains("CORRECCIÓN DEL SANDBOX"), repair);
+        assertTrue(repair.contains("src/Combate.Application/X.cs(3,5): CS1002: ; expected"), repair);
+        verify(workspace, times(2)).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), anyString(), anyString(), any());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Rondas de corrección: 1"), result.verifiableState());
+    }
+
+    private static DevelopmentResult corrected(String path) {
+        return new DevelopmentResult("corregido", List.of(new GeneratedFile(path, "corregido")));
+    }
+
+    @Test
+    void theCorrectionCycleStopsAfterTheMaximumRounds() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(sandbox, times(1 + DevelopmentTeamStrategy.MAX_REPAIR_ROUNDS))
+                .verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"));
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"), anyString());
+    }
+
+    @Test
+    void errorsInFilesWithoutAnOwnerAreNotRepaired() throws Exception {
+        stubHappyPath();
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Otro/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(sandbox, times(1)).verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"));
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-11): una corrección fallida dejaba la tarea en FAILED aunque su
+    // commit seguía siendo válido.
+    @Test
+    void aFailedRepairKeepsThePreviousCommitAndTheTaskCompleted() throws Exception {
+        stubHappyPath();
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("reintentos agotados")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var inOrder = inOrder(memory);
+        inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), anyString());
+        inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), contains("se conserva el commit"));
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(),
+                contains("propias rutas o usa los tipos que sí existen"), anyList(), anyList(), eq(List.of("src/Combate.Application")));
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): CS0246 por un "using" faltante de un tipo que existe en
+    // otra capa. Forjai lo corrige solo (commit propio) y verifica de nuevo sin gastar una llamada al modelo.
+    @Test
+    void aMissingUsingIsFixedByForjaiWithoutAskingTheAgent() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of(
+                "src/Combate.Domain/Unidad.cs", "src/Combate.Application/X.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Domain/Unidad.cs"))
+                .thenReturn("namespace Combate.Domain;\npublic class Unidad { }\n");
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs"))
+                .thenReturn("using System;\nnamespace Combate.Application;\npublic class X { Unidad u; }\n");
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-AUTOFIX"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("6".repeat(40), List.of("src/Combate.Application/X.cs")));
+        var fail = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("build", "FAIL", 1, 1000,
+                "/work/src/Combate.Application/X.cs(3,35): error CS0246: The type or namespace name 'Unidad' could not "
+                        + "be found (are you missing a using directive or an assembly reference?) [/work/x.csproj]", 0, 0)));
+        var pass = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 2, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(fail))
+                .thenReturn(Optional.of(pass));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-AUTOFIX"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().get(0).content().contains("using System;\nusing Combate.Domain;\n")));
+        verify(sandbox).verify("M-1", "6".repeat(40), "GODOT_DOTNET_GAME");
+        verify(runtime, never()).generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Correcciones automáticas de Forjai: 1"), result.verifiableState());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-14): quedaba un solo error y la corrección devolvió el archivo
+    // idéntico. La corrección muestra la línea exacta y, si no cambia nada, se le repite dentro de la misma ronda.
+    @Test
+    void aRepairShowsTheFailingLineAndInsistsIfTheAgentChangesNothing() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of("src/Combate.Application/X.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs"))
+                .thenReturn("linea1\nlinea2\n    var t = lista._tareas;\n");
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        var repairPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
+                        new DevelopmentResult.GeneratedFile("src/Combate.Application/X.cs",
+                                "linea1\nlinea2\n    var t = lista._tareas;\n")))))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("cambiado", List.of(
+                        new DevelopmentResult.GeneratedFile("src/Combate.Application/X.cs", "arreglado\n")))));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var first = repairPrompts.getAllValues().get(0);
+        assertTrue(first.contains("línea 3: var t = lista._tareas;"), first);
+        var second = repairPrompts.getAllValues().get(1);
+        assertTrue(second.contains("devolviste tus archivos SIN CAMBIOS"), second);
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-15): CS0102 señalaba la propiedad Estado, pero el conflicto era un
+    // enum Estado anidado 26 líneas más abajo que Neo nunca vio. Se muestran todas las definiciones del nombre.
+    @Test
+    void aDuplicateDefinitionShowsEveryDeclarationOfTheName() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of("src/Combate.Application/X.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs"))
+                .thenReturn("class Tarea {\n  public Estado Estado { get; }\n  void M() { }\n  public enum Estado { A }\n}\n");
+        var fail = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("build", "FAIL", 1, 1000,
+                "/work/src/Combate.Application/X.cs(2,17): error CS0102: The type 'Tarea' already contains a definition "
+                        + "for 'Estado' [/work/x.csproj]", 0, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(fail));
+        var repairPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var prompt = repairPrompts.getAllValues().get(0);
+        assertTrue(prompt.contains("otras definiciones de 'Estado'"), prompt);
+        assertTrue(prompt.contains("línea 4: public enum Estado { A }"), prompt);
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-16): Neo devolvió el archivo con errores sin cambios y otro suyo
+    // también sin cambios; la comparación solo miraba el primero y git fallaba con "nothing to commit".
+    @Test
+    void unchangedDetectionComparesEveryReturnedFileAgainstHead() throws Exception {
+        stubHappyPath();
+        when(workspace.filesAtCommit("M-1", SHA_NEO)).thenReturn(List.of(
+                "src/Combate.Application/X.cs", "src/Combate.Application/Y.cs"));
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/X.cs")).thenReturn("x\n");
+        when(workspace.readFileAtCommit("M-1", SHA_NEO, "src/Combate.Application/Y.cs")).thenReturn("y\n");
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
+        var repairPrompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
+                        new GeneratedFile("src/Combate.Application/X.cs", "x\n"),
+                        new GeneratedFile("src/Combate.Application/Y.cs", "y\n")))));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        assertTrue(repairPrompts.getAllValues().get(1).contains("SIN CAMBIOS"), repairPrompts.getAllValues().get(1));
     }
 }

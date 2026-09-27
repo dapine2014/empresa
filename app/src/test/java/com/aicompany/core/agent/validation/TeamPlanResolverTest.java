@@ -65,7 +65,8 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), godotTasks()), ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertEquals(List.of("src/Combate.Application", "Solution.sln"), of(result.plan(), "engineering").ownedPaths());
+        // Revisión 3 (MISSION-SANDBOX-VERIFY-*): el .sln lo genera Forjai; game/project.godot es del dueño de game.
+        assertEquals(List.of("src/Combate.Application"), of(result.plan(), "engineering").ownedPaths());
         assertEquals(List.of("src/Combate.Domain"), of(result.plan(), "backend").ownedPaths());
         assertEquals(List.of("game"), of(result.plan(), "frontend-ui").ownedPaths());
         assertEquals("VALIDATION", of(result.plan(), "qa").kind());
@@ -145,7 +146,7 @@ class TeamPlanResolverTest {
     }
 
     @Test
-    void flutterLeaderGetsTheBootstrapFiles() {
+    void flutterBootstrapFilesGoToThePresentationOwner() {
         var tasks = new ArrayList<>(List.of(
                 task("engineering", "WORK", a("pedidos", "APPLICATION")),
                 task("backend", "WORK", a("pedidos", "DOMAIN")),
@@ -156,8 +157,10 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("FLUTTER_WEB_APP", List.of("pedidos"), tasks), ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertTrue(of(result.plan(), "engineering").ownedPaths().containsAll(List.of("pubspec.yaml", "lib/main.dart", "web")));
-        assertEquals(List.of("lib/pedidos/presentation"), of(result.plan(), "frontend-ui").ownedPaths());
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): el composition root va con la capa más externa.
+        assertEquals(List.of("lib/pedidos/application"), of(result.plan(), "engineering").ownedPaths());
+        assertEquals(List.of("lib/pedidos/presentation", "pubspec.yaml", "lib/main.dart", "web"),
+                of(result.plan(), "frontend-ui").ownedPaths());
     }
 
     @Test
@@ -209,11 +212,11 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate", "Inventario"), tasks), REAL_ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertEquals(List.of("src/Combate.Domain", "src/Inventario.Domain", "src/Combate.Application", "src/Inventario.Application"),
-                of(result.plan(), "backend").ownedPaths());
+        // Revisión 3 (decisión del fundador tras MISSION-SANDBOX-VERIFY-8): el líder hace DOMAIN, Diego TESTS.
+        assertEquals(List.of("src/Combate.Application", "src/Inventario.Application"), of(result.plan(), "backend").ownedPaths());
         assertEquals(List.of("game"), of(result.plan(), "frontend-ui").ownedPaths());
         assertEquals(List.of("tests/Combate.Tests", "tests/Inventario.Tests"), of(result.plan(), "devops").ownedPaths());
-        assertEquals(List.of("Solution.sln"), of(result.plan(), "engineering").ownedPaths());
+        assertEquals(List.of("src/Combate.Domain", "src/Inventario.Domain"), of(result.plan(), "engineering").ownedPaths());
         assertEquals("WORK", of(result.plan(), "frontend-ui").kind());
         assertEquals("VALIDATION", of(result.plan(), "qa").kind());
     }
@@ -223,9 +226,13 @@ class TeamPlanResolverTest {
         var result = resolver.resolve(plan("FLUTTER_WEB_APP", List.of("pedidos"), tasksWithoutAssignments()), REAL_ENGINEERING);
 
         assertEquals(List.of(), result.errors());
-        assertEquals(List.of("lib/pedidos/presentation"), of(result.plan(), "frontend-ui").ownedPaths());
-        assertEquals(List.of("lib/pedidos/infrastructure", "test/pedidos"), of(result.plan(), "devops").ownedPaths());
-        assertEquals(List.of("pubspec.yaml", "lib/main.dart", "web"), of(result.plan(), "engineering").ownedPaths());
+        // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): main.dart es el composition root y lo escribía el líder
+        // primero, sin pantalla todavía. Los archivos de entrada van al dueño de la capa más externa (va último).
+        assertEquals(List.of("lib/pedidos/presentation", "pubspec.yaml", "lib/main.dart", "web"),
+                of(result.plan(), "frontend-ui").ownedPaths());
+        assertEquals(List.of("test/pedidos"), of(result.plan(), "devops").ownedPaths());
+        assertEquals(List.of("lib/pedidos/application", "lib/pedidos/infrastructure"), of(result.plan(), "backend").ownedPaths());
+        assertEquals(List.of("lib/pedidos/domain"), of(result.plan(), "engineering").ownedPaths());
     }
 
     @Test
@@ -238,6 +245,26 @@ class TeamPlanResolverTest {
         var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).toList();
         assertEquals(1, neo.size());
         assertTrue(neo.get(0).objective().contains("objetivo") && neo.get(0).objective().contains("otra cosa"));
-        assertTrue(neo.get(0).requiredCapabilitiesOrEmpty().containsAll(List.of("x", "y")));
+        // "x" e "y" no son capabilities reales de Neo: quedan las reales (MISSION-SANDBOX-VERIFY-17).
+        assertEquals(List.of("arquitectura backend"), neo.get(0).requiredCapabilitiesOrEmpty());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-17): 5 intentos perdidos por capabilities ajenas ("APIs" para
+    // Mila, "tests xUnit" para Vera). En desarrollo las capas salen del rol: las capabilities son etiquetas y Java
+    // se queda con las reales del miembro (o su primera real si no acertó ninguna).
+    @Test
+    void developmentCapabilitiesAreReducedToTheMembersRealOnes() {
+        var tasks = new ArrayList<>(List.of(
+                new PlannedTask("engineering", "WORK", "W", "o", List.of("arquitectura backend"), List.of()),
+                new PlannedTask("backend", "WORK", "W", "o", List.of("backend", "inventada"), List.of()),
+                new PlannedTask("frontend-ui", "WORK", "W", "o", List.of("APIs"), List.of()),
+                new PlannedTask("devops", "WORK", "W", "o", List.of("infraestructura"), List.of()),
+                new PlannedTask("qa", "VALIDATION", "W", "o", List.of("tests xUnit"), List.of())));
+
+        var result = resolver.resolve(plan("DOTNET_APP", List.of("Tareas"), tasks), REAL_ENGINEERING);
+
+        assertEquals(List.of("backend"), of(result.plan(), "backend").requiredCapabilities());
+        assertEquals(List.of("Game UI"), of(result.plan(), "frontend-ui").requiredCapabilities());
+        assertEquals(List.of("QA"), of(result.plan(), "qa").requiredCapabilities());
     }
 }

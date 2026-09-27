@@ -28,6 +28,25 @@ public class MissingFileClaimGate {
             "\\bno (existe|existen|esta presente|estan presentes|se encuentra|se encuentran|fue incluido|fueron incluidos)\\b"
                     + "|\\binexistente(s)?\\b|\\bfalta(n)? (el|los) archivo(s)?\\b|\\bausente(s)?\\b");
 
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-15): el validador agotaba los reintentos declarando faltantes
+     * archivos que existen y la revisión se perdía. Esos nombres se quitan de missingFiles (no es una opinión, es
+     * un dato que Java ya conoce); los findings que afirman inexistencia siguen rechazándose en validate().
+     */
+    public static StaticReviewResult withoutExistingMissingFiles(StaticReviewResult review, Set<String> repositoryFiles) {
+        if (review == null || review.missingFiles() == null) {
+            return review;
+        }
+        var reallyMissing = review.missingFiles().stream()
+                .filter(Objects::nonNull)
+                .filter(path -> !repositoryFiles.contains(OwnedPaths.normalize(path)))
+                .toList();
+        return new StaticReviewResult(review.verdict(), review.findings(), reallyMissing,
+                review.architectureConsistency(), review.notValidatableWithoutExecution(), review.evidence());
+    }
+
+    private static final Pattern FILE_WORD = Pattern.compile("\\b(archivo|archivos|fichero|ficheros)\\b");
+
     public List<String> validate(StaticReviewResult review, Set<String> repositoryFiles) {
 
         var errors = new ArrayList<String>();
@@ -57,19 +76,29 @@ public class MissingFileClaimGate {
                 continue;
             }
 
-            if (!NON_EXISTENCE.matcher(normalize(finding.description())).find()) {
-                continue;
-            }
-
+            var text = normalize(finding.description());
             var mentioned = new LinkedHashSet<String>();
 
-            if (finding.path() != null && repositoryFiles.contains(OwnedPaths.normalize(finding.path()))) {
-                mentioned.add(OwnedPaths.normalize(finding.path()));
+            // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): la frase solo cuenta si está pegada al archivo.
+            var claims = NON_EXISTENCE.matcher(text);
+            while (claims.find()) {
+                var before = text.substring(Math.max(0, claims.start() - 25), claims.start());
+                if (FILE_WORD.matcher(before).find() && finding.path() != null
+                        && repositoryFiles.contains(OwnedPaths.normalize(finding.path()))) {
+                    mentioned.add(OwnedPaths.normalize(finding.path()));
+                }
+                for (var file : repositoryFiles) {
+                    var at = text.lastIndexOf(normalize(file), claims.start());
+                    if (at < 0) {
+                        continue;
+                    }
+                    var between = text.substring(at + file.length(), claims.start());
+                    var nearFile = between.length() <= 40 && between.chars().noneMatch(c -> c == '.' || c == ';' || c == ':' || c == ',');
+                    if (nearFile || FILE_WORD.matcher(before).find()) {
+                        mentioned.add(file);
+                    }
+                }
             }
-
-            repositoryFiles.stream()
-                    .filter(file -> finding.description().contains(file))
-                    .forEach(mentioned::add);
 
             if (!mentioned.isEmpty()) {
                 errors.add("El finding \"" + finding.description() + "\" afirma que no existe(n) " + mentioned

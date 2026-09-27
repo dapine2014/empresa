@@ -96,9 +96,11 @@ public class TeamPlanResolver {
             needFreeLayers.forEach(error -> errors.add(error + suffix));
         }
 
-        addLeaderFiles(profile.get(), team.leaderAgentId(), ownerByRoot, resolved);
+        addLeaderFiles(profile.get(), entryFilesOwner(profile.get(), contexts, team.leaderAgentId(), ownerByRoot),
+                ownerByRoot, resolved);
 
-        return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
+        return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(),
+                withRealCapabilities(resolved, team),
                 plan.participationConflicts(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage()),
                 errors);
     }
@@ -198,6 +200,26 @@ public class TeamPlanResolver {
         return free;
     }
 
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-22): lib/main.dart es el composition root y el líder (DOMAIN) lo
+     * escribía primero, sin pantalla todavía; la presentación terminaba cableando la infraestructura (violación
+     * DDD). Los archivos de entrada van al dueño de la capa más externa (API/PRESENTATION/GAME), que se genera
+     * después de las demás; si no hay, al líder.
+     */
+    private static String entryFilesOwner(
+            StackProfile profile, List<String> contexts, String leaderId, HashMap<String, String> ownerByRoot) {
+        for (var layer : List.of(Layer.PRESENTATION, Layer.API, Layer.GAME)) {
+            for (var entry : ownerByRoot.entrySet()) {
+                var located = profile.locate(entry.getKey() + "/x", contexts)
+                        .filter(location -> location.layer() == layer);
+                if (located.isPresent()) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return leaderId;
+    }
+
     private static void addLeaderFiles(
             StackProfile profile, String leaderId, HashMap<String, String> ownerByRoot, List<PlannedTask> tasks) {
 
@@ -231,5 +253,28 @@ public class TeamPlanResolver {
     private static PlannedTask withKindAndPaths(PlannedTask task, String kind, List<String> ownedPaths) {
         return new PlannedTask(task.agentId(), kind, task.action(), task.objective(),
                 task.requiredCapabilities(), List.copyOf(ownedPaths), task.assignments());
+    }
+
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-17): en desarrollo las capas salen del rol, así que las
+     * capabilities son etiquetas; se conservan las reales del miembro o, si no acertó ninguna, su primera real.
+     */
+    private static List<PlannedTask> withRealCapabilities(List<PlannedTask> tasks, TeamSnapshot team) {
+        var result = new ArrayList<PlannedTask>();
+        for (var task : tasks) {
+            var member = team.members().stream().filter(m -> m.agentId().equals(task.agentId())).findFirst();
+            if (member.isEmpty() || member.get().capabilities().isEmpty()) {
+                result.add(task);
+                continue;
+            }
+            var real = task.requiredCapabilitiesOrEmpty().stream()
+                    .filter(member.get().capabilities()::contains)
+                    .distinct()
+                    .toList();
+            var capabilities = real.isEmpty() ? List.of(member.get().capabilities().get(0)) : real;
+            result.add(new PlannedTask(task.agentId(), task.kind(), task.action(), task.objective(),
+                    capabilities, task.ownedPathsOrEmpty(), task.assignments()));
+        }
+        return result;
     }
 }

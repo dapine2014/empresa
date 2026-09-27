@@ -76,4 +76,44 @@ class StaticValidationStatusTest {
         assertEquals(TeamExecutionMode.ANALYSIS, TeamExecutionMode.forTeamType("MARKETING_GROWTH"));
         assertEquals(TeamExecutionMode.ANALYSIS, TeamExecutionMode.forTeamType("CREATIVE_PRODUCT_INTELLIGENCE"));
     }
+
+    private static SandboxResult sandbox(String overall, int passed) {
+        return new SandboxResult(overall, List.of(
+                new SandboxResult.StepResult("build", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("test", overall, 0, 1000, "", passed, 0)));
+    }
+
+    @Test
+    void verifiedWhenEverythingPassesWithAtLeastOneTest() {
+        assertEquals(StaticValidationStatus.VERIFIED,
+                StaticValidationStatus.compute(ALL_PASS, review("MINOR"), sandbox("PASS", 3)));
+    }
+
+    @Test
+    void zeroTestsIsNotVerified() {
+        assertEquals(StaticValidationStatus.FAILED,
+                StaticValidationStatus.compute(ALL_PASS, review("MINOR"), sandbox("PASS", 0)));
+    }
+
+    @Test
+    void aFailedSandboxFails() {
+        assertEquals(StaticValidationStatus.FAILED,
+                StaticValidationStatus.compute(ALL_PASS, review("MINOR"), sandbox("FAIL", 2)));
+    }
+
+    @Test
+    void aMissingSandboxIsUnvalidated() {
+        assertEquals(StaticValidationStatus.UNVALIDATED,
+                StaticValidationStatus.compute(ALL_PASS, review("MINOR"), null));
+    }
+
+    // Decisión del fundador (2026-09-26, tras MISSION-SANDBOX-VERIFY-14): con ejecución real exitosa, un MAJOR de
+    // la revisión queda como deuda de diseño reportada; solo un BLOCKER impide VERIFIED.
+    @Test
+    void withAPassingSandboxOnlyABlockerPreventsVerified() {
+        assertEquals(StaticValidationStatus.VERIFIED,
+                StaticValidationStatus.compute(ALL_PASS, review("MAJOR"), sandbox("PASS", 3)));
+        assertEquals(StaticValidationStatus.FAILED,
+                StaticValidationStatus.compute(ALL_PASS, review("BLOCKER"), sandbox("PASS", 3)));
+    }
 }

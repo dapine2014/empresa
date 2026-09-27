@@ -136,4 +136,15 @@ class ProductStatusServiceTest {
 
         assertEquals(ProductStatus.DISCOVERY, service.resolve("MISSION-9"));
     }
+
+    @Test
+    void aVerifiedValidationMeansQa() {
+        var qa = new AgentTask("MISSION-9-QA", "MISSION-9", "qa", "STATIC_REVIEW", "COMPLETED", "{}",
+                Instant.parse("2026-09-26T00:00:00Z"), "VALIDATION", null, null, null, "VERIFIED", "[]");
+        when(missionMemory.tasks("MISSION-9")).thenReturn(List.of(qa));
+        when(customerMemory.totalRevenueAndCost("MISSION-9")).thenReturn(new double[]{0.0, 0.0});
+        when(customerMemory.transactionCount("MISSION-9")).thenReturn(0L);
+
+        assertEquals(ProductStatus.QA, service.resolve("MISSION-9"));
+    }
 }

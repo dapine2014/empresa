@@ -13,7 +13,9 @@ public final class ProfileStructureChecker {
 
     public static List<StaticCheck> check(StackProfile profile, List<String> contexts, List<String> files) {
 
-        var missing = profile.missingEntryFiles(files);
+        var missing = new java.util.ArrayList<>(profile.missingEntryFiles(files));
+        var normalized = files.stream().map(OwnedPaths::normalize).collect(java.util.stream.Collectors.toSet());
+        profile.projectFiles(contexts).stream().filter(p -> !normalized.contains(p)).forEach(missing::add);
         var entry = missing.isEmpty()
                 ? StaticCheck.pass("ENTRY_FILES", "Archivos de entrada de " + profile.name() + " presentes", null, List.of())
                 : StaticCheck.fail("ENTRY_FILES", "Faltan archivos de entrada de " + profile.name() + ": " + missing,

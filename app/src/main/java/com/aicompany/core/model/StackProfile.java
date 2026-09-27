@@ -216,11 +216,33 @@ public enum StackProfile {
         return Optional.empty();
     }
 
+    /**
+     * Proyectos .NET obligatorios, uno por capa (verificado en vivo con MISSION-SANDBOX-VERIFY-2: sin ellos la
+     * solución queda vacía y nada compila). Nombre = carpeta de la capa; en Godot, game/Game.csproj.
+     */
+    public List<String> projectFiles(List<String> contexts) {
+        if (ecosystem != Ecosystem.NUGET) {
+            return List.of();
+        }
+        var files = new ArrayList<String>();
+        for (var context : contexts) {
+            for (var root : contextRoots) {
+                var dir = root.resolve(context);
+                files.add(dir + "/" + dir.substring(dir.lastIndexOf('/') + 1) + ".csproj");
+            }
+        }
+        if (this == GODOT_DOTNET_GAME) {
+            files.add("game/Game.csproj");
+        }
+        return files;
+    }
+
     /** Archivos de entrada y extras de arranque que recibe el líder (revisión 2026-09-26, opción B). */
     public List<String> leaderOwnedPaths() {
         return switch (this) {
-            case DOTNET_APP -> List.of("Solution.sln");
-            case GODOT_DOTNET_GAME -> List.of("Solution.sln", "game/project.godot");
+            // El .sln lo genera Forjai (ProjectScaffold); game/project.godot cae en la capa GAME.
+            case DOTNET_APP -> List.of();
+            case GODOT_DOTNET_GAME -> List.of("game/project.godot");
             case FLUTTER_WEB_APP -> List.of("pubspec.yaml", "lib/main.dart", "web");
         };
     }
@@ -237,7 +259,34 @@ public enum StackProfile {
         return "- " + name() + " (" + usage + "): por contexto " + layers + shared
                 + " | archivos de entrada: " + entries
                 + " | nombres de contexto: " + contextNameRule
-                + " | prohibido en domain: " + forbiddenDomainDependencies;
+                + " | prohibido en domain: " + forbiddenDomainDependencies
+                + "\n  " + executionContract();
+    }
+
+    /**
+     * Qué espera el sandbox (spec 2026-09-26 §2, verificado en vivo): sin red solo existen las versiones
+     * precargadas en la imagen, y el paso de arranque busca algo concreto. Debe coincidir con
+     * sandbox/images/<perfil>/ (Dockerfile y run.sh).
+     */
+    public String executionContract() {
+        return switch (this) {
+            case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable. Los .csproj de cada capa "
+                    + "(src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, tests/<Ctx>.Tests/<Ctx>.Tests.csproj) los genera Forjai "
+                    + "con las referencias DDD y los paquetes xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0 y "
+                    + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "
+                    + "Microsoft.NET.Sdk.Web: necesita Program.cs (top-level, WebApplication) que responda GET /health "
+                    + "con 200. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. La solución la genera el sandbox.";
+            case GODOT_DOTNET_GAME -> "SANDBOX (sin red): Godot 4.3 .NET, net8.0. Los .csproj (capas en src/, "
+                    + "tests/<Ctx>.Tests con xunit 2.5.3, y game/Game.csproj con Godot.NET.Sdk/4.3.0 que referencia "
+                    + "src/) los genera Forjai: NO los escribas. game/project.godot declara run/main_scene (una escena "
+                    + ".tscn que exista) y en [dotnet] project/assembly_name=\"Game\"; cada script C# es una clase "
+                    + "partial con el mismo nombre que su archivo. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. "
+                    + "El juego corre 300 frames headless sin errores.";
+            case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.24 (Dart ^3.5), solo web; dependencias SOLO del "
+                    + "SDK (flutter, flutter_test) más cupertino_icons ^1.0.8 y flutter_lints ^4.0.0 (dev). "
+                    + "Tests reales con flutter_test en test/<ctx>/; web/index.html estándar de flutter create; "
+                    + "la app debe renderizar sin errores en Chrome headless.";
+        };
     }
 
     public static String describeAll() {

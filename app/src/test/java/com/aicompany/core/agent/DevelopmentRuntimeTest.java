@@ -97,6 +97,51 @@ class DevelopmentRuntimeTest {
                 anyString(), anyString());
     }
 
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-5): Neo, dueño solo de Solution.sln, escribía todo el proyecto
+    // y agotaba los 3 intentos. Lo ajeno pertenece a otro agente: se descarta (y se informa), no se reintenta.
+    @Test
+    void filesOutsideOwnedPathsAreDiscardedWhenTheOwnWorkIsPresent() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("todo", List.of(
+                        new GeneratedFile("Solution.sln", "sln"),
+                        new GeneratedFile("src/Tareas.Domain/Tarea.cs", "ajeno"))));
+
+        var result = runtime.generate("T-1", "MISSION-1", "engineering", "prompt", List.of("Solution.sln")).get();
+
+        assertEquals(List.of("Solution.sln"), result.files().stream().map(GeneratedFile::path).toList());
+        assertTrue(result.summary().contains("src/Tareas.Domain/Tarea.cs"), result.summary());
+        verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-11): en una corrección solo se exigen las rutas con errores;
+    // lo que el agente no devuelve sigue en el repositorio.
+    @Test
+    void aRepairOnlyRequiresThePathsWithErrors() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("src/Tareas.Application/Handler.cs"));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt",
+                List.of("src/Tareas.Application", "src/Tareas.Infrastructure"), List.of(),
+                List.of("src/Tareas.Application")).get();
+
+        assertEquals(1, result.files().size());
+        verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-15): Vera agotaba los reintentos declarando faltantes archivos
+    // que existen y la revisión se perdía. Esos nombres se quitan de missingFiles sin rechazar la revisión.
+    @Test
+    void existingFilesAreDroppedFromMissingFilesWithoutRetrying() throws Exception {
+        var claimed = new StaticReviewResult("NO_EVIDENT_ISSUES", List.of(), List.of("web/game/main.js", "web/falta.js"),
+                "ok", List.of("x"), List.of(new AgentResult.Evidence("main", validSource, "INTERNAL", true)));
+        when(ceoService.reviewStaticWorkspace(anyString(), anyString(), anyString(), anyString())).thenReturn(claimed);
+
+        var result = runtime.review("T-QA", "MISSION-1", "qa", "prompt", filesBySha).get();
+
+        assertEquals(List.of("web/falta.js"), result.missingFiles());
+        verify(ceoService, times(1)).reviewStaticWorkspace(anyString(), anyString(), anyString(), anyString());
+    }
+
     // Review Focus: "\" como separador es corregible → reintento, nunca un archivo con "\" en el nombre.
     @Test
     void aBackslashSeparatorIsRetriedNotWritten() throws Exception {
@@ -172,8 +217,11 @@ class DevelopmentRuntimeTest {
     }
 
     @Test
-    void reviewDeclaringAnExistingFileAsMissingIsRetried() throws Exception {
-        var wrong = new StaticReviewResult("ISSUES_FOUND", List.of(), List.of("web/game/main.js"), "Coherente.",
+    void reviewClaimingAnExistingFileDoesNotExistIsRetried() throws Exception {
+        // missingFiles con archivos existentes ya no se reintenta (se limpia, MISSION-SANDBOX-VERIFY-15); un finding
+        // que afirma inexistencia sí.
+        var wrong = new StaticReviewResult("ISSUES_FOUND", List.of(new StaticReviewResult.Finding("web/game/main.js",
+                "BLOCKER", "El archivo web/game/main.js no existe.")), List.of(), "Coherente.",
                 List.of("No se puede verificar la ejecución del juego."),
                 List.of(new AgentResult.Evidence("Revisé main.js", validSource, "INTERNAL", true)));
         when(ceoService.reviewStaticWorkspace(anyString(), anyString(), anyString(), anyString()))
@@ -183,7 +231,44 @@ class DevelopmentRuntimeTest {
         runtime.review("T-QA", "MISSION-1", "qa", "prompt", filesBySha).get();
 
         verify(ceoService).reviewStaticWorkspace(anyString(),
-                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("sí existe")),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("afirma que no existe")),
+                anyString(), anyString());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-4 y -6): Diego escribía .csproj aun prohibido (incluso uno
+    // inventado) y agotaba los reintentos. Los proyectos son de Forjai: se descartan, no se reintenta.
+    @Test
+    void projectFilesWrittenByTheAgentAreDiscardedWithoutRetrying() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("r", List.of(
+                        new GeneratedFile("src/Tareas.Domain/Tareas.Domain.csproj", "<Project />"),
+                        new GeneratedFile("src/Tareas.Domain/Inventado.csproj", "roto"),
+                        new GeneratedFile("src/Tareas.Domain/Tarea.cs", "namespace Tareas.Domain;"))));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("src/Tareas.Domain"),
+                List.of("src/Tareas.Domain/Tareas.Domain.csproj")).get();
+
+        assertEquals(List.of("src/Tareas.Domain/Tarea.cs"), result.files().stream().map(GeneratedFile::path).toList());
+        assertTrue(result.summary().contains("Inventado.csproj"), result.summary());
+        verify(ceoService, times(1)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
+    }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): dueños de Infrastructure+Tests entregaban solo una
+    // capa (o solo el .csproj). Cada ownedPath debe recibir al menos un archivo.
+    @Test
+    void anOwnedPathWithoutFilesIsRetried() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("src/Tareas.Infrastructure/Repo.cs"))
+                .thenReturn(new DevelopmentResult("r", List.of(
+                        new GeneratedFile("src/Tareas.Infrastructure/Repo.cs", "x"),
+                        new GeneratedFile("tests/Tareas.Tests/TareaTests.cs", "x"))));
+
+        var result = runtime.generate("T-1", "MISSION-1", "devops", "prompt",
+                List.of("src/Tareas.Infrastructure", "tests/Tareas.Tests")).get();
+
+        assertEquals(2, result.files().size());
+        verify(ceoService).generateDevelopmentArtifact(anyString(),
+                argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR") && p.contains("tests/Tareas.Tests")),
                 anyString(), anyString());
     }
 

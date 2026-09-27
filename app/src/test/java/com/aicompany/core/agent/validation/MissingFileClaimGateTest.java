@@ -60,4 +60,14 @@ class MissingFileClaimGateTest {
                 "game-logic.js solo registra mensajes en consola y no implementa reglas del juego.");
         assertEquals(List.of(), gate.validate(review(List.of(finding), List.of()), repoFiles));
     }
+
+    // Verificado en vivo (MISSION-SANDBOX-VERIFY-22, kimi-k3): una revisión correcta se rechazaba 3 veces porque
+    // el texto decía "no existe importación" o "no existe evidencia" hablando de otra cosa. La frase de
+    // inexistencia solo cuenta si está pegada al archivo ("<ruta> no existe", "el archivo no existe").
+    @Test
+    void aNonExistencePhraseAboutSomethingElseIsNotAClaimAboutTheFile() {
+        var finding = new Finding("src/index.html", "MAJOR", "El comentario de src/index.html no es posible: no "
+                + "existe importación de la capa ni mecanismo de detección. Por lo que no existe evidencia de compilación.");
+        assertEquals(List.of(), gate.validate(review(List.of(finding), List.of()), repoFiles));
+    }
 }

@@ -1,0 +1,12 @@
+server:
+  port: ${SANDBOX_PORT:8090}
+sandbox:
+  token: ${SANDBOX_RUNNER_TOKEN:}
+  products-root: ${SANDBOX_PRODUCTS_ROOT:${user.home}/forjai-products}
+  work-root: ${SANDBOX_WORK_ROOT:${user.home}/forjai-sandbox-work}
+  podman-url: ${SANDBOX_PODMAN_URL:unix:///run/podman/podman.sock}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

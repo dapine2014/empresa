@@ -1,7 +1,7 @@
 // Mapeo de estados reales (AgentTask/MissionStatus, ambos strings desde
 // el backend) a un color semántico simple para toda la UI.
 
-const GREEN = new Set(['RUNNING', 'WORKING', 'ACTIVE', 'COMPLETED', 'STATICALLY_VALIDATED'])
+const GREEN = new Set(['RUNNING', 'WORKING', 'ACTIVE', 'COMPLETED', 'STATICALLY_VALIDATED', 'VERIFIED'])
 const YELLOW = new Set(['PENDING', 'WAITING', 'AWAITING_INVESTOR', 'CONSOLIDATING', 'EVALUATING', 'WAITING_AGENT_RESULTS', 'PLANNING', 'DELEGATING', 'CREATED', 'GENERATED', 'UNVALIDATED'])
 const RED = new Set(['FAILED', 'CANCELLED'])
 

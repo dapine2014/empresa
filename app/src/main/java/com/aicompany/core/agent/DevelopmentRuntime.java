@@ -5,6 +5,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.validation.DevelopmentPathValidationGate;
 import com.aicompany.core.agent.validation.EvidenceValidationGate;
 import com.aicompany.core.agent.validation.ForbiddenClaimsGuard;
+import com.aicompany.core.agent.validation.ProjectFileGate;
 import com.aicompany.core.agent.validation.MissingFileClaimGate;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.agent.validation.RepositoryEvidenceGate;
@@ -103,12 +104,30 @@ public class DevelopmentRuntime {
 
     public CompletableFuture<DevelopmentResult> generate(
             String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths) {
+        return generate(taskId, missionId, agentId, prompt, ownedPaths, List.of());
+    }
+
+    /** expectedProjects: los .csproj del plan (StackProfile.projectFiles), para validar ProjectReference. */
+    public CompletableFuture<DevelopmentResult> generate(
+            String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths,
+            List<String> expectedProjects) {
+        return generate(taskId, missionId, agentId, prompt, ownedPaths, expectedProjects, ownedPaths);
+    }
+
+    /**
+     * requiredPaths: las rutas que deben recibir al menos un archivo. En una corrección son solo las que tienen
+     * errores (verificado en vivo con MISSION-SANDBOX-VERIFY-11); lo que no vuelve sigue en el repositorio.
+     */
+    public CompletableFuture<DevelopmentResult> generate(
+            String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths,
+            List<String> expectedProjects, List<String> requiredPaths) {
 
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
-                (attemptPrompt, model, agentPrompt) ->
-                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model),
-                result -> verifyGenerated(result, ownedPaths),
+                (attemptPrompt, model, agentPrompt) -> discardForeignFiles(
+                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
+                        !expectedProjects.isEmpty()),
+                result -> verifyGenerated(result, ownedPaths, expectedProjects, requiredPaths),
                 "GENERATED"));
     }
 
@@ -117,8 +136,9 @@ public class DevelopmentRuntime {
 
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
-                (attemptPrompt, model, agentPrompt) ->
+                (attemptPrompt, model, agentPrompt) -> MissingFileClaimGate.withoutExistingMissingFiles(
                         ceoService.reviewStaticWorkspace(agentId, attemptPrompt, agentPrompt, model),
+                        filesBySha.values().stream().flatMap(Set::stream).collect(java.util.stream.Collectors.toSet())),
                 review -> verifyReview(review, missionId, filesBySha),
                 "COMPLETED"));
     }
@@ -208,10 +228,52 @@ public class DevelopmentRuntime {
         }
     }
 
-    private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths) {
+    static final String DISCARDED_NOTE = "[Forjai descartó archivos que no te corresponden (de otro agente, o "
+            + ".csproj que genera Forjai): ";
+
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-5): el líder, dueño solo de Solution.sln, escribía todo el
+     * proyecto y agotaba los reintentos. Un archivo relativo bien formado fuera de los ownedPaths pertenece a
+     * otro agente: se descarta y queda anotado en el summary. Rutas absolutas o con "\" siguen yendo a
+     * verifyGenerated para corregirse con reintento.
+     */
+    static DevelopmentResult discardForeignFiles(DevelopmentResult result, List<String> ownedPaths,
+                                                 boolean projectsByForjai) {
+        if (result == null || result.files() == null) {
+            return result;
+        }
+        var kept = new ArrayList<DevelopmentResult.GeneratedFile>();
+        var discarded = new ArrayList<String>();
+        for (var file : result.files()) {
+            var path = file == null ? null : file.path();
+            // Nunca se descarta una ruta insegura: ".." o ".git" tienen que llegar al gate que falla sin reintento.
+            var unsafe = path == null || java.util.Arrays.stream(path.split("[/\\\\]"))
+                    .anyMatch(segment -> segment.equals("..") || segment.equalsIgnoreCase(".git"));
+            var wellFormed = !unsafe && !path.startsWith("/") && !path.matches("^[a-zA-Z]:.*") && !path.contains("\\");
+            // Verificado en vivo (MISSION-SANDBOX-VERIFY-4 y -6): los .csproj son de Forjai (ProjectScaffold).
+            var projectFile = projectsByForjai && path != null && path.endsWith(".csproj");
+            if (wellFormed && (projectFile || !OwnedPaths.coveredByAny(ownedPaths, path))) {
+                discarded.add(path);
+            } else {
+                kept.add(file);
+            }
+        }
+        if (discarded.isEmpty()) {
+            return result;
+        }
+        var summary = (result.summary() == null ? "" : result.summary()) + "\n" + DISCARDED_NOTE + discarded + "]";
+        return new DevelopmentResult(summary, kept);
+    }
+
+    private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects,
+                                    List<String> requiredPaths) {
+
+        var discardedNote = result == null || result.summary() == null || !result.summary().contains(DISCARDED_NOTE)
+                ? "" : " " + result.summary().substring(result.summary().indexOf(DISCARDED_NOTE));
 
         if (result == null || result.files() == null || result.files().isEmpty()) {
-            return new Verdict(List.of(), List.of("Debes devolver al menos un archivo en files."));
+            return new Verdict(List.of(), List.of("Debes devolver al menos un archivo en files dentro de tus rutas "
+                    + ownedPaths + "." + discardedNote));
         }
 
         var gate = pathGate.validate(result);
@@ -231,6 +293,19 @@ public class DevelopmentRuntime {
                 retryable.add("Usa \"/\" como separador de rutas, no \"\\\": \"" + file.path() + "\".");
             } else if (!OwnedPaths.coveredByAny(ownedPaths, file.path())) {
                 retryable.add("La ruta \"" + file.path() + "\" está fuera de tus ownedPaths " + ownedPaths + ".");
+            }
+        }
+
+        // Los .csproj esperados los genera Forjai (ProjectScaffold): el agente no puede pisarlos.
+        retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects, expectedProjects));
+
+        // Verificado en vivo: dueños de dos capas entregaban solo una (o solo el .csproj).
+        var paths = result.files().stream().filter(Objects::nonNull).map(f -> f.path()).toList();
+        for (var owned : requiredPaths) {
+            if (paths.stream().noneMatch(path -> OwnedPaths.coveredByAny(List.of(owned), path))) {
+                retryable.add("No escribiste ningún archivo en \"" + owned + "\": también es tu responsabilidad; "
+                        + "devuelve TODOS tus archivos (los de todas tus rutas) en files, no solo los corregidos."
+                        + discardedNote);
             }
         }
 
@@ -291,7 +366,8 @@ public class DevelopmentRuntime {
                 CORRECCIÓN DEL INTENTO ANTERIOR
 
                 El resultado anterior fue rechazado por validaciones deterministas.
-                Corrige únicamente estos errores:
+                Corrige estos errores y devuelve el resultado COMPLETO (todos tus archivos o campos, no solo
+                las partes corregidas; lo que no devuelvas se pierde):
                 %s
                 """.formatted(feedback);
     }

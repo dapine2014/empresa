@@ -67,3 +67,12 @@ management:
   health:
     mail:
       enabled: false
+sandbox:
+  runner:
+    url: ${SANDBOX_RUNNER_URL:http://localhost:8090}
+    token: ${SANDBOX_RUNNER_TOKEN:}
+    timeout: ${SANDBOX_RUNNER_TIMEOUT:30m}
+remote-models:
+  base-url: ${REMOTE_MODELS_BASE_URL:https://integrate.api.nvidia.com/v1}
+  api-key: ${NVIDIA_API_KEY:}
+  read-timeout: ${REMOTE_MODELS_READ_TIMEOUT:10m}
