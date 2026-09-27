@@ -1143,6 +1143,60 @@ class ChatIntentRouterTest {
         assertEquals("status de Kira", replies.get(0).text());
     }
 
+    // Verificado en vivo (MISSION-E2E-DISC): "@Sofia @Max resuman lo que encontraron" → "No tengo ese dato registrado",
+    // porque la memoria del chat no exponía los resultados de las tareas.
+    private void stubMissionWithResults() {
+        var mission = new MissionResponse("MISSION-7", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "Recomendación",
+                "ok", Instant.now(), null);
+        when(missionMemory.find("MISSION-7")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-7")).thenReturn(List.of(new AgentTask("T1", "MISSION-7", "sales",
+                "MARKET_DISCOVERY", "COMPLETED", """
+                {"agent":"sales","action":"MARKET_DISCOVERY","verificationStatus":"NOT_VALIDATED",
+                 "facts":["Hay agencias que cobran 150 USD por una landing"],
+                 "recommendation":"Vender landings a 120 USD",
+                 "evidence":[{"description":"precios","source":"https://ej.com/precios","sourceType":"WEB","verified":false}],
+                 "calculations":[{"name":"margen %","inputA":0.9,"inputB":100,"operation":"MULTIPLY","result":90}]}
+                """, Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-7")).thenReturn(ProductStatus.DESIGN);
+    }
+
+    @Test
+    void missionDetailsTopicReturnsEachAgentsRealResult() {
+        stubMissionWithResults();
+
+        var details = router.answerMemoryTopic("MISSION_DETAILS:MISSION-7");
+
+        assertTrue(details.contains("sales"), details);
+        assertTrue(details.contains("Vender landings a 120 USD"), details);
+        assertTrue(details.contains("Hay agencias que cobran 150 USD"), details);
+        assertTrue(details.contains("https://ej.com/precios"), details);
+        assertTrue(details.contains("margen % = 90"), details);
+    }
+
+    @Test
+    void missionDetailsTopicForAnUnknownMissionSaysSo() {
+        when(missionMemory.find("MISSION-404")).thenReturn(Optional.empty());
+
+        assertTrue(router.answerMemoryTopic("MISSION_DETAILS:MISSION-404").contains("No existe ninguna misión"));
+    }
+
+    @Test
+    void aMentionedAgentAskedAboutAMissionReceivesItsRealDataFromJava() {
+        stubAgents();
+        stubMissionWithResults();
+        var message = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(ceoService.agentChat(any(), any(), anyList(), message.capture(), any(), any(), any())).thenReturn("resumen");
+
+        router.routeReplies("@Sofia ¿qué encontraste en MISSION-7?");
+
+        assertTrue(message.getValue().contains(CeoService.JAVA_MEMORY_DATA_MARKER), message.getValue());
+        assertTrue(message.getValue().contains("Vender landings a 120 USD"), message.getValue());
+        assertTrue(message.getValue().endsWith("@Sofia ¿qué encontraste en MISSION-7?"), message.getValue());
+        // El historial guarda el mensaje del fundador tal cual, sin los datos inyectados.
+        verify(conversationMemory).recordMessage("user", "@Sofia ¿qué encontraste en MISSION-7?");
+    }
+
     // Review Focus: la gobernanza gana sobre las menciones.
     @Test
     void governanceWinsOverMentions() {

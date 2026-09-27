@@ -51,6 +51,29 @@ class CeoServiceMemoryClaimTest {
         assertEquals("No tengo ese dato registrado.", chat("No tengo ese dato registrado."));
     }
 
+    @Test
+    void anAnswerBasedOnDataInjectedByJavaIsNotFlagged() {
+        when(ceo.complete(anyString(), anyList(), any(), eq(false), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("Según la memoria, recomendé landings.", List.of()));
+
+        var answer = ceoService.agentChat(new CeoService.ChatSpeaker("sales", "Sofia", "Sales", "Directa"), "Sofia",
+                List.of(), CeoService.JAVA_MEMORY_DATA_MARKER + " MISSION-7: ...\n\n¿qué encontraste?", topic -> "datos",
+                null, "nvidia-ceo:m");
+
+        assertEquals("Según la memoria, recomendé landings.", answer);
+    }
+
+    @Test
+    void missionDetailsIsAMemoryTopicWithItsMissionId() {
+        var topic = ceoService.parseCompanyMemoryTopic(Map.of("function", Map.of("name", "query_company_memory",
+                "arguments", Map.of("topic", "MISSION_DETAILS", "missionId", "MISSION-7"))));
+        var inline = ceoService.detectInlineCompanyMemoryTopic(
+                "{\"name\":\"query_company_memory\",\"arguments\":{\"topic\":\"MISSION_DETAILS\",\"missionId\":\"MISSION-7\"}}");
+
+        assertEquals("MISSION_DETAILS:MISSION-7", topic);
+        assertEquals("MISSION_DETAILS:MISSION-7", inline);
+    }
+
     @SuppressWarnings("unchecked")
     @Test
     void anAnswerBackedByARealToolCallIsNotFlagged() {

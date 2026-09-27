@@ -270,19 +270,107 @@ public class ChatIntentRouter {
         try {
             if ("ceo".equals(agentId)) {
                 return ceoReply(ceoService.chat(name, companyMemory.teamRosterDescription(), historyFor("ceo", agents),
-                        message, this::answerMemoryTopic, promptMemory.activePrompt("ceo"),
+                        withMissionData(message), this::answerMemoryTopic, promptMemory.activePrompt("ceo"),
                         companyMemory.agentModel("ceo", defaultCeoModel)));
             }
             var speaker = new CeoService.ChatSpeaker(agentId, name, String.valueOf(agent.get("role")),
                     String.valueOf(agent.get("personality")));
             return new ChatReply(agentId, name, ceoService.agentChat(speaker, companyMemory.teamRosterDescription(),
-                    historyFor(agentId, agents), message, this::answerMemoryTopic, promptMemory.activePrompt(agentId),
+                    historyFor(agentId, agents), withMissionData(message), this::answerMemoryTopic, promptMemory.activePrompt(agentId),
                     companyMemory.agentModel(agentId, defaultCeoModel)));
         } catch (Exception ex) {
             return new ChatReply(agentId, name, name + " no pudo responder: "
                     + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
         }
     }
+
+    /**
+     * Verificado en vivo (MISSION-E2E-DISC): los agentes mencionados no veían sus propios resultados y el modelo casi
+     * nunca pide la herramienta. Si el mensaje nombra una misión que existe, Java antepone sus datos reales.
+     */
+    private String withMissionData(String message) {
+        var matcher = MISSION_ID.matcher(message);
+        var blocks = new ArrayList<String>();
+        while (matcher.find()) {
+            var missionId = matcher.group(1).toUpperCase(Locale.ROOT);
+            if (missionMemory.find(missionId).isPresent()) {
+                blocks.add(formatMissionDetails(missionId));
+            }
+        }
+        return blocks.isEmpty()
+                ? message
+                : CeoService.JAVA_MEMORY_DATA_MARKER + "\n" + String.join("\n\n", blocks) + "\n\nMENSAJE DEL FUNDADOR:\n"
+                        + message;
+    }
+
+    /** Resultado real de cada tarea de la misión, armado en Java desde el AgentResult guardado (nunca por el modelo). */
+    private String formatMissionDetails(String missionId) {
+        var mission = missionMemory.find(missionId);
+        if (mission.isEmpty()) {
+            return "No tengo ese dato registrado. No existe ninguna misión con id " + missionId + " en Company Memory.";
+        }
+        var tasks = missionMemory.tasks(missionId);
+        var lines = new ArrayList<String>();
+        lines.add(formatMissionStatus(mission.get(), tasks));
+        for (var task : tasks) {
+            lines.add("- " + task.agentId() + " / " + task.action() + " (" + task.status() + "): "
+                    + summarizeTaskResult(task.result()));
+        }
+        return String.join("\n", lines);
+    }
+
+    private String summarizeTaskResult(String result) {
+        if (result == null || result.isBlank()) {
+            return "sin resultado registrado.";
+        }
+        try {
+            var node = JSON.readTree(result);
+            if (!node.isObject()) {
+                return truncate(result, 400);
+            }
+            var parts = new ArrayList<String>();
+            var status = node.path("verificationStatus").asString("");
+            if (!status.isBlank()) {
+                parts.add("verificationStatus=" + status);
+            }
+            var recommendation = node.path("recommendation").asString("");
+            if (!recommendation.isBlank()) {
+                parts.add("recomendación: " + truncate(recommendation, 400));
+            }
+            var facts = new ArrayList<String>();
+            node.path("facts").forEach(f -> { if (facts.size() < 3) facts.add(truncate(f.asString(""), 200)); });
+            if (!facts.isEmpty()) {
+                parts.add("hechos: " + String.join(" | ", facts));
+            }
+            var sources = new ArrayList<String>();
+            node.path("evidence").forEach(e -> { if (sources.size() < 3) sources.add(e.path("source").asString("")); });
+            if (!sources.isEmpty()) {
+                parts.add("evidencia: " + String.join(", ", sources));
+            }
+            var calculations = new ArrayList<String>();
+            node.path("calculations").forEach(c -> {
+                if (calculations.size() < 5) {
+                    calculations.add(c.path("name").asString("") + " = " + formatNumber(c.path("result").asDouble()));
+                }
+            });
+            if (!calculations.isEmpty()) {
+                parts.add("cálculos: " + String.join("; ", calculations));
+            }
+            return parts.isEmpty() ? truncate(result, 400) : String.join(". ", parts) + ".";
+        } catch (Exception ex) {
+            return truncate(result, 400);
+        }
+    }
+
+    private static String formatNumber(double value) {
+        return value == Math.rint(value) ? String.valueOf((long) value) : String.valueOf(value);
+    }
+
+    private static String truncate(String text, int max) {
+        return text.length() <= max ? text : text.substring(0, max) + "…";
+    }
+
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
     /**
      * Historial desde el punto de vista de {@code speakerId}: sus propios turnos como "ceo" (assistant), los del
@@ -1041,6 +1129,10 @@ public class ChatIntentRouter {
 
         if (topic != null && topic.startsWith("TEAM_DETAILS:")) {
             return formatTeamDetails(topic.substring("TEAM_DETAILS:".length()));
+        }
+
+        if (topic != null && topic.startsWith("MISSION_DETAILS:")) {
+            return formatMissionDetails(topic.substring("MISSION_DETAILS:".length()).strip());
         }
 
         return switch (topic) {
