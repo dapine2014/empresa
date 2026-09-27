@@ -227,7 +227,19 @@ public class CeoService {
      * Prefijo de Agent.model para la API remota compatible con OpenAI (hoy NVIDIA). Decisión del fundador
      * (2026-09-26): Engineering con "nvidia:moonshotai/kimi-k3" tras 18 misiones con qwen3:8b sin build verde.
      */
-    static final String REMOTE_MODEL_PREFIX = "nvidia:";
+    static final java.util.regex.Pattern REMOTE_MODEL = java.util.regex.Pattern.compile("^(nvidia(?:-[a-z]+)?):(.+)$");
+
+    /** Proveedor remoto y modelo de un Agent.model con prefijo (decisión del fundador 2026-09-27: una key por grupo). */
+    public record RemoteModel(String provider, String model) {
+    }
+
+    static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
+        if (agentModel == null) {
+            return java.util.Optional.empty();
+        }
+        var m = REMOTE_MODEL.matcher(agentModel);
+        return m.matches() ? java.util.Optional.of(new RemoteModel(m.group(1), m.group(2))) : java.util.Optional.empty();
+    }
     static final int REMOTE_TEAM_MAX_OUTPUT_TOKENS = 16_384;
     static final int REMOTE_MAX_OUTPUT_TOKENS = 4_096;
 
@@ -235,7 +247,7 @@ public class CeoService {
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
     private final MeterRegistry meterRegistry;
-    private final OpenAiCompatibleClient remote;
+    private final Map<String, OpenAiCompatibleClient> remotes;
 
     public CeoService(
             RestClient ollama,
@@ -243,7 +255,7 @@ public class CeoService {
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
             MeterRegistry meterRegistry) {
-        this(ollama, jsonMapper, evidenceAcquisitionService, events, meterRegistry, null);
+        this(ollama, jsonMapper, evidenceAcquisitionService, events, meterRegistry, Map.of());
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -253,14 +265,14 @@ public class CeoService {
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
             MeterRegistry meterRegistry,
-            OpenAiCompatibleClient remote) {
+            Map<String, OpenAiCompatibleClient> remotes) {
 
         this.ollama = ollama;
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
         this.events = events;
         this.meterRegistry = meterRegistry;
-        this.remote = remote;
+        this.remotes = remotes == null ? Map.of() : remotes;
     }
 
     /**
@@ -312,13 +324,60 @@ public class CeoService {
                 + " respondé exactamente: \"No tengo ese dato registrado.\" — nunca"
                 + " asumas que un paso avanzó porque otro paso anterior terminó.";
 
+        // Verificado en vivo: con varios mencionados, el CEO escribía también por los demás.
+        system += "\nResponde solo por ti, en primera persona: nunca escribas respuestas en nombre de otros agentes, "
+                + "aunque el fundador los mencione en el mismo mensaje (ellos responden aparte).";
+        return conversation("CEO_CHAT", "ceo", system, history, message, companyMemoryQuery, model);
+    }
+
+    /** Hablante del chat con varios agentes (spec 2026-09-27 §5). */
+    public record ChatSpeaker(String agentId, String name, String role, String personality) {
+    }
+
+    /**
+     * Un agente responde en el chat (spec 2026-09-27 §5): su identidad, su prompt activo, su modelo y solo
+     * query_company_memory (lectura). No lanza misiones, no aprueba, no rechaza ni contacta a nadie.
+     */
+    public String agentChat(
+            ChatSpeaker speaker,
+            String teamRoster,
+            List<ConversationTurn> history,
+            String message,
+            Function<String, String> companyMemoryQuery,
+            String agentPrompt,
+            String model) {
+
+        var promptBlock = agentPrompt == null || agentPrompt.isBlank() ? ""
+                : "CÓMO DEBES RAZONAR (definido por el fundador para vos):\n" + agentPrompt + "\n";
+        var system = """
+                Eres %s, %s de Forjai, una empresa real operada principalmente por agentes de IA. Tu nombre es %s.
+                Personalidad: %s
+                Estás en el chat de la empresa respondiendo al fundador (a veces junto a otros agentes).
+                Responde solo por ti, en primera persona: nunca escribas respuestas, saludos ni opiniones en nombre de
+                otros agentes, aunque el fundador los haya mencionado en el mismo mensaje (ellos responden aparte).
+                No puedes lanzar misiones, aprobar, rechazar ni contactar a nadie: si te lo piden, dilo y remite a Alex
+                (el CEO) o a los comandos de misión. Las acciones reservadas son solo del fundador.
+                No inventes clientes, ventas, ingresos, búsquedas ni evidencia. Para datos reales de la empresa usa
+                query_company_memory; si no hay dato, responde exactamente: "No tengo ese dato registrado."
+                Equipo real (nombre y rol):
+                %s
+                %s""".formatted(speaker.name(), speaker.role(), speaker.name(), speaker.personality(), teamRoster,
+                promptBlock);
+
+        return conversation("AGENT_CHAT", speaker.agentId(), system, history, message, companyMemoryQuery, model);
+    }
+
+    /** Dos turnos: uno con query_company_memory disponible y, si la pidió, el final con el resultado real. */
+    private String conversation(String operation, String actor, String system, List<ConversationTurn> history,
+                                String message, Function<String, String> companyMemoryQuery, String model) {
+
         var messages = new ArrayList<Map<String, Object>>();
         messages.add(Map.of("role", "system", "content", system));
         messages.addAll(buildHistoryMessages(history));
         messages.add(Map.of("role", "user", "content", message));
 
         var turn = callModel(
-                "CEO_CHAT", "ceo", model, messages, null, COMPANY_MEMORY_TOOLS
+                operation, actor, model, messages, null, COMPANY_MEMORY_TOOLS
         );
 
         var topic =
@@ -348,7 +407,7 @@ public class CeoService {
         messages.add(Map.of("role", "tool", "content", result));
 
         var finalTurn = callModel(
-                "CEO_CHAT", "ceo", model, messages, null, null
+                operation, actor, model, messages, null, null
         );
 
         return finalTurn.content();
@@ -1236,14 +1295,6 @@ public class CeoService {
         }
     }
 
-    /** El proveedor remoto se usa solo en llamadas de equipo, que nunca llevan tools (sin traducción de tool calls). */
-    void rejectToolsForRemoteModels(String operation, String model, List<Map<String, Object>> tools) {
-        if (model != null && model.startsWith(REMOTE_MODEL_PREFIX) && tools != null && !tools.isEmpty()) {
-            throw new IllegalArgumentException("callModel: el modelo remoto " + model + " no admite tools todavía "
-                    + "(operation=" + operation + "); usa un modelo de Ollama para ese agente.");
-        }
-    }
-
     @SuppressWarnings("unchecked")
     private ModelMessage callModel(
             String operation,
@@ -1280,21 +1331,25 @@ public class CeoService {
             Boolean think) {
 
         rejectFormatCombinedWithTools(operation, format, tools);
-        rejectToolsForRemoteModels(operation, model, tools);
 
         var startedAt = System.nanoTime();
 
-        if (model != null && model.startsWith(REMOTE_MODEL_PREFIX)) {
+        var remoteRef = remoteModel(model);
+        if (remoteRef.isPresent()) {
+            var remote = remotes.get(remoteRef.get().provider());
             if (remote == null) {
-                throw new IllegalStateException("No hay cliente remoto configurado para " + model + ".");
+                throw new IllegalStateException("No hay proveedor remoto configurado para \"" + remoteRef.get().provider()
+                        + "\" (modelo " + model + ").");
             }
-            var remoteModel = model.substring(REMOTE_MODEL_PREFIX.length());
+            var remoteModel = remoteRef.get().model();
             var maxTokens = TEAM_STRUCTURED_OPERATIONS.contains(operation)
                     ? REMOTE_TEAM_MAX_OUTPUT_TOKENS : REMOTE_MAX_OUTPUT_TOKENS;
-            var content = remote.chat(remoteModel, messages, format != null, maxTokens);
-            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={}",
-                    operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000, content.length());
-            return new ModelMessage(content, List.of());
+            // Spec 2026-09-27 §2: herramientas traducidas por el cliente; el guard format+tools ya corrió arriba.
+            var reply = remote.complete(remoteModel, messages, tools, format != null, maxTokens);
+            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={}",
+                    operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
+                    reply.content().length(), reply.toolCalls().size());
+            return new ModelMessage(reply.content(), reply.toolCalls());
         }
 
         var body = new java.util.LinkedHashMap<String, Object>();

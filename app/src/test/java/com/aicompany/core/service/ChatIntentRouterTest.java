@@ -20,6 +20,9 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import com.aicompany.core.model.ChatReply;
+import com.aicompany.core.model.ConversationTurn;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -1087,5 +1090,115 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("TEAM-ENGINEERING"));
         assertTrue(response.contains("backend=abcdef1"));
         assertTrue(response.contains("STATICALLY_VALIDATED"));
+    }
+
+    // ── Spec 2026-09-27 §5: chat con varios agentes por mención ─────────────────────────────
+
+    private static final List<Map<String, Object>> AGENTS = List.of(
+            Map.of("id", "ceo", "name", "Alex", "role", "CEO", "personality", "Estratégico"),
+            Map.of("id", "growth-content", "name", "Kira", "role", "Growth", "personality", "Curiosa"),
+            Map.of("id", "sales", "name", "Sofia", "role", "Sales", "personality", "Directa"));
+
+    private void stubAgents() {
+        when(companyMemory.agents()).thenReturn(AGENTS);
+        when(companyMemory.agentModel(anyString(), anyString())).thenAnswer(inv -> "nvidia-creative:m");
+        when(companyMemory.agentName("ceo")).thenReturn(java.util.Optional.of("Alex"));
+        when(promptMemory.activePrompt(anyString())).thenReturn("");
+        when(conversationMemory.recentMessages(anyInt())).thenReturn(List.of());
+    }
+
+    @Test
+    void aMentionIsAnsweredByThatAgentAndRecordedWithItsId() {
+        stubAgents();
+        when(ceoService.agentChat(argThat(s -> s != null && s.agentId().equals("growth-content")), any(), anyList(),
+                eq("@Kira ideas"), any(), any(), any())).thenReturn("respuesta de Kira");
+
+        var replies = router.routeReplies("@Kira ideas");
+
+        assertEquals(List.of(new ChatReply("growth-content", "Kira", "respuesta de Kira")), replies);
+        verify(conversationMemory).recordMessage("user", "@Kira ideas");
+        verify(conversationMemory).recordMessage("growth-content", "respuesta de Kira");
+        verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    @Test
+    void severalMentionsAnswerInOrder() {
+        stubAgents();
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any()))
+                .thenAnswer(inv -> "soy " + ((CeoService.ChatSpeaker) inv.getArgument(0)).name());
+
+        var replies = router.routeReplies("@Sofia y @Kira, ¿qué opinan?");
+
+        assertEquals(List.of("soy Sofia", "soy Kira"), replies.stream().map(ChatReply::text).toList());
+    }
+
+    // Review Focus: la mención gana sobre las consultas deterministas.
+    @Test
+    void aMentionWinsOverDeterministicQueries() {
+        stubAgents();
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("status de Kira");
+
+        var replies = router.routeReplies("@Kira dame un status");
+
+        assertEquals("status de Kira", replies.get(0).text());
+    }
+
+    // Review Focus: la gobernanza gana sobre las menciones.
+    @Test
+    void governanceWinsOverMentions() {
+        stubAgents();
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(
+                Optional.of(new DecisionResponse("D-1", "MISSION-1", InvestorDecision.APPROVE, Instant.now())));
+
+        router.routeReplies("aprueba MISSION-1 porque cumple @Kira");
+
+        verify(missionService).recordDecision(eq("MISSION-1"), any());
+        verify(ceoService, never()).agentChat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    // Review Focus: el historial de un agente etiqueta a los demás hablantes.
+    @SuppressWarnings("unchecked")
+    @Test
+    void anAgentsHistoryLabelsOtherSpeakers() {
+        stubAgents();
+        when(conversationMemory.recentMessages(anyInt())).thenReturn(List.of(
+                new ConversationTurn("user", "hola"),
+                new ConversationTurn("ceo", "soy Alex"),
+                new ConversationTurn("growth-content", "soy Kira")));
+        var history = org.mockito.ArgumentCaptor.forClass(List.class);
+        when(ceoService.agentChat(any(), any(), history.capture(), any(), any(), any(), any())).thenReturn("ok");
+
+        router.routeReplies("@Kira seguimos");
+
+        assertEquals(List.of(
+                new ConversationTurn("user", "hola"),
+                new ConversationTurn("user", "[Alex (CEO)]: soy Alex"),
+                new ConversationTurn("ceo", "soy Kira")), history.getValue());
+    }
+
+    @Test
+    void anUnknownMentionListsTheRealAgents() {
+        stubAgents();
+
+        var replies = router.routeReplies("@Pepe hola");
+
+        assertTrue(replies.get(0).text().contains("Pepe"), replies.get(0).text());
+        assertTrue(replies.get(0).text().contains("Kira (growth-content)"), replies.get(0).text());
+        verify(ceoService, never()).agentChat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    // Review Focus: un agente que falla no silencia a los demás.
+    @Test
+    void aFailingAgentDoesNotSilenceTheOthers() {
+        stubAgents();
+        when(ceoService.agentChat(argThat(s -> s != null && s.agentId().equals("growth-content")), any(), anyList(), any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("HTTP 401"));
+        when(ceoService.agentChat(argThat(s -> s != null && s.agentId().equals("sales")), any(), anyList(), any(), any(), any(), any()))
+                .thenReturn("respuesta de Sofia");
+
+        var replies = router.routeReplies("@Kira @Sofia hola");
+
+        assertTrue(replies.get(0).text().startsWith("Kira no pudo responder"), replies.get(0).text());
+        assertEquals("respuesta de Sofia", replies.get(1).text());
     }
 }

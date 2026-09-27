@@ -1,5 +1,8 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.ChatReply;
+import com.aicompany.core.model.ConversationTurn;
+
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
@@ -18,6 +21,7 @@ import java.text.Normalizer;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -204,13 +208,100 @@ public class ChatIntentRouter {
      * routing en sí no cambió de forma, solo se movió a {@link #resolve}.
      */
     public String route(String message) {
+        return routeReplies(message).stream()
+                .map(r -> r.agentId().equals("ceo") ? r.text() : r.name() + ": " + r.text())
+                .collect(java.util.stream.Collectors.joining("\n\n"));
+    }
 
-        var response = resolve(message);
+    /**
+     * Spec 2026-09-27 §5: por defecto responde Alex; con @menciones responden esos agentes, en orden. La gobernanza
+     * (arranque de misión, decisiones) se resuelve antes que las menciones. Graba el mensaje del usuario una vez y
+     * cada respuesta con el agentId de quien habla.
+     */
+    public List<ChatReply> routeReplies(String message) {
+
+        var replies = resolveReplies(message);
 
         conversationMemory.recordMessage("user", message);
-        conversationMemory.recordMessage("ceo", response);
+        for (var reply : replies) {
+            conversationMemory.recordMessage(reply.agentId(), reply.text());
+        }
 
-        return response;
+        return replies;
+    }
+
+    private List<ChatReply> resolveReplies(String message) {
+
+        if (isGovernance(message)) {
+            return List.of(ceoReply(resolve(message)));
+        }
+
+        var agents = companyMemory.agents();
+        var mentions = MentionResolver.resolve(message, agents);
+
+        if (!mentions.unknown().isEmpty()) {
+            var known = agents.stream().map(a -> a.get("name") + " (" + a.get("id") + ")")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            return List.of(ceoReply("No conozco a " + mentions.unknown() + " en Forjai. Agentes: " + known + "."));
+        }
+
+        if (!mentions.agentIds().isEmpty()) {
+            return mentions.agentIds().stream().map(id -> agentReply(id, message, agents)).toList();
+        }
+
+        return List.of(ceoReply(resolve(message)));
+    }
+
+    private boolean isGovernance(String message) {
+        return MISSION_START.matcher(message).find()
+                || detectFreeMissionStart(normalize(message))
+                || detectDecision(message) != null;
+    }
+
+    private ChatReply ceoReply(String text) {
+        return new ChatReply("ceo", companyMemory.agentName("ceo").orElse("CEO"), text);
+    }
+
+    private ChatReply agentReply(String agentId, String message, List<Map<String, Object>> agents) {
+
+        var agent = agents.stream().filter(a -> agentId.equals(a.get("id"))).findFirst().orElseThrow();
+        var name = String.valueOf(agent.get("name"));
+
+        try {
+            if ("ceo".equals(agentId)) {
+                return ceoReply(ceoService.chat(name, companyMemory.teamRosterDescription(), historyFor("ceo", agents),
+                        message, this::answerMemoryTopic, promptMemory.activePrompt("ceo"),
+                        companyMemory.agentModel("ceo", defaultCeoModel)));
+            }
+            var speaker = new CeoService.ChatSpeaker(agentId, name, String.valueOf(agent.get("role")),
+                    String.valueOf(agent.get("personality")));
+            return new ChatReply(agentId, name, ceoService.agentChat(speaker, companyMemory.teamRosterDescription(),
+                    historyFor(agentId, agents), message, this::answerMemoryTopic, promptMemory.activePrompt(agentId),
+                    companyMemory.agentModel(agentId, defaultCeoModel)));
+        } catch (Exception ex) {
+            return new ChatReply(agentId, name, name + " no pudo responder: "
+                    + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
+        }
+    }
+
+    /**
+     * Historial desde el punto de vista de {@code speakerId}: sus propios turnos como "ceo" (assistant), los del
+     * fundador como "user" y los de otros agentes como "user" etiquetados con nombre y rol (spec 2026-09-27 §5).
+     */
+    private List<ConversationTurn> historyFor(String speakerId, List<Map<String, Object>> agents) {
+        return conversationMemory.recentMessages(HISTORY_LIMIT).stream()
+                .map(turn -> {
+                    if ("user".equals(turn.role())) {
+                        return turn;
+                    }
+                    if (speakerId.equals(turn.role())) {
+                        return new ConversationTurn("ceo", turn.content());
+                    }
+                    var other = agents.stream().filter(a -> turn.role().equals(a.get("id"))).findFirst();
+                    var label = other.map(a -> a.get("name") + " (" + a.get("role") + ")").orElse(turn.role());
+                    return new ConversationTurn("user", "[" + label + "]: " + turn.content());
+                })
+                .toList();
     }
 
     private String resolve(String message) {
@@ -272,7 +363,7 @@ public class ChatIntentRouter {
         return ceoService.chat(
                 companyMemory.agentName("ceo").orElse("CEO"),
                 companyMemory.teamRosterDescription(),
-                conversationMemory.recentMessages(HISTORY_LIMIT),
+                historyFor("ceo", companyMemory.agents()),
                 message,
                 this::answerMemoryTopic,
                 promptMemory.activePrompt("ceo"),
@@ -691,7 +782,7 @@ public class ChatIntentRouter {
             return ceoService.chat(
                     companyMemory.agentName("ceo").orElse("CEO"),
                     companyMemory.teamRosterDescription(),
-                    conversationMemory.recentMessages(HISTORY_LIMIT),
+                    historyFor("ceo", companyMemory.agents()),
                     hint + message,
                     this::answerMemoryTopic,
                     promptMemory.activePrompt("ceo"),

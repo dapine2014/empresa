@@ -18,18 +18,21 @@ class CeoServiceRemoteModelTest {
 
     private final RestClient ollama = mock(RestClient.class);
     private final OpenAiCompatibleClient remote = mock(OpenAiCompatibleClient.class);
+    private final OpenAiCompatibleClient ceoRemote = mock(OpenAiCompatibleClient.class);
     private final CeoService ceoService = new CeoService(ollama, JsonMapper.builder().build(),
-            mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class), new SimpleMeterRegistry(), remote);
+            mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class), new SimpleMeterRegistry(),
+            java.util.Map.of("nvidia", remote, "nvidia-ceo", ceoRemote));
 
     @Test
     void aNvidiaPrefixedModelGoesToTheRemoteClientWithJsonMode() {
-        when(remote.chat(eq("moonshotai/kimi-k3"), anyList(), eq(true), anyInt()))
-                .thenReturn("{\"summary\":\"ok\",\"files\":[{\"path\":\"src/A.cs\",\"content\":\"class A {}\"}]}");
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply(
+                        "{\"summary\":\"ok\",\"files\":[{\"path\":\"src/A.cs\",\"content\":\"class A {}\"}]}", List.of()));
 
         var result = ceoService.generateDevelopmentArtifact("backend", "prompt", "", "nvidia:moonshotai/kimi-k3");
 
         assertEquals("src/A.cs", result.files().get(0).path());
-        verify(remote).chat(eq("moonshotai/kimi-k3"), argThat(messages -> messages.size() == 2), eq(true),
+        verify(remote).complete(eq("moonshotai/kimi-k3"), argThat(messages -> messages.size() == 2), isNull(), eq(true),
                 eq(CeoService.REMOTE_TEAM_MAX_OUTPUT_TOKENS));
         verifyNoInteractions(ollama);
     }
@@ -41,10 +44,48 @@ class CeoServiceRemoteModelTest {
         verifyNoInteractions(remote);
     }
 
+
+    // Decisión del fundador (2026-09-27): una key por grupo; el prefijo del modelo elige el proveedor.
     @Test
-    void theRemoteProviderRejectsToolCallsExplicitly() {
-        var ex = assertThrows(IllegalArgumentException.class, () -> ceoService.rejectToolsForRemoteModels(
-                "AGENT_TOOL_DECISION", "nvidia:moonshotai/kimi-k3", List.of(java.util.Map.of("type", "function"))));
-        assertTrue(ex.getMessage().contains("tools"), ex.getMessage());
+    void eachProviderPrefixUsesItsOwnClient() {
+        when(ceoRemote.complete(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("no es un plan", List.of()));
+        assertThrows(IllegalStateException.class, () ->
+                ceoService.planTeamWork("ceo", "p", "", "nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b"));
+        verify(ceoRemote).complete(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyList(), isNull(), eq(true), anyInt());
+        verifyNoInteractions(remote);
+    }
+
+    @Test
+    void anUnknownRemoteProviderFailsClearlyInsteadOfFallingBackToOllama() {
+        var ex = assertThrows(IllegalStateException.class, () ->
+                ceoService.generateDevelopmentArtifact("backend", "p", "", "nvidia-otro:x/y"));
+        assertTrue(ex.getMessage().contains("nvidia-otro"), ex.getMessage());
+        verifyNoInteractions(ollama);
+    }
+
+    @Test
+    void remoteModelParsing() {
+        assertEquals(java.util.Optional.of(new CeoService.RemoteModel("nvidia-discovery", "nvidia/nemotron-3-super-120b-a12b")),
+                CeoService.remoteModel("nvidia-discovery:nvidia/nemotron-3-super-120b-a12b"));
+        assertEquals(java.util.Optional.empty(), CeoService.remoteModel("qwen3:8b"));
+    }
+
+    // Spec 2026-09-27 §2: el chat de Alex en remoto usa query_company_memory igual que con Ollama.
+    @Test
+    void aRemoteChatCanUseTheCompanyMemoryTool() {
+        when(ceoRemote.complete(eq("m"), anyList(), notNull(), eq(false), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("", List.of(java.util.Map.of("function",
+                        java.util.Map.of("name", "query_company_memory", "arguments", java.util.Map.of("topic", "AGENT_STATUS"))))));
+        when(ceoRemote.complete(eq("m"), anyList(), isNull(), eq(false), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("respuesta con datos reales", List.of()));
+        var topics = new java.util.ArrayList<String>();
+
+        var answer = ceoService.chat("Alex", "roster", List.of(), "¿quién trabaja?",
+                topic -> { topics.add(topic); return "datos"; }, "", "nvidia-ceo:m");
+
+        assertEquals("respuesta con datos reales", answer);
+        assertEquals(List.of("AGENT_STATUS"), topics);
+        verifyNoInteractions(ollama);
     }
 }

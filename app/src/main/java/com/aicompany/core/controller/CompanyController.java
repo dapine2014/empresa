@@ -200,7 +200,11 @@ public class CompanyController {
      */
     @PostMapping("/chat")
     public ChatResponse chat(@Valid @RequestBody ChatRequest request) {
-        return new ChatResponse("CEO", chatIntentRouter.route(request.message()));
+        var replies = chatIntentRouter.routeReplies(request.message());
+        var joined = replies.stream()
+                .map(r -> replies.size() == 1 ? r.text() : r.name() + ": " + r.text())
+                .collect(java.util.stream.Collectors.joining("\n\n"));
+        return new ChatResponse(replies.isEmpty() ? "CEO" : replies.get(0).name(), joined, replies);
     }
 
     /**

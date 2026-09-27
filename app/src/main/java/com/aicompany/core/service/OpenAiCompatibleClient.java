@@ -32,8 +32,24 @@ public class OpenAiCompatibleClient {
         this.retryDelay = retryDelay;
     }
 
-    @SuppressWarnings("unchecked")
+    /** Respuesta remota: content y tool_calls ya en formato Ollama ({"function": {"name", "arguments": Map}}). */
+    public record RemoteReply(String content, List<Map<String, Object>> toolCalls) {
+    }
+
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
+
     public String chat(String model, List<Map<String, Object>> messages, boolean json, int maxTokens) {
+        return complete(model, messages, null, json, maxTokens).content();
+    }
+
+    /**
+     * Llamada con herramientas opcionales (spec 2026-09-27 §2): la definición de Ollama ya es la de OpenAI; el
+     * historial con tool_calls de Ollama se traduce a OpenAI (id, type, arguments como texto, tool_call_id) y las
+     * tool_calls de la respuesta vuelven en formato Ollama. Una llamada con arguments inválidos se descarta.
+     */
+    @SuppressWarnings("unchecked")
+    public RemoteReply complete(String model, List<Map<String, Object>> messages, List<Map<String, Object>> tools,
+                                boolean json, int maxTokens) {
 
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("Falta NVIDIA_API_KEY para usar el modelo remoto " + model + ".");
@@ -41,14 +57,15 @@ public class OpenAiCompatibleClient {
 
         var body = new LinkedHashMap<String, Object>();
         body.put("model", model);
-        body.put("messages", messages.stream()
-                .map(m -> Map.of("role", m.get("role"), "content", String.valueOf(m.get("content"))))
-                .toList());
+        body.put("messages", toOpenAi(messages));
         body.put("max_tokens", maxTokens);
         body.put("temperature", 0.2);
         body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
         if (json) {
             body.put("response_format", Map.of("type", "json_object"));
+        }
+        if (tools != null && !tools.isEmpty()) {
+            body.put("tools", tools);
         }
 
         RuntimeException last = null;
@@ -73,7 +90,8 @@ public class OpenAiCompatibleClient {
                 }
                 var message = (Map<String, Object>) choices.get(0).get("message");
                 var content = message == null ? null : message.get("content");
-                return content == null ? "" : String.valueOf(content);
+                var rawCalls = message == null ? null : message.get("tool_calls");
+                return new RemoteReply(content == null ? "" : String.valueOf(content), toOllamaToolCalls(rawCalls));
             } catch (RestClientResponseException ex) {
                 var status = ex.getStatusCode().value();
                 last = new IllegalStateException("Modelo remoto " + model + " respondió HTTP " + status + ": "
@@ -87,6 +105,59 @@ public class OpenAiCompatibleClient {
         }
 
         throw last;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> toOpenAi(List<Map<String, Object>> messages) {
+        var result = new java.util.ArrayList<Map<String, Object>>();
+        var counter = 0;
+        String lastCallId = null;
+        for (var m : messages) {
+            var role = String.valueOf(m.get("role"));
+            var out = new LinkedHashMap<String, Object>();
+            out.put("role", role);
+            out.put("content", m.get("content") == null ? "" : String.valueOf(m.get("content")));
+            if ("assistant".equals(role) && m.get("tool_calls") instanceof List<?> calls && !calls.isEmpty()) {
+                var translated = new java.util.ArrayList<Map<String, Object>>();
+                for (var call : calls) {
+                    var function = (Map<String, Object>) ((Map<String, Object>) call).get("function");
+                    lastCallId = "call_" + counter++;
+                    var arguments = function.get("arguments");
+                    translated.add(Map.of("id", lastCallId, "type", "function", "function", Map.of(
+                            "name", String.valueOf(function.get("name")),
+                            "arguments", arguments instanceof String text ? text : JSON.writeValueAsString(arguments))));
+                }
+                out.put("tool_calls", translated);
+            }
+            if ("tool".equals(role) && lastCallId != null) {
+                out.put("tool_call_id", lastCallId);
+            }
+            result.add(out);
+        }
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> toOllamaToolCalls(Object rawCalls) {
+        if (!(rawCalls instanceof List<?> calls)) {
+            return List.of();
+        }
+        var result = new java.util.ArrayList<Map<String, Object>>();
+        for (var call : calls) {
+            if (!(call instanceof Map<?, ?> map) || !(map.get("function") instanceof Map<?, ?> function)) {
+                continue;
+            }
+            try {
+                var arguments = function.get("arguments");
+                Map<String, Object> parsed = arguments instanceof Map<?, ?> already
+                        ? (Map<String, Object>) already
+                        : JSON.readValue(String.valueOf(arguments), Map.class);
+                result.add(Map.of("function", Map.of("name", String.valueOf(function.get("name")), "arguments", parsed)));
+            } catch (Exception ex) {
+                log.warn("REMOTE_TOOL_CALL_DROPPED reason=arguments no son JSON: {}", ex.getMessage());
+            }
+        }
+        return result;
     }
 
     private void sleep() {

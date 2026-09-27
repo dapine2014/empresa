@@ -18,6 +18,9 @@ services:
       SANDBOX_RUNNER_URL: http://sandbox-runner:8090
       SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+      NVIDIA_API_KEY_DISCOVERY: ${NVIDIA_API_KEY_DISCOVERY}
+      NVIDIA_API_KEY_CREATIVE: ${NVIDIA_API_KEY_CREATIVE}
+      NVIDIA_API_KEY_CEO: ${NVIDIA_API_KEY_CEO}
     volumes:
       - ${HOME}/forjai-products:/data/forjai-products
     extra_hosts:

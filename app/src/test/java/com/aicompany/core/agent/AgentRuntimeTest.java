@@ -85,6 +85,23 @@ class AgentRuntimeTest {
     }
 
     @Test
+    void taskPromptOffersMultiplyAndDivideOneStepPerCalculation() throws Exception {
+        var result = agentResult("finance", "recomendación ok");
+
+        var promptCaptor = ArgumentCaptor.forClass(String.class);
+        when(ceoService.executeAgentTask(eq("finance"), promptCaptor.capture(), anyString(), eq("MISSION-1"), eq("TASK-1"), anyString()))
+                .thenReturn(outcome(result));
+        when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(result)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción").get();
+
+        // Verificado en vivo: sin DIVIDE, los márgenes en % se escribían como SUBTRACT y fallaban 3 veces.
+        assertTrue(promptCaptor.getValue().contains("\"operation\": \"ADD|SUBTRACT|MULTIPLY|DIVIDE\""));
+        assertTrue(promptCaptor.getValue().contains("un porcentaje son dos cálculos"));
+    }
+
+    @Test
     void injectsTheAgentsActivePromptIntoTheTaskPrompt() throws Exception {
         var result = agentResult("finance", "recomendación ok");
 
