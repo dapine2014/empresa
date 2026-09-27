@@ -647,4 +647,22 @@ class DevelopmentTeamStrategyTest {
         assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0")), DevelopmentTeamStrategy.dependencyRefs(
                 StackProfile.DOTNET_APP, List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")), null));
     }
+
+    // Verificado en vivo (MISSION-DEPS-VERIFY-4): Iris (Application + Infrastructure) pidió Newtonsoft y Forjai lo
+    // agregó solo al primer .csproj; lo usaba en Infrastructure. Va a todos los proyectos de las capas del agente.
+    @Test
+    void requestedPackagesGoToEveryProjectOfTheAgentsLayers() {
+        var projects = DevelopmentTeamStrategy.projectsOf(StackProfile.DOTNET_APP, List.of("Tareas"),
+                List.of("src/Tareas.Application", "src/Tareas.Infrastructure"));
+        assertEquals(List.of("src/Tareas.Application/Tareas.Application.csproj",
+                "src/Tareas.Infrastructure/Tareas.Infrastructure.csproj"), projects);
+    }
+
+    // Verificado en vivo (MISSION-DEPS-VERIFY-4): con kimi-k3, 24.000 caracteres dejaban archivos fuera y Vera marcaba
+    // MAJOR "no pude verificar". El presupuesto depende del modelo del validador (remoto: contexto grande).
+    @Test
+    void theReviewBudgetDependsOnTheValidatorsModel() {
+        assertEquals(DevelopmentTeamStrategy.REVIEW_TOTAL_BUDGET_CHARS, DevelopmentTeamStrategy.reviewBudget("qwen3:8b").total());
+        assertTrue(DevelopmentTeamStrategy.reviewBudget("nvidia:moonshotai/kimi-k3").total() >= 100_000);
+    }
 }

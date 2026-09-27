@@ -55,6 +55,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     // Debe entrar en CeoService.TEAM_CONTEXT_WINDOW_TOKENS (16k) junto con el prompt y la respuesta.
     static final int REVIEW_TOTAL_BUDGET_CHARS = 24_000;
     static final int REVIEW_FILE_BUDGET_CHARS = 6_000;
+    static final int REMOTE_REVIEW_TOTAL_BUDGET_CHARS = 120_000;
+    static final int REMOTE_REVIEW_FILE_BUDGET_CHARS = 30_000;
     static final String NO_EXECUTION_DISCLAIMER =
             "No se verificó la ejecución: no se puede afirmar que el producto compile, se ejecute o pase tests.";
     static final int FAILED_STEP_TAIL_CHARS = 1_500;
@@ -355,7 +357,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
             }
 
-            var repositoryContext = renderRepositoryContext(contents, REVIEW_TOTAL_BUDGET_CHARS, REVIEW_FILE_BUDGET_CHARS);
+            var repositoryContext = renderRepositoryContext(contents,
+                    reviewBudget(validatorModel(context, validation.agentId())).total(),
+                    reviewBudget(validatorModel(context, validation.agentId())).perFile());
 
             reviewStarted = true;
             review = runtime.review(validationTaskId, missionId, validation.agentId(),
@@ -428,11 +432,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         var byProject = new LinkedHashMap<String, List<DependencyRef>>();
         for (var entry : packagesByTask.entrySet()) {
-            profile.projectFiles(plan.contextNames()).stream()
-                    .filter(project -> OwnedPaths.coveredByAny(entry.getKey().ownedPathsOrEmpty(), project))
-                    .findFirst()
-                    .ifPresent(project -> byProject.computeIfAbsent(project, k -> new ArrayList<>()).addAll(
-                            entry.getValue().stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).toList()));
+            // Verificado en vivo (MISSION-DEPS-VERIFY-4): va a todos los proyectos de las capas del agente.
+            for (var project : projectsOf(profile, plan.contextNames(), entry.getKey().ownedPathsOrEmpty())) {
+                byProject.computeIfAbsent(project, k -> new ArrayList<>()).addAll(
+                        entry.getValue().stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).toList());
+            }
         }
         if (byProject.isEmpty()) {
             return null;
@@ -449,6 +453,25 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             log.warn("MISSION {} - could not commit requested packages: {}", context.missionId(), ex.getMessage());
             return null;
         }
+    }
+
+    static List<String> projectsOf(StackProfile profile, List<String> contexts, List<String> ownedPaths) {
+        return profile.projectFiles(contexts).stream()
+                .filter(project -> OwnedPaths.coveredByAny(ownedPaths, project))
+                .toList();
+    }
+
+    record ReviewBudget(int total, int perFile) {
+    }
+
+    /**
+     * Verificado en vivo (MISSION-DEPS-VERIFY-4): el tope pensado para los 16K de contexto de qwen3:8b dejaba archivos
+     * fuera de la revisión con modelos remotos de contexto grande.
+     */
+    static ReviewBudget reviewBudget(String validatorModel) {
+        return validatorModel != null && validatorModel.startsWith("nvidia")
+                ? new ReviewBudget(REMOTE_REVIEW_TOTAL_BUDGET_CHARS, REMOTE_REVIEW_FILE_BUDGET_CHARS)
+                : new ReviewBudget(REVIEW_TOTAL_BUDGET_CHARS, REVIEW_FILE_BUDGET_CHARS);
     }
 
     private String readOrNull(String missionId, String sha, String path) {
@@ -687,6 +710,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     static String taskId(String missionId, String agentId) {
         return missionId + "-" + agentId.toUpperCase(Locale.ROOT);
+    }
+
+    private static String validatorModel(TeamMissionContext context, String agentId) {
+        return context.team().members().stream()
+                .filter(m -> m.agentId().equals(agentId))
+                .map(TeamMemberInfo::model)
+                .findFirst()
+                .orElse(null);
     }
 
     private static String agentName(TeamMissionContext context, String agentId) {
