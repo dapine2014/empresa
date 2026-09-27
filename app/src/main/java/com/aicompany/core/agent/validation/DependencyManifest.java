@@ -13,7 +13,7 @@ public final class DependencyManifest {
     public record Parsed(List<DependencyRef> deps, List<String> errors) {
     }
 
-    static final Pattern NAME = Pattern.compile("^[A-Za-z0-9_.-]{1,100}$");
+    static final Pattern NAME = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$");
     static final Pattern VERSION = Pattern.compile("^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.-]+)?$");
     private static final Pattern SECTION = Pattern.compile("^(dependencies|dev_dependencies):\\s*$");
     private static final Pattern ENTRY = Pattern.compile("^  ([A-Za-z0-9_]+):\\s*(.*?)\\s*$");

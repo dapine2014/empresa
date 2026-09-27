@@ -54,4 +54,9 @@ class DependencyManifestTest {
         assertEquals(2, DependencyManifest.validateRequests(List.of(new PackageRequest("A", "[1.0,2.0)"),
                 new PackageRequest("B; rm", "1.0.0"))).size());
     }
+
+    @Test
+    void aNameThatIsARelativePathIsInvalid() {
+        assertEquals(1, DependencyManifest.validateRequests(List.of(new PackageRequest("..", "1.0.0"))).size());
+    }
 }

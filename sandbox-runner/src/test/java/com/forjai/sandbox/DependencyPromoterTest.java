@@ -50,4 +50,12 @@ class DependencyPromoterTest {
         assertThrows(IllegalArgumentException.class, () -> new DependencyPromoter(deps).promote("NUGET", "../nuget",
                 List.of(new DependencyRequest.Package("A", "1.0.0"))));
     }
+
+    // Revisión final: ".." cumplía el patrón de nombre y el promotor armaba rutas con él.
+    @Test
+    void aPackageNameThatIsARelativePathIsRejected() throws Exception {
+        Files.createDirectories(deps.resolve("staging/fetch-9/packages"));
+        assertThrows(IllegalArgumentException.class, () -> new DependencyPromoter(deps).promote("NUGET", "fetch-9",
+                List.of(new DependencyRequest.Package("..", "1.0.0"))));
+    }
 }
