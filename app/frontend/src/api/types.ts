@@ -139,9 +139,17 @@ export interface DecisionResponse {
   recordedAt: string
 }
 
+export interface ChatReply {
+  agentId: string
+  name: string
+  text: string
+}
+
 export interface ChatResponse {
   agent: string
   response: string
+  // Chat con varios agentes: una respuesta por cada agente mencionado (@Nombre); por defecto, Alex.
+  replies?: ChatReply[]
 }
 
 export interface SettingsResponse {

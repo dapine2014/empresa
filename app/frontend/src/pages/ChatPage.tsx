@@ -5,6 +5,7 @@ import { api } from '../api/client'
 interface Message {
   from: 'you' | 'ceo'
   text: string
+  name?: string
 }
 
 export default function ChatPage() {
@@ -14,7 +15,11 @@ export default function ChatPage() {
   const mutation = useMutation({
     mutationFn: (message: string) => api.chat(message),
     onSuccess: (response) => {
-      setMessages((prev) => [...prev, { from: 'ceo', text: response.response }])
+      const replies =
+        response.replies && response.replies.length > 0
+          ? response.replies.map((r) => ({ from: 'ceo' as const, name: r.name, text: r.text }))
+          : [{ from: 'ceo' as const, name: response.agent, text: response.response }]
+      setMessages((prev) => [...prev, ...replies])
     },
     onError: () => {
       setMessages((prev) => [...prev, { from: 'ceo', text: 'No pude procesar ese mensaje.' }])
@@ -35,16 +40,17 @@ export default function ChatPage() {
       <p className="hint">
         Consultas reales ("¿qué agentes están trabajando?", "¿qué misiones necesitan mi aprobación?") y decisiones
         reales ("aprueba la misión MISSION-XXX porque...") — nunca texto libre inventado; el chat no ejecuta nada
-        directamente, pasa por la misma gobernanza que el resto de la empresa.
+        directamente, pasa por la misma gobernanza que el resto de la empresa. Por defecto responde Alex (CEO); escribe
+        @Nombre para sumar a otro agente (p. ej. @Kira o @Sofia).
       </p>
       <div className="chat-history">
         {messages.length === 0 && <p className="hint">Todavía no escribiste nada.</p>}
         {messages.map((m, i) => (
           <div key={i} className={`chat-message chat-${m.from}`}>
-            <strong>{m.from === 'you' ? 'Tú' : 'CEO'}:</strong> {m.text}
+            <strong>{m.from === 'you' ? 'Tú' : (m.name ?? 'CEO')}:</strong> {m.text}
           </div>
         ))}
-        {mutation.isPending && <div className="chat-message chat-ceo">CEO está pensando...</div>}
+        {mutation.isPending && <div className="chat-message chat-ceo">Forjai está pensando...</div>}
       </div>
       <form
         className="chat-input"
