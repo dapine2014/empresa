@@ -49,6 +49,58 @@ class AgentResultValidatorTest {
     }
 
     @Test
+    void acceptsMultiplyAndDivideRecalculatedInJava() {
+        // Verificado en vivo (PROVIDERS-VERIFY-DISC): Max y Luna necesitan márgenes en % y punto de equilibrio.
+        var validation = validator.validate(result("NOT_VALIDATED", List.of(), List.of(
+                new AgentResult.Calculation("ingreso mensual", 12, 25, "MULTIPLY", 300),
+                new AgentResult.Calculation("margen unitario", 19, 20, "DIVIDE", 0.95),
+                new AgentResult.Calculation("margen %", 0.95, 100, "multiply", 95))));
+
+        assertTrue(validation.valid(), () -> String.join(", ", validation.errors()));
+    }
+
+    @Test
+    void acceptsDivisionRoundedToTwoDecimals() {
+        var calculation = new AgentResult.Calculation("unidades por dólar", 1, 3, "DIVIDE", 0.33);
+
+        var validation = validator.validate(result("NOT_VALIDATED", List.of(), List.of(calculation)));
+
+        assertTrue(validation.valid(), () -> String.join(", ", validation.errors()));
+    }
+
+    @Test
+    void rejectsInconsistentDivision() {
+        // El caso real: "margen 95%" declarado sobre una operación que da otro número.
+        var calculation = new AgentResult.Calculation("margen %", 19, 20, "DIVIDE", 95);
+
+        var validation = validator.validate(result("NOT_VALIDATED", List.of(), List.of(calculation)));
+
+        assertFalse(validation.valid());
+        assertTrue(validation.errors().stream()
+                .anyMatch(error -> error.contains("Cálculo inconsistente: margen %")));
+    }
+
+    @Test
+    void rejectsDivisionByZero() {
+        var calculation = new AgentResult.Calculation("punto de equilibrio", 50, 0, "DIVIDE", 0);
+
+        var validation = validator.validate(result("NOT_VALIDATED", List.of(), List.of(calculation)));
+
+        assertFalse(validation.valid());
+        assertTrue(validation.errors().stream()
+                .anyMatch(error -> error.contains("División por cero")), () -> String.join(", ", validation.errors()));
+    }
+
+    @Test
+    void keepsExactToleranceForAddAndSubtract() {
+        var calculation = new AgentResult.Calculation("costo total", 10, 5, "ADD", 15.004);
+
+        var validation = validator.validate(result("NOT_VALIDATED", List.of(), List.of(calculation)));
+
+        assertFalse(validation.valid());
+    }
+
+    @Test
     void rejectsInconsistentCalculation() {
         var calculation = new AgentResult.Calculation("margen", 100, 30, "SUBTRACT", 80);
 

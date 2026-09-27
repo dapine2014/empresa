@@ -153,6 +153,25 @@ public class AgentResultValidator {
                                     - calculation.inputB();
                     break;
 
+                case "MULTIPLY":
+                    expected =
+                            calculation.inputA()
+                                    * calculation.inputB();
+                    break;
+
+                case "DIVIDE":
+                    if (calculation.inputB() == 0) {
+                        errors.add(
+                                "División por cero: "
+                                        + calculation.name()
+                        );
+                        continue;
+                    }
+                    expected =
+                            calculation.inputA()
+                                    / calculation.inputB();
+                    break;
+
                 default:
                     errors.add(
                             "Operación matemática inválida: "
@@ -161,9 +180,15 @@ public class AgentResultValidator {
                     continue;
             }
 
-            if (!approximatelyEqual(
-                    expected,
-                    calculation.result())) {
+            // Multiplicar y dividir producen decimales largos: se acepta el
+            // resultado redondeado a 2 decimales. Sumar y restar siguen exactos.
+            var rounded = switch (calculation.operation().toUpperCase()) {
+                case "MULTIPLY", "DIVIDE" -> true;
+                default -> false;
+            };
+
+            if (!(approximatelyEqual(expected, calculation.result())
+                    || (rounded && Math.abs(expected - calculation.result()) <= ROUNDING_TOLERANCE))) {
 
                 errors.add(
                         "Cálculo inconsistente: "
@@ -258,6 +283,8 @@ public class AgentResultValidator {
             }
         }
     }
+
+    private static final double ROUNDING_TOLERANCE = 0.005 + 1e-9;
 
     private boolean approximatelyEqual(
             double expected,

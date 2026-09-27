@@ -26,7 +26,9 @@ public final class AgentResultSchema {
 
     private static final List<String> CALCULATION_OPERATIONS = List.of(
             "ADD",
-            "SUBTRACT"
+            "SUBTRACT",
+            "MULTIPLY",
+            "DIVIDE"
     );
 
     /**

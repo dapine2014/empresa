@@ -536,6 +536,10 @@ public class AgentRuntime {
                 - No declares un resultado futuro como
                   resultado verificado.
                 - No presentes cálculos sin comprobarlos.
+                - Cada calculation es UNA operación entre inputA e inputB
+                  (ADD, SUBTRACT, MULTIPLY o DIVIDE) y Java la recalcula:
+                  un porcentaje son dos cálculos (DIVIDE y luego MULTIPLY
+                  por 100). Nunca dividas por 0.
                 - customerCandidates es para perfiles de clientes
                   concretos y reales que hayas identificado en tu
                   investigación (no genéricos como "microempresarios en
@@ -585,7 +589,7 @@ public class AgentRuntime {
                   "name": "",
                   "inputA": 0,
                   "inputB": 0,
-                  "operation": "ADD|SUBTRACT",
+                  "operation": "ADD|SUBTRACT|MULTIPLY|DIVIDE",
                   "result": 0
                 }
 

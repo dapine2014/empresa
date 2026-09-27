@@ -102,7 +102,7 @@ Preparación (una vez): `systemctl --user enable --now podman.socket`, `mkdir -p
 
 La llamada final de cada tarea usa el JSON Schema `AgentResultSchema.SCHEMA` como `format` de Ollama. El contenido pasa por gates en `AgentRuntime.executeInternal`, en este orden:
 
-1. `AgentResultValidator` (sintáctico: obligatorios, `confidence`∈[0,1], recalcula cada `Calculation` `ADD`/`SUBTRACT`, `VALIDATED` exige evidencia `verified=true` con `source`). **Reintenta.**
+1. `AgentResultValidator` (sintáctico: obligatorios, `confidence`∈[0,1], recalcula cada `Calculation` `ADD`/`SUBTRACT` (exactas) y `MULTIPLY`/`DIVIDE` (redondeo a 2 decimales; división por 0 rechazada), `VALIDATED` exige evidencia `verified=true` con `source`). **Reintenta.**
 2. `EvidenceValidationGate` (semántico: `sourceType`∈`WEB|CUSTOMER|TRANSACTION|INTERNAL|NONE`, `verified` + `NONE` prohibido, `WEB` verificado exige URL http(s)). **No reintenta**, falla la tarea de inmediato (asimetría deliberada).
 3. `EvidenceBindingGate` ("buscó pero no citó"): si el agente recibió URLs confirmadas de la herramienta de búsqueda, debe citar al menos una. Las URLs se acumulan entre reintentos. **Reintenta.**
 
