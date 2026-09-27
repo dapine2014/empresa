@@ -324,13 +324,55 @@ public class CeoService {
                 + " respondé exactamente: \"No tengo ese dato registrado.\" — nunca"
                 + " asumas que un paso avanzó porque otro paso anterior terminó.";
 
+        return conversation("CEO_CHAT", "ceo", system, history, message, companyMemoryQuery, model);
+    }
+
+    /** Hablante del chat con varios agentes (spec 2026-09-27 §5). */
+    public record ChatSpeaker(String agentId, String name, String role, String personality) {
+    }
+
+    /**
+     * Un agente responde en el chat (spec 2026-09-27 §5): su identidad, su prompt activo, su modelo y solo
+     * query_company_memory (lectura). No lanza misiones, no aprueba, no rechaza ni contacta a nadie.
+     */
+    public String agentChat(
+            ChatSpeaker speaker,
+            String teamRoster,
+            List<ConversationTurn> history,
+            String message,
+            Function<String, String> companyMemoryQuery,
+            String agentPrompt,
+            String model) {
+
+        var promptBlock = agentPrompt == null || agentPrompt.isBlank() ? ""
+                : "CÓMO DEBES RAZONAR (definido por el fundador para vos):\n" + agentPrompt + "\n";
+        var system = """
+                Eres %s, %s de Forjai, una empresa real operada principalmente por agentes de IA. Tu nombre es %s.
+                Personalidad: %s
+                Estás en el chat de la empresa respondiendo al fundador (a veces junto a otros agentes).
+                No puedes lanzar misiones, aprobar, rechazar ni contactar a nadie: si te lo piden, dilo y remite a Alex
+                (el CEO) o a los comandos de misión. Las acciones reservadas son solo del fundador.
+                No inventes clientes, ventas, ingresos, búsquedas ni evidencia. Para datos reales de la empresa usa
+                query_company_memory; si no hay dato, responde exactamente: "No tengo ese dato registrado."
+                Equipo real (nombre y rol):
+                %s
+                %s""".formatted(speaker.name(), speaker.role(), speaker.name(), speaker.personality(), teamRoster,
+                promptBlock);
+
+        return conversation("AGENT_CHAT", speaker.agentId(), system, history, message, companyMemoryQuery, model);
+    }
+
+    /** Dos turnos: uno con query_company_memory disponible y, si la pidió, el final con el resultado real. */
+    private String conversation(String operation, String actor, String system, List<ConversationTurn> history,
+                                String message, Function<String, String> companyMemoryQuery, String model) {
+
         var messages = new ArrayList<Map<String, Object>>();
         messages.add(Map.of("role", "system", "content", system));
         messages.addAll(buildHistoryMessages(history));
         messages.add(Map.of("role", "user", "content", message));
 
         var turn = callModel(
-                "CEO_CHAT", "ceo", model, messages, null, COMPANY_MEMORY_TOOLS
+                operation, actor, model, messages, null, COMPANY_MEMORY_TOOLS
         );
 
         var topic =
@@ -360,7 +402,7 @@ public class CeoService {
         messages.add(Map.of("role", "tool", "content", result));
 
         var finalTurn = callModel(
-                "CEO_CHAT", "ceo", model, messages, null, null
+                operation, actor, model, messages, null, null
         );
 
         return finalTurn.content();
