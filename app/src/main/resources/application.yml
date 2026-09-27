@@ -74,5 +74,13 @@ sandbox:
     timeout: ${SANDBOX_RUNNER_TIMEOUT:30m}
 remote-models:
   base-url: ${REMOTE_MODELS_BASE_URL:https://integrate.api.nvidia.com/v1}
-  api-key: ${NVIDIA_API_KEY:}
   read-timeout: ${REMOTE_MODELS_READ_TIMEOUT:10m}
+  providers:
+    nvidia:
+      api-key: ${NVIDIA_API_KEY:}
+    nvidia-discovery:
+      api-key: ${NVIDIA_API_KEY_DISCOVERY:}
+    nvidia-creative:
+      api-key: ${NVIDIA_API_KEY_CREATIVE:}
+    nvidia-ceo:
+      api-key: ${NVIDIA_API_KEY_CEO:}

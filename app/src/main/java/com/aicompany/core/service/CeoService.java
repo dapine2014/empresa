@@ -227,7 +227,19 @@ public class CeoService {
      * Prefijo de Agent.model para la API remota compatible con OpenAI (hoy NVIDIA). Decisión del fundador
      * (2026-09-26): Engineering con "nvidia:moonshotai/kimi-k3" tras 18 misiones con qwen3:8b sin build verde.
      */
-    static final String REMOTE_MODEL_PREFIX = "nvidia:";
+    static final java.util.regex.Pattern REMOTE_MODEL = java.util.regex.Pattern.compile("^(nvidia(?:-[a-z]+)?):(.+)$");
+
+    /** Proveedor remoto y modelo de un Agent.model con prefijo (decisión del fundador 2026-09-27: una key por grupo). */
+    public record RemoteModel(String provider, String model) {
+    }
+
+    static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
+        if (agentModel == null) {
+            return java.util.Optional.empty();
+        }
+        var m = REMOTE_MODEL.matcher(agentModel);
+        return m.matches() ? java.util.Optional.of(new RemoteModel(m.group(1), m.group(2))) : java.util.Optional.empty();
+    }
     static final int REMOTE_TEAM_MAX_OUTPUT_TOKENS = 16_384;
     static final int REMOTE_MAX_OUTPUT_TOKENS = 4_096;
 
@@ -235,7 +247,7 @@ public class CeoService {
     private final EvidenceAcquisitionService evidenceAcquisitionService;
     private final CompanyEventPublisher events;
     private final MeterRegistry meterRegistry;
-    private final OpenAiCompatibleClient remote;
+    private final Map<String, OpenAiCompatibleClient> remotes;
 
     public CeoService(
             RestClient ollama,
@@ -243,7 +255,7 @@ public class CeoService {
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
             MeterRegistry meterRegistry) {
-        this(ollama, jsonMapper, evidenceAcquisitionService, events, meterRegistry, null);
+        this(ollama, jsonMapper, evidenceAcquisitionService, events, meterRegistry, Map.of());
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -253,14 +265,14 @@ public class CeoService {
             EvidenceAcquisitionService evidenceAcquisitionService,
             CompanyEventPublisher events,
             MeterRegistry meterRegistry,
-            OpenAiCompatibleClient remote) {
+            Map<String, OpenAiCompatibleClient> remotes) {
 
         this.ollama = ollama;
         this.jsonMapper = jsonMapper;
         this.evidenceAcquisitionService = evidenceAcquisitionService;
         this.events = events;
         this.meterRegistry = meterRegistry;
-        this.remote = remote;
+        this.remotes = remotes == null ? Map.of() : remotes;
     }
 
     /**
@@ -1238,7 +1250,7 @@ public class CeoService {
 
     /** El proveedor remoto se usa solo en llamadas de equipo, que nunca llevan tools (sin traducción de tool calls). */
     void rejectToolsForRemoteModels(String operation, String model, List<Map<String, Object>> tools) {
-        if (model != null && model.startsWith(REMOTE_MODEL_PREFIX) && tools != null && !tools.isEmpty()) {
+        if (remoteModel(model).isPresent() && tools != null && !tools.isEmpty()) {
             throw new IllegalArgumentException("callModel: el modelo remoto " + model + " no admite tools todavía "
                     + "(operation=" + operation + "); usa un modelo de Ollama para ese agente.");
         }
@@ -1284,11 +1296,14 @@ public class CeoService {
 
         var startedAt = System.nanoTime();
 
-        if (model != null && model.startsWith(REMOTE_MODEL_PREFIX)) {
+        var remoteRef = remoteModel(model);
+        if (remoteRef.isPresent()) {
+            var remote = remotes.get(remoteRef.get().provider());
             if (remote == null) {
-                throw new IllegalStateException("No hay cliente remoto configurado para " + model + ".");
+                throw new IllegalStateException("No hay proveedor remoto configurado para \"" + remoteRef.get().provider()
+                        + "\" (modelo " + model + ").");
             }
-            var remoteModel = model.substring(REMOTE_MODEL_PREFIX.length());
+            var remoteModel = remoteRef.get().model();
             var maxTokens = TEAM_STRUCTURED_OPERATIONS.contains(operation)
                     ? REMOTE_TEAM_MAX_OUTPUT_TOKENS : REMOTE_MAX_OUTPUT_TOKENS;
             var content = remote.chat(remoteModel, messages, format != null, maxTokens);

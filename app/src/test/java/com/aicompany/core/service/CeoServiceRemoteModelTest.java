@@ -18,8 +18,10 @@ class CeoServiceRemoteModelTest {
 
     private final RestClient ollama = mock(RestClient.class);
     private final OpenAiCompatibleClient remote = mock(OpenAiCompatibleClient.class);
+    private final OpenAiCompatibleClient ceoRemote = mock(OpenAiCompatibleClient.class);
     private final CeoService ceoService = new CeoService(ollama, JsonMapper.builder().build(),
-            mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class), new SimpleMeterRegistry(), remote);
+            mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class), new SimpleMeterRegistry(),
+            java.util.Map.of("nvidia", remote, "nvidia-ceo", ceoRemote));
 
     @Test
     void aNvidiaPrefixedModelGoesToTheRemoteClientWithJsonMode() {
@@ -41,10 +43,30 @@ class CeoServiceRemoteModelTest {
         verifyNoInteractions(remote);
     }
 
+
+    // Decisión del fundador (2026-09-27): una key por grupo; el prefijo del modelo elige el proveedor.
     @Test
-    void theRemoteProviderRejectsToolCallsExplicitly() {
-        var ex = assertThrows(IllegalArgumentException.class, () -> ceoService.rejectToolsForRemoteModels(
-                "AGENT_TOOL_DECISION", "nvidia:moonshotai/kimi-k3", List.of(java.util.Map.of("type", "function"))));
-        assertTrue(ex.getMessage().contains("tools"), ex.getMessage());
+    void eachProviderPrefixUsesItsOwnClient() {
+        when(ceoRemote.chat(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyList(), eq(true), anyInt()))
+                .thenReturn("no es un plan");
+        assertThrows(IllegalStateException.class, () ->
+                ceoService.planTeamWork("ceo", "p", "", "nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b"));
+        verify(ceoRemote).chat(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyList(), eq(true), anyInt());
+        verifyNoInteractions(remote);
+    }
+
+    @Test
+    void anUnknownRemoteProviderFailsClearlyInsteadOfFallingBackToOllama() {
+        var ex = assertThrows(IllegalStateException.class, () ->
+                ceoService.generateDevelopmentArtifact("backend", "p", "", "nvidia-otro:x/y"));
+        assertTrue(ex.getMessage().contains("nvidia-otro"), ex.getMessage());
+        verifyNoInteractions(ollama);
+    }
+
+    @Test
+    void remoteModelParsing() {
+        assertEquals(java.util.Optional.of(new CeoService.RemoteModel("nvidia-discovery", "nvidia/nemotron-3-super-120b-a12b")),
+                CeoService.remoteModel("nvidia-discovery:nvidia/nemotron-3-super-120b-a12b"));
+        assertEquals(java.util.Optional.empty(), CeoService.remoteModel("qwen3:8b"));
     }
 }

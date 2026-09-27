@@ -42,18 +42,26 @@ public class CoreConfig {
                 RestClient.builder().baseUrl(url).requestFactory(factory).build(), token);
     }
 
-    /** API remota compatible con OpenAI (NVIDIA) para Agent.model "nvidia:<modelo>". Sin key, falla solo al usarse. */
+    /**
+     * Proveedores remotos compatibles con OpenAI (NVIDIA), uno por grupo de agentes con su propia key (decisión del
+     * fundador 2026-09-27). Agent.model "<proveedor>:<modelo>" elige el cliente; sin key, falla solo al usarse.
+     */
     @Bean
-    com.aicompany.core.service.OpenAiCompatibleClient remoteModelClient(
+    java.util.Map<String, com.aicompany.core.service.OpenAiCompatibleClient> remoteModelClients(
+            org.springframework.core.env.Environment env,
             @Value("${remote-models.base-url:https://integrate.api.nvidia.com/v1}") String baseUrl,
-            @Value("${remote-models.api-key:}") String apiKey,
             @Value("${remote-models.read-timeout:10m}") java.time.Duration readTimeout) {
-        var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(java.time.Duration.ofSeconds(15));
-        factory.setReadTimeout(readTimeout);
-        return new com.aicompany.core.service.OpenAiCompatibleClient(
-                RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build(), apiKey,
-                java.time.Duration.ofSeconds(10));
+        var clients = new java.util.LinkedHashMap<String, com.aicompany.core.service.OpenAiCompatibleClient>();
+        for (var provider : java.util.List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo")) {
+            var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(java.time.Duration.ofSeconds(15));
+            factory.setReadTimeout(readTimeout);
+            clients.put(provider, new com.aicompany.core.service.OpenAiCompatibleClient(
+                    RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build(),
+                    env.getProperty("remote-models.providers." + provider + ".api-key", ""),
+                    java.time.Duration.ofSeconds(10)));
+        }
+        return clients;
     }
 
     /** Vulnerabilidades conocidas (parte 3 del sandbox): https://api.osv.dev. */
