@@ -98,4 +98,23 @@ class DependencyFetcherTest {
         assertTrue(result.outputTail().contains("no quedó listo"), result.outputTail());
         assertTrue(calls.stream().noneMatch(c -> c.contains("dotnet")));
     }
+
+    // Diagnóstico (MISSION-DEPS-VERIFY-3): NU1301 intermitente; si la restauración falla, la salida lleva los logs
+    // del proxy (qué CONNECT vio y con qué resultado) antes de borrarlo.
+    @Test
+    void aFailedRestoreIncludesTheProxyLogs() {
+        var result = fetcher((command, dir, timeout) -> {
+            calls.add(command);
+            if (command.contains("logs")) {
+                return new ProcessExecutor.Execution(0, "Accepting HTTP Socket connections\nTCP_DENIED/403 CONNECT x:443", false);
+            }
+            if (command.contains("dotnet")) {
+                return new ProcessExecutor.Execution(1, "error NU1301", false);
+            }
+            return new ProcessExecutor.Execution(0, "", false);
+        }).fetch("NUGET", List.of(new DependencyRequest.Package("A", "1.0.0")));
+
+        assertEquals("FAIL", result.status());
+        assertTrue(result.outputTail().contains("TCP_DENIED/403"), result.outputTail());
+    }
 }

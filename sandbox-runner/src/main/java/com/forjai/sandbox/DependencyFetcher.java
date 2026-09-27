@@ -76,6 +76,8 @@ public class DependencyFetcher {
             var restore = executor.run(restoreCommand(ecosystem, jobDir, proxy), jobDir, RESTORE_TIMEOUT_SECONDS);
             out.append(restore.output());
             if (restore.timedOut() || restore.exitCode() != 0) {
+                var proxyLogs = executor.run(List.of("podman", "--url", podmanUrl, "logs", proxy), depsRoot, 30);
+                out.append("\n--- logs del proxy ---\n").append(proxyLogs.output());
                 return new FetchedPackage.FetchResult(jobId, restore.timedOut() ? "TIMEOUT" : "FAIL", tail(out.toString()), List.of());
             }
 
