@@ -156,6 +156,9 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("Ronda de evidencia 1 de 2 (queda 1)"), response);
         assertTrue(response.contains("Ronda 0: sales=MARKET_DISCOVERY COMPLETED"), response);
         assertTrue(response.contains("Ronda 1 (pedido: \"Quiero precios reales\"): sales=MARKET_DISCOVERY COMPLETED"), response);
+        // Verificado en vivo (MISSION-RONDAS-DISC): la lista plana y la agrupada salían juntas, con "..".
+        assertFalse(response.contains("Tareas de esta misión"), response);
+        assertFalse(response.contains(".."), response);
     }
 
     // Una misión con un "más evidencia" registrado antes de esta feature (no disparó ronda) no debe correr los pedidos.

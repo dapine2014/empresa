@@ -731,6 +731,8 @@ public class ChatIntentRouter {
                 .map(a -> a.name() + " (" + a.role() + "): " + a.status())
                 .collect(Collectors.joining(", "));
 
+        var rounds = formatEvidenceRounds(mission.missionId(), tasks);
+
         var closing = productStatus.ordinal() < ProductStatus.DEVELOPMENT.ordinal()
                 ? NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_SINGLE
                 : "";
@@ -739,8 +741,8 @@ public class ChatIntentRouter {
                 + " (esto es el estado del proceso de análisis/decisión interno, "
                 + "NO implica nada sobre si el producto está en desarrollo, publicado "
                 + "o generando ingresos). productStatus=" + productStatus
-                + ". Tareas de esta misión: " + taskLines + formatEvidenceRounds(mission.missionId(), tasks)
-                + ". Estado actual de los agentes involucrados: " + agentStatusLines
+                + (rounds.isEmpty() ? ". Tareas de esta misión: " + taskLines + "." : "." + rounds)
+                + " Estado actual de los agentes involucrados: " + agentStatusLines
                 + "." + closing + formatFinancialCriteria(mission) + formatTeamExecution(mission, tasks);
     }
 
