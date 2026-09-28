@@ -49,6 +49,8 @@ public class CompanyPolicyService {
         map.put(PolicyKey.SUCCESS_THRESHOLD_VERY_GOOD, 100.0);
         map.put(PolicyKey.SUCCESS_THRESHOLD_EXCELLENT, 1000.0);
         map.put(PolicyKey.SUCCESS_THRESHOLD_EXTRAORDINARY, 5000.0);
+        // Rondas de evidencia (spec 2026-09-16, revisión 2026-09-27): vueltas de REQUEST_MORE_EVIDENCE por misión.
+        map.put(PolicyKey.MAX_EVIDENCE_ROUNDS, 2.0);
         return map;
     }
 
