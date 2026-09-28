@@ -175,3 +175,60 @@ instrucción original a `reexecuteAsync`.
 - **Editar `company.max-evidence-rounds` por misión**: es un límite global
   de la empresa, no por misión — no hay caso de uso real hoy para variarlo
   caso a caso.
+
+---
+
+## Revisión 2026-09-27 (reimplementación sobre el código actual)
+
+La rama `worktree-evidence-rounds` quedó ~190 commits atrás (misiones por equipo, sandbox, proveedores remotos,
+policies versionadas) y choca con `MissionExecutor`/`MissionService`/`CeoService`. Se **reimplementa** sobre `master`;
+lo de arriba sigue vigente salvo donde esta sección lo reemplaza.
+
+### Decisiones del fundador (2026-09-27)
+
+1. **Aplica a todas las misiones**, incluidas las de equipo y Engineering (reemplaza el punto 1: ya no son "siempre los 5").
+2. **El límite es una Financial Policy versionada** `MAX_EVIDENCE_ROUNDS` (default 2), editable en Settings con historial
+   y rollback (reemplaza `company.max-evidence-rounds` del punto 2). El chequeo es el mismo: `evidenceRound >= límite` →
+   `IllegalStateException` sin registrar la `Decision`.
+3. **Sobre una misión `FAILED` también re-ejecuta** y consume una vuelta (sirve para reintentar con el comentario).
+
+### Qué re-ejecuta cada tipo de misión
+
+- **Discovery** (sin `teamId`): las 5 tareas fijas, como decía el spec.
+- **Equipo de análisis** (Creative, Marketing) y **Engineering**: **se reutiliza el último plan válido** del líder (mismos
+  miembros, acciones y, en Engineering, mismo `stackProfile`, contextos y `ownedPaths`), sin volver a planificar. Cada
+  miembro vuelve a correr su tarea con el pedido del inversionista. Así una vuelta es una revisión del mismo trabajo y no un
+  proyecto distinto. Si la misión falló antes de tener plan (p. ej. en la planificación), el líder planifica de nuevo con el
+  pedido del inversionista agregado a la instrucción.
+- **Engineering sobre el mismo repositorio**: no se vuelve a crear el scaffold; cada agente regenera su capa **viendo el
+  código actual** (como en el ciclo de corrección) y commitea encima (`Forjai-Task` con el `taskId` de la ronda). Después
+  corren igual la capa 1, el sandbox con su ciclo de corrección, la revisión de Vera y `validationStatus`. El historial de
+  Git conserva cada ronda.
+
+### Ids de tarea (ajusta el punto 3)
+
+La ronda 0 **conserva los ids actuales** (`MISSION-X-SALES`, `MISSION-X-ENGINEERING-PLAN`), para no romper misiones
+existentes ni el código que deriva ids; desde la ronda 1 se agrega el sufijo `-R<n>` (`MISSION-X-SALES-R1`). El nodo
+`AgentTask` gana la propiedad `evidenceRound`.
+
+### Reparto del pedido (generaliza el punto 5)
+
+`CeoService.routeInvestorFeedback` recibe la lista de agentes de la ronda (5 fijos en discovery, miembros del plan en
+equipos) y el schema se arma con esas claves. Usa el modelo del CEO (hoy remoto: `json_object`, la estructura la valida
+Java). Si falla o devuelve vacío para alguien, ese agente corre igual con el pedido completo del inversionista (nunca se
+pierde el pedido).
+
+### Chat y Command Center
+
+- En el chat, "pide más evidencia sobre MISSION-X …" ya pasa por `recordDecision`: la respuesta dice que arrancó la ronda N
+  (o por qué no: límite alcanzado).
+- Command Center: sin pantalla nueva; las tareas de cada ronda aparecen en el detalle con su sufijo, y `MAX_EVIDENCE_ROUNDS`
+  aparece en Settings junto a las demás policies.
+
+### Testing adicional
+
+- Límite leído de la policy; `FAILED` re-ejecuta; ronda 0 sin sufijo y ronda 1 con `-R1`.
+- Equipo: la ronda reutiliza el plan guardado sin llamar al planificador; sin plan, replanifica con el pedido.
+- Engineering: la ronda no recrea el scaffold y cada agente recibe el pedido y el código actual.
+- `routeInvestorFeedback`: claves dinámicas; si el modelo falla, cada agente recibe el pedido completo.
+- En vivo: una misión de discovery y una de Engineering con `REQUEST_MORE_EVIDENCE`, verificando ronda 1, historial y límite.
