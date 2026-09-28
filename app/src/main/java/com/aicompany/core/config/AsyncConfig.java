@@ -9,6 +9,8 @@ import java.util.concurrent.Executor;
 
 @Configuration
 @EnableAsync
+// Spec salud de modelos (2026-09-28): ModelHealthService prueba cada 30 s los modelos caídos.
+@org.springframework.scheduling.annotation.EnableScheduling
 public class AsyncConfig {
 
     @Bean(name = "missionOrchestratorExecutor")

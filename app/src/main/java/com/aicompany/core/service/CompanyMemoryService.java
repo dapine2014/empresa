@@ -220,6 +220,44 @@ public class CompanyMemoryService {
      * {@code PUT /api/company/agents/{id}/model}) — toma efecto en la
      * próxima tarea/llamada de ese agente, sin caché ni reinicio.
      */
+    /** Suplente local (spec salud de modelos 2026-09-28). Default qwen3-coder:30b; "" = sin suplente. */
+    public String agentFallbackModel(String agentId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (a:Agent {id:$id}) RETURN coalesce(a.fallbackModel, $fallback) AS model",
+                            Map.of("id", agentId, "fallback", DEFAULT_FALLBACK_MODEL))
+                    .list(r -> r.get("model").asString()).stream().findFirst().orElse(DEFAULT_FALLBACK_MODEL);
+        }
+    }
+
+    public void setAgentFallbackModel(String agentId, String model) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                var result = tx.run("MATCH (a:Agent {id:$id}) SET a.fallbackModel=$model",
+                        Map.of("id", agentId, "model", model == null ? "" : model.strip()));
+                if (result.consume().counters().propertiesSet() == 0) {
+                    throw new IllegalArgumentException("No existe el agente " + agentId);
+                }
+                return null;
+            });
+        }
+    }
+
+    public List<String> agentIdsUsingModel(String model) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (a:Agent {model:$model}) RETURN a.id AS id ORDER BY a.id", Map.of("model", model))
+                    .list(r -> r.get("id").asString());
+        }
+    }
+
+    public List<String> remoteModelsInUse() {
+        try (var session = driver.session()) {
+            return session.run("MATCH (a:Agent) WHERE a.model STARTS WITH 'nvidia' RETURN DISTINCT a.model AS m ORDER BY m")
+                    .list(r -> r.get("m").asString());
+        }
+    }
+
+    public static final String DEFAULT_FALLBACK_MODEL = "qwen3-coder:30b";
+
     public void setAgentModel(String agentId, String model) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
@@ -311,14 +349,17 @@ public class CompanyMemoryService {
     public List<Map<String, Object>> agents() {
         try (var session = driver.session()) {
             return session.run("MATCH (a:Agent) RETURN a.id AS id, a.name AS name, a.role AS role, a.personality AS personality, "
-                            + "coalesce(a.model, '') AS model ORDER BY a.id")
+                            + "coalesce(a.model, '') AS model, coalesce(a.fallbackModel, '" + DEFAULT_FALLBACK_MODEL
+                            + "') AS fallbackModel ORDER BY a.id")
                     .list(record -> Map.of(
                             "id", record.get("id").asString(),
                             "name", record.get("name").asString(),
                             "role", record.get("role").asString(),
                             "personality", record.get("personality").asString(),
                             // Subproyecto 2 (2026-09-28): la pantalla Agents muestra y edita el modelo.
-                            "model", record.get("model").asString()));
+                            "model", record.get("model").asString(),
+                            // Spec salud de modelos (2026-09-28): suplente local editable en Agents.
+                            "fallbackModel", record.get("fallbackModel").asString()));
         }
     }
 }
