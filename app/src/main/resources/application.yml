@@ -25,6 +25,9 @@ spring:
 
 server:
   port: 8081
+  # Finanzas (2026-09-27): la pantalla muestra el motivo real de un rechazo (p. ej. "es un prospecto").
+  error:
+    include-message: always
 
 company:
   name: Forjai

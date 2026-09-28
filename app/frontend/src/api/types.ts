@@ -271,3 +271,70 @@ export interface PolicyCommand {
   value: number
   changeReason: string
 }
+
+// Finanzas (spec 2026-09-27): reflejo a mano de los records Java de com.aicompany.core.model.Finance*.
+export interface FinanceEntry {
+  movementId: string
+  type: 'SALE_REVENUE' | 'SALE_COST' | 'EXPENSE' | 'CORRECTION'
+  description: string
+  amountUsd: number
+  missionId: string | null
+  environment: string
+  occurredAt: string
+  runningBalanceUsd: number | null
+  targetId: string | null
+}
+
+export interface FinanceSummary {
+  seedCapitalUsd: number
+  revenueUsd: number
+  costsUsd: number
+  profitUsd: number
+  balanceUsd: number
+  entries: FinanceEntry[]
+}
+
+export interface FinanceCustomer {
+  id: string
+  name: string
+  contact: string | null
+  missionId: string | null
+  recordedAt: string
+}
+
+export interface FinanceCustomerCommand {
+  name: string
+  contact?: string
+  missionId?: string
+  evidenceDescription: string
+  evidenceLink?: string
+}
+
+export interface FinanceSaleCommand {
+  customerId: string
+  description: string
+  revenueUsd: number
+  costUsd: number
+  missionId?: string
+  environment?: string
+  evidenceDescription: string
+  evidenceLink?: string
+}
+
+export interface FinanceExpenseCommand {
+  description: string
+  amountUsd: number
+  missionId?: string
+  environment?: string
+  evidenceDescription: string
+  evidenceLink?: string
+}
+
+export interface FinanceCorrectionCommand {
+  targetId: string
+  revenueAdjustmentUsd: number
+  costAdjustmentUsd: number
+  reason: string
+  evidenceDescription: string
+  evidenceLink?: string
+}
