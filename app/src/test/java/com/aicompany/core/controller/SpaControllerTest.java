@@ -15,5 +15,6 @@ class SpaControllerTest {
         var mapping = SpaController.class.getMethod("forwardToSpa").getAnnotation(RequestMapping.class);
 
         assertTrue(List.of(mapping.value()).contains("/finanzas"), List.of(mapping.value()).toString());
+        assertTrue(List.of(mapping.value()).contains("/dependencias"), List.of(mapping.value()).toString());
     }
 }

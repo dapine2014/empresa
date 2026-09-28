@@ -38,6 +38,7 @@ public class CompanyController {
     private final TeamMemoryService teamMemoryService;
     private final PromptMemoryService promptMemoryService;
     private final CompanyPolicyService companyPolicyService;
+    private final com.aicompany.core.service.CeoService ceoService;
 
     public CompanyController(
             CompanyMemoryService memoryService,
@@ -46,7 +47,8 @@ public class CompanyController {
             ChatIntentRouter chatIntentRouter,
             TeamMemoryService teamMemoryService,
             PromptMemoryService promptMemoryService,
-            CompanyPolicyService companyPolicyService) {
+            CompanyPolicyService companyPolicyService,
+            com.aicompany.core.service.CeoService ceoService) {
 
         this.memoryService = memoryService;
         this.missionMemoryService = missionMemoryService;
@@ -55,6 +57,7 @@ public class CompanyController {
         this.teamMemoryService = teamMemoryService;
         this.promptMemoryService = promptMemoryService;
         this.companyPolicyService = companyPolicyService;
+        this.ceoService = ceoService;
     }
 
     @GetMapping("/agents")
@@ -84,7 +87,9 @@ public class CompanyController {
             @PathVariable("id") String id,
             @Valid @RequestBody AgentModelCommand command) {
 
-        memoryService.setAgentModel(id, command.model());
+        // Subproyecto 2 (2026-09-28): un proveedor remoto desconocido se rechaza antes de guardar.
+        ceoService.checkModel(command.model());
+        memoryService.setAgentModel(id, command.model().strip());
 
         return new AgentModelResponse(id, command.model());
     }

@@ -1,9 +1,11 @@
 import type {
   ActivityItem,
+  AgentInfo,
   AgentStatusResponse,
   ChatResponse,
   DecisionCommand,
   DecisionResponse,
+  DependencyInfo,
   FinanceCorrectionCommand,
   FinanceCustomer,
   FinanceCustomerCommand,
@@ -49,6 +51,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  agents: () => request<AgentInfo[]>('/api/company/agents'),
+  updateAgentModel: (agentId: string, model: string) =>
+    request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/model`, {
+      method: 'PUT',
+      body: JSON.stringify({ model }),
+    }),
+  dependencies: () => request<DependencyInfo[]>('/api/company/dependencies'),
+  approveDependency: (id: string) =>
+    request<unknown>(`/api/company/dependencies/${encodeURIComponent(id)}/approve`, { method: 'PUT' }),
+  rejectDependency: (id: string) =>
+    request<unknown>(`/api/company/dependencies/${encodeURIComponent(id)}/reject`, { method: 'PUT' }),
+
   finance: (missionId?: string) =>
     request<FinanceSummary>(`/api/company/finance${missionId ? `?missionId=${encodeURIComponent(missionId)}` : ''}`),
   financeCustomers: () => request<FinanceCustomer[]>('/api/company/finance/customers'),

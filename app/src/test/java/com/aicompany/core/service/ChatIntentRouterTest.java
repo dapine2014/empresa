@@ -49,10 +49,11 @@ class ChatIntentRouterTest {
     private final PromptMemoryService promptMemory = mock(PromptMemoryService.class);
 
     private final FinanceService finance = mock(FinanceService.class);
+    private final DependencyMemoryService dependencies = mock(DependencyMemoryService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
-            "qwen2.5-coder:14b", teamMemory, promptMemory, finance
+            "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies
     );
 
     {
@@ -1475,6 +1476,42 @@ class ChatIntentRouterTest {
                 new FinanceEntry("S1", "SALE_REVENUE", "Landing", 100, "MISSION-5", "PRODUCTION", Instant.now(), 150.0, null))));
         var response = router.route("¿Cómo va MISSION-5?");
         assertTrue(response.contains("Finanzas de la misión: ingresos US$100.00, costos US$20.00, ganancias US$80.00"), response);
+    }
+
+    // Subproyecto 2 (2026-09-28): el modelo de cada agente y las dependencias pendientes también se ven en el chat.
+    @Test
+    void theAgentStatusShowsEachAgentsModel() {
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(new AgentStatusResponse("sales", "Sofia",
+                "Director of Sales AI", "x", "WORKING", "MISSION-1", "MARKET_DISCOVERY", "RUNNING", Instant.now())));
+        when(companyMemory.agentModel(eq("sales"), anyString())).thenReturn("nvidia-discovery:nvidia/nemotron-3-ultra-550b-a55b");
+
+        var response = router.route("¿Qué agentes están trabajando ahora?");
+
+        assertTrue(response.contains("Sofia (Director of Sales AI): WORKING (MISSION-1, MARKET_DISCOVERY) — modelo "
+                + "nvidia-discovery:nvidia/nemotron-3-ultra-550b-a55b"), response);
+    }
+
+    @Test
+    void pendingDependenciesAreListedWithTheirReason() {
+        when(dependencies.list()).thenReturn(List.of(
+                Map.of("id", "NUGET:newtonsoft.json@12.0.1", "status", "PENDING_APPROVAL", "missionId", "MISSION-9",
+                        "requestedByAgent", "backend", "reasons", List.of("Vulnerabilidad HIGH GHSA-5crp")),
+                Map.of("id", "NUGET:serilog@3.1.1", "status", "APPROVED", "missionId", "MISSION-8",
+                        "requestedByAgent", "backend", "reasons", List.of())));
+
+        var response = router.route("¿hay dependencias pendientes?");
+
+        assertTrue(response.contains("1 dependencia(s) esperando tu aprobación"), response);
+        assertTrue(response.contains("NUGET:newtonsoft.json@12.0.1 (MISSION-9, pedida por backend): Vulnerabilidad HIGH GHSA-5crp"), response);
+        assertFalse(response.contains("serilog"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void withoutPendingDependenciesTheChatSaysSo() {
+        when(dependencies.list()).thenReturn(List.of());
+
+        assertTrue(router.route("dependencias pendientes").contains("No hay dependencias esperando tu aprobación"));
     }
 
     // Review Focus: la gobernanza gana sobre las menciones.

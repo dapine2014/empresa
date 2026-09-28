@@ -23,6 +23,23 @@ class CeoServiceRemoteModelTest {
             mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class), new SimpleMeterRegistry(),
             java.util.Map.of("nvidia", remote, "nvidia-ceo", ceoRemote));
 
+    // Subproyecto 2 (2026-09-28): el modelo se edita desde el Command Center; un proveedor remoto desconocido se
+    // rechaza al guardar (antes fallaba recién cuando el agente trabajaba).
+    @Test
+    void anUnknownRemoteProviderIsRejectedWhenSavingTheModel() {
+        var ex = assertThrows(IllegalArgumentException.class, () -> ceoService.checkModel("anthropic:claude/opus"));
+        assertTrue(ex.getMessage().contains("nvidia-ceo"), ex.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> ceoService.checkModel("  "));
+    }
+
+    @Test
+    void knownProvidersAndLocalOllamaModelsAreAccepted() {
+        assertDoesNotThrow(() -> ceoService.checkModel("nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b"));
+        assertDoesNotThrow(() -> ceoService.checkModel("nvidia:moonshotai/kimi-k3"));
+        assertDoesNotThrow(() -> ceoService.checkModel("qwen3:8b"));
+        assertDoesNotThrow(() -> ceoService.checkModel("hf.co/user/model:Q4"));
+    }
+
     @Test
     void aNvidiaPrefixedModelGoesToTheRemoteClientWithJsonMode() {
         when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))

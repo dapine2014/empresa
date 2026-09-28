@@ -44,9 +44,10 @@ class CompanyControllerTest {
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
     private final PromptMemoryService promptMemory = mock(PromptMemoryService.class);
     private final CompanyPolicyService companyPolicyService = mock(CompanyPolicyService.class);
+    private final com.aicompany.core.service.CeoService ceoService = mock(com.aicompany.core.service.CeoService.class);
 
     private final CompanyController controller =
-            new CompanyController(memory, missionMemory, activityMemory, router, teamMemory, promptMemory, companyPolicyService);
+            new CompanyController(memory, missionMemory, activityMemory, router, teamMemory, promptMemory, companyPolicyService, ceoService);
 
     @Test
     void teamsEndpointDelegatesEntirelyToTeamMemoryServiceSnapshotAll() {
@@ -214,6 +215,15 @@ class CompanyControllerTest {
 
         verify(memory).setAgentModel("engineering", "llama3:8b");
         assertEquals("llama3:8b", response.model());
+    }
+
+    @Test
+    void anInvalidModelIsRejectedBeforeSavingIt() {
+        doThrow(new IllegalArgumentException("Proveedor remoto desconocido")).when(ceoService).checkModel("anthropic:x/y");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.updateAgentModel("sales", new AgentModelCommand("anthropic:x/y")));
+        verify(memory, never()).setAgentModel(any(), any());
     }
 
     @Test

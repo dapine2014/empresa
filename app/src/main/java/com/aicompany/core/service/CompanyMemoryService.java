@@ -308,12 +308,15 @@ public class CompanyMemoryService {
 
     public List<Map<String, Object>> agents() {
         try (var session = driver.session()) {
-            return session.run("MATCH (a:Agent) RETURN a.id AS id, a.name AS name, a.role AS role, a.personality AS personality ORDER BY a.id")
+            return session.run("MATCH (a:Agent) RETURN a.id AS id, a.name AS name, a.role AS role, a.personality AS personality, "
+                            + "coalesce(a.model, '') AS model ORDER BY a.id")
                     .list(record -> Map.of(
                             "id", record.get("id").asString(),
                             "name", record.get("name").asString(),
                             "role", record.get("role").asString(),
-                            "personality", record.get("personality").asString()));
+                            "personality", record.get("personality").asString(),
+                            // Subproyecto 2 (2026-09-28): la pantalla Agents muestra y edita el modelo.
+                            "model", record.get("model").asString()));
         }
     }
 }
