@@ -1432,6 +1432,32 @@ public class CeoService {
         }
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Spec salud de modelos (2026-09-28). Setter opcional: los tests que no lo usan no cambian. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
+    /** La llamada del agente va a su suplente local; nunca en silencio (log, y el aviso lo da ModelHealthService). */
+    private ModelMessage viaFallback(String operation, String actor, String model, List<Map<String, Object>> messages,
+                                     Object format, List<Map<String, Object>> tools, Boolean think, Exception cause) {
+        var fallback = modelHealth.fallbackFor(actor);
+        var since = modelHealth.downSince(model);
+        if (fallback == null || fallback.isBlank() || remoteModel(fallback).isPresent() && modelHealth.isDown(fallback)) {
+            throw new IllegalStateException("El modelo " + model + " no responde en NVIDIA desde " + since + " y " + actor
+                    + " no tiene suplente disponible.", cause);
+        }
+        log.warn("MODEL_FALLBACK operation={} actor={} model={} fallback={}", operation, actor, model, fallback);
+        try {
+            return callModel(operation, actor, fallback, messages, format, tools, think);
+        } catch (RuntimeException ex) {
+            throw new IllegalStateException("El modelo " + model + " no responde en NVIDIA y el suplente " + fallback
+                    + " de " + actor + " también falló: " + ex.getMessage(), ex);
+        }
+    }
+
     /**
      * Verificado en vivo (MISSION-LOCAL-DISC, 2026-09-28): un modelo local sin "thinking" (qwen3-coder:30b, suplente de
      * Engineering) responde 400 "does not support thinking" si se manda "think". Se reintenta sin esa opción.
@@ -1500,8 +1526,27 @@ public class CeoService {
             var remoteModel = remoteRef.get().model();
             var maxTokens = TEAM_STRUCTURED_OPERATIONS.contains(operation)
                     ? REMOTE_TEAM_MAX_OUTPUT_TOKENS : REMOTE_MAX_OUTPUT_TOKENS;
-            // Spec 2026-09-27 §2: herramientas traducidas por el cliente; el guard format+tools ya corrió arriba.
-            var reply = remote.complete(remoteModel, messages, tools, format != null, maxTokens);
+            // Spec salud de modelos (2026-09-28): un modelo caído no se vuelve a esperar; va al suplente del agente.
+            if (modelHealth != null && modelHealth.isDown(model)) {
+                return viaFallback(operation, actor, model, messages, format, tools, think, null);
+            }
+            OpenAiCompatibleClient.RemoteReply reply;
+            try {
+                // Spec 2026-09-27 §2: herramientas traducidas por el cliente; el guard format+tools ya corrió arriba.
+                reply = remote.complete(remoteModel, messages, tools, format != null, maxTokens);
+            } catch (RemoteUnavailableException ex) {
+                if (modelHealth == null) {
+                    throw ex;
+                }
+                modelHealth.recordFailure(model, ex.getMessage());
+                if (modelHealth.isDown(model)) {
+                    return viaFallback(operation, actor, model, messages, format, tools, think, ex);
+                }
+                throw ex;
+            }
+            if (modelHealth != null) {
+                modelHealth.recordSuccess(model);
+            }
             log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={}",
                     operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
                     reply.content().length(), reply.toolCalls().size());
