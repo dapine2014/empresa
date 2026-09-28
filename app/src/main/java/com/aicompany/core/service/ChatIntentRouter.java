@@ -927,7 +927,10 @@ public class ChatIntentRouter {
         var lines = new ArrayList<String>();
         lines.add(" Ronda de evidencia " + round + " de " + max + " (queda" + (max - round == 1 ? " 1" : "n " + Math.max(0, max - round)) + ").");
         byRound.forEach((r, list) -> {
-            var label = r == 0 ? "Ronda 0" : "Ronda " + r + " (pedido: \"" + (r - 1 < requests.size() ? requests.get(r - 1) : "") + "\")";
+            // Los pedidos se alinean desde el final: uno registrado antes de existir las rondas no disparó ninguna.
+            var index = requests.size() - round + (r - 1);
+            var label = r == 0 ? "Ronda 0" : "Ronda " + r + " (pedido: \""
+                    + (index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
             lines.add(" " + label + ": " + list.stream().map(t -> t.agentId() + "=" + t.action() + " " + t.status())
                     .collect(Collectors.joining(", ")) + ".");
         });

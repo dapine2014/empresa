@@ -158,6 +158,24 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("Ronda 1 (pedido: \"Quiero precios reales\"): sales=MARKET_DISCOVERY COMPLETED"), response);
     }
 
+    // Una misión con un "más evidencia" registrado antes de esta feature (no disparó ronda) no debe correr los pedidos.
+    @Test
+    void aRequestRecordedBeforeRoundsExistedDoesNotShiftTheLabels() {
+        var mission = new MissionResponse("MISSION-7", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-7")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-7")).thenReturn(List.of(
+                new AgentTask("MISSION-7-SALES-R1", "MISSION-7", "sales", "MARKET_DISCOVERY", "COMPLETED", "{}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-7")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.evidenceRound("MISSION-7")).thenReturn(1);
+        when(missionMemory.evidenceRequests("MISSION-7")).thenReturn(List.of("pedido viejo", "pedido nuevo"));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        var response = router.route("¿Cómo va MISSION-7?");
+
+        assertTrue(response.contains("Ronda 1 (pedido: \"pedido nuevo\")"), response);
+    }
+
     @Test
     void aMissionFromBeforeRoundsIsShownAsRoundZero() {
         var mission = new MissionResponse("MISSION-6", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
