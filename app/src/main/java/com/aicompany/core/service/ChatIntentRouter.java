@@ -1,5 +1,7 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.FinanceSummary;
+
 import java.util.Optional;
 
 import com.aicompany.core.model.DecisionResponse;
@@ -177,6 +179,7 @@ public class ChatIntentRouter {
     private final ProductStatusService productStatusService;
     private final String defaultCeoModel;
     private final TeamMemoryService teamMemory;
+    private final FinanceService financeService;
     private final PromptMemoryService promptMemory;
 
     public ChatIntentRouter(
@@ -192,7 +195,8 @@ public class ChatIntentRouter {
             ProductStatusService productStatusService,
             @Value("${ollama.ceo-model}") String defaultCeoModel,
             TeamMemoryService teamMemory,
-            PromptMemoryService promptMemory) {
+            PromptMemoryService promptMemory,
+            FinanceService financeService) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -207,6 +211,7 @@ public class ChatIntentRouter {
         this.defaultCeoModel = defaultCeoModel;
         this.teamMemory = teamMemory;
         this.promptMemory = promptMemory;
+        this.financeService = financeService;
     }
 
     /**
@@ -743,7 +748,7 @@ public class ChatIntentRouter {
                 + "o generando ingresos). productStatus=" + productStatus
                 + (rounds.isEmpty() ? ". Tareas de esta misión: " + taskLines + "." : "." + rounds)
                 + " Estado actual de los agentes involucrados: " + agentStatusLines
-                + "." + closing + formatFinancialCriteria(mission) + formatTeamExecution(mission, tasks);
+                + "." + closing + missionFinance(mission.missionId()) + formatFinancialCriteria(mission) + formatTeamExecution(mission, tasks);
     }
 
     /** Equipo, commits reales y estado de validación — 100% desde Neo4j, nunca redactado por el LLM. */
@@ -1200,11 +1205,17 @@ public class ChatIntentRouter {
             return new QueryMatch(QueryIntent.OPPORTUNITIES, null);
         }
 
+        // Spec finanzas (2026-09-27): costos frente a ganancias, balance y movimientos.
         if (normalized.contains("gastado")
                 || normalized.contains("gasto")
                 || normalized.contains("dinero")
                 || normalized.contains("ganancia")
-                || normalized.contains("beneficio")) {
+                || normalized.contains("beneficio")
+                || normalized.contains("costo")
+                || normalized.contains("movimiento")
+                || normalized.contains("balance")
+                || normalized.contains("finanza")
+                || normalized.contains("ingreso")) {
             return new QueryMatch(QueryIntent.COMPANY_PROFIT, null);
         }
 
@@ -1264,7 +1275,7 @@ public class ChatIntentRouter {
             case "TEST_MISSIONS" -> formatTestMissions(missionMemory.findAll(50));
             case "LAST_MENTIONED" -> formatLastMentioned();
             case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
-            case "COMPANY_PROFIT" -> formatCompanyProfit(customerMemory.companyWideTotalRevenueAndCost());
+            case "COMPANY_PROFIT" -> formatFinance(financeService.summary(null), 10);
             case "COMPANY_STATUS" -> formatCompanyStatus();
             default -> "Dato no reconocido: " + topic + ".";
         };
@@ -1370,9 +1381,8 @@ public class ChatIntentRouter {
         var customers = customerCounts[0];
         var prospects = customerCounts[1];
 
-        var totals = customerMemory.companyWideTotalRevenueAndCost();
-        var revenue = totals[0];
-        var netProfit = totals[0] - totals[1];
+        // Spec finanzas (2026-09-27): mismo cálculo que la pantalla Finanzas (incluye gastos y correcciones).
+        var finance = financeService.summary(null);
 
         return String.format(
                 Locale.ROOT,
@@ -1380,12 +1390,12 @@ public class ChatIntentRouter {
                         + "Agentes: %d trabajando, %d inactivo(s). "
                         + "Misiones (producción): %d activa(s)%s, %d esperando tu aprobación, %d fallida(s). "
                         + "Oportunidades registradas: %d. Prospectos (leads): %d. Clientes reales: %d. "
-                        + "Ingresos: US$%.2f. Beneficio neto: US$%.2f.",
-                companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD), working, idle,
+                        + "Ingresos: US$%.2f. Costos: US$%.2f. Ganancias: US$%.2f. Balance: US$%.2f.",
+                finance.balanceUsd(), working, idle,
                 active, rerunning > 0 ? " (" + rerunning + " re-ejecutándose por más evidencia)" : "",
                 awaitingInvestor, failed,
                 opportunities, prospects, customers,
-                revenue, netProfit
+                finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd()
         );
     }
 
@@ -1573,18 +1583,27 @@ public class ChatIntentRouter {
                 + " oportunidad(es) identificada(s): " + lines;
     }
 
-    private String formatCompanyProfit(double[] totals) {
+    private String missionFinance(String missionId) {
+        var f = financeService.summary(missionId);
+        return f.entries().isEmpty() ? "" : String.format(Locale.ROOT,
+                " Finanzas de la misión: ingresos US$%.2f, costos US$%.2f, ganancias US$%.2f.",
+                f.revenueUsd(), f.costsUsd(), f.profitUsd());
+    }
 
-        var revenue = totals[0];
-        var cost = totals[1];
-        var netProfit = revenue - cost;
-
-        return String.format(
-                Locale.ROOT,
-                "Ingresos totales reales: US$%.2f. Costos totales reales: "
-                        + "US$%.2f. Utilidad neta real: US$%.2f.",
-                revenue, cost, netProfit
-        );
+    /** Spec finanzas (2026-09-27): costos, ganancias, balance y últimos movimientos, 100% desde FinanceService. */
+    private String formatFinance(FinanceSummary s, int lastN) {
+        var head = String.format(Locale.ROOT, "Costos: US$%.2f. Ganancias: US$%.2f (ingresos US$%.2f). Balance: US$%.2f "
+                + "(capital semilla US$%.2f).", s.costsUsd(), s.profitUsd(), s.revenueUsd(), s.balanceUsd(), s.seedCapitalUsd());
+        if (s.entries().isEmpty()) {
+            return head + " Todavía no hay movimientos registrados.";
+        }
+        var from = Math.max(0, s.entries().size() - lastN);
+        var lines = s.entries().subList(from, s.entries().size()).stream()
+                .map(e -> String.format(Locale.ROOT, "%s %s US$%.2f \"%s\"%s%s", e.occurredAt().toString().substring(0, 10),
+                        e.type(), e.amountUsd(), e.description(), e.targetId() == null ? "" : " (corrige " + e.targetId() + ")",
+                        "TEST".equals(e.environment()) ? " [prueba]" : ""))
+                .collect(Collectors.joining("; "));
+        return head + " Últimos movimientos: " + lines + ".";
     }
 
     private static String normalize(String text) {

@@ -862,3 +862,11 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 - `MISSION-E2E-ENG` (Engineering, `VERIFIED` con 25 tests): ronda 1 "agrega un endpoint para listar las facturas pagadas" sobre el mismo repositorio (sin scaffold nuevo; sandbox con 28 tests; `UNVALIDATED` por Iris y porque la API devolvió "sin choices" 3 veces a Vera); ronda 2 "el endpoint debe devolver también el total pagado" con el fix → **`VERIFIED`, 30/30 tests**, un commit por agente con `Forjai-Task …-R2`.
 
 **Pendientes menores**: "dame un status" solo cuenta misiones de producción; el pedido guardado es el mensaje completo del chat; la pantalla de misión del Command Center todavía no muestra "arrancó la ronda N".
+
+### Finanzas: costos frente a ganancias (subproyecto 1 de "Command Center: todo editable")
+
+**Decisiones del fundador** (2026-09-27): el éxito se mide en costos frente a ganancias; cliente = quien compra (un prospecto no); todo editable desde la UI, pero los registros financieros **no se editan ni se borran**: se corrigen con un asiento (`Correction`); misión opcional; evidencia = descripción obligatoria + link opcional; solo USD. Se reimplementó sobre master el spec del ledger del 15-sep (rama `worktree-financial-ledger`, ~190 commits atrás).
+
+**Bug real en vivo**: la pantalla no podía mostrar el motivo de un rechazo porque Spring no incluía el mensaje; `server.error.include-message` no tuvo efecto en Spring Boot 4 y la propiedad que aplica es `spring.web.error.include-message: always`.
+
+**Verificado en vivo** (con registros `TEST`, borrados después): cliente → venta US$120 (costo 10) con link → gasto US$12 → corrección "Anular" (−120/−10): el libro lista las 4 líneas con 🧪 y la corrección apunta a la venta, los totales reales quedan en cero (`TEST` no suma); rechazos con su motivo ("El comprobante debe ser un link http(s).", "No existe el movimiento …"); en el chat "costos vs ganancias" y "dame un status" responden desde Java; `/finanzas` servida por la SPA.

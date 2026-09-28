@@ -18,6 +18,12 @@ import static org.mockito.Mockito.*;
 class CustomerServiceTest {
 
     private final EvidenceValidationGate evidenceGate = new EvidenceValidationGate();
+    // Spec finanzas (2026-09-27): net-profit por misión sale del mismo cálculo que la pantalla y el chat.
+    private final FinanceService finance = mock(FinanceService.class);
+
+    private static com.aicompany.core.model.FinanceSummary totals(double revenue, double cost) {
+        return new com.aicompany.core.model.FinanceSummary(50, revenue, cost, revenue - cost, 50 + revenue - cost, java.util.List.of());
+    }
     private final CompanyPolicyService companyPolicyService = defaultCompanyPolicyService();
 
     private static CompanyPolicyService defaultCompanyPolicyService() {
@@ -35,7 +41,7 @@ class CustomerServiceTest {
         var memory = mock(CustomerMemoryService.class);
         when(memory.missionExists("MISSION-001")).thenReturn(true);
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         var command = new CustomerCommand(
                 "CUST-1", "Panadería El Sol", "panaderia@example.com",
@@ -57,7 +63,7 @@ class CustomerServiceTest {
         var memory = mock(CustomerMemoryService.class);
         when(memory.missionExists("MISSION-404")).thenReturn(false);
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         var command = new CustomerCommand(
                 "CUST-1", "Panadería El Sol", null,
@@ -75,7 +81,7 @@ class CustomerServiceTest {
         var memory = mock(CustomerMemoryService.class);
         when(memory.missionExists("MISSION-001")).thenReturn(true);
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         // verified=true con sourceType=NONE: contradicción semántica.
         var command = new CustomerCommand(
@@ -98,7 +104,7 @@ class CustomerServiceTest {
                 any(AgentResult.Evidence.class)
         )).thenReturn(Optional.of("2026-09-13T00:00:00Z"));
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         var command = new TransactionCommand(
                 "TX-1", "CUST-1", "Venta de 10 camisetas", 100.0, 40.0,
@@ -118,7 +124,7 @@ class CustomerServiceTest {
                 any(), any(), any(), any(), anyDouble(), anyDouble(), any()
         )).thenReturn(Optional.empty());
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         var command = new TransactionCommand(
                 "TX-1", "CUST-DESCONOCIDO", "Venta", 100.0, 40.0,
@@ -131,12 +137,24 @@ class CustomerServiceTest {
     }
 
     @Test
+    void netProfitOfAMissionIncludesItsExpensesAndCorrections() {
+        when(finance.summary("MISSION-1")).thenReturn(new com.aicompany.core.model.FinanceSummary(50, 100, 32, 68, 118, java.util.List.of()));
+        var service = new CustomerService(mock(CustomerMemoryService.class), evidenceGate, companyPolicyService,
+                mock(MissionMemoryService.class), finance);
+
+        var response = service.netProfit("MISSION-1");
+
+        assertEquals(100.0, response.totalRevenueUsd());
+        assertEquals(32.0, response.totalCostUsd());
+        assertEquals(68.0, response.netProfitUsd());
+    }
+
+    @Test
     void aggregatesNetProfitAcrossTransactions() {
         var memory = mock(CustomerMemoryService.class);
-        when(memory.totalRevenueAndCost("MISSION-001"))
-                .thenReturn(new double[]{200.0, 50.0});
+        when(finance.summary("MISSION-001")).thenReturn(totals(200.0, 50.0));
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         var profit = service.netProfit("MISSION-001");
 
@@ -150,10 +168,9 @@ class CustomerServiceTest {
     @Test
     void successCriterionNotMetWhenNetProfitBelowSeedCapital() {
         var memory = mock(CustomerMemoryService.class);
-        when(memory.totalRevenueAndCost("MISSION-001"))
-                .thenReturn(new double[]{30.0, 10.0});
+        when(finance.summary("MISSION-001")).thenReturn(totals(30.0, 10.0));
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         var profit = service.netProfit("MISSION-001");
 
@@ -165,14 +182,14 @@ class CustomerServiceTest {
     @Test
     void includesFinancialCriteriaEvaluationWhenMissionDeclaredOne() {
         var memory = mock(CustomerMemoryService.class);
-        when(memory.totalRevenueAndCost("MISSION-001")).thenReturn(new double[]{1200.0, 100.0});
+        when(finance.summary("MISSION-001")).thenReturn(totals(1200.0, 100.0));
 
         var missionMemory = mock(MissionMemoryService.class);
         when(missionMemory.financialCriteria("MISSION-001")).thenReturn(Optional.of(
                 new FinancialCriteriaResponse(FinancialMetric.NET_PROFIT, 1000.0, "USD", null)
         ));
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, missionMemory);
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, missionMemory, finance);
 
         var profit = service.netProfit("MISSION-001");
 
@@ -184,9 +201,9 @@ class CustomerServiceTest {
     @Test
     void financialCriteriaEvaluationIsAbsentWhenMissionHasNoDeclaredCriteria() {
         var memory = mock(CustomerMemoryService.class);
-        when(memory.totalRevenueAndCost("MISSION-001")).thenReturn(new double[]{200.0, 50.0});
+        when(finance.summary("MISSION-001")).thenReturn(totals(200.0, 50.0));
 
-        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class));
+        var service = new CustomerService(memory, evidenceGate, companyPolicyService, mock(MissionMemoryService.class), finance);
 
         var profit = service.netProfit("MISSION-001");
 

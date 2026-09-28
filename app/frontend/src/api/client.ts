@@ -4,6 +4,12 @@ import type {
   ChatResponse,
   DecisionCommand,
   DecisionResponse,
+  FinanceCorrectionCommand,
+  FinanceCustomer,
+  FinanceCustomerCommand,
+  FinanceExpenseCommand,
+  FinanceSaleCommand,
+  FinanceSummary,
   MissionCommand,
   MissionProfitResponse,
   MissionResponse,
@@ -25,7 +31,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
-    throw new Error(`${init?.method ?? 'GET'} ${path} -> HTTP ${response.status}`)
+    // El backend devuelve el motivo real (server.error.include-message): se muestra tal cual en la pantalla.
+    const body = await response.text()
+    let message = `${init?.method ?? 'GET'} ${path} -> HTTP ${response.status}`
+    try {
+      const parsed = JSON.parse(body) as { message?: string }
+      if (parsed.message) message = parsed.message
+    } catch {
+      // sin cuerpo JSON: queda el mensaje genérico
+    }
+    throw new Error(message)
   }
 
   // 404 en los endpoints que devuelven Optional puede venir sin body.
@@ -34,6 +49,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  finance: (missionId?: string) =>
+    request<FinanceSummary>(`/api/company/finance${missionId ? `?missionId=${encodeURIComponent(missionId)}` : ''}`),
+  financeCustomers: () => request<FinanceCustomer[]>('/api/company/finance/customers'),
+  createFinanceCustomer: (command: FinanceCustomerCommand) =>
+    request<FinanceCustomer>('/api/company/finance/customers', { method: 'POST', body: JSON.stringify(command) }),
+  createSale: (command: FinanceSaleCommand) =>
+    request<{ id: string }>('/api/company/finance/sales', { method: 'POST', body: JSON.stringify(command) }),
+  createExpense: (command: FinanceExpenseCommand) =>
+    request<{ id: string }>('/api/company/finance/expenses', { method: 'POST', body: JSON.stringify(command) }),
+  createCorrection: (command: FinanceCorrectionCommand) =>
+    request<{ id: string }>('/api/company/finance/corrections', { method: 'POST', body: JSON.stringify(command) }),
+
   health: () => request<{ status: string }>('/actuator/health'),
 
   agentsStatus: () => request<AgentStatusResponse[]>('/api/company/agents/status'),

@@ -1,5 +1,9 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.FinanceEntry;
+
+import com.aicompany.core.model.FinanceSummary;
+
 import com.aicompany.core.model.AgentStatusResponse;
 import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
@@ -44,14 +48,16 @@ class ChatIntentRouterTest {
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
     private final PromptMemoryService promptMemory = mock(PromptMemoryService.class);
 
+    private final FinanceService finance = mock(FinanceService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
-            "qwen2.5-coder:14b", teamMemory, promptMemory
+            "qwen2.5-coder:14b", teamMemory, promptMemory, finance
     );
 
     {
         when(companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(50.0);
+        when(finance.summary(any())).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
     }
 
     @Test
@@ -203,7 +209,7 @@ class ChatIntentRouterTest {
         when(missionMemory.evidenceRound("MISSION-1")).thenReturn(1);
         when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
         when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
-        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{0.0, 0.0});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0.0, 0.0, 0.0, 50.0, List.of()));
 
         var response = router.route("dame un status");
 
@@ -565,7 +571,7 @@ class ChatIntentRouterTest {
 
     @Test
     void routesCompanyProfitQueryWithDeterministicAggregation() {
-        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{120.0, 40.0});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 120.0, 40.0, 80.0, 130.0, List.of()));
 
         var response = router.route("¿Cuánto dinero hemos ganado hasta ahora?");
 
@@ -632,7 +638,7 @@ class ChatIntentRouterTest {
         when(missionMemory.latestTaskPerAgent()).thenReturn(agentStatuses);
         when(opportunityMemory.countOpportunities()).thenReturn(4L);
         when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{2L, 3L});
-        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{150.0, 50.0});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 150, 50, 100, 150, List.of()));
 
         var response = router.route("dame un status");
 
@@ -792,7 +798,7 @@ class ChatIntentRouterTest {
         when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
         when(missionMemory.findAll(50)).thenReturn(List.of());
         when(opportunityMemory.listRecent(20)).thenReturn(List.of());
-        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{0.0, 0.0});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0.0, 0.0, 0.0, 50.0, List.of()));
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
 
         router.route("necesitamos una estrategia de marketing nueva");
@@ -819,7 +825,7 @@ class ChatIntentRouterTest {
         when(missionMemory.latestTaskPerAgent()).thenReturn(statuses);
         when(missionMemory.findAll(50)).thenReturn(List.of());
         when(opportunityMemory.listRecent(20)).thenReturn(List.of());
-        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{100.0, 40.0});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 100.0, 40.0, 60.0, 110.0, List.of()));
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
         when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(
                 new TeamSnapshot("TEAM-ENGINEERING", null, null, null, List.of())
@@ -1126,11 +1132,12 @@ class ChatIntentRouterTest {
     @Test
     void companyStatusQueryReadsSeedCapitalFromTheLivePolicyInsteadOfAppProperties() {
         when(companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(200.0);
+        // Spec finanzas: el capital disponible es el balance de FinanceService (que parte de la policy).
+        when(finance.summary(null)).thenReturn(new FinanceSummary(200, 0, 0, 0, 200, List.of()));
         when(missionMemory.findAll(50)).thenReturn(List.of());
         when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
         when(opportunityMemory.countOpportunities()).thenReturn(0L);
         when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
-        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{0.0, 0.0});
 
         var response = router.route("dame el estado de la empresa");
 
@@ -1416,6 +1423,58 @@ class ChatIntentRouterTest {
         var text = router.routeReplies("@Alex ¿qué hizo el equipo?").get(0).text();
 
         assertEquals("Resumen del equipo:\nSofia: encontró demanda.\nKira: propuso contenido.", text);
+    }
+
+    // Spec finanzas (2026-09-27): costos frente a ganancias en el chat, 100% Java.
+    @Test
+    void costsVersusProfitIsAnsweredFromJavaWithTheLatestMovements() {
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 100, 32, 68, 118, List.of(
+                new FinanceEntry("E1", "EXPENSE", "Dominio forjai.com", -12, null, "PRODUCTION",
+                        Instant.parse("2026-09-27T10:00:00Z"), 118.0, null),
+                new FinanceEntry("C1", "CORRECTION", "Duplicada", -80, "MISSION-1", "PRODUCTION",
+                        Instant.parse("2026-09-27T11:00:00Z"), 38.0, "S2"))));
+
+        var response = router.route("¿cómo vamos en costos vs ganancias?");
+
+        assertTrue(response.contains("Costos: US$32.00"), response);
+        assertTrue(response.contains("Ganancias: US$68.00"), response);
+        assertTrue(response.contains("Balance: US$118.00"), response);
+        assertTrue(response.contains("Dominio forjai.com"), response);
+        assertTrue(response.contains("corrige S2"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void withNoMovementsTheChatSaysZerosAndTheSeedCapital() {
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("¿cuánto hemos gastado?");
+
+        assertTrue(response.contains("Costos: US$0.00") && response.contains("Balance: US$50.00"), response);
+        assertTrue(response.contains("Todavía no hay movimientos"), response);
+    }
+
+    @Test
+    void theCompanyStatusAddsCostsAndBalance() {
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 150, 62, 88, 138, List.of()));
+        var response = router.route("dame un status");
+        assertTrue(response.contains("Costos: US$62.00") && response.contains("Balance: US$138.00"), response);
+    }
+
+    @Test
+    void aMissionWithMovementsShowsItsFinances() {
+        var mission = new MissionResponse("MISSION-5", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-5")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-5")).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-5")).thenReturn(ProductStatus.DESIGN);
+        when(finance.summary("MISSION-5")).thenReturn(new FinanceSummary(50, 100, 20, 80, 130, List.of(
+                new FinanceEntry("S1", "SALE_REVENUE", "Landing", 100, "MISSION-5", "PRODUCTION", Instant.now(), 150.0, null))));
+        var response = router.route("¿Cómo va MISSION-5?");
+        assertTrue(response.contains("Finanzas de la misión: ingresos US$100.00, costos US$20.00, ganancias US$80.00"), response);
     }
 
     // Review Focus: la gobernanza gana sobre las menciones.

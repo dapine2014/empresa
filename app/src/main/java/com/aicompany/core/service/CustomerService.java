@@ -31,17 +31,20 @@ public class CustomerService {
     private final EvidenceValidationGate evidenceGate;
     private final CompanyPolicyService companyPolicyService;
     private final MissionMemoryService missionMemory;
+    private final FinanceService finance;
 
     public CustomerService(
             CustomerMemoryService memory,
             EvidenceValidationGate evidenceGate,
             CompanyPolicyService companyPolicyService,
-            MissionMemoryService missionMemory) {
+            MissionMemoryService missionMemory,
+            FinanceService finance) {
 
         this.memory = memory;
         this.evidenceGate = evidenceGate;
         this.companyPolicyService = companyPolicyService;
         this.missionMemory = missionMemory;
+        this.finance = finance;
     }
 
     public CustomerResponse registerCustomer(
@@ -135,10 +138,11 @@ public class CustomerService {
 
     public MissionProfitResponse netProfit(String missionId) {
 
-        var totals = memory.totalRevenueAndCost(missionId);
-        var totalRevenue = totals[0];
-        var totalCost = totals[1];
-        var netProfit = totalRevenue - totalCost;
+        // Spec finanzas (2026-09-27): mismo cálculo que la pantalla y el chat (incluye gastos y correcciones).
+        var totals = finance.summary(missionId);
+        var totalRevenue = totals.revenueUsd();
+        var totalCost = totals.costsUsd();
+        var netProfit = totals.profitUsd();
         var seedCapitalUsd = companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD);
 
         var successCriterionMet = netProfit > seedCapitalUsd;
