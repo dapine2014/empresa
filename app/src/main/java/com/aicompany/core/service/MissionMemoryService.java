@@ -169,6 +169,50 @@ public class MissionMemoryService {
      * {@code MERGE}-idempotente sobre el mismo id como sí lo son los
      * registros de evidencia.
      */
+    /** Ronda de evidencia vigente (0 = ejecución original; misiones previas a la feature no tienen la propiedad). */
+    public int evidenceRound(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN coalesce(m.evidenceRound, 0) AS r", Map.of("id", missionId))
+                    .list(r -> r.get("r").asInt()).stream().findFirst().orElse(0);
+        }
+    }
+
+    public void setEvidenceRound(String missionId, int round) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (m:Mission {id:$id}) SET m.evidenceRound=$round", Map.of("id", missionId, "round", round));
+                return null;
+            });
+        }
+    }
+
+    public Optional<String> instructionOf(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN m.instruction AS i", Map.of("id", missionId))
+                    .list(r -> r.get("i").isNull() ? null : r.get("i").asString()).stream()
+                    .filter(Objects::nonNull).findFirst();
+        }
+    }
+
+    /** El reasoning de cada REQUEST_MORE_EVIDENCE, en orden: el i-ésimo es el pedido de la ronda i+1. */
+    public List<String> evidenceRequests(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_DECISION]->(d:Decision {decision:'REQUEST_MORE_EVIDENCE'}) "
+                            + "RETURN coalesce(d.reasoning, '') AS r ORDER BY d.decidedAt", Map.of("id", missionId))
+                    .list(r -> r.get("r").asString());
+        }
+    }
+
+    /** Último plan aceptado del líder (resultado de la tarea PLANNING COMPLETED más reciente). */
+    public Optional<String> lastTeamPlanJson(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_TASK]->(t:AgentTask {kind:'PLANNING', status:'COMPLETED'}) "
+                            + "WHERE t.result IS NOT NULL RETURN t.result AS r ORDER BY t.updatedAt DESC LIMIT 1",
+                            Map.of("id", missionId))
+                    .list(r -> r.get("r").asString()).stream().findFirst();
+        }
+    }
+
     public void recordDecision(
             String missionId,
             String decisionId,

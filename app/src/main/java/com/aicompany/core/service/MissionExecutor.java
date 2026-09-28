@@ -1,5 +1,13 @@
 package com.aicompany.core.service;
 
+import java.util.Map;
+
+import com.aicompany.core.agent.model.TeamPlan;
+
+import com.aicompany.core.model.TeamSnapshot;
+
+import com.aicompany.core.model.TaskIds;
+
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.agent.validation.ContradictionDetector;
 import com.aicompany.core.event.CompanyEventPublisher;
@@ -125,6 +133,123 @@ public class MissionExecutor {
         }
     }
 
+    /**
+     * Ronda de evidencia (spec 2026-09-16, revisión 2026-09-27): el inversionista pidió más evidencia. Discovery
+     * re-ejecuta las 5 tareas; un equipo reutiliza el último plan del líder (o replanifica si no lo hay). Cada agente
+     * recibe su parte del pedido (la reparte el CEO) antepuesta al objetivo, y los ids llevan el sufijo -R<n>.
+     */
+    public CompletableFuture<Void> reexecuteAsync(String missionId, String instruction, int round, String investorRequest) {
+
+        log.info("MISSION {} - submitting evidence round {}", missionId, round);
+
+        events.publish("EMPRESA_MISSION_EVIDENCE_ROUND_STARTED", missionId, null, "human",
+                Map.of("evidenceRound", round, "reasoning", investorRequest == null ? "" : investorRequest));
+
+        // Síncrono (revisión final): la misión deja AWAITING_INVESTOR/FAILED antes de volver a MissionService, así un
+        // segundo pedido en el mismo instante se rechaza en vez de lanzar otra ronda en paralelo.
+        advanceMission(missionId, MissionStatus.DELEGATING, 10, "Ronda de evidencia " + round,
+                "Arrancando la ronda " + round + " con el pedido del inversionista.");
+
+        try {
+            return CompletableFuture.runAsync(
+                    () -> reexecuteInternal(missionId, instruction, round, investorRequest), orchestratorExecutor);
+        } catch (Exception ex) {
+            log.error("MISSION {} - could not submit evidence round {}", missionId, round, ex);
+            safeFail(missionId, ex);
+            return CompletableFuture.failedFuture(ex);
+        }
+    }
+
+    static String investorBlock(String routedRequest) {
+        return "SOLICITUD DEL INVERSIONISTA (ronda de evidencia):\n" + routedRequest;
+    }
+
+    private void reexecuteInternal(String missionId, String instruction, int round, String investorRequest) {
+
+        try {
+            var priorResults = priorRoundResults(missionId, round);
+            var ceoModel = companyMemory.agentModel("ceo", defaultCeoModel);
+            var teamId = memory.teamId(missionId).orElse(null);
+
+            if (teamId != null) {
+                reexecuteTeamMission(missionId, instruction, teamId, round, investorRequest, priorResults, ceoModel);
+                return;
+            }
+
+            advanceMission(missionId, MissionStatus.DELEGATING, 10, "Ronda de evidencia " + round,
+                    "Re-ejecutando Sales, Product, Finance, Engineering y QA con el pedido del inversionista.");
+
+            var seedCapitalUsd = companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD);
+            var base = discoveryDefinitions(seedCapitalUsd, memory.financialCriteria(missionId).orElse(null));
+            var routed = ceoService.routeInvestorFeedback(instruction, priorResults, investorRequest,
+                    base.stream().map(AgentTaskBatchRunner.AgentTaskDefinition::agentId).toList(), ceoModel);
+            var definitions = base.stream()
+                    .map(d -> new AgentTaskBatchRunner.AgentTaskDefinition(d.agentId(), d.action(),
+                            investorBlock(routed.get(d.agentId())) + "\n" + d.objective(), d.kind()))
+                    .toList();
+
+            var outcomes = batchRunner.run(missionId, instruction, definitions,
+                    () -> advanceMission(missionId, MissionStatus.WAITING_AGENT_RESULTS, 30,
+                            "Trabajo paralelo (ronda " + round + ")", "Los agentes están trabajando en paralelo."),
+                    round);
+
+            consolidateAgentOutcomes(missionId, instruction, outcomes, seedCapitalUsd);
+
+        } catch (Exception ex) {
+            log.error("MISSION {} - evidence round {} failed", missionId, round, ex);
+            safeFail(missionId, ex);
+        }
+    }
+
+    private void reexecuteTeamMission(String missionId, String instruction, String teamId, int round,
+                                      String investorRequest, String priorResults, String ceoModel) {
+
+        var mode = TeamExecutionMode.forTeamType(TeamMemoryService.teamType(teamId)
+                .orElseThrow(() -> new IllegalStateException("teamId desconocido: " + teamId)));
+
+        TeamSnapshot team;
+        TeamPlan plan;
+        var saved = memory.lastTeamPlanJson(missionId);
+        if (saved.isPresent()) {
+            team = teamWorkPlanner.teamSnapshot(teamId);
+            plan = jsonMapper.readValue(saved.get(), TeamPlan.class);
+        } else {
+            // Falló antes de tener plan: el líder planifica de nuevo con el pedido del inversionista.
+            advanceMission(missionId, MissionStatus.PLANNING, 5, "Planificación del equipo (ronda " + round + ")",
+                    "El líder de " + teamId + " está descomponiendo el trabajo con el pedido del inversionista.");
+            var request = investorRequest == null || investorRequest.isBlank()
+                    ? CeoService.NO_INVESTOR_COMMENT : investorRequest;
+            var planned = teamWorkPlanner.plan(missionId, teamId, instruction + "\n\n" + investorBlock(request), mode, round);
+            team = planned.team();
+            plan = planned.plan();
+        }
+
+        var agentIds = plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
+                .map(TeamPlan.PlannedTask::agentId).distinct().toList();
+        var routed = ceoService.routeInvestorFeedback(instruction, priorResults, investorRequest, agentIds, ceoModel);
+        var tasks = plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
+                .map(t -> new TeamPlan.PlannedTask(t.agentId(), t.kind(), t.action(),
+                        investorBlock(routed.getOrDefault(t.agentId(), investorRequest)) + "\n" + t.objective(),
+                        t.requiredCapabilities(), t.ownedPaths(), t.assignments()))
+                .toList();
+        var withRequest = new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks,
+                plan.participationConflicts(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage());
+
+        advanceMission(missionId, MissionStatus.DELEGATING, 10, "Ronda de evidencia " + round,
+                "Re-ejecutando el plan de " + team.teamName() + " con el pedido del inversionista.");
+
+        runTeamPlan(missionId, instruction, mode, new TeamMissionContext(missionId, instruction, team, withRequest, round));
+    }
+
+    /** Resultados de la ronda anterior, para que el CEO reparta el pedido sabiendo qué hizo cada uno. */
+    private String priorRoundResults(String missionId, int round) {
+        var text = memory.tasks(missionId).stream()
+                .filter(t -> TaskIds.roundOf(t.taskId()) == round - 1 && "COMPLETED".equals(t.status()))
+                .map(t -> t.agentId() + " / " + t.action() + ": " + (t.result() == null ? "" : t.result()))
+                .collect(java.util.stream.Collectors.joining("\n\n"));
+        return text.length() > 12_000 ? text.substring(0, 12_000) + "…" : text;
+    }
+
     private void executeInternal(
             String missionId,
             String instruction) {
@@ -225,7 +350,16 @@ public class MissionExecutor {
                         + " tareas para " + planned.team().teamName() + "."
         );
 
-        var context = new TeamMissionContext(missionId, instruction, planned.team(), planned.plan());
+        runTeamPlan(missionId, instruction, mode,
+                new TeamMissionContext(missionId, instruction, planned.team(), planned.plan()));
+    }
+
+    private void runTeamPlan(String missionId, String instruction, TeamExecutionMode mode, TeamMissionContext context) {
+
+        var strategy = teamStrategies.stream()
+                .filter(s -> s.mode() == mode)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No hay estrategia de ejecución para " + mode));
 
         var result = strategy.execute(context, (status, progress, step, message) ->
                 advanceMission(missionId, status, progress, step, message));

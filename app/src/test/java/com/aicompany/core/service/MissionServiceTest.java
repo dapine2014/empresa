@@ -8,6 +8,7 @@ import com.aicompany.core.model.FinancialMetric;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.TeamMemberInfo;
 import com.aicompany.core.model.TeamSnapshot;
 import org.junit.jupiter.api.Test;
@@ -153,33 +154,81 @@ class MissionServiceTest {
         );
     }
 
+    // Spec evidence-rounds (revisión 2026-09-27): REQUEST_MORE_EVIDENCE ya no es solo un registro, dispara una ronda.
+    private final MissionMemoryService roundMemory = mock(MissionMemoryService.class);
+    private final MissionExecutor roundExecutor = mock(MissionExecutor.class);
+    private final CompanyEventPublisher roundEvents = mock(CompanyEventPublisher.class);
+    private final CompanyPolicyService policies = mock(CompanyPolicyService.class);
+    private final MissionService roundService =
+            new MissionService(roundMemory, roundExecutor, roundEvents, teamMemory, workspace, policies);
+
+    private static MissionResponse mission(String id, MissionStatus status) {
+        return new MissionResponse(id, status, "TEST", 95, "x", "x", Instant.parse("2026-09-27T00:00:00Z"), null);
+    }
+
     @Test
-    void requestingMoreEvidenceDoesNotChangeMissionStatus() {
-        var memory = mock(MissionMemoryService.class);
-        var executor = mock(MissionExecutor.class);
-        var eventPublisher = mock(CompanyEventPublisher.class);
+    void requestMoreEvidenceStartsTheNextRoundWithTheOriginalInstruction() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(0);
+        when(roundMemory.instructionOf("MISSION-1")).thenReturn(Optional.of("Buscar un servicio"));
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(roundExecutor.reexecuteAsync(any(), any(), anyInt(), any())).thenReturn(CompletableFuture.completedFuture(null));
 
-        var awaitingInvestor = new MissionResponse(
-                "MISSION-001", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95,
-                "Recomendación", "informe final",
-                Instant.parse("2026-09-12T00:00:00Z"), null
-        );
-        when(memory.find("MISSION-001")).thenReturn(Optional.of(awaitingInvestor));
+        var response = roundService.recordDecision("MISSION-1",
+                new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "Quiero precios reales")).orElseThrow();
 
-        var service = new MissionService(memory, executor, eventPublisher, teamMemory, workspace);
-        var response = service.recordDecision(
-                "MISSION-001",
-                new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "Falta validar precios reales")
-        );
+        assertEquals(1, response.evidenceRound());
+        verify(roundMemory).recordDecision(eq("MISSION-1"), anyString(), eq(InvestorDecision.REQUEST_MORE_EVIDENCE),
+                eq("Quiero precios reales"));
+        verify(roundMemory).setEvidenceRound("MISSION-1", 1);
+        verify(roundExecutor).reexecuteAsync("MISSION-1", "Buscar un servicio", 1, "Quiero precios reales");
+    }
 
-        assertTrue(response.isPresent());
-        verify(memory).recordDecision(
-                eq("MISSION-001"), anyString(), eq(InvestorDecision.REQUEST_MORE_EVIDENCE), anyString()
-        );
-        verify(memory, never()).updateMission(anyString(), any(), anyInt(), anyString(), anyString());
-        verify(eventPublisher).publish(
-                eq("EMPRESA_MISSION_DECISION_RECORDED"), eq("MISSION-001"), any(), eq("human"), any()
-        );
+    @Test
+    void aFailedMissionAlsoRunsAgainAndConsumesARound() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.FAILED)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(1);
+        when(roundMemory.instructionOf("MISSION-1")).thenReturn(Optional.of("x"));
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(roundExecutor.reexecuteAsync(any(), any(), anyInt(), any())).thenReturn(CompletableFuture.completedFuture(null));
+
+        roundService.recordDecision("MISSION-1", new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "reintenta"));
+
+        verify(roundExecutor).reexecuteAsync("MISSION-1", "x", 2, "reintenta");
+    }
+
+    @Test
+    void atTheLimitItIsRejectedWithoutRecordingTheDecision() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(2);
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        var ex = assertThrows(IllegalStateException.class, () -> roundService.recordDecision("MISSION-1",
+                new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));
+
+        assertTrue(ex.getMessage().contains("2 de 2"), ex.getMessage());
+        verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
+        verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void aMissionStillRunningCannotAskForMoreEvidence() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS)));
+
+        assertThrows(IllegalStateException.class, () -> roundService.recordDecision("MISSION-1",
+                new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));
+        verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
+    }
+
+    @Test
+    void approveDoesNotStartARound() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));
+
+        var response = roundService.recordDecision("MISSION-1",
+                new DecisionCommand(InvestorDecision.APPROVE, "ok")).orElseThrow();
+
+        assertNull(response.evidenceRound());
+        verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
     }
 
     @Test

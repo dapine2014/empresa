@@ -289,6 +289,42 @@ class DevelopmentTeamStrategyTest {
     }
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): los .csproj los genera Forjai antes que los agentes.
+    // Rondas de evidencia (revisión 2026-09-27): mismo repositorio, sin scaffold nuevo, ids -R<n>.
+    @Test
+    void anEvidenceRoundDoesNotRecreateTheScaffoldAndUsesSuffixedTaskIds() throws Exception {
+        var base = context();
+        var roundOne = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI-R1"), eq("frontend-ui"), eq("Mila"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+        when(dependencies.resolve(anyString(), anyString(), anyList()))
+                .thenReturn(new DependencyService.Outcome(List.of(), List.of(), null));
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
+        when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
+                .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(roundOne, progress);
+
+        verify(workspace, never()).commitAgentWork(any(), endsWith("-SCAFFOLD"), any(), any(), any());
+        verify(memory).createTask("M-1-ENGINEERING-R1", "M-1", "engineering", "ARCHITECTURE", "WORK");
+        verify(memory).createTask("M-1-QA-R1", "M-1", "qa", "STATIC_REVIEW", "VALIDATION");
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI-R1"), eq("frontend-ui"), eq("Mila"), any());
+        // Verificado en vivo (MISSION-E2E-ENG ronda 1): exigir un archivo en cada ruta obligaba a Iris a reenviar todo
+        // su código; la API terminó fallando. En una ronda lo no devuelto queda como está en el repositorio.
+        verify(runtime).generate(eq("M-1-FRONTEND-UI-R1"), eq("M-1"), eq("frontend-ui"),
+                argThat(p -> p.contains("devuelve solo los archivos que cambias")), anyList(), anyList(), eq(List.of()));
+    }
+
     @Test
     void forjaiCommitsTheProjectScaffoldBeforeTheAgentsWork() throws Exception {
         stubHappyPath();

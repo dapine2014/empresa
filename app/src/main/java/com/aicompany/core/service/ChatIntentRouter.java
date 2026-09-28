@@ -1,5 +1,13 @@
 package com.aicompany.core.service;
 
+import java.util.Optional;
+
+import com.aicompany.core.model.DecisionResponse;
+
+import com.aicompany.core.model.TeamMemberInfo;
+
+import com.aicompany.core.model.TaskIds;
+
 import com.aicompany.core.model.ChatReply;
 import com.aicompany.core.model.ConversationTurn;
 
@@ -641,13 +649,23 @@ public class ChatIntentRouter {
                 decision.decision()
         );
 
-        var response = missionService.recordDecision(
-                decision.missionId(),
-                new DecisionCommand(decision.decision(), message)
-        );
+        Optional<DecisionResponse> response;
+        try {
+            response = missionService.recordDecision(
+                    decision.missionId(),
+                    new DecisionCommand(decision.decision(), message)
+            );
+        } catch (IllegalStateException ex) {
+            // Spec evidence-rounds: el límite de vueltas (o una misión en curso) se explica en el chat.
+            return "No se registró la decisión sobre " + decision.missionId() + ": " + ex.getMessage();
+        }
 
         if (response.isEmpty()) {
             return "No encontré la misión " + decision.missionId() + ".";
+        }
+
+        if (response.get().evidenceRound() != null) {
+            return evidenceRoundStarted(decision.missionId(), response.get().evidenceRound());
         }
 
         return "Decisión registrada: " + decision.decision()
@@ -713,6 +731,8 @@ public class ChatIntentRouter {
                 .map(a -> a.name() + " (" + a.role() + "): " + a.status())
                 .collect(Collectors.joining(", "));
 
+        var rounds = formatEvidenceRounds(mission.missionId(), tasks);
+
         var closing = productStatus.ordinal() < ProductStatus.DEVELOPMENT.ordinal()
                 ? NO_DEVELOPMENT_EVIDENCE_DISCLAIMER_SINGLE
                 : "";
@@ -721,8 +741,8 @@ public class ChatIntentRouter {
                 + " (esto es el estado del proceso de análisis/decisión interno, "
                 + "NO implica nada sobre si el producto está en desarrollo, publicado "
                 + "o generando ingresos). productStatus=" + productStatus
-                + ". Tareas de esta misión: " + taskLines
-                + ". Estado actual de los agentes involucrados: " + agentStatusLines
+                + (rounds.isEmpty() ? ". Tareas de esta misión: " + taskLines + "." : "." + rounds)
+                + " Estado actual de los agentes involucrados: " + agentStatusLines
                 + "." + closing + formatFinancialCriteria(mission) + formatTeamExecution(mission, tasks);
     }
 
@@ -865,7 +885,10 @@ public class ChatIntentRouter {
             try {
                 var response = missionService.recordDecision(missionId, new DecisionCommand(command, message));
 
-                if (response.isPresent()) {
+                if (response.isPresent() && response.get().evidenceRound() != null) {
+                    lines.add("✅ " + evidenceRoundStarted(missionId, response.get().evidenceRound()));
+                    anySucceeded = true;
+                } else if (response.isPresent()) {
                     lines.add("✅ " + missionId + " " + pastParticipleFor(command) + ".");
                     anySucceeded = true;
                 } else {
@@ -879,6 +902,41 @@ public class ChatIntentRouter {
         var closing = anySucceeded ? " Las decisiones fueron registradas en Company Memory." : "";
 
         return String.join(" ", lines) + closing;
+    }
+
+    /** Spec evidence-rounds (revisión 2026-09-27): qué ronda arrancó, de cuántas, y quiénes trabajan (100% Java). */
+    private String evidenceRoundStarted(String missionId, int round) {
+        var max = (int) companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
+        var teamId = missionMemory.teamId(missionId).orElse(null);
+        var who = teamId == null
+                ? "Sales, Product, Finance, Engineering y QA"
+                : teamMemory.snapshot(teamId).members().stream().map(TeamMemberInfo::name)
+                        .collect(Collectors.joining(", "));
+        return "Arrancó la ronda " + round + " de " + max + " de más evidencia sobre " + missionId + ". Trabajan: "
+                + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
+    }
+
+    /** Rondas de una misión: vacío si nunca pidió más evidencia (misiones previas a la feature incluidas). */
+    private String formatEvidenceRounds(String missionId, List<AgentTask> tasks) {
+        var round = missionMemory.evidenceRound(missionId);
+        var requests = missionMemory.evidenceRequests(missionId);
+        if (round == 0 && requests.isEmpty()) {
+            return "";
+        }
+        var max = (int) companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
+        var byRound = new java.util.TreeMap<Integer, List<AgentTask>>();
+        tasks.forEach(t -> byRound.computeIfAbsent(TaskIds.roundOf(t.taskId()), k -> new ArrayList<>()).add(t));
+        var lines = new ArrayList<String>();
+        lines.add(" Ronda de evidencia " + round + " de " + max + " (queda" + (max - round == 1 ? " 1" : "n " + Math.max(0, max - round)) + ").");
+        byRound.forEach((r, list) -> {
+            // Los pedidos se alinean desde el final: uno registrado antes de existir las rondas no disparó ninguna.
+            var index = requests.size() - round + (r - 1);
+            var label = r == 0 ? "Ronda 0" : "Ronda " + r + " (pedido: \""
+                    + (index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
+            lines.add(" " + label + ": " + list.stream().map(t -> t.agentId() + "=" + t.action() + " " + t.status())
+                    .collect(Collectors.joining(", ")) + ".");
+        });
+        return String.join("", lines);
     }
 
     private String pastParticipleFor(InvestorDecision decision) {
@@ -1295,6 +1353,12 @@ public class ChatIntentRouter {
                 .filter(m -> m.status() == MissionStatus.FAILED)
                 .count();
 
+        var rerunning = missions.stream()
+                .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR && m.status() != MissionStatus.FAILED
+                        && m.status() != MissionStatus.COMPLETED && m.status() != MissionStatus.CANCELLED)
+                .filter(m -> missionMemory.evidenceRound(m.missionId()) > 0)
+                .count();
+
         var agentStatuses = missionMemory.latestTaskPerAgent();
 
         var working = agentStatuses.stream().filter(a -> "WORKING".equals(a.status())).count();
@@ -1314,11 +1378,12 @@ public class ChatIntentRouter {
                 Locale.ROOT,
                 "Estado actual de Forjai: capital disponible US$%.2f. "
                         + "Agentes: %d trabajando, %d inactivo(s). "
-                        + "Misiones (producción): %d activa(s), %d esperando tu aprobación, %d fallida(s). "
+                        + "Misiones (producción): %d activa(s)%s, %d esperando tu aprobación, %d fallida(s). "
                         + "Oportunidades registradas: %d. Prospectos (leads): %d. Clientes reales: %d. "
                         + "Ingresos: US$%.2f. Beneficio neto: US$%.2f.",
                 companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD), working, idle,
-                active, awaitingInvestor, failed,
+                active, rerunning > 0 ? " (" + rerunning + " re-ejecutándose por más evidencia)" : "",
+                awaitingInvestor, failed,
                 opportunities, prospects, customers,
                 revenue, netProfit
         );

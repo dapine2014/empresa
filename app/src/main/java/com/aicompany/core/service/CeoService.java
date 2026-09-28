@@ -412,6 +412,48 @@ public class CeoService {
         return content + "\n\n" + UNBACKED_MEMORY_CLAIM_NOTE;
     }
 
+    static final String NO_INVESTOR_COMMENT = "(sin comentario del inversionista)";
+
+    /**
+     * Spec evidence-rounds §5 (revisión 2026-09-27): el CEO reparte el pedido del inversionista entre los agentes de la
+     * ronda. Java garantiza que nadie quede sin él: si el modelo falla o deja vacío a un agente, recibe el pedido completo.
+     */
+    public Map<String, String> routeInvestorFeedback(String instruction, String priorResults, String investorRequest,
+                                                     List<String> agentIds, String model) {
+        var request = investorRequest == null || investorRequest.isBlank() ? NO_INVESTOR_COMMENT : investorRequest.strip();
+        var routed = new java.util.LinkedHashMap<String, String>();
+        agentIds.forEach(id -> routed.put(id, request));
+        if (request.equals(NO_INVESTOR_COMMENT)) {
+            return routed;
+        }
+        try {
+            var properties = new java.util.LinkedHashMap<String, Object>();
+            agentIds.forEach(id -> properties.put(id, Map.of("type", "string")));
+            var schema = Map.<String, Object>of("type", "object", "properties", properties, "required", agentIds);
+            var system = """
+                    Eres el CEO de Forjai. El inversionista pidió más evidencia sobre una misión. Reparte su pedido entre
+                    los agentes: para cada uno, qué debe buscar o corregir en esta nueva ronda, en una o dos frases, sin
+                    inventar datos. Si el pedido no le toca a un agente, deja su valor vacío. Responde solo el JSON.
+                    """;
+            var user = "MISIÓN:\n" + instruction + "\n\nRESULTADOS DE LA RONDA ANTERIOR:\n" + priorResults
+                    + "\n\nPEDIDO DEL INVERSIONISTA:\n" + request;
+            var reply = callModel("INVESTOR_FEEDBACK_ROUTING", "ceo", model,
+                    List.of(Map.<String, Object>of("role", "system", "content", system),
+                            Map.<String, Object>of("role", "user", "content", user)),
+                    schema, null);
+            var node = jsonMapper.readTree(normalizeJsonResponse(reply.content()));
+            for (var id : agentIds) {
+                var part = node.path(id).asString("");
+                if (!part.isBlank()) {
+                    routed.put(id, part.strip() + "\n(Pedido original del inversionista: " + request + ")");
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("INVESTOR_FEEDBACK_ROUTING failed, every agent gets the full request: {}", ex.getMessage());
+        }
+        return routed;
+    }
+
     /** Dos turnos: uno con query_company_memory disponible y, si la pidió, el final con el resultado real. */
     private String conversation(String operation, String actor, String system, List<ConversationTurn> history,
                                 String message, Function<String, String> companyMemoryQuery, String model) {

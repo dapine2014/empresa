@@ -11,6 +11,7 @@ const POLICY_LABELS: Record<string, string> = {
   SUCCESS_THRESHOLD_VERY_GOOD: 'Umbral de éxito: Muy bueno (US$, >)',
   SUCCESS_THRESHOLD_EXCELLENT: 'Umbral de éxito: Excelente (US$, ≥)',
   SUCCESS_THRESHOLD_EXTRAORDINARY: 'Umbral de éxito: Extraordinario (US$, ≥)',
+  MAX_EVIDENCE_ROUNDS: 'Vueltas máximas de "más evidencia" por misión',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {

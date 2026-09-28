@@ -47,6 +47,19 @@ class DevelopmentWorkspaceServiceTest {
         assertEquals(40, neo.sha().length());
     }
 
+    // Rondas de evidencia (revisión 2026-09-27): un agente puede devolver sus archivos sin cambios; el commit no debe fallar.
+    @Test
+    void committingTheSameFilesAgainIsAllowedAndKeepsThemInTheCommit() throws Exception {
+        var ws = workspace();
+        var same = result(new GeneratedFile("src/A.cs", "class A {}"));
+        ws.commitAgentWork("MISSION-9", "MISSION-9-BACKEND", "backend", "Iris", same);
+
+        var second = ws.commitAgentWork("MISSION-9", "MISSION-9-BACKEND-R1", "backend", "Iris", same);
+
+        assertEquals(second.sha(), ws.headSha("MISSION-9"));
+        assertTrue(ws.filesAtCommit("MISSION-9", second.sha()).contains("src/A.cs"));
+    }
+
     // Review Focus: la misma ruta dos veces no debe duplicar archivos ni entradas en AgentTask.files.
     @Test
     void duplicatedPathsKeepTheLastContentAndAppearOnce() throws Exception {

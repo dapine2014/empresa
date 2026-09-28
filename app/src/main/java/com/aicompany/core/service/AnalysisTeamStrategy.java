@@ -42,7 +42,8 @@ public class AnalysisTeamStrategy implements TeamExecutionStrategy {
                         MissionStatus.WAITING_AGENT_RESULTS,
                         30,
                         "Trabajo del equipo",
-                        "Los miembros de " + context.team().teamName() + " están trabajando en paralelo."));
+                        "Los miembros de " + context.team().teamName() + " están trabajando en paralelo."),
+                context.round());
 
         return new TeamExecutionResult.AgentOutcomes(outcomes);
     }

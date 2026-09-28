@@ -103,22 +103,22 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var work = plan.workTasks();
         var validation = plan.validationTask()
                 .orElseThrow(() -> new IllegalStateException("El plan no tiene tarea VALIDATION."));
-        var validationTaskId = taskId(missionId, validation.agentId());
+        var validationTaskId = taskId(context, validation.agentId());
 
         for (var task : work) {
-            createTask(missionId, task, TeamPlan.KIND_WORK);
+            createTask(context, task, TeamPlan.KIND_WORK);
         }
-        createTask(missionId, validation, TeamPlan.KIND_VALIDATION);
+        createTask(context, validation, TeamPlan.KIND_VALIDATION);
 
         var expectedProjects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
         CommittedWork scaffold;
         try {
-            scaffold = commitProjectScaffold(context);
+            scaffold = context.round() > 0 ? existingScaffold(context) : commitProjectScaffold(context);
         } catch (IllegalStateException ex) {
             // Sin estructura de proyectos no hay nada que generar: ninguna tarea queda colgada en PENDING.
             for (var task : plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
                     .toList()) {
-                var id = taskId(missionId, task.agentId());
+                var id = taskId(context, task.agentId());
                 memory.updateTask(id, "FAILED", ex.getMessage());
                 events.publishTask("EMPRESA_TASK_FAILED", id, missionId, task.agentId(), "FAILED", ex.getMessage());
             }
@@ -137,7 +137,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         for (int i = 0; i < ordered.size(); i++) {
 
             var task = ordered.get(i);
-            var id = taskId(missionId, task.agentId());
+            var id = taskId(context, task.agentId());
 
             progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30 + (40 * i / ordered.size()), "Desarrollo por capas",
                     agentName(context, task.agentId()) + " (" + (i + 1) + "/" + ordered.size() + ") está generando "
@@ -145,9 +145,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             DevelopmentResult result;
             try {
-                result = runtime.generate(id, missionId, task.agentId(),
-                        buildWorkPrompt(context, task) + existingCode(missionId, generationHead),
-                        task.ownedPathsOrEmpty(), expectedProjects).join();
+                // Ronda de evidencia (verificado en vivo, MISSION-E2E-ENG): lo no devuelto queda como está en el
+                // repositorio, así que no se exige un archivo por ruta (reenviar todo alargaba la respuesta hasta fallar).
+                result = context.round() > 0
+                        ? runtime.generate(id, missionId, task.agentId(),
+                                buildWorkPrompt(context, task) + ROUND_RULE + existingCode(missionId, generationHead),
+                                task.ownedPathsOrEmpty(), expectedProjects, List.of()).join()
+                        : runtime.generate(id, missionId, task.agentId(),
+                                buildWorkPrompt(context, task) + existingCode(missionId, generationHead),
+                                task.ownedPathsOrEmpty(), expectedProjects).join();
             } catch (Exception ex) {
                 failures.add(task.agentId() + ": " + safeMessage(ex, "no generó código"));
                 continue;
@@ -277,7 +283,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             var repaired = false;
             for (var entry : errorsByTask.entrySet()) {
                 var task = entry.getKey();
-                var id = taskId(missionId, task.agentId());
+                var id = taskId(context, task.agentId());
                 try {
                     var current = currentContents(missionId, headSha, entry.getValue());
                     var required = task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
@@ -685,6 +691,23 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * Verificado en vivo (MISSION-SANDBOX-VERIFY-2 a -4): qwen3:8b no escribía los .csproj, los rompía o deformaba
      * ".csproj". Forjai los genera (ProjectScaffold) en un commit propio antes del trabajo de los agentes.
      */
+    /**
+     * Ronda de evidencia: el repositorio ya existe y los agentes corrigen encima del código actual. El scaffold no se
+     * vuelve a commitear; sus archivos (deterministas) siguen siendo de Forjai y el punto de partida es el HEAD.
+     */
+    private CommittedWork existingScaffold(TeamMissionContext context) {
+        var plan = context.plan();
+        var files = plan.profile().map(p -> ProjectScaffold.generate(p, plan.contextNames())).orElse(List.of()).stream()
+                .map(DevelopmentResult.GeneratedFile::path).toList();
+        try {
+            return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai",
+                    workspace.headSha(context.missionId()), files);
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudo leer el repositorio de la ronda anterior: "
+                    + safeMessage(ex, "error de Git"), ex);
+        }
+    }
+
     private CommittedWork commitProjectScaffold(TeamMissionContext context) {
         var plan = context.plan();
         var files = plan.profile().map(p -> ProjectScaffold.generate(p, plan.contextNames())).orElse(List.of());
@@ -702,14 +725,22 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
     }
 
-    private void createTask(String missionId, PlannedTask task, String kind) {
-        var id = taskId(missionId, task.agentId());
+    private void createTask(TeamMissionContext context, PlannedTask task, String kind) {
+        var missionId = context.missionId();
+        var id = taskId(context, task.agentId());
         memory.createTask(id, missionId, task.agentId(), task.action(), kind);
         events.publishTask("EMPRESA_TASK_CREATED", id, missionId, task.agentId(), "PENDING", "Tarea creada.");
     }
 
-    static String taskId(String missionId, String agentId) {
-        return missionId + "-" + agentId.toUpperCase(Locale.ROOT);
+    static final String ROUND_RULE = """
+
+            RONDA DE EVIDENCIA: el código de abajo ya está en el repositorio. Aplica la SOLICITUD DEL INVERSIONISTA de tu
+            objetivo y devuelve solo los archivos que cambias o agregas (completos); los que no devuelvas quedan como están.
+            """;
+
+    /** Rondas de evidencia (revisión 2026-09-27): ronda 0 sin sufijo, luego -R<n>. */
+    static String taskId(TeamMissionContext context, String agentId) {
+        return com.aicompany.core.model.TaskIds.agentTask(context.missionId(), agentId, context.round());
     }
 
     private static String validatorModel(TeamMissionContext context, String agentId) {

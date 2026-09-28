@@ -77,6 +77,15 @@ public class TeamWorkPlanner {
     }
 
     public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode) {
+        return plan(missionId, teamId, instruction, mode, 0);
+    }
+
+    /** Equipo real (Neo4j) para una ronda de evidencia que reutiliza el plan guardado. */
+    public TeamSnapshot teamSnapshot(String teamId) {
+        return teamMemory.snapshot(teamId);
+    }
+
+    public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode, int round) {
 
         var team = teamMemory.snapshot(teamId);
 
@@ -89,7 +98,7 @@ public class TeamWorkPlanner {
         }
 
         var leaderId = team.leaderAgentId();
-        var taskId = missionId + "-" + leaderId.toUpperCase(Locale.ROOT) + "-PLAN";
+        var taskId = com.aicompany.core.model.TaskIds.planTask(missionId, leaderId, round);
 
         memory.createTask(taskId, missionId, leaderId, "TEAM_PLANNING", "PLANNING");
         memory.updateTask(taskId, "RUNNING", "El líder está descomponiendo el trabajo.");

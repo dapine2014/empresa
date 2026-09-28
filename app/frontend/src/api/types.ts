@@ -137,6 +137,8 @@ export interface DecisionResponse {
   missionId: string
   decision: InvestorDecision
   recordedAt: string
+  /** Ronda de evidencia que arrancó (solo con REQUEST_MORE_EVIDENCE aceptado). */
+  evidenceRound?: number | null
 }
 
 export interface ChatReply {
@@ -245,6 +247,7 @@ export type PolicyKey =
   | 'SUCCESS_THRESHOLD_VERY_GOOD'
   | 'SUCCESS_THRESHOLD_EXCELLENT'
   | 'SUCCESS_THRESHOLD_EXTRAORDINARY'
+  | 'MAX_EVIDENCE_ROUNDS'
 
 export interface PolicyVersionSummary {
   version: number

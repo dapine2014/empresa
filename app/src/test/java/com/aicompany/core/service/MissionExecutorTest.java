@@ -328,6 +328,45 @@ class MissionExecutorTest {
         assertFalse(instructionCaptor.getValue().contains("objetivo financiero explícito"));
     }
 
+    // Spec evidence-rounds (revisión 2026-09-27): una ronda re-ejecuta los 5 con ids -R<n> y el pedido del inversionista.
+    @SuppressWarnings("unchecked")
+    @Test
+    void anEvidenceRoundRerunsTheFiveAgentsWithSuffixedIdsAndTheInvestorRequest() throws Exception {
+        for (var agent : List.of("sales", "product", "finance", "engineering", "qa")) {
+            stubAgent(agent);
+        }
+        when(memory.teamId("MISSION-1")).thenReturn(Optional.empty());
+        when(memory.tasks("MISSION-1")).thenReturn(List.of());
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any()))
+                .thenAnswer(inv -> ((List<String>) inv.getArgument(3)).stream()
+                        .collect(java.util.stream.Collectors.toMap(id -> id, id -> "Busca precios reales")));
+
+        executor.reexecuteAsync("MISSION-1", "Buscar servicio", 1, "Quiero precios reales").get();
+
+        verify(memory).createTask("MISSION-1-SALES-R1", "MISSION-1", "sales", "MARKET_DISCOVERY");
+        verify(runtime).execute(eq("MISSION-1-SALES-R1"), eq("MISSION-1"), eq("sales"), eq("MARKET_DISCOVERY"),
+                argThat(p -> p.contains("SOLICITUD DEL INVERSIONISTA") && p.contains("Busca precios reales")));
+        verify(events).publish(eq("EMPRESA_MISSION_EVIDENCE_ROUND_STARTED"), eq("MISSION-1"), isNull(), eq("human"),
+                argThat(m -> Integer.valueOf(1).equals(m.get("evidenceRound"))));
+        verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
+    }
+
+    // Revisión final: entre registrar la decisión y arrancar la ronda en segundo plano la misión seguía en
+    // AWAITING_INVESTOR; un segundo "más evidencia" en ese intervalo lanzaba dos rondas en paralelo.
+    @Test
+    void anEvidenceRoundLeavesTheDecidableStateBeforeReturning() {
+        var deferred = new MissionExecutor(
+                memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory,
+                "qwen2.5-coder:14b", command -> { }, events, jsonMapper, contradictionDetector, companyPolicyService,
+                opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of());
+
+        deferred.reexecuteAsync("MISSION-1", "Buscar servicio", 1, "Quiero precios reales");
+
+        verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.DELEGATING), anyInt(), anyString(), anyString());
+    }
+
     private void stubAgent(String agentId) {
         var result = new AgentResult(
                 agentId, "ACTION", "NOT_VALIDATED",
