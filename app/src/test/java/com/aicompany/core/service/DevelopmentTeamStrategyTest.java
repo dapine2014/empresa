@@ -296,9 +296,9 @@ class DevelopmentTeamStrategyTest {
         var roundOne = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
         when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
-        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
@@ -319,6 +319,10 @@ class DevelopmentTeamStrategyTest {
         verify(memory).createTask("M-1-ENGINEERING-R1", "M-1", "engineering", "ARCHITECTURE", "WORK");
         verify(memory).createTask("M-1-QA-R1", "M-1", "qa", "STATIC_REVIEW", "VALIDATION");
         verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI-R1"), eq("frontend-ui"), eq("Mila"), any());
+        // Verificado en vivo (MISSION-E2E-ENG ronda 1): exigir un archivo en cada ruta obligaba a Iris a reenviar todo
+        // su código; la API terminó fallando. En una ronda lo no devuelto queda como está en el repositorio.
+        verify(runtime).generate(eq("M-1-FRONTEND-UI-R1"), eq("M-1"), eq("frontend-ui"),
+                argThat(p -> p.contains("devuelve solo los archivos que cambias")), anyList(), anyList(), eq(List.of()));
     }
 
     @Test

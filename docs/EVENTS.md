@@ -39,6 +39,8 @@ EMPRESA_MISSION_REPLANNED (`MissionExecutor.replanFailedAgents`, `EMPRESA_AI_NUE
 
 EMPRESA_MISSION_DECISION_RECORDED (`MissionService.recordDecision`, `agentId="human"` siempre): se publica cada vez que el fundador humano registra una decisión real sobre una misión en `AWAITING_INVESTOR`/`FAILED` vía `POST /api/company/missions/{missionId}/decision`. `data: {decision, reasoning}` (`decision` uno de `APPROVE|REJECT|REQUEST_MORE_EVIDENCE`). Se publica siempre, además del `EMPRESA_MISSION_UPDATED` normal cuando la decisión sí cambia el estado de la misión (`APPROVE`→`COMPLETED`, `REJECT`→`CANCELLED`) — ver "Decisión del inversionista humano" en `CLAUDE.md`.
 
+EMPRESA_MISSION_EVIDENCE_ROUND_STARTED (`MissionExecutor.reexecuteAsync`, `agentId="human"`): se publica al arrancar una ronda de evidencia tras un `REQUEST_MORE_EVIDENCE` aceptado (dentro de `MAX_EVIDENCE_ROUNDS`). `data: {evidenceRound, reasoning}`.
+
 EMPRESA_MISSION_DELETED (`MissionService.delete`, `agentId="human"` siempre): se publica cuando el fundador borra una misión terminada (`AWAITING_INVESTOR`/`FAILED`/`COMPLETED`/`CANCELLED`) vía `DELETE /api/company/missions/{missionId}` — limpieza de misiones de prueba. `data: {previousStatus}`. Nunca se publica para `MISSION-001` (protegida), una misión en curso, ni una con clientes/ventas reales (esas se rechazan antes de borrar). Es el último evento de ese `missionId`: su historial previo en Kafka queda, pero ya no existe en Neo4j.
 
 EMPRESA_TEAM_PLAN_CREATED (`TeamWorkPlanner.plan`, `agentId` = líder del equipo): el plan del líder de una misión con `teamId` pasó `TeamPlanValidator`. `taskId` = `<missionId>-<LÍDER>-PLAN`. `data: {teamId, tasks}` — ver "Misiones por equipo" en `CLAUDE.md`.

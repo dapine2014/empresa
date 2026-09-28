@@ -208,8 +208,7 @@ lo de arriba sigue vigente salvo donde esta sección lo reemplaza.
 ### Ids de tarea (ajusta el punto 3)
 
 La ronda 0 **conserva los ids actuales** (`MISSION-X-SALES`, `MISSION-X-ENGINEERING-PLAN`), para no romper misiones
-existentes ni el código que deriva ids; desde la ronda 1 se agrega el sufijo `-R<n>` (`MISSION-X-SALES-R1`). El nodo
-`AgentTask` gana la propiedad `evidenceRound`.
+existentes ni el código que deriva ids; desde la ronda 1 se agrega el sufijo `-R<n>` (`MISSION-X-SALES-R1`). La ronda de una tarea se deriva del sufijo (`TaskIds.roundOf`), sin propiedad nueva en `AgentTask`.
 
 ### Reparto del pedido (generaliza el punto 5)
 

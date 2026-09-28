@@ -145,9 +145,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             DevelopmentResult result;
             try {
-                result = runtime.generate(id, missionId, task.agentId(),
-                        buildWorkPrompt(context, task) + existingCode(missionId, generationHead),
-                        task.ownedPathsOrEmpty(), expectedProjects).join();
+                // Ronda de evidencia (verificado en vivo, MISSION-E2E-ENG): lo no devuelto queda como está en el
+                // repositorio, así que no se exige un archivo por ruta (reenviar todo alargaba la respuesta hasta fallar).
+                result = context.round() > 0
+                        ? runtime.generate(id, missionId, task.agentId(),
+                                buildWorkPrompt(context, task) + ROUND_RULE + existingCode(missionId, generationHead),
+                                task.ownedPathsOrEmpty(), expectedProjects, List.of()).join()
+                        : runtime.generate(id, missionId, task.agentId(),
+                                buildWorkPrompt(context, task) + existingCode(missionId, generationHead),
+                                task.ownedPathsOrEmpty(), expectedProjects).join();
             } catch (Exception ex) {
                 failures.add(task.agentId() + ": " + safeMessage(ex, "no generó código"));
                 continue;
@@ -725,6 +731,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         memory.createTask(id, missionId, task.agentId(), task.action(), kind);
         events.publishTask("EMPRESA_TASK_CREATED", id, missionId, task.agentId(), "PENDING", "Tarea creada.");
     }
+
+    static final String ROUND_RULE = """
+
+            RONDA DE EVIDENCIA: el código de abajo ya está en el repositorio. Aplica la SOLICITUD DEL INVERSIONISTA de tu
+            objetivo y devuelve solo los archivos que cambias o agregas (completos); los que no devuelvas quedan como están.
+            """;
 
     /** Rondas de evidencia (revisión 2026-09-27): ronda 0 sin sufijo, luego -R<n>. */
     static String taskId(TeamMissionContext context, String agentId) {
