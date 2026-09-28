@@ -145,6 +145,11 @@ public class MissionExecutor {
         events.publish("EMPRESA_MISSION_EVIDENCE_ROUND_STARTED", missionId, null, "human",
                 Map.of("evidenceRound", round, "reasoning", investorRequest == null ? "" : investorRequest));
 
+        // Síncrono (revisión final): la misión deja AWAITING_INVESTOR/FAILED antes de volver a MissionService, así un
+        // segundo pedido en el mismo instante se rechaza en vez de lanzar otra ronda en paralelo.
+        advanceMission(missionId, MissionStatus.DELEGATING, 10, "Ronda de evidencia " + round,
+                "Arrancando la ronda " + round + " con el pedido del inversionista.");
+
         try {
             return CompletableFuture.runAsync(
                     () -> reexecuteInternal(missionId, instruction, round, investorRequest), orchestratorExecutor);

@@ -137,6 +137,8 @@ export interface DecisionResponse {
   missionId: string
   decision: InvestorDecision
   recordedAt: string
+  /** Ronda de evidencia que arrancó (solo con REQUEST_MORE_EVIDENCE aceptado). */
+  evidenceRound?: number | null
 }
 
 export interface ChatReply {

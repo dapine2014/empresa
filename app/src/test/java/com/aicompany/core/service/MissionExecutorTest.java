@@ -353,6 +353,20 @@ class MissionExecutorTest {
         verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
     }
 
+    // Revisión final: entre registrar la decisión y arrancar la ronda en segundo plano la misión seguía en
+    // AWAITING_INVESTOR; un segundo "más evidencia" en ese intervalo lanzaba dos rondas en paralelo.
+    @Test
+    void anEvidenceRoundLeavesTheDecidableStateBeforeReturning() {
+        var deferred = new MissionExecutor(
+                memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory,
+                "qwen2.5-coder:14b", command -> { }, events, jsonMapper, contradictionDetector, companyPolicyService,
+                opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of());
+
+        deferred.reexecuteAsync("MISSION-1", "Buscar servicio", 1, "Quiero precios reales");
+
+        verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.DELEGATING), anyInt(), anyString(), anyString());
+    }
+
     private void stubAgent(String agentId) {
         var result = new AgentResult(
                 agentId, "ACTION", "NOT_VALIDATED",
