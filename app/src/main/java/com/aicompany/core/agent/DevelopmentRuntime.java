@@ -103,6 +103,25 @@ public class DevelopmentRuntime {
         this.jsonMapper = jsonMapper;
     }
 
+    private com.aicompany.core.service.ModelHealthService modelHealth;
+
+    /** Spec salud de modelos (2026-09-28). Setter opcional: los tests que no lo usan no cambian. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(com.aicompany.core.service.ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
+    /** Si el modelo del agente está caído, la tarea la hizo su suplente local: queda marcada. */
+    private void markIfDoneByFallback(String taskId, String agentId) {
+        if (modelHealth == null) {
+            return;
+        }
+        var model = companyMemory.agentModel(agentId, defaultAgentModel);
+        if (modelHealth.isDown(model)) {
+            memory.setTaskModelUsed(taskId, modelHealth.fallbackFor(agentId));
+        }
+    }
+
     public CompletableFuture<DevelopmentResult> generate(
             String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths) {
         return generate(taskId, missionId, agentId, prompt, ownedPaths, List.of());
@@ -200,6 +219,7 @@ public class DevelopmentRuntime {
 
                     var json = toJson(result);
                     memory.updateTask(taskId, successStatus, json);
+                    markIfDoneByFallback(taskId, agentId);
 
                     if ("COMPLETED".equals(successStatus)) {
                         events.publishTask("EMPRESA_TASK_COMPLETED", taskId, missionId, agentId, "COMPLETED", json);

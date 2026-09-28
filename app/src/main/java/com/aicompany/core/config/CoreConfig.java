@@ -56,8 +56,13 @@ public class CoreConfig {
             var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
             factory.setConnectTimeout(java.time.Duration.ofSeconds(15));
             factory.setReadTimeout(readTimeout);
+            // Spec salud de modelos (2026-09-28): el ping de un modelo caído usa un timeout corto, no el de 10 minutos.
+            var probeFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+            probeFactory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+            probeFactory.setReadTimeout(java.time.Duration.ofSeconds(20));
             clients.put(provider, new com.aicompany.core.service.OpenAiCompatibleClient(
                     RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build(),
+                    RestClient.builder().baseUrl(baseUrl).requestFactory(probeFactory).build(),
                     env.getProperty("remote-models.providers." + provider + ".api-key", ""),
                     java.time.Duration.ofSeconds(10)));
         }

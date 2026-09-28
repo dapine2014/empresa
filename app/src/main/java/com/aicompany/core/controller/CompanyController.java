@@ -94,6 +94,29 @@ public class CompanyController {
         return new AgentModelResponse(id, command.model());
     }
 
+    /** Spec salud de modelos (2026-09-28): suplente local del agente; vacío = sin suplente. */
+    @PutMapping("/agents/{id}/fallback-model")
+    public AgentModelResponse updateAgentFallbackModel(@PathVariable("id") String id, @RequestBody AgentModelCommand command) {
+        var model = command.model() == null ? "" : command.model().strip();
+        if (!model.isEmpty()) {
+            ceoService.checkModel(model);
+        }
+        memoryService.setAgentFallbackModel(id, model);
+        return new AgentModelResponse(id, model);
+    }
+
+    private com.aicompany.core.service.ModelHealthService modelHealth;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(com.aicompany.core.service.ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
+    @GetMapping("/models/health")
+    public List<com.aicompany.core.model.ModelHealth> modelsHealth() {
+        return modelHealth == null ? List.of() : modelHealth.snapshot();
+    }
+
     /**
      * Los 3 equipos reales (Engineering, Creative/Product Intelligence,
      * Marketing & Growth) con sus miembros y líder — panel "Agents" del

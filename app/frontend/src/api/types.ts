@@ -347,6 +347,16 @@ export interface AgentInfo {
   role: string
   personality: string
   model: string
+  /** Suplente local si su modelo remoto cae (spec salud de modelos 2026-09-28); "" = sin suplente. */
+  fallbackModel: string
+}
+
+export interface ModelHealth {
+  model: string
+  status: 'UP' | 'DOWN'
+  since: string | null
+  lastError: string | null
+  affectedAgents: string[]
 }
 
 export interface DependencyInfo {

@@ -74,7 +74,9 @@ class OpenAiCompatibleClientTest {
 
         var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
 
-        assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
+        var ex = assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
+        // Un 4xx es un error del pedido, no del modelo: nunca cuenta como caída (spec salud de modelos).
+        assertFalse(ex instanceof RemoteUnavailableException, ex.toString());
         server.verify();
     }
 
@@ -103,8 +105,67 @@ class OpenAiCompatibleClientTest {
 
         var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
 
-        var ex = assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
+        var ex = assertThrows(RemoteUnavailableException.class, () -> client.chat("m", MESSAGES, true, 100));
         assertTrue(ex.getMessage().contains("upstream timeout"), ex.getMessage());
+    }
+
+    // Spec salud de modelos (2026-09-28): verificado en vivo con kimi-k3 caído en NVIDIA (504, sin respuesta, cuerpo
+    // application/octet-stream). Esos fallos son de disponibilidad y se tipan para que ModelHealthService los cuente.
+    @Test
+    void persistentServerErrorsAreAnAvailabilityFailure() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(times(OpenAiCompatibleClient.MAX_ATTEMPTS), requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(withStatus(HttpStatus.GATEWAY_TIMEOUT));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        var ex = assertThrows(RemoteUnavailableException.class, () -> client.chat("m", MESSAGES, true, 100));
+        assertTrue(ex.getMessage().contains("504"), ex.getMessage());
+    }
+
+    @Test
+    void aTimeoutIsAnAvailabilityFailure() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withException(new java.net.SocketTimeoutException("Read timed out")));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertThrows(RemoteUnavailableException.class, () -> client.chat("m", MESSAGES, true, 100));
+    }
+
+    @Test
+    void anUnreadableBodyIsAnAvailabilityFailure() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(withSuccess("<html>gateway</html>", MediaType.APPLICATION_OCTET_STREAM));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertThrows(RemoteUnavailableException.class, () -> client.chat("m", MESSAGES, true, 100));
+    }
+
+    @Test
+    void pingIsTrueOnlyWhenTheModelAnswers() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.max_tokens").value(10))
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andRespond(withStatus(HttpStatus.GATEWAY_TIMEOUT));
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withException(new java.net.SocketTimeoutException("Read timed out")));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertTrue(client.ping("m"));
+        assertFalse(client.ping("m"));
+        assertFalse(client.ping("m"));
     }
 
     private static final String TOOL_CALLS = """
