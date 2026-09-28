@@ -167,7 +167,7 @@ Solo se envían para `AWAITING_INVESTOR` y `FAILED` (desde `advanceMission`). La
 
 ## Command Center web (`app/frontend/`)
 
-Interfaz principal para operar la compañía: Dashboard, Chat, Agents (organigrama + editor de prompts), Missions (+ formulario de inicio con objetivo financiero), Activity y Settings (correo + Financial Policies). SPA servida como estáticos por `company-core`; polling con `@tanstack/react-query` (sin WebSocket/SSE). Activity sale de una sola query UNION en Neo4j (`ActivityMemoryService`).
+Interfaz principal para operar la compañía (regla del fundador: todo lo configurable se edita acá): Dashboard, Chat, Agents (organigrama + editor de prompts + **modelo de cada agente**, validado en Java con `CeoService.checkModel`: un proveedor remoto no configurado se rechaza al guardar), Missions (+ formulario de inicio con objetivo financiero), **Finanzas** (costos vs ganancias), **Dependencias** (aprobar/rechazar las `PENDING_APPROVAL` de Engineering), Activity y Settings (correo + Financial Policies). En el chat, el estado de los agentes muestra el modelo de cada uno y "dependencias pendientes" lista las que esperan decisión con su motivo. SPA servida como estáticos por `company-core`; polling con `@tanstack/react-query` (sin WebSocket/SSE). Activity sale de una sola query UNION en Neo4j (`ActivityMemoryService`).
 
 - `api/types.ts` refleja a mano los records Java (sin generación): mantenerlos sincronizados.
 - `SpaController` reenvía una **lista explícita** de rutas a `index.html` (no un comodín, que atrapaba `/api/**` mal escritos). Al agregar una pantalla en `App.tsx`, agregar la ruta también ahí.
