@@ -367,6 +367,25 @@ class MissionExecutorTest {
         verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.DELEGATING), anyInt(), anyString(), anyString());
     }
 
+    // Spec catálogo §6 A (2026-09-28): la oferta de Luna en una discovery crea una idea; si la automatización falla,
+    // la misión igual termina.
+    @Test
+    void aFinishedDiscoveryHandsLunasOfferToTheCatalog() throws Exception {
+        for (var agent : List.of("sales", "product", "finance", "engineering", "qa")) {
+            stubAgent(agent);
+        }
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
+        var automation = mock(ProductAutomation.class);
+        doThrow(new IllegalStateException("Neo4j caído")).when(automation).ideaFromDiscovery(any(), any());
+        executor.setProductAutomation(automation);
+
+        executor.executeAsync("MISSION-1", "instrucción").get();
+
+        verify(automation).ideaFromDiscovery(eq("MISSION-1"), argThat(r -> "product".equals(r.agent())));
+        verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
+    }
+
     private void stubAgent(String agentId) {
         var result = new AgentResult(
                 agentId, "ACTION", "NOT_VALIDATED",
