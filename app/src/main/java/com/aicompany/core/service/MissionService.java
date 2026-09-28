@@ -6,6 +6,8 @@ import com.aicompany.core.model.DecisionResponse;
 import com.aicompany.core.model.FinancialCriteriaCommand;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
+import com.aicompany.core.model.InvestorDecision;
+import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.MissionStatusResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +30,7 @@ public class MissionService {
     private final CompanyEventPublisher events;
     private final TeamMemoryService teamMemory;
     private final DevelopmentWorkspaceService workspace;
+    private final CompanyPolicyService policies;
 
     public MissionService(
             MissionMemoryService memory,
@@ -35,11 +38,23 @@ public class MissionService {
             CompanyEventPublisher events,
             TeamMemoryService teamMemory,
             DevelopmentWorkspaceService workspace) {
+        this(memory, executor, events, teamMemory, workspace, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MissionService(
+            MissionMemoryService memory,
+            MissionExecutor executor,
+            CompanyEventPublisher events,
+            TeamMemoryService teamMemory,
+            DevelopmentWorkspaceService workspace,
+            CompanyPolicyService policies) {
         this.memory = memory;
         this.executor = executor;
         this.events = events;
         this.teamMemory = teamMemory;
         this.workspace = workspace;
+        this.policies = policies;
     }
 
     public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
@@ -127,6 +142,21 @@ public class MissionService {
             );
         }
 
+        // Spec evidence-rounds (revisión 2026-09-27): el límite se chequea antes de escribir nada.
+        Integer nextRound = null;
+        if (command.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE) {
+            if (policies == null) {
+                throw new IllegalStateException("Falta CompanyPolicyService");
+            }
+            var current = memory.evidenceRound(missionId);
+            var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
+            if (current >= max) {
+                throw new IllegalStateException("MISSION " + missionId + " ya usó " + current + " de " + max
+                        + " vueltas de evidencia: decide con APPROVE o REJECT (o sube MAX_EVIDENCE_ROUNDS en Settings).");
+            }
+            nextRound = current + 1;
+        }
+
         var decisionId = missionId + "-DECISION-" + Instant.now().toEpochMilli();
 
         memory.recordDecision(
@@ -173,11 +203,23 @@ public class MissionService {
                 )
         );
 
+        if (nextRound != null) {
+            var round = nextRound;
+            memory.setEvidenceRound(missionId, round);
+            executor.reexecuteAsync(missionId, memory.instructionOf(missionId).orElse(""), round, command.reasoning())
+                    .whenComplete((ignored, error) -> {
+                        if (error != null) {
+                            log.error("MISSION {} - evidence round {} failed", missionId, round, error);
+                        }
+                    });
+        }
+
         return Optional.of(new DecisionResponse(
                 decisionId,
                 missionId,
                 command.decision(),
-                Instant.now()
+                Instant.now(),
+                nextRound
         ));
     }
 

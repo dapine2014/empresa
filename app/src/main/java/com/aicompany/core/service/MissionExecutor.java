@@ -125,6 +125,11 @@ public class MissionExecutor {
         }
     }
 
+    /** Ronda de evidencia (spec 2026-09-16, revisión 2026-09-27). */
+    public CompletableFuture<Void> reexecuteAsync(String missionId, String instruction, int round, String investorRequest) {
+        return CompletableFuture.completedFuture(null);
+    }
+
     private void executeInternal(
             String missionId,
             String instruction) {

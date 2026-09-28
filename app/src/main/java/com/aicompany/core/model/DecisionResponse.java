@@ -6,6 +6,11 @@ public record DecisionResponse(
         String decisionId,
         String missionId,
         InvestorDecision decision,
-        Instant recordedAt
+        Instant recordedAt,
+        Integer evidenceRound
 ) {
+    /** Decisiones sin ronda de evidencia (APPROVE, REJECT). */
+    public DecisionResponse(String decisionId, String missionId, InvestorDecision decision, Instant recordedAt) {
+        this(decisionId, missionId, decision, recordedAt, null);
+    }
 }
