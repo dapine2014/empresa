@@ -41,6 +41,18 @@ function ModelEditor({ agentId }: { agentId: string }) {
   const queryClient = useQueryClient()
   const agentsQuery = useQuery({ queryKey: ['agents'], queryFn: api.agents })
   const current = agentsQuery.data?.find((a) => a.id === agentId)?.model ?? ''
+  const currentFallback = agentsQuery.data?.find((a) => a.id === agentId)?.fallbackModel ?? ''
+  const healthQuery = useQuery({ queryKey: ['models-health'], queryFn: api.modelsHealth, refetchInterval: 30_000 })
+  const down = healthQuery.data?.find((h) => h.model === current && h.status === 'DOWN')
+  const [fallback, setFallback] = useState<string | null>(null)
+  const displayedFallback = fallback ?? currentFallback
+  const fallbackMutation = useMutation({
+    mutationFn: () => api.updateAgentFallbackModel(agentId, displayedFallback),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['agents'] })
+      setFallback(null)
+    },
+  })
   const [model, setModel] = useState<string | null>(null)
   const displayed = model ?? current
   const known = Array.from(new Set((agentsQuery.data ?? []).map((a) => a.model).filter(Boolean)))
@@ -70,6 +82,21 @@ function ModelEditor({ agentId }: { agentId: string }) {
       </button>
       {mutation.isSuccess && <p className="hint">Modelo actualizado.</p>}
       {mutation.isError && <p className="error">{mutation.error.message}</p>}
+      {down && (
+        <p className="error">
+          ⚠ Su modelo no responde desde {down.since?.slice(0, 16).replace('T', ' ')} UTC: trabaja con su suplente{' '}
+          <code>{currentFallback || 'ninguno (sus tareas fallan hasta que vuelva)'}</code>.
+        </p>
+      )}
+      <h3>Suplente local</h3>
+      <p className="hint">
+        Si su modelo remoto cae, Forjai usa este (por defecto qwen3-coder:30b). Vacío = sin suplente.
+      </p>
+      <input value={displayedFallback} onChange={(e) => setFallback(e.target.value)} placeholder="p. ej. qwen3-coder:30b" />
+      <button disabled={displayedFallback === currentFallback || fallbackMutation.isPending} onClick={() => fallbackMutation.mutate()}>
+        Guardar suplente
+      </button>
+      {fallbackMutation.isError && <p className="error">{fallbackMutation.error.message}</p>}
     </div>
   )
 }

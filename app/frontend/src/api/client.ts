@@ -12,6 +12,7 @@ import type {
   FinanceExpenseCommand,
   FinanceSaleCommand,
   FinanceSummary,
+  ModelHealth,
   MissionCommand,
   MissionProfitResponse,
   MissionResponse,
@@ -56,6 +57,12 @@ export const api = {
   agents: () => request<AgentInfo[]>('/api/company/agents'),
   updateAgentModel: (agentId: string, model: string) =>
     request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/model`, {
+      method: 'PUT',
+      body: JSON.stringify({ model }),
+    }),
+  modelsHealth: () => request<ModelHealth[]>('/api/company/models/health'),
+  updateAgentFallbackModel: (agentId: string, model: string) =>
+    request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/fallback-model`, {
       method: 'PUT',
       body: JSON.stringify({ model }),
     }),
