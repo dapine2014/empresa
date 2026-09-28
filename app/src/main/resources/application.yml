@@ -57,8 +57,10 @@ evidence:
   web-search:
     base-url: ${EVIDENCE_WEB_SEARCH_BASE_URL:https://google.serper.dev}
     api-key: ${EVIDENCE_WEB_SEARCH_API_KEY:}
-    country: ${EVIDENCE_WEB_SEARCH_COUNTRY:CO}
-    language: ${EVIDENCE_WEB_SEARCH_LANGUAGE:es}
+    # Decisión del fundador (2026-09-28): Forjai busca clientes siempre a nivel mundial. Vacío = sin país ni idioma
+    # fijos (SerperSearchAdapter omite gl/hl). Antes CO/es sesgaba toda la evidencia de los agentes a Colombia.
+    country: ${EVIDENCE_WEB_SEARCH_COUNTRY:}
+    language: ${EVIDENCE_WEB_SEARCH_LANGUAGE:}
 
 management:
   endpoints:
