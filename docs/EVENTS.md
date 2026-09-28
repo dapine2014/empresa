@@ -45,6 +45,8 @@ EMPRESA_CUSTOMER_REGISTERED, EMPRESA_SALE_RECORDED, EMPRESA_EXPENSE_RECORDED, EM
 
 EMPRESA_PRODUCT_CREATED, EMPRESA_PRODUCT_UPDATED, EMPRESA_PRODUCT_STATUS_CHANGED (`ProductService`, `agentId` = actor: `human`, el agente que lo hizo, o `system` para las automatizaciones; spec `2026-09-28-catalogo-productos-design.md`): alta, edición y cambio de estado de un producto del catálogo. `data`: `{productId, name, kind}`, `{productId}` y `{productId, from, to}`.
 
+EMPRESA_MODEL_DOWN, EMPRESA_MODEL_UP (`ModelHealthService`, `agentId="system"`; spec `2026-09-28-salud-de-modelos-design.md`): un modelo remoto dejó de responder (2 fallos de disponibilidad seguidos) o volvió (el ping cada 30 s respondió). `data`: `{model, error, affectedAgents}` y `{model, downSince}`. Mientras está caído, sus agentes trabajan con su suplente local.
+
 EMPRESA_MISSION_DELETED (`MissionService.delete`, `agentId="human"` siempre): se publica cuando el fundador borra una misión terminada (`AWAITING_INVESTOR`/`FAILED`/`COMPLETED`/`CANCELLED`) vía `DELETE /api/company/missions/{missionId}` — limpieza de misiones de prueba. `data: {previousStatus}`. Nunca se publica para `MISSION-001` (protegida), una misión en curso, ni una con clientes/ventas reales (esas se rechazan antes de borrar). Es el último evento de ese `missionId`: su historial previo en Kafka queda, pero ya no existe en Neo4j.
 
 EMPRESA_TEAM_PLAN_CREATED (`TeamWorkPlanner.plan`, `agentId` = líder del equipo): el plan del líder de una misión con `teamId` pasó `TeamPlanValidator`. `taskId` = `<missionId>-<LÍDER>-PLAN`. `data: {teamId, tasks}` — ver "Misiones por equipo" en `CLAUDE.md`.

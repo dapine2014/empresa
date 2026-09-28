@@ -888,3 +888,11 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 **Caída real de kimi-k3 en NVIDIA** (2026-09-28, horas): todas las llamadas a `moonshotai/kimi-k3` fallaban (504, sin respuesta, cuerpo no JSON) con dos keys distintas, mientras `nemotron-3-ultra` con la misma key respondía en 0,7 s: el problema era el modelo en NVIDIA, no la cuenta. Una discovery quedó más de 2 horas esperando a Neo y Vera (10 min por intento × 3 + replan). Motivó el validador de salud de modelos con suplentes locales (siguiente trabajo).
 
 **Prueba de suplente local** (`qwen3-coder:30b`, Q4, 18,6 GB, RTX 5060 8 GB + 30 GB RAM): mismo test del 27-sep (dominio + tests + sandbox sin red): 14 tokens/s; dominio compila; tests con 2 `using` faltantes (los agrega `MissingUsingFixer`) y 3 errores reales; tras una ronda de corrección, **compila y pasa 13/13 tests**. Claramente mejor que `qwen3:8b` y que `nemotron-3.5-lightning` local (3,6–4,7 tokens/s, tests con 8 errores); por debajo de kimi-k3 (0 errores y 19 tests al primer intento).
+
+### Salud de los modelos remotos con suplente local
+
+**Decisiones del fundador** (2026-09-28): tras la caída de kimi-k3, "es necesario colocar un validador de ese tipo"; "en caso de caída los modelos locales pueden ser los suplentes". Suplente por agente editable (default `qwen3-coder:30b`, elegido por la prueba en vivo); cambio automático pero nunca en silencio.
+
+**Verificado en vivo con la caída real de kimi-k3**: tras un redeploy todo arrancó `UP`; dos preguntas en paralelo a Neo y Vera fallaron por timeout/cuerpo ilegible y a las 22:22 UTC kimi-k3 quedó `DOWN` (`EMPRESA_MODEL_DOWN`, correo); la llamada de Neo que detectó la caída se rehízo con `qwen3-coder:30b` y respondió; la de Vera (primer fallo) devolvió el motivo. Después, **@Iris respondió en 14 s por el suplente** (antes: 10 min de espera y fallo); "estado de los modelos" y "dame un status" muestran kimi-k3 caído desde las 22:22 y quién usa suplente.
+
+**Límite conocido**: la primera detección cuesta hasta 2 timeouts (10 min c/u) porque glm-5.3 llegó a tardar 8,6 min en una tarea legítima; lo que se elimina es la espera repetida (horas).
