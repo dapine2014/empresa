@@ -29,8 +29,9 @@ public class FinanceController {
     }
 
     @GetMapping
-    public FinanceSummary summary(@RequestParam(required = false) String missionId) {
-        return finance.summary(missionId);
+    public FinanceSummary summary(@RequestParam(required = false) String missionId,
+                                  @RequestParam(required = false) String productId) {
+        return productId != null && !productId.isBlank() ? finance.summaryForProduct(productId) : finance.summary(missionId);
     }
 
     @GetMapping("/customers")
