@@ -104,13 +104,20 @@ public class DevelopmentWorkspaceService {
                 "-c", "user.name=Forjai company-core",
                 "-c", "user.email=company-core@forjai.local",
                 "-c", "commit.gpgsign=false",
-                "commit", "-q",
+                // Rondas de evidencia: un agente puede devolver sus archivos sin cambios; el commit (con su trailer)
+                // igual queda, y FILES_IN_COMMIT lee el árbol completo (ls-tree), así que sigue pasando.
+                "commit", "-q", "--allow-empty",
                 "--author", agentName + " <" + authorEmail(agentId) + ">",
                 "-m", message);
 
         var sha = git.run(dir, "rev-parse", "HEAD").trim();
 
         return new CommitRecord(sha, List.copyOf(paths));
+    }
+
+    /** HEAD actual del repositorio de la misión (rondas de evidencia: se trabaja encima del código existente). */
+    public String headSha(String missionId) throws IOException {
+        return git.run(missionWorkspace(missionId), "rev-parse", "HEAD").trim();
     }
 
     public List<String> filesAtCommit(String missionId, String sha) throws IOException {
