@@ -51,10 +51,11 @@ class ChatIntentRouterTest {
     private final FinanceService finance = mock(FinanceService.class);
     private final DependencyMemoryService dependencies = mock(DependencyMemoryService.class);
     private final ProductService products = mock(ProductService.class);
+    private final ModelHealthService modelHealth = mock(ModelHealthService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
-            "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products
+            "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products, modelHealth
     );
 
     {
@@ -1618,6 +1619,67 @@ class ChatIntentRouterTest {
         var response = router.route("dame un status");
 
         assertTrue(response.contains("Productos: 1 listo(s) para vender, 2 en construcción, 0 idea(s)"), response);
+    }
+
+    // Spec salud de modelos (2026-09-28): el fundador ve en el chat qué modelo cayó y quién trabaja con suplente.
+    private void kimiDown() {
+        when(modelHealth.snapshot()).thenReturn(List.of(
+                new com.aicompany.core.model.ModelHealth("nvidia:moonshotai/kimi-k3", "DOWN",
+                        Instant.parse("2026-09-28T17:30:00Z"), "HTTP 504", List.of("engineering", "qa")),
+                new com.aicompany.core.model.ModelHealth("nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b", "UP", null, null,
+                        List.of("ceo"))));
+        when(modelHealth.isDown("nvidia:moonshotai/kimi-k3")).thenReturn(true);
+        when(modelHealth.fallbackFor(anyString())).thenReturn("qwen3-coder:30b");
+    }
+
+    @Test
+    void theModelsStatusShowsWhichOneIsDownAndWhoUsesTheFallback() {
+        kimiDown();
+
+        var response = router.route("¿cuál es el estado de los modelos?");
+
+        assertTrue(response.contains("⚠ kimi-k3 no responde desde 2026-09-28 17:30 UTC"), response);
+        assertTrue(response.contains("engineering, qa trabajan con su suplente (qwen3-coder:30b)"), response);
+        assertTrue(response.contains("✅ nemotron-3-ultra-550b-a55b"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void theCompanyStatusWarnsAboutDownModelsOnly() {
+        kimiDown();
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("⚠ Modelos caídos: kimi-k3"), response);
+    }
+
+    @Test
+    void anAgentOnAFallbackIsMarkedInTheAgentStatus() {
+        kimiDown();
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(new AgentStatusResponse("engineering", "Neo",
+                "Architect", "x", "WORKING", "MISSION-1", "DELIVERY_FEASIBILITY", "RUNNING", Instant.now())));
+        when(companyMemory.agentModel(eq("engineering"), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
+
+        var response = router.route("¿Qué agentes están trabajando ahora?");
+
+        assertTrue(response.contains("modelo nvidia:moonshotai/kimi-k3 (caído: usa su suplente qwen3-coder:30b)"), response);
+    }
+
+    @Test
+    void aMissionListsTheTasksDoneWithTheFallback() {
+        var mission = new MissionResponse("MISSION-9", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-9")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-9")).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-9")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.modelsUsed("MISSION-9")).thenReturn(Map.of("MISSION-9-ENGINEERING", "qwen3-coder:30b"));
+
+        var response = router.route("¿Cómo va MISSION-9?");
+
+        assertTrue(response.contains("Tareas hechas con suplente local: MISSION-9-ENGINEERING (qwen3-coder:30b)"), response);
     }
 
     // Review Focus: la gobernanza gana sobre las menciones.

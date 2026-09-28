@@ -188,6 +188,7 @@ public class ChatIntentRouter {
     private final FinanceService financeService;
     private final DependencyMemoryService dependencyMemory;
     private final ProductService productService;
+    private final ModelHealthService modelHealth;
 
     /** Spec catálogo §6 B (2026-09-28): comandos del fundador sobre un producto, interpretados en Java. */
     private static final Pattern PRODUCT_COMMAND = Pattern.compile(
@@ -211,7 +212,8 @@ public class ChatIntentRouter {
             PromptMemoryService promptMemory,
             FinanceService financeService,
             DependencyMemoryService dependencyMemory,
-            ProductService productService) {
+            ProductService productService,
+            ModelHealthService modelHealth) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -229,6 +231,7 @@ public class ChatIntentRouter {
         this.financeService = financeService;
         this.dependencyMemory = dependencyMemory;
         this.productService = productService;
+        this.modelHealth = modelHealth;
     }
 
     /**
@@ -771,7 +774,7 @@ public class ChatIntentRouter {
                 + "o generando ingresos). productStatus=" + productStatus
                 + (rounds.isEmpty() ? ". Tareas de esta misión: " + taskLines + "." : "." + rounds)
                 + " Estado actual de los agentes involucrados: " + agentStatusLines
-                + "." + closing + missionFinance(mission.missionId()) + formatFinancialCriteria(mission) + formatTeamExecution(mission, tasks);
+                + "." + closing + fallbackTasks(mission.missionId()) + missionFinance(mission.missionId()) + formatFinancialCriteria(mission) + formatTeamExecution(mission, tasks);
     }
 
     /** Equipo, commits reales y estado de validación — 100% desde Neo4j, nunca redactado por el LLM. */
@@ -1124,6 +1127,7 @@ public class ChatIntentRouter {
         COMPANY_PROFIT,
         COMPANY_STATUS,
         DEPENDENCIES,
+        MODELS,
         PRODUCTS,
         PRODUCT_DETAIL
     }
@@ -1168,6 +1172,12 @@ public class ChatIntentRouter {
         // Subproyecto 2 (2026-09-28): dependencias de Engineering que esperan la decisión del fundador (🔴).
         if (normalized.contains("dependencia")) {
             return new QueryMatch(QueryIntent.DEPENDENCIES, null);
+        }
+
+        // Spec salud de modelos (2026-09-28).
+        if (normalized.contains("estado de los modelos") || normalized.matches(".*\\bmodelos?\\b.*(caid|responde|funcion|estado).*")
+                || normalized.contains("modelos caidos")) {
+            return new QueryMatch(QueryIntent.MODELS, null);
         }
 
         // Spec catálogo (2026-09-28).
@@ -1323,6 +1333,7 @@ public class ChatIntentRouter {
             case "COMPANY_STATUS" -> formatCompanyStatus();
             case "DEPENDENCIES" -> formatPendingDependencies();
             case "PRODUCTS" -> formatCatalog();
+            case "MODELS" -> formatModelsHealth();
             default -> "Dato no reconocido: " + topic + ".";
         };
     }
@@ -1446,7 +1457,7 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        );
+        ) + downModelsLine();
     }
 
     private String formatAgentStatus(List<AgentStatusResponse> statuses) {
@@ -1472,7 +1483,8 @@ public class ChatIntentRouter {
         var base = statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status();
         // Subproyecto 2 (2026-09-28): el modelo real de cada agente (editable desde el Command Center).
         var model = companyMemory.agentModel(a.agentId(), defaultCeoModel);
-        var modelSuffix = model == null || model.isBlank() ? "" : " — modelo " + model;
+        var modelSuffix = model == null || model.isBlank() ? "" : " — modelo " + model
+                + (modelHealth.isDown(model) ? " (caído: usa su suplente " + modelHealth.fallbackFor(a.agentId()) + ")" : "");
 
         if (a.missionId() == null) {
             return base + modelSuffix;
@@ -1640,6 +1652,32 @@ public class ChatIntentRouter {
             CatalogStatus.READY_TO_SELL, "Listos para vender", CatalogStatus.IN_CONSTRUCTION, "En construcción",
             CatalogStatus.IDEA, "Ideas", CatalogStatus.PAUSED, "Pausados", CatalogStatus.RETIRED, "Retirados");
 
+    private static final java.time.format.DateTimeFormatter SINCE =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'").withZone(java.time.ZoneOffset.UTC);
+
+    /** Spec salud de modelos (2026-09-28): qué modelo remoto cayó, desde cuándo y quién trabaja con suplente. */
+    private String formatModelsHealth() {
+        var models = modelHealth.snapshot();
+        if (models.isEmpty()) {
+            return "No hay modelos remotos en uso: todos los agentes usan modelos locales.";
+        }
+        return "Estado de los modelos: " + models.stream().map(h -> "DOWN".equals(h.status())
+                        ? "⚠ " + ModelHealthService.shortName(h.model()) + " no responde desde " + SINCE.format(h.since())
+                        + " — " + String.join(", ", h.affectedAgents()) + " trabajan con su suplente ("
+                        + h.affectedAgents().stream().map(modelHealth::fallbackFor).distinct().collect(Collectors.joining(", "))
+                        + ")"
+                        : "✅ " + ModelHealthService.shortName(h.model()) + " (" + String.join(", ", h.affectedAgents()) + ")")
+                .collect(Collectors.joining("; ")) + ".";
+    }
+
+    private String downModelsLine() {
+        var down = modelHealth.snapshot().stream().filter(h -> "DOWN".equals(h.status()))
+                .map(h -> ModelHealthService.shortName(h.model()) + " desde " + SINCE.format(h.since()))
+                .toList();
+        return down.isEmpty() ? "" : " ⚠ Modelos caídos: " + String.join(", ", down)
+                + " (sus agentes trabajan con el suplente local).";
+    }
+
     private static long countProducts(List<ProductView> views, CatalogStatus status) {
         return views.stream().filter(v -> v.product().status() == status).count();
     }
@@ -1742,6 +1780,12 @@ public class ChatIntentRouter {
                 .collect(Collectors.joining(" | "));
         return pending.size() + " dependencia(s) esperando tu aprobación: " + lines
                 + ". Apruébalas o recházalas en la pantalla Dependencias del Command Center.";
+    }
+
+    private String fallbackTasks(String missionId) {
+        var used = missionMemory.modelsUsed(missionId);
+        return used.isEmpty() ? "" : " Tareas hechas con suplente local: " + used.entrySet().stream()
+                .map(e -> e.getKey() + " (" + e.getValue() + ")").collect(Collectors.joining(", ")) + ".";
     }
 
     private String missionFinance(String missionId) {

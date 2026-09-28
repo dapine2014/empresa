@@ -101,6 +101,25 @@ class AgentRuntimeTest {
         assertTrue(promptCaptor.getValue().contains("un porcentaje son dos cálculos"));
     }
 
+    // Spec salud de modelos (2026-09-28): una tarea hecha mientras el modelo del agente está caído queda marcada.
+    @Test
+    void aTaskFinishedWhileTheModelIsDownIsMarkedWithTheFallback() throws Exception {
+        var result = agentResult("finance", "recomendación ok");
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        runtime.setModelHealth(health);
+        when(companyMemory.agentModel(eq("finance"), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
+        when(health.isDown("nvidia:moonshotai/kimi-k3")).thenReturn(true);
+        when(health.fallbackFor("finance")).thenReturn("qwen3-coder:30b");
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), anyString()))
+                .thenReturn(outcome(result));
+        when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(result)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción").get();
+
+        verify(memory).setTaskModelUsed("TASK-1", "qwen3-coder:30b");
+    }
+
     @Test
     void injectsTheAgentsActivePromptIntoTheTaskPrompt() throws Exception {
         var result = agentResult("finance", "recomendación ok");

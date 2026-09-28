@@ -29,6 +29,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -215,6 +216,21 @@ class CompanyControllerTest {
 
         verify(memory).setAgentModel("engineering", "llama3:8b");
         assertEquals("llama3:8b", response.model());
+    }
+
+    // Spec salud de modelos (2026-09-28): suplente editable en Agents, con la misma validación que el modelo.
+    @Test
+    void theFallbackModelIsValidatedAndCanBeCleared() {
+        doThrow(new IllegalArgumentException("Proveedor remoto desconocido")).when(ceoService).checkModel("anthropic:x/y");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.updateAgentFallbackModel("sales", new AgentModelCommand("anthropic:x/y")));
+        controller.updateAgentFallbackModel("sales", new AgentModelCommand("nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b"));
+        controller.updateAgentFallbackModel("qa", new AgentModelCommand(""));
+
+        verify(memory).setAgentFallbackModel("sales", "nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b");
+        verify(memory).setAgentFallbackModel("qa", "");
+        verify(memory, never()).setAgentFallbackModel(eq("sales"), eq("anthropic:x/y"));
     }
 
     @Test

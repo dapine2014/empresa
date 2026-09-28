@@ -76,6 +76,25 @@ public class AgentRuntime {
         this.jsonMapper = jsonMapper;
     }
 
+    private com.aicompany.core.service.ModelHealthService modelHealth;
+
+    /** Spec salud de modelos (2026-09-28). Setter opcional: los tests que no lo usan no cambian. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(com.aicompany.core.service.ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
+    /** Si el modelo del agente está caído, la tarea la hizo su suplente local: queda marcada. */
+    private void markIfDoneByFallback(String taskId, String agentId) {
+        if (modelHealth == null) {
+            return;
+        }
+        var model = companyMemory.agentModel(agentId, defaultAgentModel);
+        if (modelHealth.isDown(model)) {
+            memory.setTaskModelUsed(taskId, modelHealth.fallbackFor(agentId));
+        }
+    }
+
     public CompletableFuture<AgentResult> execute(
             String taskId,
             String missionId,
@@ -409,6 +428,8 @@ public class AgentRuntime {
                     "COMPLETED",
                     resultJson
             );
+
+            markIfDoneByFallback(taskId, agentId);
 
             memory.recordEvidence(
                     taskId,

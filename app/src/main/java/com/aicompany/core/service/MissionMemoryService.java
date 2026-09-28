@@ -213,6 +213,26 @@ public class MissionMemoryService {
         }
     }
 
+    /** Spec salud de modelos (2026-09-28): la tarea se hizo con el suplente local porque el modelo del agente cayó. */
+    public void setTaskModelUsed(String taskId, String model) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (t:AgentTask {id:$id}) SET t.modelUsed=$model", Map.of("id", taskId, "model", model));
+                return null;
+            });
+        }
+    }
+
+    public Map<String, String> modelsUsed(String missionId) {
+        try (var session = driver.session()) {
+            var out = new java.util.LinkedHashMap<String, String>();
+            session.run("MATCH (:Mission {id:$id})-[:HAS_TASK]->(t:AgentTask) WHERE t.modelUsed IS NOT NULL "
+                    + "RETURN t.id AS id, t.modelUsed AS m ORDER BY t.id", Map.of("id", missionId))
+                    .list().forEach(r -> out.put(r.get("id").asString(), r.get("m").asString()));
+            return out;
+        }
+    }
+
     public void recordDecision(
             String missionId,
             String decisionId,
