@@ -846,3 +846,19 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 **Calidad de respuestas en el chat** (2026-09-27): con los datos de la misión inyectados, Max resumía también lo de Sofia y Sofia escribió "demanda validada" sobre un resultado `NOT_VALIDATED`. Ahora un agente con tareas en la misión recibe solo las suyas, y una afirmación de validación (sin "no"/"sin" delante) sobre resultados no validados recibe una nota de Java. Tras desplegarlo, Sofia igual escribió una sección "**Max (…):**" con números inventados y "la misión validó", y Max (viendo solo lo suyo) dijo que la misión "solo completó finanzas": Java recorta lo escrito en nombre de otro agente (no en Alex), reconoce los verbos de validación y lista las otras tareas sin su contenido.
 
 **`glm-5.3-flash`** (prueba para Creative/Marketing, misión borrada): no fue más rápido (tareas de 2–3,5 min), plan rechazado 1 vez y un resultado rechazado (evidencia sin descripción); se vuelve a `glm-5.3`.
+
+### Rondas de evidencia (v2, reimplementación sobre master)
+
+**Decisiones del fundador** (2026-09-27): `REQUEST_MORE_EVIDENCE` re-ejecuta todas las misiones (discovery, análisis y Engineering); el límite es la policy `MAX_EVIDENCE_ROUNDS` (default 2, editable en Settings); sobre `FAILED` también re-ejecuta; el chat es la ventana del fundador, así que todo lo de las rondas se consulta ahí (100% Java). La rama vieja `worktree-evidence-rounds` quedó ~190 commits atrás y se reimplementó.
+
+**Bugs reales en vivo**:
+1. En la ronda 1 de `MISSION-E2E-ENG` falló Iris: la regla "un archivo en cada ruta" la obligaba a reenviar todo su código; la respuesta se alargó hasta cortarse (JSON incompleto y la API respondiendo `application/octet-stream`). En una ronda lo no devuelto queda como está en el repositorio: se exige al menos un archivo, no uno por ruta, y el prompt lo dice.
+2. En el chat, las tareas salían dos veces (lista plana y agrupada) y con "..": ahora solo agrupadas por ronda.
+3. Una misión con un "más evidencia" registrado antes de esta feature corría las etiquetas de pedido: los pedidos se alinean desde el final.
+4. Revisión final: la misión seguía en `AWAITING_INVESTOR` hasta que el thread de la ronda arrancaba; un segundo pedido en ese instante lanzaba dos rondas en paralelo. La transición a `DELEGATING` ahora es síncrona.
+
+**Verificado en vivo (por el chat)**:
+- `MISSION-RONDAS-DISC` (discovery): "Necesito más evidencia sobre … : quiero 3 precios reales…" → "Arrancó la ronda 1 de 2… Trabajan: Sales, Product, Finance, Engineering y QA"; tareas `-R1`, fuentes nuevas de precios (99designs, Fiverr, Google Workspace); ronda 2 igual; un pedido con la misión en curso se rechaza con el estado; el tercero → "ya usó 2 de 2 vueltas". "¿Cómo va?" muestra las 3 rondas con el pedido de cada una.
+- `MISSION-E2E-ENG` (Engineering, `VERIFIED` con 25 tests): ronda 1 "agrega un endpoint para listar las facturas pagadas" sobre el mismo repositorio (sin scaffold nuevo; sandbox con 28 tests; `UNVALIDATED` por Iris y porque la API devolvió "sin choices" 3 veces a Vera); ronda 2 "el endpoint debe devolver también el total pagado" con el fix → **`VERIFIED`, 30/30 tests**, un commit por agente con `Forjai-Task …-R2`.
+
+**Pendientes menores**: "dame un status" solo cuenta misiones de producción; el pedido guardado es el mensaje completo del chat; la pantalla de misión del Command Center todavía no muestra "arrancó la ronda N".
