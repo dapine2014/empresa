@@ -23,13 +23,38 @@ public class OpenAiCompatibleClient {
     static final int MAX_ATTEMPTS = 3;
 
     private final RestClient client;
+    private final RestClient probeClient;
     private final String apiKey;
     private final Duration retryDelay;
 
     public OpenAiCompatibleClient(RestClient client, String apiKey, Duration retryDelay) {
+        this(client, client, apiKey, retryDelay);
+    }
+
+    /** probeClient: mismo endpoint con timeout corto, solo para ping (spec salud de modelos 2026-09-28). */
+    public OpenAiCompatibleClient(RestClient client, RestClient probeClient, String apiKey, Duration retryDelay) {
         this.client = client;
+        this.probeClient = probeClient;
         this.apiKey = apiKey;
         this.retryDelay = retryDelay;
+    }
+
+    /** ¿El modelo responde? Llamada mínima (10 tokens); nunca lanza. */
+    @SuppressWarnings("unchecked")
+    public boolean ping(String model) {
+        try {
+            var body = new LinkedHashMap<String, Object>();
+            body.put("model", model);
+            body.put("messages", List.of(Map.of("role", "user", "content", "Responde solo: ok")));
+            body.put("max_tokens", 10);
+            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            var response = probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + apiKey)
+                    .body(body).retrieve().body(Map.class);
+            var choices = response == null ? null : (List<Object>) response.get("choices");
+            return choices != null && !choices.isEmpty();
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     /** Respuesta remota: content y tool_calls ya en formato Ollama ({"function": {"name", "arguments": Map}}). */
@@ -68,7 +93,7 @@ public class OpenAiCompatibleClient {
             body.put("tools", tools);
         }
 
-        RuntimeException last = null;
+        IllegalStateException last = null;
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
@@ -81,8 +106,8 @@ public class OpenAiCompatibleClient {
                 if (choices == null || choices.isEmpty()) {
                     // Verificado en vivo (MISSION-SANDBOX-VERIFY-19): intermitente, el siguiente intento funcionó.
                     var excerpt = String.valueOf(response);
-                    last = new IllegalStateException("Respuesta sin choices del modelo remoto " + model + ": "
-                            + excerpt.substring(0, Math.min(300, excerpt.length())));
+                    last = new RemoteUnavailableException("Respuesta sin choices del modelo remoto " + model + ": "
+                            + excerpt.substring(0, Math.min(300, excerpt.length())), null);
                     log.warn("REMOTE_MODEL_RETRY model={} attempt={} reason=sin choices response={}", model, attempt,
                             excerpt.substring(0, Math.min(300, excerpt.length())));
                     sleep();
@@ -94,13 +119,18 @@ public class OpenAiCompatibleClient {
                 return new RemoteReply(content == null ? "" : String.valueOf(content), toOllamaToolCalls(rawCalls));
             } catch (RestClientResponseException ex) {
                 var status = ex.getStatusCode().value();
-                last = new IllegalStateException("Modelo remoto " + model + " respondió HTTP " + status + ": "
-                        + ex.getResponseBodyAsString().lines().findFirst().orElse(""), ex);
+                var detail = "Modelo remoto " + model + " respondió HTTP " + status + ": "
+                        + ex.getResponseBodyAsString().lines().findFirst().orElse("");
                 if (status != 429 && status < 500) {
-                    throw last;
+                    throw new IllegalStateException(detail, ex);
                 }
+                last = new RemoteUnavailableException(detail, ex);
                 log.warn("REMOTE_MODEL_RETRY model={} attempt={} status={}", model, attempt, status);
                 sleep();
+            } catch (org.springframework.web.client.RestClientException ex) {
+                // Verificado en vivo (kimi-k3 caído, 2026-09-28): timeout y cuerpo ilegible (octet-stream). El tiempo ya
+                // se gastó esperando: no se reintenta acá, lo cuenta ModelHealthService.
+                throw new RemoteUnavailableException("Modelo remoto " + model + " no responde: " + ex.getMessage(), ex);
             }
         }
 
