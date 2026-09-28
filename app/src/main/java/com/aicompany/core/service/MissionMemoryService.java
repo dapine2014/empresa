@@ -203,6 +203,16 @@ public class MissionMemoryService {
         }
     }
 
+    /** Último plan aceptado del líder (resultado de la tarea PLANNING COMPLETED más reciente). */
+    public Optional<String> lastTeamPlanJson(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_TASK]->(t:AgentTask {kind:'PLANNING', status:'COMPLETED'}) "
+                            + "WHERE t.result IS NOT NULL RETURN t.result AS r ORDER BY t.updatedAt DESC LIMIT 1",
+                            Map.of("id", missionId))
+                    .list(r -> r.get("r").asString()).stream().findFirst();
+        }
+    }
+
     public void recordDecision(
             String missionId,
             String decisionId,

@@ -1,5 +1,7 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.TaskIds;
+
 import com.aicompany.core.agent.AgentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
 import com.aicompany.core.event.CompanyEventPublisher;
@@ -53,6 +55,16 @@ public class AgentTaskBatchRunner {
             String instruction,
             List<AgentTaskDefinition> definitions,
             Runnable onSubmitted) {
+        return run(missionId, instruction, definitions, onSubmitted, 0);
+    }
+
+    /** round > 0: ronda de evidencia, ids con sufijo -R<n> (spec 2026-09-16, revisión 2026-09-27). */
+    public List<AgentExecutionOutcome> run(
+            String missionId,
+            String instruction,
+            List<AgentTaskDefinition> definitions,
+            Runnable onSubmitted,
+            int round) {
 
         var definitionsByAgent = definitions.stream()
                 .collect(Collectors.toMap(AgentTaskDefinition::agentId, Function.identity()));
@@ -62,7 +74,7 @@ public class AgentTaskBatchRunner {
         for (var definition : definitions) {
 
             var agentId = definition.agentId();
-            var taskId = missionId + "-" + agentId.toUpperCase();
+            var taskId = TaskIds.agentTask(missionId, agentId, round);
 
             log.info("MISSION {} - creating task {} for agent {}", missionId, taskId, agentId);
 
@@ -100,7 +112,7 @@ public class AgentTaskBatchRunner {
 
         log.info("MISSION {} - all agent tasks settled", missionId);
 
-        return replanFailedAgents(missionId, instruction, definitionsByAgent, outcomes);
+        return replanFailedAgents(missionId, instruction, definitionsByAgent, outcomes, round);
     }
 
     private void createTask(String taskId, String missionId, AgentTaskDefinition definition) {
@@ -115,7 +127,8 @@ public class AgentTaskBatchRunner {
             String missionId,
             String instruction,
             Map<String, AgentTaskDefinition> definitionsByAgent,
-            List<AgentExecutionOutcome> outcomes) {
+            List<AgentExecutionOutcome> outcomes,
+            int round) {
 
         var settled = new ArrayList<AgentExecutionOutcome>();
 
@@ -130,7 +143,7 @@ public class AgentTaskBatchRunner {
 
                 var agentId = current.agentId();
                 var definition = definitionsByAgent.get(agentId);
-                var taskId = missionId + "-" + agentId.toUpperCase();
+                var taskId = TaskIds.agentTask(missionId, agentId, round);
 
                 log.warn("MISSION {} - replanning agent {} (attempt {} of {}) after: {}",
                         missionId, agentId, replanAttempt, MAX_AGENT_REPLANS, current.error());

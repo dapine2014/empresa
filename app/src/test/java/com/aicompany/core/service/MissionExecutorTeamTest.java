@@ -56,6 +56,45 @@ class MissionExecutorTeamTest {
         return new TeamPlanResult(team, plan);
     }
 
+    // Spec evidence-rounds (revisión 2026-09-27): la ronda de un equipo reutiliza el último plan guardado.
+    @Test
+    void anEvidenceRoundOfATeamReusesTheSavedPlanWithoutCallingThePlanner() throws Exception {
+        var saved = planned("TEAM-MARKETING-GROWTH");
+        when(memory.teamId("M-2")).thenReturn(Optional.of("TEAM-MARKETING-GROWTH"));
+        when(memory.tasks("M-2")).thenReturn(List.of());
+        when(memory.lastTeamPlanJson("M-2")).thenReturn(Optional.of(JsonMapper.builder().build().writeValueAsString(saved.plan())));
+        when(planner.teamSnapshot("TEAM-MARKETING-GROWTH")).thenReturn(saved.team());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any()))
+                .thenReturn(java.util.Map.of("engineering", "Más canales"));
+        when(analysis.execute(any(), any())).thenReturn(new TeamExecutionResult.AgentOutcomes(List.of()));
+
+        executor.reexecuteAsync("M-2", "Plan de contenido", 1, "Más canales").get();
+
+        verify(planner, never()).plan(any(), any(), any(), any());
+        verify(planner, never()).plan(any(), any(), any(), any(), anyInt());
+        verify(analysis).execute(argThat(c -> c.round() == 1 && c.plan().workTasks().stream()
+                .allMatch(t -> t.objective().contains("SOLICITUD DEL INVERSIONISTA")
+                        && t.objective().contains("Más canales"))), any());
+    }
+
+    @Test
+    void aTeamMissionThatFailedBeforeHavingAPlanIsPlannedAgainWithTheRequest() throws Exception {
+        when(memory.teamId("M-3")).thenReturn(Optional.of("TEAM-MARKETING-GROWTH"));
+        when(memory.tasks("M-3")).thenReturn(List.of());
+        when(memory.lastTeamPlanJson("M-3")).thenReturn(Optional.empty());
+        when(planner.plan(eq("M-3"), eq("TEAM-MARKETING-GROWTH"), argThat(i -> i != null && i.contains("Más canales")),
+                any(), eq(1))).thenReturn(planned("TEAM-MARKETING-GROWTH"));
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any()))
+                .thenReturn(java.util.Map.of("engineering", "Más canales"));
+        when(analysis.execute(any(), any())).thenReturn(new TeamExecutionResult.AgentOutcomes(List.of()));
+
+        executor.reexecuteAsync("M-3", "Plan de contenido", 1, "Más canales").get();
+
+        verify(planner).plan(eq("M-3"), eq("TEAM-MARKETING-GROWTH"), argThat(i -> i != null && i.contains("Más canales")),
+                any(), eq(1));
+        verify(analysis).execute(argThat(c -> c.round() == 1), any());
+    }
+
     @Test
     void anEngineeringMissionNeverCreatesDiscoveryTasks() throws Exception {
         when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-ENGINEERING"));
