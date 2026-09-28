@@ -85,6 +85,22 @@ class FinanceCalculatorTest {
         assertEquals(4, summary.entries().size());
     }
 
+    // Spec catálogo (2026-09-28): ingresos y ganancias por producto (un producto se vende muchas veces).
+    @Test
+    void perProductOnlyCountsThatProductsSalesAndTheirCorrections() {
+        var t0 = Instant.parse("2026-09-28T10:00:00Z");
+        var summary = FinanceCalculator.summarize(List.of(
+                new FinanceMovement("S1", "SALE", "a", 100, 10, null, "PRODUCTION", t0, null, "A", "P1"),
+                new FinanceMovement("S2", "SALE", "b", 300, 0, null, "PRODUCTION", t0.plusSeconds(60), null, "B", "P2"),
+                new FinanceMovement("C1", "CORRECTION", "rebaja", -20, 0, null, "PRODUCTION", t0.plusSeconds(120), "S1", null, "P1"),
+                new FinanceMovement("E1", "EXPENSE", "dominio", 0, 12, null, "PRODUCTION", t0.plusSeconds(180), null, null)),
+                50, null, "P1");
+
+        assertEquals(80.0, summary.revenueUsd(), 1e-9);
+        assertEquals(10.0, summary.costsUsd(), 1e-9);
+        assertEquals(3, summary.entries().size());
+    }
+
     @Test
     void centsAddUpExactly() {
         var summary = FinanceCalculator.summarize(List.of(

@@ -95,6 +95,21 @@ class MissionExecutorTeamTest {
         verify(analysis).execute(argThat(c -> c.round() == 1), any());
     }
 
+    // Spec catálogo §6 A: una construcción terminada intenta pasar sus productos a "listo para vender".
+    @Test
+    void aFinishedBuildTellsTheCatalog() throws Exception {
+        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-ENGINEERING"));
+        when(planner.plan(anyString(), anyString(), anyString(), any())).thenReturn(planned("TEAM-ENGINEERING"));
+        when(development.execute(any(), any())).thenReturn(new TeamExecutionResult.Development("reporte", "ESTADO"));
+        var automation = mock(ProductAutomation.class);
+        executor.setProductAutomation(automation);
+
+        executor.executeAsync("M-1", "crear").get();
+
+        verify(automation).buildFinished("M-1");
+        verify(automation, never()).ideaFromDiscovery(any(), any());
+    }
+
     @Test
     void anEngineeringMissionNeverCreatesDiscoveryTasks() throws Exception {
         when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-ENGINEERING"));

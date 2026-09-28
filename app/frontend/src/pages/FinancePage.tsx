@@ -97,7 +97,9 @@ function CustomerForm() {
 function SaleForm() {
   const refresh = useFinanceInvalidation()
   const customers = useQuery({ queryKey: ['finance-customers'], queryFn: api.financeCustomers })
+  const products = useQuery({ queryKey: ['products'], queryFn: api.products })
   const [customerId, setCustomerId] = useState('')
+  const [productId, setProductId] = useState('')
   const [description, setDescription] = useState('')
   const [revenue, setRevenue] = useState(0)
   const [cost, setCost] = useState(0)
@@ -116,6 +118,7 @@ function SaleForm() {
         environment,
         evidenceDescription: evidence,
         evidenceLink: link || undefined,
+        productId: productId || undefined,
       }),
     onSuccess: () => {
       setDescription('')
@@ -134,6 +137,14 @@ function SaleForm() {
         {(customers.data ?? []).map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
+          </option>
+        ))}
+      </select>
+      <select value={productId} onChange={(e) => setProductId(e.target.value)}>
+        <option value="">Sin producto del catálogo</option>
+        {(products.data ?? []).map((v) => (
+          <option key={v.product.id} value={v.product.id}>
+            {v.product.name}
           </option>
         ))}
       </select>

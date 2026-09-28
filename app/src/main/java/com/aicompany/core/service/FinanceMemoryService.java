@@ -64,10 +64,15 @@ public class FinanceMemoryService {
         write(tx -> {
             var params = params("id", id, "customerId", c.customerId(), "description", c.description().strip(),
                     "revenueUsd", c.revenueUsd(), "costUsd", c.costUsd(), "netProfitUsd", c.revenueUsd() - c.costUsd(),
-                    "environment", environment, "missionId", blankToNull(c.missionId()));
+                    "environment", environment, "missionId", blankToNull(c.missionId()), "productId", blankToNull(c.productId()));
             tx.run("MATCH (cu:Customer {id:$customerId}) CREATE (t:Transaction {id:$id, customerId:$customerId, "
                     + "description:$description, revenueUsd:$revenueUsd, costUsd:$costUsd, netProfitUsd:$netProfitUsd, "
-                    + "environment:$environment, missionId:$missionId, recordedAt:$now})-[:FOR_CUSTOMER]->(cu)", params);
+                    + "environment:$environment, missionId:$missionId, productId:$productId, recordedAt:$now})"
+                    + "-[:FOR_CUSTOMER]->(cu)", params);
+            if (blankToNull(c.productId()) != null) {
+                tx.run("MATCH (t:Transaction {id:$id}), (p:Product {id:$productId}) MERGE (t)-[:OF_PRODUCT]->(p)",
+                        Map.of("id", id, "productId", c.productId().strip()));
+            }
             linkMission(tx, "Transaction", "HAS_TRANSACTION", id, blankToNull(c.missionId()));
             evidence(tx, "Transaction", id, c.evidenceDescription(), c.evidenceLink());
         });
@@ -103,16 +108,16 @@ public class FinanceMemoryService {
                             + "RETURN t.id AS id, t.description AS d, coalesce(t.revenueUsd, 0.0) AS r, "
                             + "coalesce(t.costUsd, 0.0) AS c, coalesce(t.missionId, m.id) AS mission, "
                             + "coalesce(t.environment, CASE WHEN m IS NULL THEN 'PRODUCTION' ELSE " + MISSION_ENV + " END) AS env, "
-                            + "t.recordedAt AS at, cu.name AS who")
+                            + "t.recordedAt AS at, cu.name AS who, t.productId AS product")
                     .list().forEach(r -> out.add(movement(r, "SALE", r.get("r").asDouble(), r.get("c").asDouble(), null)));
             session.run("MATCH (e:Expense) RETURN e.id AS id, e.description AS d, e.amountUsd AS c, e.missionId AS mission, "
-                            + "e.environment AS env, e.recordedAt AS at, null AS who")
+                            + "e.environment AS env, e.recordedAt AS at, null AS who, null AS product")
                     .list().forEach(r -> out.add(movement(r, "EXPENSE", 0, r.get("c").asDouble(), null)));
             session.run("MATCH (c:Correction)-[:CORRECTS]->(target) OPTIONAL MATCH (m:Mission)-[:HAS_TRANSACTION]->(target) "
                             + "RETURN c.id AS id, c.reason AS d, c.revenueAdjustmentUsd AS r, c.costAdjustmentUsd AS c, "
                             + "coalesce(target.missionId, m.id) AS mission, coalesce(target.environment, "
                             + "CASE WHEN m IS NULL THEN 'PRODUCTION' ELSE " + MISSION_ENV + " END) AS env, "
-                            + "c.recordedAt AS at, null AS who, c.targetId AS target")
+                            + "c.recordedAt AS at, null AS who, c.targetId AS target, target.productId AS product")
                     .list().forEach(r -> out.add(movement(r, "CORRECTION", r.get("r").asDouble(), r.get("c").asDouble(),
                             r.get("target").asString(null))));
         }
@@ -133,7 +138,7 @@ public class FinanceMemoryService {
     private static FinanceMovement movement(Record r, String kind, double revenue, double cost, String target) {
         return new FinanceMovement(r.get("id").asString(), kind, r.get("d").asString(""), revenue, cost,
                 r.get("mission").asString(null), r.get("env").asString("PRODUCTION"), instant(r.get("at").asString(null)),
-                target, r.get("who").asString(null));
+                target, r.get("who").asString(null), r.get("product").asString(null));
     }
 
     private static Instant instant(String text) {

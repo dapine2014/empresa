@@ -33,6 +33,11 @@ class CeoServiceRemoteModelTest {
     }
 
     @Test
+    void theMemoryToolOffersTheCatalog() {
+        assertTrue(CeoService.companyMemoryTopics().contains("PRODUCTS"));
+    }
+
+    @Test
     void knownProvidersAndLocalOllamaModelsAreAccepted() {
         assertDoesNotThrow(() -> ceoService.checkModel("nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b"));
         assertDoesNotThrow(() -> ceoService.checkModel("nvidia:moonshotai/kimi-k3"));

@@ -1,5 +1,9 @@
 package com.aicompany.core.service;
 
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+
+import org.springframework.http.HttpStatus;
+
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.evidence.EvidenceAcquisitionService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -43,6 +47,29 @@ class CeoServiceContextWindowTest {
                 mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class), new SimpleMeterRegistry());
 
         var plan = ceoService.planTeamWork("engineering", "prompt", "", "qwen3:8b");
+
+        assertEquals("s", plan.summary());
+        server.verify();
+    }
+
+    // Verificado en vivo (MISSION-LOCAL-DISC, 2026-09-28): qwen3-coder:30b (suplente local) responde 400 "does not
+    // support thinking" si se manda "think". Se reintenta la misma llamada sin esa opción.
+    @Test
+    void aLocalModelWithoutThinkingIsRetriedWithoutTheThinkOption() {
+        var builder = RestClient.builder().baseUrl("http://ollama");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("http://ollama/api/chat"))
+                .andExpect(jsonPath("$.think").exists())
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":\"\\\"qwen3-coder:30b\\\" does not support thinking\"}"));
+        server.expect(requestTo("http://ollama/api/chat"))
+                .andExpect(jsonPath("$.think").doesNotExist())
+                .andRespond(withSuccess(PLAN_RESPONSE, MediaType.APPLICATION_JSON));
+
+        var ceoService = new CeoService(builder.build(), JsonMapper.builder().build(),
+                mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class), new SimpleMeterRegistry());
+
+        var plan = ceoService.planTeamWork("engineering", "prompt", "", "qwen3-coder:30b");
 
         assertEquals("s", plan.summary());
         server.verify();

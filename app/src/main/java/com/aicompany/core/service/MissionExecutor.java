@@ -88,6 +88,26 @@ public class MissionExecutor {
         this.teamStrategies = teamStrategies;
     }
 
+    private ProductAutomation productAutomation;
+
+    /** Spec catálogo §6 A (2026-09-28). Setter opcional: los tests que no lo usan no cambian. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setProductAutomation(ProductAutomation productAutomation) {
+        this.productAutomation = productAutomation;
+    }
+
+    /** El catálogo nunca puede tumbar una misión: si falla, solo se registra. */
+    private void catalog(String missionId, String what, Runnable action) {
+        if (productAutomation == null) {
+            return;
+        }
+        try {
+            action.run();
+        } catch (Exception ex) {
+            log.warn("MISSION {} - catalog automation ({}) failed: {}", missionId, what, ex.getMessage());
+        }
+    }
+
     public CompletableFuture<Void> executeAsync(
             String missionId,
             String instruction) {
@@ -405,6 +425,8 @@ public class MissionExecutor {
         );
 
         log.info("MISSION {} -> AWAITING_INVESTOR (team development)", missionId);
+
+        catalog(missionId, "build", () -> productAutomation.buildFinished(missionId));
     }
 
     /** Las 5 tareas fijas de discovery — misiones SIN teamId, sin cambios. */
@@ -557,6 +579,15 @@ public class MissionExecutor {
         );
 
         log.info("MISSION {} -> AWAITING_INVESTOR", missionId);
+
+        if (memory.teamId(missionId).isEmpty()) {
+            outcomes.stream()
+                    .filter(o -> o.completed() && ProductAutomation.PRODUCT_AGENT.equals(o.agentId()))
+                    .findFirst()
+                    .ifPresent(o -> catalog(missionId, "idea", () -> productAutomation.ideaFromDiscovery(missionId, o.result())));
+        } else {
+            catalog(missionId, "build", () -> productAutomation.buildFinished(missionId));
+        }
     }
 
     private String financeObjective(double seedCapitalUsd, FinancialCriteriaResponse financialCriteria) {

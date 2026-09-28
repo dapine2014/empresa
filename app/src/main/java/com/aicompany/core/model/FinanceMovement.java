@@ -8,5 +8,12 @@ import java.time.Instant;
  */
 public record FinanceMovement(String id, String kind, String description, double revenueUsd, double costUsd,
                               String missionId, String environment, Instant recordedAt, String targetId,
-                              String counterparty) {
+                              String counterparty, String productId) {
+
+    /** Movimientos sin producto (gastos, ventas previas al catálogo). */
+    public FinanceMovement(String id, String kind, String description, double revenueUsd, double costUsd,
+                           String missionId, String environment, java.time.Instant recordedAt, String targetId,
+                           String counterparty) {
+        this(id, kind, description, revenueUsd, costUsd, missionId, environment, recordedAt, targetId, counterparty, null);
+    }
 }

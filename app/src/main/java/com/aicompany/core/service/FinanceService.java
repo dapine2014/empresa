@@ -26,11 +26,20 @@ public class FinanceService {
     private final FinanceMemoryService memory;
     private final CompanyPolicyService policies;
     private final CompanyEventPublisher events;
+    private final ProductMemoryService products;
 
-    public FinanceService(FinanceMemoryService memory, CompanyPolicyService policies, CompanyEventPublisher events) {
+    public FinanceService(FinanceMemoryService memory, CompanyPolicyService policies, CompanyEventPublisher events,
+                          ProductMemoryService products) {
         this.memory = memory;
         this.policies = policies;
         this.events = events;
+        this.products = products;
+    }
+
+    /** Ingresos, costos y ganancias de un producto del catálogo (spec 2026-09-28). */
+    public FinanceSummary summaryForProduct(String productId) {
+        return FinanceCalculator.summarize(memory.movements(), policies.activeValue(PolicyKey.SEED_CAPITAL_USD), null,
+                productId);
     }
 
     public FinanceSummary summary(String missionIdOrNull) {
@@ -65,6 +74,9 @@ public class FinanceService {
         if ("LEAD".equals(kind)) {
             throw new IllegalArgumentException("El cliente " + c.customerId() + " es un prospecto de los agentes, no un "
                     + "cliente: regístralo como cliente cuando compre.");
+        }
+        if (c.productId() != null && !c.productId().isBlank() && products.find(c.productId()).isEmpty()) {
+            throw new IllegalArgumentException("No existe el producto " + c.productId() + ".");
         }
         var environment = environmentFor(c.missionId(), c.environment());
         var id = "SALE-" + UUID.randomUUID();

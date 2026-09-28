@@ -16,5 +16,6 @@ class SpaControllerTest {
 
         assertTrue(List.of(mapping.value()).contains("/finanzas"), List.of(mapping.value()).toString());
         assertTrue(List.of(mapping.value()).contains("/dependencias"), List.of(mapping.value()).toString());
+        assertTrue(List.of(mapping.value()).contains("/productos"), List.of(mapping.value()).toString());
     }
 }

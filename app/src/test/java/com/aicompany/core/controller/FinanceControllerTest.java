@@ -24,7 +24,7 @@ class FinanceControllerTest {
         when(finance.summary("MISSION-1")).thenReturn(summary);
         when(finance.registerExpense(any())).thenReturn("EXPENSE-1");
 
-        assertEquals(summary, controller.summary("MISSION-1"));
+        assertEquals(summary, controller.summary("MISSION-1", null));
         assertEquals(Map.of("id", "EXPENSE-1"),
                 controller.expense(new FinanceExpenseCommand("Dominio", 12, null, null, "Recibo", null)));
     }

@@ -319,6 +319,7 @@ export interface FinanceSaleCommand {
   environment?: string
   evidenceDescription: string
   evidenceLink?: string
+  productId?: string
 }
 
 export interface FinanceExpenseCommand {
@@ -361,4 +362,57 @@ export interface DependencyInfo {
   requestedByAgent?: string
   createdAt?: string
   decidedAt?: string
+}
+
+// Catálogo de productos (spec 2026-09-28): reflejo a mano de CatalogProduct/ProductView/ProductChange.
+export type CatalogStatus = 'IDEA' | 'IN_CONSTRUCTION' | 'READY_TO_SELL' | 'PAUSED' | 'RETIRED'
+
+export interface CatalogProduct {
+  id: string
+  name: string
+  description: string | null
+  kind: 'SOFTWARE' | 'SERVICE'
+  targetCustomer: string | null
+  priceUsd: number
+  priceOnRequest: boolean
+  estimatedCostUsd: number
+  delivery: string | null
+  markets: string[]
+  languages: string[]
+  status: CatalogStatus
+  statusBeforePause: CatalogStatus | null
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+  validatedBy: string[]
+  builtBy: string[]
+}
+
+export interface ProductChange {
+  actor: string
+  field: string
+  from: string | null
+  to: string | null
+  reason: string | null
+  at: string
+}
+
+export interface ProductView {
+  product: CatalogProduct
+  missing: string[]
+  history: ProductChange[]
+}
+
+export interface ProductCommand {
+  name?: string
+  description?: string
+  kind?: string
+  targetCustomer?: string
+  priceUsd?: number
+  priceOnRequest?: boolean
+  estimatedCostUsd?: number
+  delivery?: string
+  markets?: string[]
+  languages?: string[]
+  reason?: string
 }

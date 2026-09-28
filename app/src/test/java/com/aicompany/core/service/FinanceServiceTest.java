@@ -20,7 +20,8 @@ class FinanceServiceTest {
     private final FinanceMemoryService memory = mock(FinanceMemoryService.class);
     private final CompanyPolicyService policies = mock(CompanyPolicyService.class);
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
-    private final FinanceService service = new FinanceService(memory, policies, events);
+    private final ProductMemoryService products = mock(ProductMemoryService.class);
+    private final FinanceService service = new FinanceService(memory, policies, events, products);
 
     @Test
     void aSaleWithoutMissionIsProductionAndPublishesAnEvent() {
@@ -39,6 +40,17 @@ class FinanceServiceTest {
         var id = service.registerExpense(new FinanceExpenseCommand("Dominio", 12, "MISSION-1", null, "Recibo", null));
 
         verify(memory).createExpense(eq(id), any(), eq("TEST"));
+    }
+
+    @Test
+    void aSaleOfAnUnknownProductIsRejected() {
+        when(memory.customerKind("C1")).thenReturn(Optional.of("CUSTOMER"));
+        when(products.find("NOPE")).thenReturn(Optional.empty());
+
+        var ex = assertThrows(IllegalArgumentException.class, () -> service.registerSale(
+                new FinanceSaleCommand("C1", "Landing", 120, 10, null, null, "Pago", null, "NOPE")));
+        assertTrue(ex.getMessage().contains("No existe el producto NOPE"), ex.getMessage());
+        verify(memory, never()).createSale(any(), any(), any());
     }
 
     @Test

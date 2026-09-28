@@ -1,5 +1,11 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.ProductView;
+
+import com.aicompany.core.model.CatalogStatus;
+
+import com.aicompany.core.model.CatalogProduct;
+
 import com.aicompany.core.model.FinanceSummary;
 
 import java.util.Optional;
@@ -181,6 +187,12 @@ public class ChatIntentRouter {
     private final TeamMemoryService teamMemory;
     private final FinanceService financeService;
     private final DependencyMemoryService dependencyMemory;
+    private final ProductService productService;
+
+    /** Spec catálogo §6 B (2026-09-28): comandos del fundador sobre un producto, interpretados en Java. */
+    private static final Pattern PRODUCT_COMMAND = Pattern.compile(
+            "^\\s*(?:por favor\\s+)?(pausa|reanuda|retira|reactiva)(?:\\s+el)?(?:\\s+(?:producto|servicio))?\\s+(.+?)\\s*[.!]?\\s*$");
+    private static final Pattern PRODUCT_NEEDS = Pattern.compile("le falta (?:a |al )?(?:producto |servicio )?(.+?) para (?:venderse|vender)");
     private final PromptMemoryService promptMemory;
 
     public ChatIntentRouter(
@@ -198,7 +210,8 @@ public class ChatIntentRouter {
             TeamMemoryService teamMemory,
             PromptMemoryService promptMemory,
             FinanceService financeService,
-            DependencyMemoryService dependencyMemory) {
+            DependencyMemoryService dependencyMemory,
+            ProductService productService) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -215,6 +228,7 @@ public class ChatIntentRouter {
         this.promptMemory = promptMemory;
         this.financeService = financeService;
         this.dependencyMemory = dependencyMemory;
+        this.productService = productService;
     }
 
     /**
@@ -269,7 +283,8 @@ public class ChatIntentRouter {
     }
 
     private boolean isGovernance(String message) {
-        return MISSION_START.matcher(message).find()
+        return PRODUCT_COMMAND.matcher(normalize(message)).matches()
+                || MISSION_START.matcher(message).find()
                 || detectFreeMissionStart(normalize(message))
                 || detectDecision(message) != null;
     }
@@ -473,6 +488,11 @@ public class ChatIntentRouter {
     }
 
     private String resolve(String message) {
+
+        var productCommand = PRODUCT_COMMAND.matcher(normalize(message));
+        if (productCommand.matches()) {
+            return handleProductCommand(productCommand.group(1), productCommand.group(2), message);
+        }
 
         var missionStartMatcher = MISSION_START.matcher(message);
 
@@ -1103,7 +1123,9 @@ public class ChatIntentRouter {
         OPPORTUNITIES,
         COMPANY_PROFIT,
         COMPANY_STATUS,
-        DEPENDENCIES
+        DEPENDENCIES,
+        PRODUCTS,
+        PRODUCT_DETAIL
     }
 
     private record TeamKeywordRule(String teamId, List<Pattern> topicKeywordPatterns) {}
@@ -1146,6 +1168,15 @@ public class ChatIntentRouter {
         // Subproyecto 2 (2026-09-28): dependencias de Engineering que esperan la decisión del fundador (🔴).
         if (normalized.contains("dependencia")) {
             return new QueryMatch(QueryIntent.DEPENDENCIES, null);
+        }
+
+        // Spec catálogo (2026-09-28).
+        var needs = PRODUCT_NEEDS.matcher(normalized);
+        if (needs.find()) {
+            return new QueryMatch(QueryIntent.PRODUCT_DETAIL, needs.group(1).strip());
+        }
+        if (normalized.contains("producto") || normalized.contains("catalogo")) {
+            return new QueryMatch(QueryIntent.PRODUCTS, null);
         }
 
         var teamGate = normalized.contains("equipo") || normalized.contains("team")
@@ -1255,6 +1286,10 @@ public class ChatIntentRouter {
             return answerMemoryTopic("TEAM_DETAILS:" + match.teamId());
         }
 
+        if (match.intent() == QueryIntent.PRODUCT_DETAIL) {
+            return formatProductDetail(match.teamId());
+        }
+
         return answerMemoryTopic(match.intent().name());
     }
 
@@ -1287,6 +1322,7 @@ public class ChatIntentRouter {
             case "COMPANY_PROFIT" -> formatFinance(financeService.summary(null), 10);
             case "COMPANY_STATUS" -> formatCompanyStatus();
             case "DEPENDENCIES" -> formatPendingDependencies();
+            case "PRODUCTS" -> formatCatalog();
             default -> "Dato no reconocido: " + topic + ".";
         };
     }
@@ -1393,6 +1429,7 @@ public class ChatIntentRouter {
 
         // Spec finanzas (2026-09-27): mismo cálculo que la pantalla Finanzas (incluye gastos y correcciones).
         var finance = financeService.summary(null);
+        var catalog = productService.list();
 
         return String.format(
                 Locale.ROOT,
@@ -1400,12 +1437,15 @@ public class ChatIntentRouter {
                         + "Agentes: %d trabajando, %d inactivo(s). "
                         + "Misiones (producción): %d activa(s)%s, %d esperando tu aprobación, %d fallida(s). "
                         + "Oportunidades registradas: %d. Prospectos (leads): %d. Clientes reales: %d. "
-                        + "Ingresos: US$%.2f. Costos: US$%.2f. Ganancias: US$%.2f. Balance: US$%.2f.",
+                        + "Ingresos: US$%.2f. Costos: US$%.2f. Ganancias: US$%.2f. Balance: US$%.2f. "
+                        + "Productos: %d listo(s) para vender, %d en construcción, %d idea(s).",
                 finance.balanceUsd(), working, idle,
                 active, rerunning > 0 ? " (" + rerunning + " re-ejecutándose por más evidencia)" : "",
                 awaitingInvestor, failed,
                 opportunities, prospects, customers,
-                finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd()
+                finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
+                countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
+                countProducts(catalog, CatalogStatus.IDEA)
         );
     }
 
@@ -1594,6 +1634,98 @@ public class ChatIntentRouter {
 
         return "Tenés " + opportunities.size()
                 + " oportunidad(es) identificada(s): " + lines;
+    }
+
+    private static final Map<CatalogStatus, String> CATALOG_LABELS = Map.of(
+            CatalogStatus.READY_TO_SELL, "Listos para vender", CatalogStatus.IN_CONSTRUCTION, "En construcción",
+            CatalogStatus.IDEA, "Ideas", CatalogStatus.PAUSED, "Pausados", CatalogStatus.RETIRED, "Retirados");
+
+    private static long countProducts(List<ProductView> views, CatalogStatus status) {
+        return views.stream().filter(v -> v.product().status() == status).count();
+    }
+
+    private String formatCatalog() {
+        var views = productService.list();
+        if (views.isEmpty()) {
+            return "El catálogo está vacío: Forjai todavía no tiene productos ni servicios. Puedes crear uno en la pantalla "
+                    + "Productos; las misiones de discovery con una oferta también crean ideas.";
+        }
+        var parts = new ArrayList<String>();
+        for (var status : List.of(CatalogStatus.READY_TO_SELL, CatalogStatus.IN_CONSTRUCTION, CatalogStatus.IDEA,
+                CatalogStatus.PAUSED, CatalogStatus.RETIRED)) {
+            var names = views.stream().filter(v -> v.product().status() == status).map(v -> v.product().name()
+                            + (v.product().priceOnRequest() ? " (a cotizar)" : v.product().priceUsd() > 0
+                            ? String.format(Locale.ROOT, " (US$%.2f)", v.product().priceUsd()) : ""))
+                    .toList();
+            if (!names.isEmpty()) {
+                parts.add(CATALOG_LABELS.get(status) + ": " + String.join(", ", names));
+            }
+        }
+        return "Catálogo de Forjai. " + String.join(". ", parts) + ".";
+    }
+
+    private String formatProductDetail(String name) {
+        var found = resolveProduct(name);
+        if (found.product() == null) {
+            return found.message();
+        }
+        var v = productService.view(found.product().id()).orElseThrow();
+        var p = v.product();
+        var requirements = v.missing().isEmpty()
+                ? (p.status() == CatalogStatus.READY_TO_SELL ? "✅ Cumple todos los requisitos para venderse."
+                        : "✅ Cumple los requisitos: puede pasar a listo para vender.")
+                : "Para venderse: " + v.missing().stream().map(m -> "❌ " + m).collect(Collectors.joining(" "));
+        return p.name() + " (" + p.kind() + ", " + CATALOG_LABELS.get(p.status()).toLowerCase(Locale.ROOT) + "). "
+                + requirements + " Misiones de demanda: " + p.validatedBy() + "; de construcción: " + p.builtBy()
+                + ". Mercados: " + p.markets() + ", idiomas: " + p.languages() + ".";
+    }
+
+    private record ProductMatch(CatalogProduct product, String message) {
+    }
+
+    /** Por nombre sin mayúsculas ni tildes: el nombre exacto gana; si hay varios candidatos no se adivina. */
+    private ProductMatch resolveProduct(String rawName) {
+        var name = rawName.replaceAll("@[\\p{L}\\p{N}_-]+", "").strip();
+        var candidates = productService.findByName(name);
+        var exact = candidates.stream().filter(p -> ProductService.normalize(p.name()).equals(ProductService.normalize(name)))
+                .toList();
+        if (exact.size() == 1) {
+            return new ProductMatch(exact.get(0), null);
+        }
+        if (candidates.size() == 1) {
+            return new ProductMatch(candidates.get(0), null);
+        }
+        if (candidates.isEmpty()) {
+            return new ProductMatch(null, "No encontré ningún producto que se llame \"" + name + "\". " + formatCatalog());
+        }
+        return new ProductMatch(null, "Hay varios productos con ese nombre: " + candidates.stream().map(CatalogProduct::name)
+                .collect(Collectors.joining(", ")) + ". ¿Cuál? Escribe el nombre completo.");
+    }
+
+    private String handleProductCommand(String verb, String name, String message) {
+        var found = resolveProduct(name);
+        if (found.product() == null) {
+            return found.message();
+        }
+        var target = switch (verb) {
+            case "pausa" -> CatalogStatus.PAUSED;
+            case "retira" -> CatalogStatus.RETIRED;
+            case "reactiva" -> CatalogStatus.IDEA;
+            default -> null;
+        };
+        var done = switch (verb) {
+            case "pausa" -> "pausado (la búsqueda de clientes se frena)";
+            case "retira" -> "retirado";
+            case "reactiva" -> "reactivado como idea";
+            default -> "reanudado";
+        };
+        try {
+            var view = productService.changeStatus(found.product().id(), target, message, ProductService.FOUNDER);
+            return "Listo: " + view.product().name() + " quedó " + done + ". Estado actual: "
+                    + CATALOG_LABELS.get(view.product().status()).toLowerCase(Locale.ROOT) + ".";
+        } catch (IllegalArgumentException ex) {
+            return "No se cambió " + found.product().name() + ": " + ex.getMessage();
+        }
     }
 
     /** Dependencias PENDING_APPROVAL con su motivo, 100% desde Neo4j (se aprueban en la pantalla Dependencias). */

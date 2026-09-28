@@ -58,6 +58,8 @@ public class CompanyMemoryService {
             // Finanzas (spec 2026-09-27): gastos y correcciones del fundador.
             session.run("CREATE CONSTRAINT expense_id IF NOT EXISTS FOR (e:Expense) REQUIRE e.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT correction_id IF NOT EXISTS FOR (c:Correction) REQUIRE c.id IS UNIQUE").consume();
+            // Catálogo de productos (spec 2026-09-28).
+            session.run("CREATE CONSTRAINT product_id IF NOT EXISTS FOR (p:Product) REQUIRE p.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:AgentTask) REQUIRE t.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT opportunity_id IF NOT EXISTS FOR (o:Opportunity) REQUIRE o.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.id IS UNIQUE").consume();

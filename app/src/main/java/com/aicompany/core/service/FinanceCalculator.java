@@ -17,8 +17,15 @@ public final class FinanceCalculator {
     }
 
     public static FinanceSummary summarize(List<FinanceMovement> movements, double seedCapitalUsd, String missionIdOrNull) {
+        return summarize(movements, seedCapitalUsd, missionIdOrNull, null);
+    }
+
+    /** productIdOrNull (spec catálogo 2026-09-28): ventas del producto y sus correcciones. */
+    public static FinanceSummary summarize(List<FinanceMovement> movements, double seedCapitalUsd, String missionIdOrNull,
+                                           String productIdOrNull) {
         var selected = movements.stream()
                 .filter(m -> missionIdOrNull == null || missionIdOrNull.equals(m.missionId()))
+                .filter(m -> productIdOrNull == null || productIdOrNull.equals(m.productId()))
                 .sorted(Comparator.comparing(FinanceMovement::recordedAt))
                 .toList();
 
