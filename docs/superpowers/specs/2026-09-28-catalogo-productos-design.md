@@ -2,8 +2,9 @@
 
 **Fecha**: 2026-09-28
 **Estado**: diseño aprobado por el fundador en conversación (enfoque A); pendiente de revisión de este spec.
-**Subproyecto 1 del "ciclo de producto"** (orden aprobado: 1 catálogo → 3 búsqueda diaria de prospectos → 2 orquestador
-→ 4 contacto con prospectos).
+**Subproyecto 1 del "ciclo de producto"**. Orden (revisado por el fundador el 2026-09-28, "somos una empresa IA, no tiene
+sentido limitarnos"): 1 catálogo → 2 orquestador (sin producto ni propuesta del inversionista, Forjai investiga y crea
+uno) → 3 búsqueda diaria de prospectos → 4 contacto con prospectos. Segunda fase: revender lo creado a otros clientes.
 
 ## Contexto y objetivo
 
@@ -24,6 +25,10 @@ diaria de prospectos (subproyecto 3) y del orquestador (subproyecto 2).
    producto construido y verificado; margen estimado positivo.
 3. **Enfoque A**: entidad `Product` propia con máquina de estados, no reutilizar `Opportunity` ni `Mission`.
 4. Todo editable desde la UI, con historial de cambios (regla general del fundador).
+5. **Mercado mundial siempre**: el cliente objetivo de un producto declara mercados e idiomas, con "mundial" por defecto.
+6. **Un producto se vende muchas veces** (segunda fase: revender a otros clientes); el catálogo y Finanzas acumulan sus
+   ventas por producto.
+7. **Automatizaciones deterministas desde el día uno** (A) y **comandos del fundador en el chat** (B), ver §6.
 
 ## 1. Datos (Neo4j)
 
@@ -33,6 +38,8 @@ createdBy, createdAt, updatedAt})`
 - `kind`: `SOFTWARE` | `SERVICE`.
 - `priceUsd` (≥ 0) o `priceOnRequest: true` ("a cotizar"); `estimatedCostUsd` (≥ 0), costo estimado por venta.
 - `delivery`: cómo se entrega (obligatorio en `SERVICE` para estar listo).
+- `markets` (lista; default `["WORLDWIDE"]`) e `languages` (lista; default `["en", "es"]`): dónde y en qué idiomas se
+  buscan clientes. Nunca un país por defecto.
 - `status`: `IDEA` | `IN_CONSTRUCTION` | `READY_TO_SELL` | `PAUSED` | `RETIRED`.
 - `createdBy`: `"human"` o el `agentId` que lo creó.
 - Relaciones: `(:Product)-[:VALIDATED_BY]->(:Mission)` (misiones de discovery que respaldan la demanda) y
@@ -85,9 +92,30 @@ createdBy, createdAt, updatedAt})`
 - "Dame un status" suma "Productos: N listos para vender, M en construcción".
 - Topic `PRODUCTS` en `query_company_memory`.
 
+## 6. Automatizaciones (A) y comandos en el chat (B)
+
+**A. Deterministas, en Java (sin decisión del modelo)**:
+- **Discovery → Idea**: al consolidar una misión de discovery (sin `teamId`) cuyo resultado de `product` (Luna,
+  `OFFER_DESIGN`) trae una oferta, Java crea un producto `IDEA` (`createdBy: "product"`) con nombre y descripción de la
+  oferta y la misión como `VALIDATED_BY`. Idempotente por misión (no duplica si la misión se re-ejecuta en una ronda de
+  evidencia: actualiza la misma idea con historial). Si no hay oferta, no crea nada.
+- **Construcción verificada → intento de "listo"**: cuando una misión `BUILT_BY` de un producto termina con su
+  `VALIDATION` en `VERIFIED` (o, en un servicio, la misión de equipo completa), Java pasa el producto a
+  `IN_CONSTRUCTION` si estaba en `IDEA` y evalúa los requisitos: si se cumplen, `READY_TO_SELL`; si no, deja en el
+  historial qué falta. Un producto `PAUSED` o `RETIRED` nunca se mueve solo.
+- Eventos y chat reflejan estos cambios con el actor (`product`, `system`).
+
+**B. Comandos del fundador en el chat** (interpretados en Java, mismo nivel que "aprueba MISSION-X"): "pausa el producto
+X", "reanuda X", "retira X", "reactiva X". X por nombre (sin mayúsculas ni tildes) o id; si es ambiguo, el chat lista los
+candidatos y no cambia nada. Los agentes mencionados en el chat siguen siendo solo lectura.
+
 ## Testing
 
 - `ProductReadiness`: cada requisito por separado, software vs servicio, a cotizar, margen cero o negativo.
+- Automatizaciones: discovery con oferta crea una idea (y una ronda no la duplica); discovery sin oferta no crea nada;
+  construcción `VERIFIED` con requisitos → `READY_TO_SELL`, sin requisitos → `IN_CONSTRUCTION` con lo que falta; `PAUSED`
+  no se mueve.
+- Comandos del chat: pausar/reanudar/retirar/reactivar por nombre sin tildes; nombre ambiguo lista candidatos sin cambiar.
 - `ProductService`: transiciones válidas e inválidas, agente vs fundador (pausar/retirar solo fundador), rechazo con la
   lista de requisitos faltantes, edición que invalida "listo" → vuelve a construcción con historial, eventos.
 - Finanzas por producto (`FinanceCalculator` filtrando por `productId`).
@@ -98,7 +126,7 @@ createdBy, createdAt, updatedAt})`
 
 ## Fuera de alcance
 
-- Que los agentes creen o muevan productos por su cuenta (lo hace el orquestador, subproyecto 2); en el chat los agentes
-  son solo lectura.
+- Lanzar misiones para crear un producto cuando no hay ninguno (orquestador, subproyecto 2). Adaptar o personalizar un
+  producto por cliente (segunda fase).
 - Búsqueda de prospectos (subproyecto 3), contacto y venta (subproyecto 4), precios en otras monedas, variantes o planes
   de un producto, inventario.
