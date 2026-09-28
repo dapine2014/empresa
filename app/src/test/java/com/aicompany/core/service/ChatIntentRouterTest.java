@@ -50,10 +50,11 @@ class ChatIntentRouterTest {
 
     private final FinanceService finance = mock(FinanceService.class);
     private final DependencyMemoryService dependencies = mock(DependencyMemoryService.class);
+    private final ProductService products = mock(ProductService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
-            "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies
+            "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products
     );
 
     {
@@ -846,6 +847,7 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("OPPORTUNITIES").contains("Todavía no hay ninguna oportunidad"));
         assertTrue(companyMemoryQuery.apply("COMPANY_PROFIT").contains("60.00"));
         assertTrue(companyMemoryQuery.apply("COMPANY_STATUS").contains("Estado actual de Forjai"));
+        assertTrue(companyMemoryQuery.apply("PRODUCTS").contains("catálogo"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
         assertTrue(companyMemoryQuery.apply("TEAM_DETAILS:TEAM-ENGINEERING").contains("No tengo ese dato registrado"));
     }
@@ -1512,6 +1514,110 @@ class ChatIntentRouterTest {
         when(dependencies.list()).thenReturn(List.of());
 
         assertTrue(router.route("dependencias pendientes").contains("No hay dependencias esperando tu aprobación"));
+    }
+
+    // Spec catálogo (2026-09-28): catálogo, requisitos y comandos del fundador en el chat, todo en Java.
+    private static com.aicompany.core.model.CatalogProduct catalogProduct(String id, String name,
+            com.aicompany.core.model.CatalogStatus status, double price) {
+        return new com.aicompany.core.model.CatalogProduct(id, name, "d", "SOFTWARE", "Pymes", price, false, 10, null,
+                List.of("WORLDWIDE"), List.of("en", "es"), status, null, "human", Instant.now(), Instant.now(),
+                List.of(), List.of());
+    }
+
+    private static com.aicompany.core.model.ProductView productView(com.aicompany.core.model.CatalogProduct p,
+                                                                   List<String> missing) {
+        return new com.aicompany.core.model.ProductView(p, missing, List.of());
+    }
+
+    @Test
+    void theCatalogIsListedByStatus() {
+        when(products.list()).thenReturn(List.of(
+                productView(catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.READY_TO_SELL, 120), List.of()),
+                productView(catalogProduct("P2", "Asesoría Contable", com.aicompany.core.model.CatalogStatus.IDEA, 0),
+                        List.of("Falta el precio (o marcarlo a cotizar)."))));
+
+        var response = router.route("¿qué productos tenemos?");
+
+        assertTrue(response.contains("Listos para vender: Landing (US$120.00)"), response);
+        assertTrue(response.contains("Ideas: Asesoría Contable"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void whatAProductStillNeedsIsAnsweredByName() {
+        var p = catalogProduct("P2", "Asesoría Contable", com.aicompany.core.model.CatalogStatus.IN_CONSTRUCTION, 0);
+        when(products.findByName("asesoria contable")).thenReturn(List.of(p));
+        when(products.view("P2")).thenReturn(Optional.of(productView(p, List.of("Falta el precio (o marcarlo a cotizar)."))));
+
+        var response = router.route("¿qué le falta a asesoria contable para venderse?");
+
+        assertTrue(response.contains("Asesoría Contable") && response.contains("❌ Falta el precio"), response);
+    }
+
+    @Test
+    void theFounderPausesAProductFromTheChat() {
+        var p = catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.READY_TO_SELL, 120);
+        when(products.findByName("landing")).thenReturn(List.of(p));
+        when(products.changeStatus(eq("P1"), eq(com.aicompany.core.model.CatalogStatus.PAUSED), anyString(), eq("human")))
+                .thenReturn(productView(p, List.of()));
+
+        var response = router.route("pausa el producto landing");
+
+        assertTrue(response.contains("Landing") && response.contains("pausado"), response);
+        verify(products).changeStatus(eq("P1"), eq(com.aicompany.core.model.CatalogStatus.PAUSED), anyString(), eq("human"));
+    }
+
+    @Test
+    void anAmbiguousNameListsTheCandidatesAndChangesNothing() {
+        when(products.findByName("land")).thenReturn(List.of(
+                catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.READY_TO_SELL, 120),
+                catalogProduct("P3", "Landing Pro", com.aicompany.core.model.CatalogStatus.IDEA, 0)));
+
+        var response = router.route("retira land");
+
+        assertTrue(response.contains("Landing Pro") && response.contains("¿Cuál"), response);
+        verify(products, never()).changeStatus(any(), any(), any(), any());
+    }
+
+    @Test
+    void anExactNameWinsOverLongerOnes() {
+        var landing = catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.PAUSED, 120);
+        when(products.findByName("landing")).thenReturn(List.of(landing,
+                catalogProduct("P3", "Landing Pro", com.aicompany.core.model.CatalogStatus.IDEA, 0)));
+        when(products.changeStatus(eq("P1"), isNull(), anyString(), eq("human"))).thenReturn(productView(landing, List.of()));
+
+        router.route("reanuda landing");
+
+        verify(products).changeStatus(eq("P1"), isNull(), anyString(), eq("human"));
+    }
+
+    @Test
+    void aProductCommandWinsOverMentions() {
+        stubAgents();
+        var p = catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.READY_TO_SELL, 120);
+        when(products.findByName("landing")).thenReturn(List.of(p));
+        when(products.changeStatus(eq("P1"), eq(com.aicompany.core.model.CatalogStatus.RETIRED), anyString(), eq("human")))
+                .thenReturn(productView(p, List.of()));
+
+        var replies = router.routeReplies("retira el producto landing @Kira");
+
+        assertEquals("ceo", replies.get(0).agentId());
+        verify(ceoService, never()).agentChat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    @Test
+    void theCompanyStatusCountsProducts() {
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(products.list()).thenReturn(List.of(
+                productView(catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.READY_TO_SELL, 120), List.of()),
+                productView(catalogProduct("P2", "X", com.aicompany.core.model.CatalogStatus.IN_CONSTRUCTION, 0), List.of()),
+                productView(catalogProduct("P3", "Y", com.aicompany.core.model.CatalogStatus.IN_CONSTRUCTION, 0), List.of())));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("Productos: 1 listo(s) para vender, 2 en construcción, 0 idea(s)"), response);
     }
 
     // Review Focus: la gobernanza gana sobre las menciones.
