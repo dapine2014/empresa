@@ -220,8 +220,18 @@ pierde el pedido).
 
 ### Chat y Command Center
 
-- En el chat, "pide más evidencia sobre MISSION-X …" ya pasa por `recordDecision`: la respuesta dice que arrancó la ronda N
-  (o por qué no: límite alcanzado).
+El chat es la forma principal en que el fundador sabe qué pasa (decisión del fundador, 2026-09-27): todo lo de las rondas
+se consulta ahí, con respuestas armadas en Java desde Neo4j (nunca redactadas por el modelo).
+
+- **Pedir la ronda**: "pide más evidencia sobre MISSION-X …" ya pasa por `recordDecision`; la respuesta dice que arrancó
+  la ronda N de M permitidas y qué agentes van a trabajar, o por qué no arrancó (límite alcanzado, misión en curso).
+- **"¿Cómo va MISSION-X?"** (y `MISSION_DETAILS`): muestra la ronda actual y las vueltas que quedan, el pedido del
+  inversionista de cada ronda, y las tareas agrupadas por ronda (quién trabaja ahora, qué completó o falló). En Engineering,
+  el `validationStatus` y los tests del sandbox de cada ronda, para comparar.
+- **Estado general y agentes**: "dame un status" cuenta las misiones re-ejecutándose por evidencia; el estado de los
+  agentes muestra la tarea de la ronda en curso.
+- **Al terminar la ronda**: vuelve a `AWAITING_INVESTOR`, llega el correo de siempre y el chat lo refleja en "misiones que
+  necesitan tu decisión".
 - Command Center: sin pantalla nueva; las tareas de cada ronda aparecen en el detalle con su sufijo, y `MAX_EVIDENCE_ROUNDS`
   aparece en Settings junto a las demás policies.
 
@@ -231,4 +241,5 @@ pierde el pedido).
 - Equipo: la ronda reutiliza el plan guardado sin llamar al planificador; sin plan, replanifica con el pedido.
 - Engineering: la ronda no recrea el scaffold y cada agente recibe el pedido y el código actual.
 - `routeInvestorFeedback`: claves dinámicas; si el modelo falla, cada agente recibe el pedido completo.
-- En vivo: una misión de discovery y una de Engineering con `REQUEST_MORE_EVIDENCE`, verificando ronda 1, historial y límite.
+- Chat (Java): respuesta al pedir la ronda (N de M, agentes), "¿cómo va?" con rondas agrupadas y pedido del inversionista, status con misiones re-ejecutándose.
+- En vivo **por el chat**: pedir más evidencia sobre una misión de discovery y una de Engineering, seguirlas con "¿cómo va?" hasta la nueva decisión, y probar el límite.
