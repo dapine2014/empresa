@@ -9,6 +9,7 @@ import MissionDetailPage from './pages/MissionDetailPage'
 import ActivityPage from './pages/ActivityPage'
 import SettingsPage from './pages/SettingsPage'
 import FinancePage from './pages/FinancePage'
+import ProductsPage from './pages/ProductsPage'
 import DependenciesPage from './pages/DependenciesPage'
 
 const queryClient = new QueryClient({
@@ -32,6 +33,7 @@ export default function App() {
             <Route path="missions" element={<MissionsPage />} />
             <Route path="missions/:missionId" element={<MissionDetailPage />} />
             <Route path="activity" element={<ActivityPage />} />
+            <Route path="productos" element={<ProductsPage />} />
             <Route path="finanzas" element={<FinancePage />} />
             <Route path="dependencias" element={<DependenciesPage />} />
             <Route path="settings" element={<SettingsPage />} />

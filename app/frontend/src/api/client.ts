@@ -17,6 +17,8 @@ import type {
   MissionResponse,
   MissionStatusResponse,
   PolicyCommand,
+  ProductCommand,
+  ProductView,
   PolicySnapshot,
   PromptCommand,
   PromptSnapshot,
@@ -63,8 +65,22 @@ export const api = {
   rejectDependency: (id: string) =>
     request<unknown>(`/api/company/dependencies/${encodeURIComponent(id)}/reject`, { method: 'PUT' }),
 
-  finance: (missionId?: string) =>
-    request<FinanceSummary>(`/api/company/finance${missionId ? `?missionId=${encodeURIComponent(missionId)}` : ''}`),
+  finance: (missionId?: string, productId?: string) =>
+    request<FinanceSummary>(
+      `/api/company/finance${productId ? `?productId=${encodeURIComponent(productId)}` : missionId ? `?missionId=${encodeURIComponent(missionId)}` : ''}`,
+    ),
+  products: () => request<ProductView[]>('/api/company/products'),
+  createProduct: (command: ProductCommand) =>
+    request<ProductView>('/api/company/products', { method: 'POST', body: JSON.stringify(command) }),
+  updateProduct: (id: string, command: ProductCommand) =>
+    request<ProductView>(`/api/company/products/${id}`, { method: 'PUT', body: JSON.stringify(command) }),
+  changeProductStatus: (id: string, status: string, reason: string) =>
+    request<ProductView>(`/api/company/products/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, reason }) }),
+  linkProductMissions: (id: string, validatedBy: string[], builtBy: string[]) =>
+    request<ProductView>(`/api/company/products/${id}/missions`, {
+      method: 'PUT',
+      body: JSON.stringify({ validatedBy, builtBy }),
+    }),
   financeCustomers: () => request<FinanceCustomer[]>('/api/company/finance/customers'),
   createFinanceCustomer: (command: FinanceCustomerCommand) =>
     request<FinanceCustomer>('/api/company/finance/customers', { method: 'POST', body: JSON.stringify(command) }),
