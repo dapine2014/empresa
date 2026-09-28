@@ -36,6 +36,44 @@ function AgentCard({
   )
 }
 
+/** Subproyecto 2 (2026-09-28): el modelo de cada agente se edita acá; Java rechaza un proveedor desconocido. */
+function ModelEditor({ agentId }: { agentId: string }) {
+  const queryClient = useQueryClient()
+  const agentsQuery = useQuery({ queryKey: ['agents'], queryFn: api.agents })
+  const current = agentsQuery.data?.find((a) => a.id === agentId)?.model ?? ''
+  const [model, setModel] = useState<string | null>(null)
+  const displayed = model ?? current
+  const known = Array.from(new Set((agentsQuery.data ?? []).map((a) => a.model).filter(Boolean)))
+  const mutation = useMutation({
+    mutationFn: () => api.updateAgentModel(agentId, displayed),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['teams'] })
+      setModel(null)
+    },
+  })
+  return (
+    <div className="decision-form">
+      <h3>Modelo</h3>
+      <p className="hint">
+        Actual: <code>{current || 'por defecto'}</code>. Formato: <code>proveedor:modelo</code> para NVIDIA (nvidia,
+        nvidia-discovery, nvidia-creative, nvidia-ceo) o el nombre de un modelo local de Ollama (p. ej. qwen3:8b).
+      </p>
+      <input list={`models-${agentId}`} value={displayed} onChange={(e) => setModel(e.target.value)} />
+      <datalist id={`models-${agentId}`}>
+        {known.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+      <button disabled={!displayed.trim() || displayed === current || mutation.isPending} onClick={() => mutation.mutate()}>
+        Guardar modelo
+      </button>
+      {mutation.isSuccess && <p className="hint">Modelo actualizado.</p>}
+      {mutation.isError && <p className="error">{mutation.error.message}</p>}
+    </div>
+  )
+}
+
 function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose: () => void }) {
   const queryClient = useQueryClient()
   const [content, setContent] = useState<string | null>(null)
@@ -91,6 +129,7 @@ function PromptEditor({ agent, onClose }: { agent: AgentStatusResponse; onClose:
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
         <h2>Prompt de {agent.name}</h2>
+        <ModelEditor agentId={agent.agentId} />
         <p className="hint">
           Versión activa: v{snapshot.activeVersion} — {snapshot.activeChangeReason}
         </p>

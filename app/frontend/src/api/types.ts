@@ -338,3 +338,27 @@ export interface FinanceCorrectionCommand {
   evidenceDescription: string
   evidenceLink?: string
 }
+
+// Subproyecto 2 (2026-09-28): modelo por agente y dependencias de Engineering.
+export interface AgentInfo {
+  id: string
+  name: string
+  role: string
+  personality: string
+  model: string
+}
+
+export interface DependencyInfo {
+  id: string
+  ecosystem: string
+  name: string
+  version: string
+  status: 'APPROVED' | 'PENDING_APPROVAL' | 'REJECTED'
+  approvedBy?: string
+  reasons?: string[]
+  license?: string
+  missionId?: string
+  requestedByAgent?: string
+  createdAt?: string
+  decidedAt?: string
+}

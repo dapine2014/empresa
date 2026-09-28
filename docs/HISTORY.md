@@ -870,3 +870,11 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 **Bug real en vivo**: la pantalla no podía mostrar el motivo de un rechazo porque Spring no incluía el mensaje; `server.error.include-message` no tuvo efecto en Spring Boot 4 y la propiedad que aplica es `spring.web.error.include-message: always`.
 
 **Verificado en vivo** (con registros `TEST`, borrados después): cliente → venta US$120 (costo 10) con link → gasto US$12 → corrección "Anular" (−120/−10): el libro lista las 4 líneas con 🧪 y la corrección apunta a la venta, los totales reales quedan en cero (`TEST` no suma); rechazos con su motivo ("El comprobante debe ser un link http(s).", "No existe el movimiento …"); en el chat "costos vs ganancias" y "dame un status" responden desde Java; `/finanzas` servida por la SPA.
+
+### Command Center: modelo por agente y dependencias (subproyecto 2)
+
+**Decisión del fundador** (2026-09-27): todo lo configurable se edita desde la UI. Faltaban pantallas para dos cosas que ya tenían API: el modelo de cada agente y la aprobación de dependencias.
+
+**Implementado**: sección "Modelo" en el panel de cada agente (Agents), con sugerencias de los modelos en uso; `CeoService.checkModel` rechaza al guardar un proveedor remoto no configurado (antes fallaba recién cuando el agente trabajaba); `GET /api/company/agents` incluye el modelo; pantalla `/dependencias` con pendientes (Aprobar/Rechazar) e historial; en el chat, el modelo en el estado de los agentes y "dependencias pendientes".
+
+**Verificado en vivo**: `anthropic:claude/opus` → rechazado con "Proveedor remoto desconocido \"anthropic\". Configurados: [nvidia, nvidia-ceo, nvidia-creative, nvidia-discovery]"; Kira cambiada a `glm-5.3-flash` y devuelta a `glm-5.3`; el chat muestra el modelo de cada agente y "No hay dependencias esperando tu aprobación" (las 2 existentes ya están decididas); `/dependencias` servida por la SPA.

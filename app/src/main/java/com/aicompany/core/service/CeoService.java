@@ -257,6 +257,28 @@ public class CeoService {
     public record RemoteModel(String provider, String model) {
     }
 
+    /** Forma "proveedor:org/modelo" (un proveedor remoto); un modelo local de Ollama no tiene ese prefijo. */
+    private static final java.util.regex.Pattern PROVIDER_PREFIXED =
+            java.util.regex.Pattern.compile("^([a-z][a-z0-9-]*):[^:\\s]+/.+$");
+
+    /**
+     * Subproyecto 2 (2026-09-28): el modelo de cada agente se edita desde el Command Center. Un proveedor remoto que no
+     * está configurado se rechaza al guardar (antes fallaba recién cuando el agente trabajaba).
+     */
+    public void checkModel(String model) {
+        if (model == null || model.isBlank()) {
+            throw new IllegalArgumentException("El modelo no puede estar vacío.");
+        }
+        var candidate = model.strip();
+        var remote = remoteModel(candidate);
+        var prefixed = PROVIDER_PREFIXED.matcher(candidate);
+        var provider = remote.map(RemoteModel::provider).orElse(prefixed.matches() ? prefixed.group(1) : null);
+        if (provider != null && !remotes.containsKey(provider)) {
+            throw new IllegalArgumentException("Proveedor remoto desconocido \"" + provider + "\". Configurados: "
+                    + new java.util.TreeSet<>(remotes.keySet()) + " (o un modelo local de Ollama, p. ej. qwen3:8b).");
+        }
+    }
+
     static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
         if (agentModel == null) {
             return java.util.Optional.empty();

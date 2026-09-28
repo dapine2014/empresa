@@ -31,6 +31,7 @@ public class SpaController {
             "/missions/{missionId}",
             "/activity",
             "/finanzas",
+            "/dependencias",
             "/settings"
     })
     public String forwardToSpa() {

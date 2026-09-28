@@ -180,6 +180,7 @@ public class ChatIntentRouter {
     private final String defaultCeoModel;
     private final TeamMemoryService teamMemory;
     private final FinanceService financeService;
+    private final DependencyMemoryService dependencyMemory;
     private final PromptMemoryService promptMemory;
 
     public ChatIntentRouter(
@@ -196,7 +197,8 @@ public class ChatIntentRouter {
             @Value("${ollama.ceo-model}") String defaultCeoModel,
             TeamMemoryService teamMemory,
             PromptMemoryService promptMemory,
-            FinanceService financeService) {
+            FinanceService financeService,
+            DependencyMemoryService dependencyMemory) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -212,6 +214,7 @@ public class ChatIntentRouter {
         this.teamMemory = teamMemory;
         this.promptMemory = promptMemory;
         this.financeService = financeService;
+        this.dependencyMemory = dependencyMemory;
     }
 
     /**
@@ -1099,7 +1102,8 @@ public class ChatIntentRouter {
         TEST_MISSIONS,
         OPPORTUNITIES,
         COMPANY_PROFIT,
-        COMPANY_STATUS
+        COMPANY_STATUS,
+        DEPENDENCIES
     }
 
     private record TeamKeywordRule(String teamId, List<Pattern> topicKeywordPatterns) {}
@@ -1138,6 +1142,11 @@ public class ChatIntentRouter {
     private QueryMatch detectQuery(String message) {
 
         var normalized = normalize(message);
+
+        // Subproyecto 2 (2026-09-28): dependencias de Engineering que esperan la decisión del fundador (🔴).
+        if (normalized.contains("dependencia")) {
+            return new QueryMatch(QueryIntent.DEPENDENCIES, null);
+        }
 
         var teamGate = normalized.contains("equipo") || normalized.contains("team")
                 || normalized.contains("lidera") || normalized.contains("lider");
@@ -1277,6 +1286,7 @@ public class ChatIntentRouter {
             case "OPPORTUNITIES" -> formatOpportunities(opportunityMemory.listRecent(20));
             case "COMPANY_PROFIT" -> formatFinance(financeService.summary(null), 10);
             case "COMPANY_STATUS" -> formatCompanyStatus();
+            case "DEPENDENCIES" -> formatPendingDependencies();
             default -> "Dato no reconocido: " + topic + ".";
         };
     }
@@ -1420,19 +1430,22 @@ public class ChatIntentRouter {
     private String formatOneAgentStatus(AgentStatusResponse a) {
 
         var base = statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status();
+        // Subproyecto 2 (2026-09-28): el modelo real de cada agente (editable desde el Command Center).
+        var model = companyMemory.agentModel(a.agentId(), defaultCeoModel);
+        var modelSuffix = model == null || model.isBlank() ? "" : " — modelo " + model;
 
         if (a.missionId() == null) {
-            return base;
+            return base + modelSuffix;
         }
 
         if ("WORKING".equals(a.status())) {
             return base + " (" + a.missionId()
                     + (a.action() == null ? "" : ", " + a.action())
-                    + ")";
+                    + ")" + modelSuffix;
         }
 
         return base + " — última tarea: " + a.action() + " (" + a.missionId()
-                + "), resultado: " + a.taskStatus();
+                + "), resultado: " + a.taskStatus() + modelSuffix;
     }
 
     private static final java.util.Set<String> STATUS_GREEN =
@@ -1581,6 +1594,22 @@ public class ChatIntentRouter {
 
         return "Tenés " + opportunities.size()
                 + " oportunidad(es) identificada(s): " + lines;
+    }
+
+    /** Dependencias PENDING_APPROVAL con su motivo, 100% desde Neo4j (se aprueban en la pantalla Dependencias). */
+    @SuppressWarnings("unchecked")
+    private String formatPendingDependencies() {
+        var pending = dependencyMemory.list().stream()
+                .filter(d -> "PENDING_APPROVAL".equals(d.get("status")))
+                .toList();
+        if (pending.isEmpty()) {
+            return "No hay dependencias esperando tu aprobación.";
+        }
+        var lines = pending.stream().map(d -> d.get("id") + " (" + d.get("missionId") + ", pedida por "
+                        + d.get("requestedByAgent") + "): " + String.join("; ", (List<String>) d.getOrDefault("reasons", List.of())))
+                .collect(Collectors.joining(" | "));
+        return pending.size() + " dependencia(s) esperando tu aprobación: " + lines
+                + ". Apruébalas o recházalas en la pantalla Dependencias del Command Center.";
     }
 
     private String missionFinance(String missionId) {
