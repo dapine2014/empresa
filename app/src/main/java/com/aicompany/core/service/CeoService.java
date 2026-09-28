@@ -1432,6 +1432,25 @@ public class CeoService {
         }
     }
 
+    /**
+     * Verificado en vivo (MISSION-LOCAL-DISC, 2026-09-28): un modelo local sin "thinking" (qwen3-coder:30b, suplente de
+     * Engineering) responde 400 "does not support thinking" si se manda "think". Se reintenta sin esa opción.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> postToOllama(Map<String, Object> body) {
+        try {
+            return ollama.post().uri("/api/chat").body(body).retrieve().body(Map.class);
+        } catch (org.springframework.web.client.HttpClientErrorException.BadRequest ex) {
+            if (!body.containsKey("think") || !ex.getResponseBodyAsString().contains("does not support thinking")) {
+                throw ex;
+            }
+            var withoutThink = new java.util.LinkedHashMap<>(body);
+            withoutThink.remove("think");
+            log.info("OLLAMA_THINK_UNSUPPORTED model={} - retrying without think", body.get("model"));
+            return ollama.post().uri("/api/chat").body(withoutThink).retrieve().body(Map.class);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private ModelMessage callModel(
             String operation,
@@ -1516,12 +1535,7 @@ public class CeoService {
 
         try {
 
-            response = ollama
-                    .post()
-                    .uri("/api/chat")
-                    .body(body)
-                    .retrieve()
-                    .body(Map.class);
+            response = postToOllama(body);
 
         } catch (Exception ex) {
 
