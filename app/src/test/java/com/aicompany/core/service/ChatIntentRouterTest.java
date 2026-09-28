@@ -98,6 +98,97 @@ class ChatIntentRouterTest {
         verifyNoInteractions(missionMemory);
     }
 
+    // Spec evidence-rounds (revisión 2026-09-27): el chat es la ventana del fundador; todo lo de las rondas se ve acá.
+    @Test
+    void askingForMoreEvidenceInTheChatSaysWhichRoundStartedAndWhoWorks() {
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-1", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 1)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+
+        var response = router.route("pide más evidencia sobre MISSION-1: quiero precios reales");
+
+        assertTrue(response.contains("ronda 1 de 2"), response);
+        assertTrue(response.contains("Sales, Product, Finance, Engineering y QA"), response);
+    }
+
+    @Test
+    void aTeamRoundNamesTheRealMembers() {
+        when(missionService.recordDecision(eq("MISSION-2"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D2", "MISSION-2", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 1)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-2")).thenReturn(Optional.of("TEAM-MARKETING-GROWTH"));
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(new TeamSnapshot("TEAM-MARKETING-GROWTH",
+                "Marketing & Growth", "ACTIVE", "growth-content", List.of(
+                new TeamMemberInfo("growth-content", "Kira", "Growth", "R", List.of("SEO"), "m"),
+                new TeamMemberInfo("community", "Nora", "Community", "R", List.of("Discord"), "m"))));
+
+        var response = router.route("pide más evidencia sobre MISSION-2");
+
+        assertTrue(response.contains("Kira") && response.contains("Nora"), response);
+    }
+
+    @Test
+    void whenTheLimitIsReachedTheChatExplainsIt() {
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenThrow(new IllegalStateException(
+                "MISSION MISSION-1 ya usó 2 de 2 vueltas de evidencia: decide con APPROVE o REJECT"));
+
+        var response = router.route("pide más evidencia sobre MISSION-1");
+
+        assertTrue(response.contains("2 de 2"), response);
+    }
+
+    @Test
+    void missionStatusGroupsTasksByRoundAndShowsEachRequest() {
+        var mission = new MissionResponse("MISSION-5", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-5")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-5")).thenReturn(List.of(
+                new AgentTask("MISSION-5-SALES", "MISSION-5", "sales", "MARKET_DISCOVERY", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-5-SALES-R1", "MISSION-5", "sales", "MARKET_DISCOVERY", "COMPLETED", "{}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-5")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.evidenceRound("MISSION-5")).thenReturn(1);
+        when(missionMemory.evidenceRequests("MISSION-5")).thenReturn(List.of("Quiero precios reales"));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        var response = router.route("¿Cómo va MISSION-5?");
+
+        assertTrue(response.contains("Ronda de evidencia 1 de 2 (queda 1)"), response);
+        assertTrue(response.contains("Ronda 0: sales=MARKET_DISCOVERY COMPLETED"), response);
+        assertTrue(response.contains("Ronda 1 (pedido: \"Quiero precios reales\"): sales=MARKET_DISCOVERY COMPLETED"), response);
+    }
+
+    @Test
+    void aMissionFromBeforeRoundsIsShownAsRoundZero() {
+        var mission = new MissionResponse("MISSION-6", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-6")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-6")).thenReturn(List.of(
+                new AgentTask("MISSION-6-SALES", "MISSION-6", "sales", "MARKET_DISCOVERY", "COMPLETED", "{}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-6")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.evidenceRound("MISSION-6")).thenReturn(0);
+        when(missionMemory.evidenceRequests("MISSION-6")).thenReturn(List.of());
+
+        var response = router.route("¿Cómo va MISSION-6?");
+
+        assertFalse(response.contains("Ronda"), response);
+        assertTrue(response.contains("sales=MARKET_DISCOVERY COMPLETED"), response);
+    }
+
+    @Test
+    void companyStatusCountsMissionsRerunningForEvidence() {
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-1", MissionStatus.WAITING_AGENT_RESULTS, "PRODUCTION", 30, "x", "x", Instant.now(), null)));
+        when(missionMemory.evidenceRound("MISSION-1")).thenReturn(1);
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(customerMemory.companyWideTotalRevenueAndCost()).thenReturn(new double[]{0.0, 0.0});
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("1 re-ejecutándose por más evidencia"), response);
+    }
+
     @Test
     void routesApproveWithExplicitMissionIdToRecordDecision() {
         var decisionResponse = new DecisionResponse(
