@@ -1,6 +1,11 @@
 spring:
   application:
     name: company-core
+  web:
+    # Finanzas (2026-09-27): la pantalla muestra el motivo real de un rechazo (p. ej. "es un prospecto").
+    # Verificado en vivo: en Spring Boot 4 server.error.include-message no aplica a este error.
+    error:
+      include-message: always
   mail:
     # username/password NO van acá: se leen dinámicamente de Neo4j
     # (Company.systemEmail/mailPassword, ver AlertMailService) porque son
@@ -25,9 +30,6 @@ spring:
 
 server:
   port: 8081
-  # Finanzas (2026-09-27): la pantalla muestra el motivo real de un rechazo (p. ej. "es un prospecto").
-  error:
-    include-message: always
 
 company:
   name: Forjai
