@@ -248,6 +248,8 @@ export type PolicyKey =
   | 'SUCCESS_THRESHOLD_EXCELLENT'
   | 'SUCCESS_THRESHOLD_EXTRAORDINARY'
   | 'MAX_EVIDENCE_ROUNDS'
+  | 'ORCHESTRATOR_ENABLED'
+  | 'MAX_AUTONOMOUS_PRODUCTS'
 
 export interface PolicyVersionSummary {
   version: number

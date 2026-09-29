@@ -40,7 +40,7 @@ public class CompanyPolicyService {
         this.defaults = defaults(appProperties);
     }
 
-    private static Map<PolicyKey, Double> defaults(AppProperties appProperties) {
+    static Map<PolicyKey, Double> defaults(AppProperties appProperties) {
         var map = new LinkedHashMap<PolicyKey, Double>();
         map.put(PolicyKey.SEED_CAPITAL_USD, appProperties.seedCapitalUsd());
         map.put(PolicyKey.CHALLENGE_DAYS, (double) appProperties.challengeDays());
@@ -51,6 +51,9 @@ public class CompanyPolicyService {
         map.put(PolicyKey.SUCCESS_THRESHOLD_EXTRAORDINARY, 5000.0);
         // Rondas de evidencia (spec 2026-09-16, revisión 2026-09-27): vueltas de REQUEST_MORE_EVIDENCE por misión.
         map.put(PolicyKey.MAX_EVIDENCE_ROUNDS, 2.0);
+        // Orquestador (spec 2026-09-28): encendido (1) y uno a la vez; el fundador lo cambia en Settings o en el chat.
+        map.put(PolicyKey.ORCHESTRATOR_ENABLED, 1.0);
+        map.put(PolicyKey.MAX_AUTONOMOUS_PRODUCTS, 1.0);
         return map;
     }
 
