@@ -12,8 +12,8 @@ Hay una implementación real y en evolución activa en `app/` (servicio `company
 - `Plan%20Maestro%20v0-2.md` — plan maestro (organización, modelo económico, gobernanza, fases técnicas).
 - `docs/STATE.md` (estado del sprint), `docs/MISSION-001.md` (primera misión), `docs/EVENTS.md` (contrato de eventos Kafka).
 - `docs/HISTORY.md` — el *por qué* y el *cómo se verificó* de cada pieza: decisiones acordadas con el usuario, bugs reales encontrados y verificaciones en vivo (Docker + Neo4j + Kafka + Ollama). Consultarlo antes de re-verificar algo ya probado o de cambiar una decisión no obvia. Este `CLAUDE.md` describe solo el estado vigente.
-- `docs/superpowers/specs/` + `plans/` — pares diseño/plan fechados, uno por feature. **Mezclan trabajo implementado y pendiente**: ledger financiero (`2026-09-15`), rondas de evidencia (`2026-09-16`) y puente LEAD→cliente real (`2026-09-17`) **todavía no** existen en el código; development generation (`2026-09-21`, revisado el 2026-09-24 como "misiones por equipo") sí. Verificar en el código antes de asumir que algo de un plan existe.
-- `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` — roadmap vigente. `EMPRESA_AI_TODO.md` es un roadmap anterior ya completo; `status.md` y `docs/KAFKA-BUILD-FIX.md` están obsoletos, no usarlos como estado actual.
+- `docs/superpowers/specs/` + `plans/` — pares diseño/plan fechados, uno por feature. **Mezclan trabajo implementado, reemplazado y pendiente**: el ledger financiero (`2026-09-15`) quedó reemplazado por Finanzas (`2026-09-27`) y el puente LEAD→cliente real (`2026-09-17`) **todavía no** existe en el código; las rondas de evidencia (`2026-09-16`, revisión `2026-09-27`) y development generation (`2026-09-21`, revisado el 2026-09-24 como "misiones por equipo") sí. Verificar en el código antes de asumir que algo de un plan existe.
+- `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` — roadmap vigente. `EMPRESA_AI_TODO.md` es un roadmap anterior ya completo; `status.md` y `docs/KAFKA-BUILD-FIX.md` están obsoletos, no usarlos como estado actual. `README.md` es una nota de un parche viejo (MVP 0.7), no documentación del proyecto.
 
 ## Comandos
 
@@ -29,6 +29,8 @@ mvn spring-boot:run               # servicio local en :8081
 ```
 
 No hay lint en el backend. Los tests unitarios mockean Neo4j, Kafka y Ollama (los `*MemoryService` no llevan test directo; se cubren vía los tests de los servicios que los usan). La integración real se verifica en vivo y se registra en `docs/HISTORY.md`. Healthcheck: `GET http://localhost:8081/actuator/health` (se exponen `health`, `info`, `metrics`).
+
+`sandbox-runner/` es un módulo Maven aparte con su propia suite: `cd sandbox-runner && mvn test`.
 
 Frontend (`app/frontend/`, React + Vite + TS):
 
@@ -159,7 +161,7 @@ Variables de entorno con defaults en `application.yml`: `NEO4J_*`, `OLLAMA_BASE_
 
 Entre la gobernanza (1–3) y el resto van las **menciones** (`MentionResolver`: `@Nombre` o `@agentId`, sin mayúsculas ni tildes; una desconocida devuelve la lista de agentes): responden los mencionados en orden (`CeoService.agentChat`, con su identidad, personalidad, prompt activo y modelo, solo lectura con `query_company_memory`; no lanzan, aprueban ni contactan) y Alex solo si también se lo menciona. `routeReplies` devuelve una `ChatReply` por hablante (`ChatResponse.replies`, se conservan `agent`/`response`); el historial es el mismo hilo, con los mensajes de los demás etiquetados por nombre.
 
-Cada turno se graba en `ConversationMemoryService`. `ProductStatus` (estado del producto) está separado de `MissionStatus` y se calcula en cada consulta a partir de señales reales. `DEVELOPMENT`/`QA`/`PUBLISHED` están modelados pero hoy son inalcanzables.
+Cada turno se graba en `ConversationMemoryService`. `ProductStatus` (estado del producto) está separado de `MissionStatus` y se calcula en cada consulta a partir de señales reales. `DEVELOPMENT` y `QA` salen de las misiones de Engineering (ver arriba); `PUBLISHED` está modelado pero hoy es inalcanzable (`isPublished` devuelve `false`; el javadoc de `ProductStatusService` todavía dice que los tres lo son).
 
 ### Agentes, equipos y prompts
 
@@ -173,7 +175,7 @@ Solo se envían para `AWAITING_INVESTOR` y `FAILED` (desde `advanceMission`). La
 
 ## Command Center web (`app/frontend/`)
 
-Interfaz principal para operar la compañía (regla del fundador: todo lo configurable se edita acá): Dashboard, Chat, Agents (organigrama + editor de prompts + **modelo de cada agente**, validado en Java con `CeoService.checkModel`: un proveedor remoto no configurado se rechaza al guardar), Missions (+ formulario de inicio con objetivo financiero), **Finanzas** (costos vs ganancias), **Dependencias** (aprobar/rechazar las `PENDING_APPROVAL` de Engineering), Activity y Settings (correo + Financial Policies). En el chat, el estado de los agentes muestra el modelo de cada uno y "dependencias pendientes" lista las que esperan decisión con su motivo. SPA servida como estáticos por `company-core`; polling con `@tanstack/react-query` (sin WebSocket/SSE). Activity sale de una sola query UNION en Neo4j (`ActivityMemoryService`).
+Interfaz principal para operar la compañía (regla del fundador: todo lo configurable se edita acá): Dashboard, Chat, Agents (organigrama + editor de prompts + **modelo de cada agente**, validado en Java con `CeoService.checkModel`: un proveedor remoto no configurado se rechaza al guardar), Missions (+ formulario de inicio con objetivo financiero), **Productos** (catálogo + panel del orquestador), **Finanzas** (costos vs ganancias), **Dependencias** (aprobar/rechazar las `PENDING_APPROVAL` de Engineering), Activity y Settings (correo + Financial Policies). En el chat, el estado de los agentes muestra el modelo de cada uno y "dependencias pendientes" lista las que esperan decisión con su motivo. SPA servida como estáticos por `company-core`; polling con `@tanstack/react-query` (sin WebSocket/SSE). Activity sale de una sola query UNION en Neo4j (`ActivityMemoryService`).
 
 - `api/types.ts` refleja a mano los records Java (sin generación): mantenerlos sincronizados.
 - `SpaController` reenvía una **lista explícita** de rutas a `index.html` (no un comodín, que atrapaba `/api/**` mal escritos). Al agregar una pantalla en `App.tsx`, agregar la ruta también ahí.
