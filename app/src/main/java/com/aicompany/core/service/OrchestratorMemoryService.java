@@ -43,6 +43,15 @@ public class OrchestratorMemoryService {
         }
     }
 
+    /** Productos cuyo ciclo falló desde {@code since} (el orquestador no los vuelve a elegir enseguida). */
+    public java.util.Set<String> failedProductsSince(Instant since) {
+        try (var session = driver.session()) {
+            return new java.util.HashSet<>(session.run("MATCH (r:OrchestratorRun {status:'FAILED'}) "
+                            + "WHERE r.productId IS NOT NULL AND datetime(r.updatedAt) >= datetime($since) RETURN r.productId AS id",
+                    Map.of("since", since.toString())).list(r -> r.get("id").asString()));
+        }
+    }
+
     public Optional<OrchestratorRun> latest() {
         try (var session = driver.session()) {
             return session.run("MATCH (r:OrchestratorRun) RETURN r ORDER BY r.startedAt DESC LIMIT 1")

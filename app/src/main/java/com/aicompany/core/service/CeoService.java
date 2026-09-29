@@ -1515,7 +1515,8 @@ public class CeoService {
         var fallback = modelHealth.fallbackFor(actor);
         var since = modelHealth.downSince(model);
         if (fallback == null || fallback.isBlank() || remoteModel(fallback).isPresent() && modelHealth.isDown(fallback)) {
-            throw new IllegalStateException("El modelo " + model + " no responde en NVIDIA desde " + since + " y " + actor
+            throw new IllegalStateException("El modelo " + model + " no responde en NVIDIA"
+                    + (since == null ? "" : " desde " + since) + " y " + actor
                     + " no tiene suplente disponible.", cause);
         }
         log.warn("MODEL_FALLBACK operation={} actor={} model={} fallback={}", operation, actor, model, fallback);
@@ -1607,11 +1608,10 @@ public class CeoService {
                 if (modelHealth == null) {
                     throw ex;
                 }
+                // Verificado en vivo (2026-09-29): con un solo fallo el modelo aún no está DOWN, pero esta llamada
+                // igual se repite con el suplente; DOWN (dejar de llamarlo) sigue exigiendo 2 fallos seguidos.
                 modelHealth.recordFailure(model, ex.getMessage());
-                if (modelHealth.isDown(model)) {
-                    return viaFallback(operation, actor, model, messages, format, tools, think, ex);
-                }
-                throw ex;
+                return viaFallback(operation, actor, model, messages, format, tools, think, ex);
             }
             if (modelHealth != null) {
                 modelHealth.recordSuccess(model);

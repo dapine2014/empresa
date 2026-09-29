@@ -71,6 +71,22 @@ class CeoServiceModelHealthTest {
         verify(health).recordFailure(eq(KIMI), contains("timeout"));
     }
 
+    // Verificado en vivo (2026-09-29): un solo cuerpo ilegible de nemotron tumbó la consolidación de una misión porque
+    // el modelo aún no estaba DOWN (hacen falta 2 fallos). La llamada que falla va al suplente igual.
+    @Test
+    void aSingleOutageAlreadyRepeatsThatCallWithTheFallback() {
+        when(health.isDown(KIMI)).thenReturn(false);
+        when(nvidia.complete(anyString(), anyList(), any(), anyBoolean(), anyInt()))
+                .thenThrow(new RemoteUnavailableException("Modelo remoto moonshotai/kimi-k3 no responde: cuerpo ilegible", null));
+        ollama.expect(requestTo("http://ollama/api/chat")).andExpect(jsonPath("$.model").value("qwen3-coder:30b"))
+                .andRespond(withSuccess(PLAN, MediaType.APPLICATION_JSON));
+
+        var plan = ceoService.planTeamWork("engineering", "prompt", "", KIMI);
+
+        assertEquals("del suplente", plan.summary());
+        verify(health).recordFailure(eq(KIMI), contains("ilegible"));
+    }
+
     @Test
     void aSuccessfulCallIsRecordedAndNeverTouchesOllama() {
         when(health.isDown(KIMI)).thenReturn(false);

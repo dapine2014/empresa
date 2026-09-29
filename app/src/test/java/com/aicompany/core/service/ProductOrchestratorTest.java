@@ -71,6 +71,16 @@ class ProductOrchestratorTest {
                 Instant.parse("2026-09-28T10:00:00Z"), validated, List.of());
     }
 
+    private static CatalogProduct withoutTarget(CatalogProduct p) {
+        return new CatalogProduct(p.id(), p.name(), p.description(), p.kind(), null, p.priceUsd(), p.priceOnRequest(),
+                p.estimatedCostUsd(), p.delivery(), p.markets(), p.languages(), p.status(), p.statusBeforePause(),
+                p.createdBy(), p.createdAt(), p.updatedAt(), p.validatedBy(), p.builtBy());
+    }
+
+    private static ProductSheet sheet(String target, double price, double cost) {
+        return new ProductSheet("SERVICE", target, List.of("WORLDWIDE"), List.of("en", "es"), price, false, cost, "Entrega en 48 h");
+    }
+
     private static ProductView view(CatalogProduct p, List<String> missing) {
         return new ProductView(p, missing, List.of());
     }
@@ -298,13 +308,13 @@ class ProductOrchestratorTest {
     void missingRequirementsAskForACorrectionRoundWhileRoundsRemain() {
         var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
         building(p, MissionStatus.AWAITING_INVESTOR);
-        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta el precio."))));
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción asociada con su validación en VERIFIED."))));
         when(missionMemory.evidenceRound("MISSION-B")).thenReturn(0);
 
         orchestrator.tick();
 
         verify(missions).recordDecision(eq("MISSION-B"), argThat((DecisionCommand d) ->
-                d.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE && d.reasoning().contains("Falta el precio")));
+                d.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE && d.reasoning().contains("VERIFIED")));
         assertTrue(saved.isEmpty() || lastSaved().status() == OrchestratorStatus.BUILDING);
     }
 
@@ -396,5 +406,102 @@ class ProductOrchestratorTest {
 
         assertTrue(current.enabled());
         assertEquals(OrchestratorStatus.BUILDING, current.run().status());
+    }
+
+    // --- Revisión en vivo (2026-09-29): la ficha la valida Java y las rondas solo piden lo que produce la misión ---
+
+    private void proposing(CatalogProduct p) {
+        when(runs.active()).thenReturn(List.of(run(OrchestratorStatus.PROPOSING, p.id(), null, null)));
+        when(products.view(p.id())).thenReturn(Optional.of(view(p, List.of())));
+        when(products.update(eq(p.id()), any(), eq("orchestrator"))).thenReturn(view(p, List.of()));
+    }
+
+    @Test
+    void aSheetWithoutTargetCustomerIsAskedAgainWithTheCorrection() {
+        var p = withoutTarget(product("P1", CatalogStatus.IDEA, "product", "SERVICE", 1));
+        proposing(p);
+        var text = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(ceo.proposeProductSheet(text.capture(), anyString(), anyString()))
+                .thenReturn(sheet(null, 39, 5), sheet("Creadores de contenido", 39, 5));
+
+        orchestrator.tick();
+
+        assertTrue(text.getAllValues().get(1).contains("CORRECCIÓN"), text.getAllValues().get(1));
+        assertTrue(text.getAllValues().get(1).contains("cliente objetivo"), text.getAllValues().get(1));
+        verify(products).update(eq("P1"), argThat(c -> "Creadores de contenido".equals(c.targetCustomer())), eq("orchestrator"));
+        assertEquals(OrchestratorStatus.BUILDING, lastSaved().status());
+    }
+
+    @Test
+    void aSheetThatStaysIncompleteFailsTheRunWithoutBuilding() {
+        var p = withoutTarget(product("P1", CatalogStatus.IDEA, "product", "SERVICE", 1));
+        proposing(p);
+        when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(sheet("", 39, 0));
+
+        orchestrator.tick();
+
+        assertEquals(OrchestratorStatus.FAILED, lastSaved().status());
+        assertTrue(lastSaved().failureReason().contains("cliente objetivo"), lastSaved().failureReason());
+        assertTrue(lastSaved().failureReason().contains("costo"), lastSaved().failureReason());
+        verify(products, never()).update(anyString(), any(), anyString());
+        verify(missions, never()).start(anyString(), anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    void aMissingSheetFieldAfterTheBuildIsCompletedByTheOrchestratorNotByARound() {
+        var p = withoutTarget(product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SERVICE", 1));
+        building(p, MissionStatus.AWAITING_INVESTOR);
+        var fixed = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SERVICE", 1);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta el cliente objetivo."))),
+                Optional.of(view(p, List.of("Falta el cliente objetivo."))), Optional.of(view(fixed, List.of())));
+        when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(sheet("Creadores de contenido", 39, 5));
+        when(ceo.summarizeDelivery(anyString(), anyString(), anyString())).thenReturn("");
+
+        orchestrator.tick();
+
+        verify(products).update(eq("P1"), argThat(c -> "Creadores de contenido".equals(c.targetCustomer())), eq("orchestrator"));
+        verify(products).changeStatus(eq("P1"), eq(CatalogStatus.READY_TO_SELL), anyString(), eq("orchestrator"));
+        verify(missions, never()).recordDecision(anyString(), any());
+        assertEquals(OrchestratorStatus.READY, lastSaved().status());
+    }
+
+    @Test
+    void aSheetFieldTheOrchestratorCannotCompleteFailsWithoutRounds() {
+        var p = withoutTarget(product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SERVICE", 1));
+        building(p, MissionStatus.FAILED);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta el cliente objetivo."))));
+        when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(sheet(null, 39, 5));
+        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(0);
+
+        orchestrator.tick();
+
+        verify(missions, never()).recordDecision(anyString(), any());
+        assertEquals(OrchestratorStatus.FAILED, lastSaved().status());
+        assertTrue(lastSaved().failureReason().contains("cliente objetivo"), lastSaved().failureReason());
+    }
+
+    @Test
+    void aFailedRunReturnsItsProductToIdea() {
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        building(p, MissionStatus.FAILED);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción asociada con su validación en VERIFIED."))));
+        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(2);
+
+        orchestrator.tick();
+
+        assertEquals(OrchestratorStatus.FAILED, lastSaved().status());
+        verify(products).changeStatus(eq("P1"), eq(CatalogStatus.IDEA), contains("VERIFIED"), eq("orchestrator"));
+    }
+
+    @Test
+    void aProductWhoseRunFailedInTheLastDayIsNotChosenAgain() {
+        when(products.list()).thenReturn(List.of(
+                view(product("P1", CatalogStatus.IDEA, "product", "SERVICE", 5), List.of()),
+                view(product("P2", CatalogStatus.IDEA, "product", "SERVICE", 1), List.of())));
+        when(runs.failedProductsSince(any())).thenReturn(java.util.Set.of("P1"));
+
+        orchestrator.tick();
+
+        assertEquals("P2", lastSaved().productId());
     }
 }

@@ -47,6 +47,9 @@ public class ProductOrchestrator {
             + "y vender online a clientes de cualquier país, con el capital disponible: evidencia web de demanda, precios "
             + "de referencia, costo estimado por venta, margen y punto de equilibrio.";
 
+    /** Un producto cuyo ciclo falló no se reelige enseguida: evita reintentar en bucle cada 15 minutos. */
+    static final java.time.Duration FAILED_COOLDOWN = java.time.Duration.ofHours(24);
+
     public record OrchestratorView(OrchestratorRun run, List<OrchestratorStep> steps, boolean enabled) {
     }
 
@@ -157,8 +160,10 @@ public class ProductOrchestrator {
     }
 
     private void choose(OrchestratorRun run) {
+        var recentlyFailed = runs.failedProductsSince(Instant.now().minus(FAILED_COOLDOWN));
         var candidates = products.list().stream().map(ProductView::product)
                 .filter(p -> p.status() == CatalogStatus.IDEA)
+                .filter(p -> recentlyFailed == null || !recentlyFailed.contains(p.id()))
                 .filter(p -> productMemory.evidence(p).demandWithWebEvidence())
                 .toList();
         if (candidates.isEmpty()) {
@@ -234,10 +239,10 @@ public class ProductOrchestrator {
         var p = view.product();
         ProductSheet sheet;
         try {
-            sheet = ceo.proposeProductSheet(productText(p), evidenceText(p), ceoModel());
+            sheet = validSheet(p, null);
             var markets = sheet.markets() == null || sheet.markets().isEmpty() ? List.of("WORLDWIDE") : sheet.markets();
             var languages = sheet.languages() == null || sheet.languages().isEmpty() ? List.of("en", "es") : sheet.languages();
-            products.update(p.id(), new ProductCommand(null, null, sheet.kind(), sheet.targetCustomer(), sheet.priceUsd(),
+            products.update(p.id(), new ProductCommand(null, null, sheet.kind(), target(sheet, p), sheet.priceUsd(),
                     sheet.priceOnRequest(), sheet.estimatedCostUsd(), sheet.delivery(), markets, languages,
                     "Ficha completada por el orquestador"), ACTOR);
         } catch (Exception ex) {
@@ -263,6 +268,76 @@ public class ProductOrchestrator {
         step(building, "BUILDING", "Lanzó " + missionId + " (" + team + ") para construir " + p.name() + ".");
         events.publish("EMPRESA_ORCHESTRATOR_BUILDING", null, null, ACTOR,
                 Map.of("runId", run.id(), "productId", p.id(), "missionId", missionId, "teamId", team));
+    }
+
+    static final int SHEET_ATTEMPTS = 2;
+
+    /**
+     * Verificado en vivo (2026-09-29): Alex devolvió la ficha sin cliente objetivo y el ciclo gastó sus rondas pidiéndoselo
+     * a Creative. La ficha la valida Java: si falta algo, se le vuelve a pedir con la corrección exacta; si sigue faltando,
+     * se lanza IllegalArgumentException con los motivos.
+     */
+    private ProductSheet validSheet(CatalogProduct p, String pending) {
+        var correction = pending;
+        List<String> problems = List.of();
+        for (int attempt = 0; attempt < SHEET_ATTEMPTS; attempt++) {
+            var text = productText(p) + (correction == null ? ""
+                    : "\n\nCORRECCIÓN DEL INTENTO ANTERIOR: la ficha debe resolver esto: " + correction);
+            var sheet = ceo.proposeProductSheet(text, evidenceText(p), ceoModel());
+            problems = sheetProblems(sheet, p);
+            if (problems.isEmpty()) {
+                return sheet;
+            }
+            correction = String.join(" ", problems);
+        }
+        throw new IllegalArgumentException("la ficha quedó incompleta: " + String.join(" ", problems));
+    }
+
+    static List<String> sheetProblems(ProductSheet sheet, CatalogProduct p) {
+        var out = new ArrayList<String>();
+        if (sheet == null) {
+            out.add("No devolvió ficha.");
+            return out;
+        }
+        var target = sheet.targetCustomer() == null || sheet.targetCustomer().isBlank() ? p.targetCustomer() : sheet.targetCustomer();
+        if (target == null || target.isBlank()) {
+            out.add("Falta el cliente objetivo (quién compra).");
+        }
+        var onRequest = Boolean.TRUE.equals(sheet.priceOnRequest());
+        var price = sheet.priceUsd();
+        if (price != null && price < 0) {
+            out.add("El precio no puede ser negativo.");
+        } else if (!onRequest && (price == null || price <= 0)) {
+            out.add("Falta el precio en USD (mayor que 0) o marcarlo a cotizar.");
+        }
+        var cost = sheet.estimatedCostUsd();
+        if (cost == null || cost <= 0) {
+            out.add("El costo estimado por venta debe ser mayor que 0 (incluye el costo de IA y de entrega).");
+        } else if (!onRequest && price != null && price > 0 && price <= cost) {
+            out.add("El margen no es positivo: el precio debe ser mayor que el costo estimado por venta.");
+        }
+        return out;
+    }
+
+    private static String target(ProductSheet sheet, CatalogProduct p) {
+        return sheet.targetCustomer() == null || sheet.targetCustomer().isBlank() ? p.targetCustomer() : sheet.targetCustomer();
+    }
+
+    /** Requisitos que produce la misión de construcción; lo demás es de la ficha (o de la discovery) y una ronda no lo arregla. */
+    private static boolean roundFixable(String missing) {
+        return missing.startsWith("Falta describir cómo se entrega") || missing.startsWith("Falta una misión de construcción");
+    }
+
+    private static boolean sheetItem(String missing) {
+        return missing.startsWith("Falta el cliente objetivo") || missing.startsWith("Falta el precio")
+                || missing.startsWith("El margen estimado");
+    }
+
+    /** Completa en el producto los campos de la ficha que faltan (sin tocar la entrega). */
+    private void completeSheet(CatalogProduct p, List<String> missing) {
+        var sheet = validSheet(p, String.join(" ", missing));
+        products.update(p.id(), new ProductCommand(null, null, null, target(sheet, p), sheet.priceUsd(), sheet.priceOnRequest(),
+                sheet.estimatedCostUsd(), null, null, null, "Ficha completada por el orquestador tras la construcción"), ACTOR);
     }
 
     private void building(OrchestratorRun run, ProductView view) {
@@ -300,6 +375,17 @@ public class ProductOrchestrator {
             return;
         }
         var missing = new ArrayList<>(after.missing());
+        if (missing.stream().anyMatch(ProductOrchestrator::sheetItem)) {
+            try {
+                completeSheet(after.product(), missing.stream().filter(ProductOrchestrator::sheetItem).toList());
+                after = products.view(p.id()).orElse(after);
+                missing = new ArrayList<>(after.missing());
+                step(run, "SHEET", "Completó la ficha de " + p.name() + " tras la construcción.");
+            } catch (Exception ex) {
+                fail(run, "No se pudo completar la ficha de " + p.name() + ": " + ex.getMessage());
+                return;
+            }
+        }
         if (missing.isEmpty() && !broken) {
             try {
                 products.changeStatus(p.id(), CatalogStatus.READY_TO_SELL, "Cumple los requisitos", ACTOR);
@@ -308,6 +394,11 @@ public class ProductOrchestrator {
             } catch (IllegalArgumentException ex) {
                 missing.add(ex.getMessage());
             }
+        }
+        var notFixable = missing.stream().filter(m -> !roundFixable(m)).toList();
+        if (!notFixable.isEmpty()) {
+            fail(run, "Falta algo que una ronda de construcción no resuelve: " + String.join(" ", notFixable));
+            return;
         }
         if (broken) {
             missing.add(0, "La misión de construcción " + mission.missionId() + " falló.");
@@ -336,6 +427,17 @@ public class ProductOrchestrator {
 
     private void fail(OrchestratorRun run, String reason) {
         finish(run, OrchestratorStatus.FAILED, reason, "EMPRESA_ORCHESTRATOR_FAILED", reason);
+        // Revisión en vivo (2026-09-29): un producto que queda IN_CONSTRUCTION bloquea al orquestador para siempre.
+        // Vuelve a idea; no se reelige durante FAILED_COOLDOWN (ver choose).
+        if (run.productId() != null) {
+            try {
+                products.view(run.productId()).filter(v -> v.product().status() == CatalogStatus.IN_CONSTRUCTION)
+                        .ifPresent(v -> products.changeStatus(run.productId(), CatalogStatus.IDEA,
+                                "Ciclo del orquestador fallido: " + reason, ACTOR));
+            } catch (Exception ex) {
+                log.warn("ORCHESTRATOR could not return {} to IDEA: {}", run.productId(), ex.getMessage());
+            }
+        }
         mail.send("⚠ Forjai: el orquestador no pudo terminar el producto", reason
                 + "\n\nPuedes revisar el ciclo en la pantalla Productos o preguntar en el chat.", true);
     }
