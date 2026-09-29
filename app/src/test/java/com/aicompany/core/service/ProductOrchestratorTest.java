@@ -350,6 +350,31 @@ class ProductOrchestratorTest {
         assertTrue(lastSaved().failureReason().contains("ya no existe"));
     }
 
+    // Revisión final: si el fundador rechaza la misión (CANCELLED), el ciclo se detiene; no es un fallo ni pide rondas.
+    @Test
+    void aBuildRejectedByTheFounderStopsTheRun() {
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        building(p, MissionStatus.CANCELLED);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta el precio."))));
+
+        orchestrator.tick();
+
+        assertEquals(OrchestratorStatus.STOPPED, lastSaved().status());
+        verify(missions, never()).recordDecision(anyString(), any());
+        verify(events).publish(eq("EMPRESA_ORCHESTRATOR_STOPPED"), isNull(), isNull(), eq("orchestrator"), anyMap());
+        verify(mail, never()).send(anyString(), anyString(), eq(true));
+    }
+
+    @Test
+    void aDiscoveryRejectedByTheFounderStopsTheRun() {
+        when(runs.active()).thenReturn(List.of(run(OrchestratorStatus.DISCOVERING, null, "MISSION-D", null)));
+        when(missionMemory.find("MISSION-D")).thenReturn(Optional.of(mission("MISSION-D", MissionStatus.CANCELLED)));
+
+        orchestrator.tick();
+
+        assertEquals(OrchestratorStatus.STOPPED, lastSaved().status());
+    }
+
     @Test
     void aPausedProductStopsTheRun() {
         var p = product("P1", CatalogStatus.PAUSED, "product", "SOFTWARE", 1);

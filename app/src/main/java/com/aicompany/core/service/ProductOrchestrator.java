@@ -215,6 +215,10 @@ public class ProductOrchestrator {
             fail(run, "La misión de discovery " + run.discoveryMissionId() + " ya no existe.");
             return;
         }
+        if (mission.status() == MissionStatus.CANCELLED) {
+            founderRejected(run, mission.missionId());
+            return;
+        }
         if (BROKEN.contains(mission.status())) {
             fail(run, "La misión de discovery " + mission.missionId() + " falló.");
             return;
@@ -270,6 +274,10 @@ public class ProductOrchestrator {
         if (!FINISHED.contains(mission.status())) {
             return;
         }
+        if (mission.status() == MissionStatus.CANCELLED) {
+            founderRejected(run, mission.missionId());
+            return;
+        }
         var p = view.product();
         var broken = BROKEN.contains(mission.status());
         if (!broken) {
@@ -312,6 +320,12 @@ public class ProductOrchestrator {
             return;
         }
         fail(run, "No quedó listo para vender tras las rondas de corrección: " + String.join(" ", missing));
+    }
+
+    /** El fundador rechazó la misión (REJECT → CANCELLED): es una decisión suya, no un fallo, y no se reintenta. */
+    private void founderRejected(OrchestratorRun run, String missionId) {
+        finish(run, OrchestratorStatus.STOPPED, "El fundador rechazó la misión " + missionId
+                + ": el orquestador no la reintenta.", "EMPRESA_ORCHESTRATOR_STOPPED", null);
     }
 
     private void ready(OrchestratorRun run, CatalogProduct p) {
