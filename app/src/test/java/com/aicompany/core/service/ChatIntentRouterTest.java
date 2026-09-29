@@ -53,11 +53,12 @@ class ChatIntentRouterTest {
     private final ProductService products = mock(ProductService.class);
     private final ModelHealthService modelHealth = mock(ModelHealthService.class);
     private final ProductOrchestrator orchestrator = mock(ProductOrchestrator.class);
+    private final ApiKeyService apiKeys = mock(ApiKeyService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
             "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products, modelHealth,
-            orchestrator
+            orchestrator, apiKeys
     );
 
     {
@@ -1811,5 +1812,21 @@ class ChatIntentRouterTest {
 
         verify(companyPolicyService).createVersion(eq(PolicyKey.ORCHESTRATOR_ENABLED), eq(1.0), anyString());
         assertTrue(response.contains("reanudado"), response);
+    }
+
+    // Keys editables desde Settings (2026-09-29): el chat dice qué proveedor tiene key y desde cuándo, nunca la key.
+    @Test
+    void theApiKeysAnswerShowsHintsAndSourcesOnly() {
+        when(apiKeys.list()).thenReturn(List.of(
+                new ApiKeyService.ApiKeyStatus("nvidia", "…9xQ2", "ENV", null, null, List.of("Neo", "Iris")),
+                new ApiKeyService.ApiKeyStatus("nvidia-ceo", "…a3F9", "FOUNDER", "2026-09-29T12:00:00Z", "human", List.of("Alex")),
+                new ApiKeyService.ApiKeyStatus("nvidia-creative", "", "NONE", null, null, List.of())));
+
+        var response = router.route("¿qué api keys de los modelos hay configuradas?");
+
+        assertTrue(response.contains("nvidia (Neo, Iris): …9xQ2, del .env"), response);
+        assertTrue(response.contains("nvidia-ceo (Alex): …a3F9, cambiada desde Settings el 2026-09-29 12:00 UTC"), response);
+        assertTrue(response.contains("nvidia-creative: sin key"), response);
+        verifyNoInteractions(ceoService);
     }
 }

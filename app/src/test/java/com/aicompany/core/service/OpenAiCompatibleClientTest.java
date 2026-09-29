@@ -228,4 +228,36 @@ class OpenAiCompatibleClientTest {
         new OpenAiCompatibleClient(builder.build(), "k", Duration.ZERO).complete("m", history, null, true, 100);
         server.verify();
     }
+
+    // Keys editables desde Settings (2026-09-29): la key cambia en caliente y una candidata se prueba antes de guardarla.
+    @Test
+    void aNewKeyIsUsedByTheNextCallWithoutRestarting() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andExpect(header("Authorization", "Bearer nueva"))
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+        var client = new OpenAiCompatibleClient(builder.build(), "vieja", Duration.ZERO);
+
+        client.setApiKey("nueva");
+        client.chat("m", MESSAGES, true, 100);
+
+        server.verify();
+        assertEquals("…ueva", client.keyHint());
+    }
+
+    @Test
+    void aCandidateKeyIsCheckedWithItsOwnBearer() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andExpect(header("Authorization", "Bearer candidata"))
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        var client = new OpenAiCompatibleClient(builder.build(), "vigente", Duration.ZERO);
+
+        assertEquals(OpenAiCompatibleClient.KeyCheck.OK, client.checkKey("m", "candidata"));
+        assertEquals(OpenAiCompatibleClient.KeyCheck.UNAUTHORIZED, client.checkKey("m", "mala"));
+        assertEquals(OpenAiCompatibleClient.KeyCheck.UNAVAILABLE, client.checkKey("m", "otra"));
+        assertEquals("…ente", client.keyHint());
+    }
 }

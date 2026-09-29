@@ -455,3 +455,13 @@ export interface OrchestratorView {
   steps: OrchestratorStep[]
   enabled: boolean
 }
+
+// Keys de modelos editables desde Settings (2026-09-29): reflejo a mano de ApiKeyService.ApiKeyStatus. Nunca trae la key.
+export interface ApiKeyStatus {
+  provider: string
+  hint: string
+  source: 'FOUNDER' | 'ENV' | 'NONE'
+  updatedAt: string | null
+  updatedBy: string | null
+  agents: string[]
+}

@@ -190,6 +190,7 @@ public class ChatIntentRouter {
     private final ProductService productService;
     private final ModelHealthService modelHealth;
     private final ProductOrchestrator orchestrator;
+    private final ApiKeyService apiKeys;
 
     /** Spec orquestador §4 (2026-09-28): gobernanza del ciclo de producto, antes que los comandos de producto. */
     private static final Pattern ORCHESTRATOR_COMMAND = Pattern.compile(
@@ -219,7 +220,8 @@ public class ChatIntentRouter {
             DependencyMemoryService dependencyMemory,
             ProductService productService,
             ModelHealthService modelHealth,
-            ProductOrchestrator orchestrator) {
+            ProductOrchestrator orchestrator,
+            ApiKeyService apiKeys) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -239,6 +241,7 @@ public class ChatIntentRouter {
         this.productService = productService;
         this.modelHealth = modelHealth;
         this.orchestrator = orchestrator;
+        this.apiKeys = apiKeys;
     }
 
     /**
@@ -1142,6 +1145,7 @@ public class ChatIntentRouter {
         DEPENDENCIES,
         MODELS,
         ORCHESTRATOR,
+        API_KEYS,
         PRODUCTS,
         PRODUCT_DETAIL
     }
@@ -1186,6 +1190,11 @@ public class ChatIntentRouter {
         // Subproyecto 2 (2026-09-28): dependencias de Engineering que esperan la decisión del fundador (🔴).
         if (normalized.contains("dependencia")) {
             return new QueryMatch(QueryIntent.DEPENDENCIES, null);
+        }
+
+        // Keys de modelos editables desde Settings (2026-09-29).
+        if (normalized.matches(".*\\b(api ?keys?|keys?)\\b.*")) {
+            return new QueryMatch(QueryIntent.API_KEYS, null);
         }
 
         // Spec orquestador (2026-09-28).
@@ -1354,6 +1363,7 @@ public class ChatIntentRouter {
             case "PRODUCTS" -> formatCatalog();
             case "MODELS" -> formatModelsHealth();
             case "ORCHESTRATOR" -> formatOrchestrator();
+            case "API_KEYS" -> formatApiKeys();
             default -> "Dato no reconocido: " + topic + ".";
         };
     }
@@ -1478,6 +1488,19 @@ public class ChatIntentRouter {
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
         ) + orchestratorLine() + downModelsLine();
+    }
+
+    /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */
+    private String formatApiKeys() {
+        return "Keys de los modelos (se cambian en Settings → Keys de modelos): " + apiKeys.list().stream().map(k -> {
+            var who = k.agents().isEmpty() ? "" : " (" + String.join(", ", k.agents()) + ")";
+            return switch (k.source()) {
+                case "FOUNDER" -> k.provider() + who + ": " + k.hint() + ", cambiada desde Settings el "
+                        + SINCE.format(java.time.Instant.parse(k.updatedAt()));
+                case "ENV" -> k.provider() + who + ": " + k.hint() + ", del .env";
+                default -> k.provider() + who + ": sin key";
+            };
+        }).collect(Collectors.joining("; ")) + ".";
     }
 
     private String handleOrchestratorCommand(boolean pause) {

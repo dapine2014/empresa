@@ -49,6 +49,8 @@ EMPRESA_MODEL_DOWN, EMPRESA_MODEL_UP (`ModelHealthService`, `agentId="system"`; 
 
 EMPRESA_ORCHESTRATOR_STARTED, EMPRESA_ORCHESTRATOR_CHOSE, EMPRESA_ORCHESTRATOR_BUILDING, EMPRESA_ORCHESTRATOR_READY, EMPRESA_ORCHESTRATOR_FAILED, EMPRESA_ORCHESTRATOR_STOPPED (`ProductOrchestrator`, `agentId="orchestrator"`, sin `missionId`; spec `2026-09-28-orquestador-de-producto-design.md`): pasos del ciclo de producto autónomo. `data`: `{runId}`, `{runId, productId, reason}`, `{runId, productId, missionId, teamId}` y `{runId, detail}` para los tres finales (`STOPPED` = el fundador pausó o retiró el producto).
 
+EMPRESA_API_KEY_UPDATED (`ApiKeyService`, `agentId="human"`): el fundador cambió la key de un proveedor de modelos desde Settings, después de que NVIDIA la aceptara. `data: {provider}`. Nunca lleva la key ni parte de ella.
+
 EMPRESA_MISSION_DELETED (`MissionService.delete`, `agentId="human"` siempre): se publica cuando el fundador borra una misión terminada (`AWAITING_INVESTOR`/`FAILED`/`COMPLETED`/`CANCELLED`) vía `DELETE /api/company/missions/{missionId}` — limpieza de misiones de prueba. `data: {previousStatus}`. Nunca se publica para `MISSION-001` (protegida), una misión en curso, ni una con clientes/ventas reales (esas se rechazan antes de borrar). Es el último evento de ese `missionId`: su historial previo en Kafka queda, pero ya no existe en Neo4j.
 
 EMPRESA_TEAM_PLAN_CREATED (`TeamWorkPlanner.plan`, `agentId` = líder del equipo): el plan del líder de una misión con `teamId` pasó `TeamPlanValidator`. `taskId` = `<missionId>-<LÍDER>-PLAN`. `data: {teamId, tasks}` — ver "Misiones por equipo" en `CLAUDE.md`.

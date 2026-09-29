@@ -18,6 +18,7 @@ import type {
   MissionResponse,
   MissionStatusResponse,
   PolicyCommand,
+  ApiKeyStatus,
   OrchestratorView,
   ProductCommand,
   ProductView,
@@ -79,6 +80,9 @@ export const api = {
     ),
   products: () => request<ProductView[]>('/api/company/products'),
   orchestrator: () => request<OrchestratorView>('/api/company/orchestrator'),
+  apiKeys: () => request<ApiKeyStatus[]>('/api/company/api-keys'),
+  updateApiKey: (provider: string, apiKey: string) =>
+    request<ApiKeyStatus>(`/api/company/api-keys/${provider}`, { method: 'PUT', body: JSON.stringify({ apiKey }) }),
   createProduct: (command: ProductCommand) =>
     request<ProductView>('/api/company/products', { method: 'POST', body: JSON.stringify(command) }),
   updateProduct: (id: string, command: ProductCommand) =>

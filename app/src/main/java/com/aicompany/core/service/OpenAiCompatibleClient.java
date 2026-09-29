@@ -24,7 +24,8 @@ public class OpenAiCompatibleClient {
 
     private final RestClient client;
     private final RestClient probeClient;
-    private final String apiKey;
+    /** Keys editables desde Settings (2026-09-29): cambia en caliente, la siguiente llamada ya usa la nueva. */
+    private volatile String apiKey;
     private final Duration retryDelay;
 
     public OpenAiCompatibleClient(RestClient client, String apiKey, Duration retryDelay) {
@@ -37,6 +38,37 @@ public class OpenAiCompatibleClient {
         this.probeClient = probeClient;
         this.apiKey = apiKey;
         this.retryDelay = retryDelay;
+    }
+
+    public void setApiKey(String apiKey) {
+        this.apiKey = apiKey;
+    }
+
+    /** Pista para la pantalla: solo los últimos 4 caracteres, nunca la key. */
+    public String keyHint() {
+        var key = apiKey;
+        return key == null || key.isBlank() ? "" : "…" + key.substring(Math.max(0, key.length() - 4));
+    }
+
+    public enum KeyCheck { OK, UNAUTHORIZED, UNAVAILABLE }
+
+    /** Prueba una key candidata con una llamada mínima, sin tocar la vigente; nunca lanza ni loguea la key. */
+    public KeyCheck checkKey(String model, String candidate) {
+        try {
+            var body = new LinkedHashMap<String, Object>();
+            body.put("model", model);
+            body.put("messages", List.of(Map.of("role", "user", "content", "Responde solo: ok")));
+            body.put("max_tokens", 10);
+            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + candidate)
+                    .body(body).retrieve().body(Map.class);
+            return KeyCheck.OK;
+        } catch (org.springframework.web.client.HttpClientErrorException ex) {
+            var status = ex.getStatusCode().value();
+            return status == 401 || status == 403 ? KeyCheck.UNAUTHORIZED : KeyCheck.UNAVAILABLE;
+        } catch (Exception ex) {
+            return KeyCheck.UNAVAILABLE;
+        }
     }
 
     /** ¿El modelo responde? Llamada mínima (10 tokens); nunca lanza. */
