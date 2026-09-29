@@ -16,7 +16,7 @@ class OrchestratorControllerTest {
     // Spec orquestador §4 (2026-09-28): la pantalla Productos muestra el ciclo en curso y sus pasos.
     @Test
     void returnsTheCurrentCycle() {
-        var view = new ProductOrchestrator.OrchestratorView(null, List.of(), false);
+        var view = new ProductOrchestrator.OrchestratorView(null, List.of(), false, null);
         when(orchestrator.current()).thenReturn(view);
 
         assertSame(view, controller.current());

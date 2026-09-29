@@ -200,6 +200,7 @@ function OrchestratorPanel({ products }: { products: ProductView[] }) {
   return (
     <div className="card">
       <h3>Orquestador {data.enabled ? '(encendido)' : '(pausado)'}</h3>
+      {!data.enabled && data.pauseReason && <p className="error">{data.pauseReason}</p>}
       {!run ? (
         <p className="hint">
           No hay ningún ciclo en curso. Arranca uno solo cuando no hay productos listos para vender ni en construcción.

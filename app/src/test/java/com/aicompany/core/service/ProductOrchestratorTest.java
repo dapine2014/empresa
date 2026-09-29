@@ -504,4 +504,71 @@ class ProductOrchestratorTest {
 
         assertEquals("P2", lastSaved().productId());
     }
+
+    // --- Revisión en vivo (2026-09-29): 3 ciclos seguidos fallaron por la ficha con costo 0 y cada uno lanzó una discovery ---
+
+    @Test
+    void theSheetIsAskedUpToThreeTimes() {
+        var p = product("P1", CatalogStatus.IDEA, "product", "SOFTWARE", 1);
+        proposing(p);
+        when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(sheet("Pymes", 19, 0));
+
+        orchestrator.tick();
+
+        verify(ceo, times(3)).proposeProductSheet(anyString(), anyString(), anyString());
+        assertEquals(OrchestratorStatus.FAILED, lastSaved().status());
+    }
+
+    @Test
+    void twoFailedCyclesInARowPauseTheOrchestratorInsteadOfStartingAnother() {
+        when(products.list()).thenReturn(List.of());
+        when(runs.finishedStatusesSince(any(), eq(2)))
+                .thenReturn(List.of(OrchestratorStatus.FAILED, OrchestratorStatus.FAILED));
+        when(runs.latest()).thenReturn(Optional.of(new OrchestratorRun("RUN-0", OrchestratorStatus.FAILED, "P1", null, null,
+                null, Instant.now(), Instant.now(), "la ficha quedó incompleta: costo 0")));
+
+        orchestrator.tick();
+
+        verify(runs, never()).create();
+        verify(missions, never()).start(anyString(), anyString(), anyString(), any(), any());
+        verify(policies).createVersion(eq(PolicyKey.ORCHESTRATOR_ENABLED), eq(0.0),
+                argThat(r -> r.contains("2 ciclos seguidos") && r.contains("costo 0")));
+        verify(events).publish(eq("EMPRESA_ORCHESTRATOR_PAUSED"), isNull(), isNull(), eq("orchestrator"), anyMap());
+        verify(mail).send(contains("pausó"), contains("reanuda el orquestador"), eq(true));
+    }
+
+    @Test
+    void aSingleFailureStillStartsANewCycle() {
+        when(products.list()).thenReturn(List.of());
+        when(runs.finishedStatusesSince(any(), eq(2)))
+                .thenReturn(List.of(OrchestratorStatus.FAILED, OrchestratorStatus.READY));
+
+        orchestrator.tick();
+
+        verify(runs).create();
+        verify(policies, never()).createVersion(any(), anyDouble(), anyString());
+    }
+
+    @Test
+    void failuresAreCountedOnlySinceTheFounderLastTurnedItOn() {
+        var resumedAt = Instant.parse("2026-09-29T20:00:00Z");
+        when(policies.snapshot(PolicyKey.ORCHESTRATOR_ENABLED)).thenReturn(new com.aicompany.core.model.PolicySnapshot(
+                "ORCHESTRATOR_ENABLED", 3, 1.0, "human", "Reanudado", resumedAt, List.of()));
+        when(products.list()).thenReturn(List.of());
+        when(runs.finishedStatusesSince(resumedAt, 2)).thenReturn(List.of());
+
+        orchestrator.tick();
+
+        verify(runs).create();
+    }
+
+    @Test
+    void whenPausedTheViewCarriesTheReason() {
+        when(policies.activeValue(PolicyKey.ORCHESTRATOR_ENABLED)).thenReturn(0.0);
+        when(policies.snapshot(PolicyKey.ORCHESTRATOR_ENABLED)).thenReturn(new com.aicompany.core.model.PolicySnapshot(
+                "ORCHESTRATOR_ENABLED", 4, 0.0, "human", "Pausado por 2 ciclos seguidos fallidos", Instant.now(), List.of()));
+        when(runs.latest()).thenReturn(Optional.empty());
+
+        assertEquals("Pausado por 2 ciclos seguidos fallidos", orchestrator.current().pauseReason());
+    }
 }

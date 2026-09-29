@@ -159,15 +159,29 @@ public class CompanyPolicyService {
      * a diferencia del prompt de agentes, acá no hay un paso de
      * "borrador": editar una política es siempre efectivo de inmediato.
      */
+    /**
+     * Revisión en vivo (2026-09-29): {@code ORCHESTRATOR_ENABLED} es un interruptor (0 = pausado, 1 = encendido); exigir
+     * un valor positivo hacía imposible pausar el orquestador, desde Settings y desde el chat. El resto sigue siendo > 0.
+     */
+    static void validateValue(PolicyKey key, double value) {
+        if (key == PolicyKey.ORCHESTRATOR_ENABLED) {
+            if (value != 0 && value != 1) {
+                throw new IllegalArgumentException("ORCHESTRATOR_ENABLED solo admite 0 (pausado) o 1 (encendido)");
+            }
+            return;
+        }
+        if (value <= 0) {
+            throw new IllegalArgumentException("El valor de una política financiera debe ser positivo");
+        }
+    }
+
     public PolicySnapshot createVersion(PolicyKey key, double value, String changeReason) {
 
         if (changeReason == null || changeReason.isBlank()) {
             throw new IllegalArgumentException("changeReason no puede estar vacío");
         }
 
-        if (value <= 0) {
-            throw new IllegalArgumentException("El valor de una política financiera debe ser positivo");
-        }
+        validateValue(key, value);
 
         try (var session = driver.session()) {
             session.executeWrite(tx -> {

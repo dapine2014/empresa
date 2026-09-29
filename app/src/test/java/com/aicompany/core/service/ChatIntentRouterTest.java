@@ -64,7 +64,7 @@ class ChatIntentRouterTest {
     {
         when(companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(50.0);
         when(finance.summary(any())).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
-        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(null, List.of(), true));
+        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(null, List.of(), true, null));
     }
 
     @Test
@@ -1752,7 +1752,7 @@ class ChatIntentRouterTest {
                 Instant.parse("2026-09-28T11:00:00Z"), null);
         when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(run, List.of(
                 new com.aicompany.core.model.OrchestratorStep(Instant.parse("2026-09-28T11:00:00Z"), "BUILDING",
-                        "Lanzó MISSION-ORQ-2 (TEAM-ENGINEERING)")), true));
+                        "Lanzó MISSION-ORQ-2 (TEAM-ENGINEERING)")), true, null));
         when(products.view("P1")).thenReturn(Optional.of(productView(
                 catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.IN_CONSTRUCTION, 120), List.of())));
     }
@@ -1774,13 +1774,24 @@ class ChatIntentRouterTest {
 
     @Test
     void theOrchestratorStatusWithoutARunSaysSoAndWhetherItIsOn() {
-        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(null, List.of(), true));
+        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(null, List.of(), true, null));
 
         var response = router.route("¿qué hace el orquestador?");
 
         assertTrue(response.contains("no hay ningún ciclo en curso"), response);
         assertTrue(response.contains("encendido"), response);
         verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void aPausedOrchestratorSaysWhy() {
+        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(null, List.of(), false,
+                "Pausado solo: 2 ciclos seguidos fallidos"));
+
+        var response = router.route("¿qué está haciendo el orquestador?");
+
+        assertTrue(response.contains("pausado"), response);
+        assertTrue(response.contains("2 ciclos seguidos fallidos"), response);
     }
 
     @Test

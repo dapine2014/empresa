@@ -50,7 +50,8 @@ public class ProductOrchestrator {
     /** Un producto cuyo ciclo falló no se reelige enseguida: evita reintentar en bucle cada 15 minutos. */
     static final java.time.Duration FAILED_COOLDOWN = java.time.Duration.ofHours(24);
 
-    public record OrchestratorView(OrchestratorRun run, List<OrchestratorStep> steps, boolean enabled) {
+    /** {@code pauseReason}: el motivo de la versión activa de {@code ORCHESTRATOR_ENABLED} cuando está pausado. */
+    public record OrchestratorView(OrchestratorRun run, List<OrchestratorStep> steps, boolean enabled, String pauseReason) {
     }
 
     private final OrchestratorMemoryService runs;
@@ -91,7 +92,13 @@ public class ProductOrchestrator {
 
     public OrchestratorView current() {
         var latest = runs.latest().orElse(null);
-        return new OrchestratorView(latest, latest == null ? List.of() : runs.steps(latest.id()), enabled());
+        var enabled = enabled();
+        String pauseReason = null;
+        if (!enabled) {
+            var policy = policies.snapshot(PolicyKey.ORCHESTRATOR_ENABLED);
+            pauseReason = policy == null ? null : policy.changeReason();
+        }
+        return new OrchestratorView(latest, latest == null ? List.of() : runs.steps(latest.id()), enabled, pauseReason);
     }
 
     public void onMissionFinished(String missionId) {
@@ -125,6 +132,9 @@ public class ProductOrchestrator {
         if (busy || runs.active().size() >= (int) policies.activeValue(PolicyKey.MAX_AUTONOMOUS_PRODUCTS)) {
             return;
         }
+        if (failingRepeatedly()) {
+            return;
+        }
         var run = runs.create();
         step(run, "STARTED", "Forjai no tiene productos listos ni en construcción: arranca un ciclo.");
         events.publish("EMPRESA_ORCHESTRATOR_STARTED", null, null, ACTOR, Map.of("runId", run.id()));
@@ -133,6 +143,32 @@ public class ProductOrchestrator {
                         + "Te aviso cuando elija qué construir. Puedes pausarlo con \"pausa el orquestador\" en el chat.",
                 false);
         advance(run);
+    }
+
+    static final int MAX_CONSECUTIVE_FAILURES = 2;
+
+    /**
+     * Revisión en vivo (2026-09-29): tres ciclos seguidos fallaron por la misma causa y cada uno lanzó una discovery nueva.
+     * Con {@link #MAX_CONSECUTIVE_FAILURES} ciclos seguidos en FAILED (contados desde que el fundador lo encendió por
+     * última vez) no arranca otro: se pausa solo, con el motivo, y avisa. Lo reanuda el fundador.
+     */
+    private boolean failingRepeatedly() {
+        var policy = policies.snapshot(PolicyKey.ORCHESTRATOR_ENABLED);
+        var since = policy == null || policy.updatedAt() == null ? Instant.EPOCH : policy.updatedAt();
+        var recent = runs.finishedStatusesSince(since, MAX_CONSECUTIVE_FAILURES);
+        if (recent == null || recent.size() < MAX_CONSECUTIVE_FAILURES
+                || recent.stream().anyMatch(s -> s != OrchestratorStatus.FAILED)) {
+            return false;
+        }
+        var lastReason = runs.latest().map(OrchestratorRun::failureReason).orElse(null);
+        var reason = "Pausado solo: " + MAX_CONSECUTIVE_FAILURES + " ciclos seguidos fallidos"
+                + (lastReason == null ? "." : ". Último motivo: " + lastReason);
+        policies.createVersion(PolicyKey.ORCHESTRATOR_ENABLED, 0, reason);
+        log.warn("ORCHESTRATOR paused itself: {}", reason);
+        events.publish("EMPRESA_ORCHESTRATOR_PAUSED", null, null, ACTOR, Map.of("reason", reason));
+        mail.send("⚠ Forjai: el orquestador se pausó solo", reason
+                + "\n\nNo arranca ciclos nuevos hasta que lo reanudes con \"reanuda el orquestador\" en el chat.", true);
+        return true;
     }
 
     private void advance(OrchestratorRun run) {
@@ -270,7 +306,7 @@ public class ProductOrchestrator {
                 Map.of("runId", run.id(), "productId", p.id(), "missionId", missionId, "teamId", team));
     }
 
-    static final int SHEET_ATTEMPTS = 2;
+    static final int SHEET_ATTEMPTS = 3;
 
     /**
      * Verificado en vivo (2026-09-29): Alex devolvió la ficha sin cliente objetivo y el ciclo gastó sus rondas pidiéndoselo
