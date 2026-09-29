@@ -18,6 +18,7 @@ import type {
   MissionResponse,
   MissionStatusResponse,
   PolicyCommand,
+  OrchestratorView,
   ProductCommand,
   ProductView,
   PolicySnapshot,
@@ -77,6 +78,7 @@ export const api = {
       `/api/company/finance${productId ? `?productId=${encodeURIComponent(productId)}` : missionId ? `?missionId=${encodeURIComponent(missionId)}` : ''}`,
     ),
   products: () => request<ProductView[]>('/api/company/products'),
+  orchestrator: () => request<OrchestratorView>('/api/company/orchestrator'),
   createProduct: (command: ProductCommand) =>
     request<ProductView>('/api/company/products', { method: 'POST', body: JSON.stringify(command) }),
   updateProduct: (id: string, command: ProductCommand) =>
