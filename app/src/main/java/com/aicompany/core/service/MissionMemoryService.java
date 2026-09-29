@@ -233,6 +233,16 @@ public class MissionMemoryService {
         }
     }
 
+    /** Spec orquestador (2026-09-28): misiones que lanzó el orquestador, no el fundador. */
+    public void markLaunchedBy(String missionId, String who) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (m:Mission {id:$id}) SET m.launchedBy=$who", Map.of("id", missionId, "who", who));
+                return null;
+            });
+        }
+    }
+
     public void recordDecision(
             String missionId,
             String decisionId,

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import type { CatalogStatus, ProductView } from '../api/types'
+import type { CatalogStatus, OrchestratorStatus, ProductView } from '../api/types'
 
 // Catálogo (spec 2026-09-28). Los agentes pueden llevar un producto hasta "listo para vender" si Java verifica los
 // requisitos; tú (el Command Center actúa como el fundador) editas, pausas, reanudas, retiras y reactivas.
@@ -178,6 +179,55 @@ function ProductEditor({ view }: { view: ProductView }) {
   )
 }
 
+const ORCHESTRATOR_LABELS: Record<OrchestratorStatus, string> = {
+  CHOOSING: 'Eligiendo qué construir',
+  DISCOVERING: 'Buscando ideas (discovery)',
+  PROPOSING: 'Completando la ficha',
+  BUILDING: 'Construyendo',
+  READY: 'Listo para vender',
+  FAILED: 'Falló',
+  STOPPED: 'Detenido',
+}
+const missionLink = (id: string | null) => (id ? <Link to={`/missions/${id}`}>{id}</Link> : '—')
+
+// Orquestador (spec 2026-09-28 §4): el ciclo en curso o el último, con su historial. Se pausa con la policy
+// ORCHESTRATOR_ENABLED (Settings) o con "pausa el orquestador" en el chat.
+function OrchestratorPanel({ products }: { products: ProductView[] }) {
+  const { data } = useQuery({ queryKey: ['orchestrator'], queryFn: api.orchestrator, refetchInterval: 15000 })
+  if (!data) return null
+  const run = data.run
+  const product = run?.productId ? products.find((v) => v.product.id === run.productId)?.product.name ?? run.productId : '—'
+  return (
+    <div className="card">
+      <h3>Orquestador {data.enabled ? '(encendido)' : '(pausado)'}</h3>
+      {!run ? (
+        <p className="hint">
+          No hay ningún ciclo en curso. Arranca uno solo cuando no hay productos listos para vender ni en construcción.
+        </p>
+      ) : (
+        <>
+          <p>
+            <strong>{ORCHESTRATOR_LABELS[run.status]}</strong> · Producto: {product} · Discovery:{' '}
+            {missionLink(run.discoveryMissionId)} · Construcción: {missionLink(run.buildMissionId)}
+          </p>
+          {run.choiceReason && <p>Motivo de la elección: {run.choiceReason}</p>}
+          {run.failureReason && <p className="error">{run.failureReason}</p>}
+          <details>
+            <summary>Pasos ({data.steps.length})</summary>
+            <ul>
+              {data.steps.map((s) => (
+                <li key={`${s.at}-${s.step}`}>
+                  {new Date(s.at).toLocaleString()} — {s.step}: {s.detail}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </>
+      )}
+    </div>
+  )
+}
+
 function NewProductForm() {
   const refresh = useRefresh()
   const [name, setName] = useState('')
@@ -219,6 +269,7 @@ export default function ProductsPage() {
         Se buscan clientes a nivel mundial para lo que está listo para vender. Contactar y vender siguen requiriendo tu
         aprobación.
       </p>
+      <OrchestratorPanel products={data} />
       {data.length === 0 && <p className="hint">El catálogo está vacío.</p>}
       {ORDER.map((status) => {
         const views = data.filter((v) => v.product.status === status)

@@ -52,15 +52,19 @@ class ChatIntentRouterTest {
     private final DependencyMemoryService dependencies = mock(DependencyMemoryService.class);
     private final ProductService products = mock(ProductService.class);
     private final ModelHealthService modelHealth = mock(ModelHealthService.class);
+    private final ProductOrchestrator orchestrator = mock(ProductOrchestrator.class);
+    private final ApiKeyService apiKeys = mock(ApiKeyService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
-            "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products, modelHealth
+            "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products, modelHealth,
+            orchestrator, apiKeys
     );
 
     {
         when(companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD)).thenReturn(50.0);
         when(finance.summary(any())).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(null, List.of(), true));
     }
 
     @Test
@@ -1739,5 +1743,90 @@ class ChatIntentRouterTest {
 
         assertTrue(replies.get(0).text().startsWith("Kira no pudo responder"), replies.get(0).text());
         assertEquals("respuesta de Sofia", replies.get(1).text());
+    }
+
+    // Spec orquestador §4 (2026-09-28): el fundador sigue y controla el ciclo de producto desde el chat.
+    private void orchestratorBuilding() {
+        var run = new com.aicompany.core.model.OrchestratorRun("RUN-1", com.aicompany.core.model.OrchestratorStatus.BUILDING,
+                "P1", "MISSION-ORQ-1", "MISSION-ORQ-2", "Tiene demanda en 3 mercados", Instant.parse("2026-09-28T10:00:00Z"),
+                Instant.parse("2026-09-28T11:00:00Z"), null);
+        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(run, List.of(
+                new com.aicompany.core.model.OrchestratorStep(Instant.parse("2026-09-28T11:00:00Z"), "BUILDING",
+                        "Lanzó MISSION-ORQ-2 (TEAM-ENGINEERING)")), true));
+        when(products.view("P1")).thenReturn(Optional.of(productView(
+                catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.IN_CONSTRUCTION, 120), List.of())));
+    }
+
+    @Test
+    void theOrchestratorStatusShowsStepProductMissionsAndReason() {
+        orchestratorBuilding();
+
+        var response = router.route("¿qué está haciendo el orquestador?");
+
+        assertTrue(response.contains("construyendo"), response);
+        assertTrue(response.contains("Landing"), response);
+        assertTrue(response.contains("MISSION-ORQ-2"), response);
+        assertTrue(response.contains("MISSION-ORQ-1"), response);
+        assertTrue(response.contains("Tiene demanda en 3 mercados"), response);
+        assertTrue(response.contains("Lanzó MISSION-ORQ-2"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void theOrchestratorStatusWithoutARunSaysSoAndWhetherItIsOn() {
+        when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(null, List.of(), true));
+
+        var response = router.route("¿qué hace el orquestador?");
+
+        assertTrue(response.contains("no hay ningún ciclo en curso"), response);
+        assertTrue(response.contains("encendido"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void theCompanyStatusIncludesTheOrchestratorLine() {
+        orchestratorBuilding();
+        when(missionMemory.findAll(50)).thenReturn(List.of());
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("Orquestador: construyendo Landing"), response);
+    }
+
+    @Test
+    void pauseTheOrchestratorTurnsThePolicyOffWithoutTouchingProducts() {
+        var replies = router.routeReplies("@Kira pausa el orquestador");
+
+        verify(companyPolicyService).createVersion(eq(PolicyKey.ORCHESTRATOR_ENABLED), eq(0.0), anyString());
+        assertEquals("ceo", replies.get(0).agentId());
+        assertTrue(replies.get(0).text().contains("pausado"), replies.get(0).text());
+        verify(products, never()).changeStatus(any(), any(), any(), any());
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void resumeTheOrchestratorTurnsThePolicyOn() {
+        var response = router.route("reanuda el orquestador");
+
+        verify(companyPolicyService).createVersion(eq(PolicyKey.ORCHESTRATOR_ENABLED), eq(1.0), anyString());
+        assertTrue(response.contains("reanudado"), response);
+    }
+
+    // Keys editables desde Settings (2026-09-29): el chat dice qué proveedor tiene key y desde cuándo, nunca la key.
+    @Test
+    void theApiKeysAnswerShowsHintsAndSourcesOnly() {
+        when(apiKeys.list()).thenReturn(List.of(
+                new ApiKeyService.ApiKeyStatus("nvidia", "…9xQ2", "ENV", null, null, List.of("Neo", "Iris")),
+                new ApiKeyService.ApiKeyStatus("nvidia-ceo", "…a3F9", "FOUNDER", "2026-09-29T12:00:00Z", "human", List.of("Alex")),
+                new ApiKeyService.ApiKeyStatus("nvidia-creative", "", "NONE", null, null, List.of())));
+
+        var response = router.route("¿qué api keys de los modelos hay configuradas?");
+
+        assertTrue(response.contains("nvidia (Neo, Iris): …9xQ2, del .env"), response);
+        assertTrue(response.contains("nvidia-ceo (Alex): …a3F9, cambiada desde Settings el 2026-09-29 12:00 UTC"), response);
+        assertTrue(response.contains("nvidia-creative: sin key"), response);
+        verifyNoInteractions(ceoService);
     }
 }

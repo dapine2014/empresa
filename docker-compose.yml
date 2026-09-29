@@ -21,6 +21,7 @@ services:
       NVIDIA_API_KEY_DISCOVERY: ${NVIDIA_API_KEY_DISCOVERY}
       NVIDIA_API_KEY_CREATIVE: ${NVIDIA_API_KEY_CREATIVE}
       NVIDIA_API_KEY_CEO: ${NVIDIA_API_KEY_CEO}
+      FORJAI_SECRETS_KEY: ${FORJAI_SECRETS_KEY}
     volumes:
       - ${HOME}/forjai-products:/data/forjai-products
     extra_hosts:

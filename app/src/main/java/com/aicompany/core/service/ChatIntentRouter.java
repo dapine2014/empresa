@@ -189,6 +189,12 @@ public class ChatIntentRouter {
     private final DependencyMemoryService dependencyMemory;
     private final ProductService productService;
     private final ModelHealthService modelHealth;
+    private final ProductOrchestrator orchestrator;
+    private final ApiKeyService apiKeys;
+
+    /** Spec orquestador §4 (2026-09-28): gobernanza del ciclo de producto, antes que los comandos de producto. */
+    private static final Pattern ORCHESTRATOR_COMMAND = Pattern.compile(
+            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(pausa|reanuda)(?:\\s+(?:el|al))?\\s+orquestador\\s*[.!]?\\s*$");
 
     /** Spec catálogo §6 B (2026-09-28): comandos del fundador sobre un producto, interpretados en Java. */
     private static final Pattern PRODUCT_COMMAND = Pattern.compile(
@@ -213,7 +219,9 @@ public class ChatIntentRouter {
             FinanceService financeService,
             DependencyMemoryService dependencyMemory,
             ProductService productService,
-            ModelHealthService modelHealth) {
+            ModelHealthService modelHealth,
+            ProductOrchestrator orchestrator,
+            ApiKeyService apiKeys) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -232,6 +240,8 @@ public class ChatIntentRouter {
         this.dependencyMemory = dependencyMemory;
         this.productService = productService;
         this.modelHealth = modelHealth;
+        this.orchestrator = orchestrator;
+        this.apiKeys = apiKeys;
     }
 
     /**
@@ -286,7 +296,8 @@ public class ChatIntentRouter {
     }
 
     private boolean isGovernance(String message) {
-        return PRODUCT_COMMAND.matcher(normalize(message)).matches()
+        return ORCHESTRATOR_COMMAND.matcher(normalize(message)).matches()
+                || PRODUCT_COMMAND.matcher(normalize(message)).matches()
                 || MISSION_START.matcher(message).find()
                 || detectFreeMissionStart(normalize(message))
                 || detectDecision(message) != null;
@@ -491,6 +502,11 @@ public class ChatIntentRouter {
     }
 
     private String resolve(String message) {
+
+        var orchestratorCommand = ORCHESTRATOR_COMMAND.matcher(normalize(message));
+        if (orchestratorCommand.matches()) {
+            return handleOrchestratorCommand("pausa".equals(orchestratorCommand.group(1)));
+        }
 
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));
         if (productCommand.matches()) {
@@ -1128,6 +1144,8 @@ public class ChatIntentRouter {
         COMPANY_STATUS,
         DEPENDENCIES,
         MODELS,
+        ORCHESTRATOR,
+        API_KEYS,
         PRODUCTS,
         PRODUCT_DETAIL
     }
@@ -1172,6 +1190,16 @@ public class ChatIntentRouter {
         // Subproyecto 2 (2026-09-28): dependencias de Engineering que esperan la decisión del fundador (🔴).
         if (normalized.contains("dependencia")) {
             return new QueryMatch(QueryIntent.DEPENDENCIES, null);
+        }
+
+        // Keys de modelos editables desde Settings (2026-09-29).
+        if (normalized.matches(".*\\b(api ?keys?|keys?)\\b.*")) {
+            return new QueryMatch(QueryIntent.API_KEYS, null);
+        }
+
+        // Spec orquestador (2026-09-28).
+        if (normalized.contains("orquestador")) {
+            return new QueryMatch(QueryIntent.ORCHESTRATOR, null);
         }
 
         // Spec salud de modelos (2026-09-28).
@@ -1334,6 +1362,8 @@ public class ChatIntentRouter {
             case "DEPENDENCIES" -> formatPendingDependencies();
             case "PRODUCTS" -> formatCatalog();
             case "MODELS" -> formatModelsHealth();
+            case "ORCHESTRATOR" -> formatOrchestrator();
+            case "API_KEYS" -> formatApiKeys();
             default -> "Dato no reconocido: " + topic + ".";
         };
     }
@@ -1457,7 +1487,88 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + downModelsLine();
+        ) + orchestratorLine() + downModelsLine();
+    }
+
+    /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */
+    private String formatApiKeys() {
+        return "Keys de los modelos (se cambian en Settings → Keys de modelos): " + apiKeys.list().stream().map(k -> {
+            var who = k.agents().isEmpty() ? "" : " (" + String.join(", ", k.agents()) + ")";
+            return switch (k.source()) {
+                case "FOUNDER" -> k.provider() + who + ": " + k.hint() + ", cambiada desde Settings el "
+                        + SINCE.format(java.time.Instant.parse(k.updatedAt()));
+                case "ENV" -> k.provider() + who + ": " + k.hint() + ", del .env";
+                default -> k.provider() + who + ": sin key";
+            };
+        }).collect(Collectors.joining("; ")) + ".";
+    }
+
+    private String handleOrchestratorCommand(boolean pause) {
+        companyPolicyService.createVersion(PolicyKey.ORCHESTRATOR_ENABLED, pause ? 0 : 1,
+                (pause ? "Pausado" : "Reanudado") + " por el fundador desde el chat");
+        log.info("CHAT_INTENT_ORCHESTRATOR_{}", pause ? "PAUSE" : "RESUME");
+        return pause
+                ? "Orquestador pausado: no arranca ciclos nuevos ni avanza el actual (las misiones ya lanzadas terminan igual). "
+                        + "Para seguir: \"reanuda el orquestador\"."
+                : "Orquestador reanudado: en el próximo chequeo (cada 15 minutos o al terminar una misión) retoma el ciclo.";
+    }
+
+    private static String orchestratorStep(com.aicompany.core.model.OrchestratorStatus status) {
+        return switch (status) {
+            case CHOOSING -> "eligiendo qué construir";
+            case DISCOVERING -> "buscando ideas con una discovery";
+            case PROPOSING -> "completando la ficha de";
+            case BUILDING -> "construyendo";
+            case READY -> "terminó: dejó listo para vender";
+            case FAILED -> "falló con";
+            case STOPPED -> "se detuvo con";
+        };
+    }
+
+    private String orchestratorProduct(com.aicompany.core.model.OrchestratorRun run) {
+        if (run.productId() == null) {
+            return "";
+        }
+        return " " + productService.view(run.productId()).map(v -> v.product().name()).orElse(run.productId());
+    }
+
+    /** Spec orquestador §4: paso actual, producto, misiones y motivo de la elección, formateados en Java. */
+    private String formatOrchestrator() {
+        var view = orchestrator.current();
+        var power = view.enabled() ? "encendido" : "pausado (\"reanuda el orquestador\" para seguir)";
+        var run = view.run();
+        if (run == null) {
+            return "El orquestador está " + power + " y no hay ningún ciclo en curso: arranca uno solo cuando Forjai no "
+                    + "tiene productos listos para vender ni en construcción.";
+        }
+        var text = new StringBuilder("El orquestador está " + power + ". Ciclo " + run.id() + ": "
+                + orchestratorStep(run.status()) + orchestratorProduct(run) + ".");
+        if (run.choiceReason() != null) {
+            text.append(" Motivo de la elección: ").append(run.choiceReason());
+        }
+        if (run.discoveryMissionId() != null) {
+            text.append(" Discovery: ").append(run.discoveryMissionId()).append(".");
+        }
+        if (run.buildMissionId() != null) {
+            text.append(" Construcción: ").append(run.buildMissionId()).append(".");
+        }
+        if (run.failureReason() != null) {
+            text.append(" Motivo del fallo: ").append(run.failureReason());
+        }
+        if (!view.steps().isEmpty()) {
+            var last = view.steps().get(view.steps().size() - 1);
+            text.append(" Último paso (").append(SINCE.format(last.at())).append("): ").append(last.detail());
+        }
+        return text.toString();
+    }
+
+    private String orchestratorLine() {
+        var view = orchestrator.current();
+        if (view.run() == null || !view.run().status().active()) {
+            return " Orquestador: " + (view.enabled() ? "encendido, sin ciclo en curso." : "pausado.");
+        }
+        return " Orquestador: " + orchestratorStep(view.run().status()) + orchestratorProduct(view.run())
+                + (view.enabled() ? "." : " (pausado).");
     }
 
     private String formatAgentStatus(List<AgentStatusResponse> statuses) {

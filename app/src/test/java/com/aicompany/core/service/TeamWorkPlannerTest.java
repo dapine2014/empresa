@@ -66,6 +66,22 @@ class TeamWorkPlannerTest {
         verify(events).publish(eq("EMPRESA_TEAM_PLAN_CREATED"), eq("MISSION-5"), anyString(), eq("growth-content"), anyMap());
     }
 
+    // Verificado en vivo (2026-09-29, glm-5.3): el líder omitía summary y se rechazaban planes válidos. Es un campo
+    // descriptivo: Java lo arma desde las tareas en vez de gastar intentos.
+    @Test
+    void aMissingSummaryIsFilledByJavaFromTheTasks() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        when(ceoService.planTeamWork(eq("growth-content"), anyString(), anyString(), eq("qwen3:8b"))).thenReturn(
+                new TeamPlan("", "", "", List.of(
+                        new PlannedTask("growth-content", "WORK", "SEO_PLAN", "Plan SEO", List.of("SEO"), List.of()))));
+
+        var result = planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "Lanzar el juego", TeamExecutionMode.ANALYSIS);
+
+        assertTrue(result.plan().summary().contains("growth-content: SEO_PLAN"), result.plan().summary());
+        verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
+        verify(events, never()).publish(eq("EMPRESA_TEAM_PLAN_REJECTED"), any(), any(), any(), anyMap());
+    }
+
     @Test
     void theRosterWithRealCapabilitiesGoesIntoThePrompt() {
         when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));

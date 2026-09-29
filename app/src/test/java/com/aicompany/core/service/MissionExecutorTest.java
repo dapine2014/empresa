@@ -386,6 +386,25 @@ class MissionExecutorTest {
         verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
     }
 
+    // Spec orquestador §2 (2026-09-28): al terminar cada misión se avisa al orquestador; si falla, la misión igual
+    // termina.
+    @Test
+    void aFinishedMissionNotifiesTheOrchestrator() throws Exception {
+        for (var agent : List.of("sales", "product", "finance", "engineering", "qa")) {
+            stubAgent(agent);
+        }
+        when(contradictionDetector.detect(any(), anyDouble(), anyDouble())).thenReturn(List.of());
+        when(ceoService.executeMission(anyString(), anyString(), anyString(), anyString())).thenReturn("consolidado");
+        var orchestrator = mock(ProductOrchestrator.class);
+        doThrow(new IllegalStateException("Neo4j caído")).when(orchestrator).onMissionFinished(any());
+        executor.setProductOrchestrator(orchestrator);
+
+        executor.executeAsync("MISSION-1", "instrucción").get();
+
+        verify(orchestrator, timeout(2000)).onMissionFinished("MISSION-1");
+        verify(memory).updateMission(eq("MISSION-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
+    }
+
     private void stubAgent(String agentId) {
         var result = new AgentResult(
                 agentId, "ACTION", "NOT_VALIDATED",

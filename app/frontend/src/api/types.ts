@@ -248,6 +248,8 @@ export type PolicyKey =
   | 'SUCCESS_THRESHOLD_EXCELLENT'
   | 'SUCCESS_THRESHOLD_EXTRAORDINARY'
   | 'MAX_EVIDENCE_ROUNDS'
+  | 'ORCHESTRATOR_ENABLED'
+  | 'MAX_AUTONOMOUS_PRODUCTS'
 
 export interface PolicyVersionSummary {
   version: number
@@ -425,4 +427,41 @@ export interface ProductCommand {
   markets?: string[]
   languages?: string[]
   reason?: string
+}
+
+// Orquestador del ciclo de producto (spec 2026-09-28): reflejo a mano de OrchestratorRun/OrchestratorStep/OrchestratorView.
+export type OrchestratorStatus = 'CHOOSING' | 'DISCOVERING' | 'PROPOSING' | 'BUILDING' | 'READY' | 'FAILED' | 'STOPPED'
+
+export interface OrchestratorRun {
+  id: string
+  status: OrchestratorStatus
+  productId: string | null
+  discoveryMissionId: string | null
+  buildMissionId: string | null
+  choiceReason: string | null
+  startedAt: string
+  updatedAt: string
+  failureReason: string | null
+}
+
+export interface OrchestratorStep {
+  at: string
+  step: string
+  detail: string
+}
+
+export interface OrchestratorView {
+  run: OrchestratorRun | null
+  steps: OrchestratorStep[]
+  enabled: boolean
+}
+
+// Keys de modelos editables desde Settings (2026-09-29): reflejo a mano de ApiKeyService.ApiKeyStatus. Nunca trae la key.
+export interface ApiKeyStatus {
+  provider: string
+  hint: string
+  source: 'FOUNDER' | 'ENV' | 'NONE'
+  updatedAt: string | null
+  updatedBy: string | null
+  agents: string[]
 }

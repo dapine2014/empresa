@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { PolicySnapshot } from '../api/types'
+import type { ApiKeyStatus, PolicySnapshot } from '../api/types'
 
 const POLICY_LABELS: Record<string, string> = {
   SEED_CAPITAL_USD: 'Capital semilla (US$)',
@@ -12,6 +12,8 @@ const POLICY_LABELS: Record<string, string> = {
   SUCCESS_THRESHOLD_EXCELLENT: 'Umbral de éxito: Excelente (US$, ≥)',
   SUCCESS_THRESHOLD_EXTRAORDINARY: 'Umbral de éxito: Extraordinario (US$, ≥)',
   MAX_EVIDENCE_ROUNDS: 'Vueltas máximas de "más evidencia" por misión',
+  ORCHESTRATOR_ENABLED: 'Orquestador de productos encendido (1 = sí, 0 = no)',
+  MAX_AUTONOMOUS_PRODUCTS: 'Productos que el orquestador crea a la vez',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {
@@ -78,6 +80,73 @@ function PolicyRow({ policy }: { policy: PolicySnapshot }) {
         </ul>
       )}
     </div>
+  )
+}
+
+const SOURCE_LABELS: Record<ApiKeyStatus['source'], string> = {
+  FOUNDER: 'cambiada desde aquí',
+  ENV: 'del .env',
+  NONE: 'sin key',
+}
+
+// Keys de modelos (2026-09-29): se prueban contra NVIDIA antes de guardarse, se guardan cifradas y se aplican al
+// instante. La pantalla nunca recibe la key: solo sus últimos 4 caracteres.
+function ApiKeyRow({ status }: { status: ApiKeyStatus }) {
+  const queryClient = useQueryClient()
+  const [apiKey, setApiKey] = useState('')
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const mutation = useMutation({
+    mutationFn: () => api.updateApiKey(status.provider, apiKey),
+    onSuccess: () => {
+      setApiKey('')
+      setFeedback('Key comprobada y guardada: ya se usa en la próxima llamada.')
+      void queryClient.invalidateQueries({ queryKey: ['api-keys'] })
+    },
+    onError: (error: Error) => setFeedback(error.message),
+  })
+  return (
+    <form
+      className="decision-form"
+      onSubmit={(e) => {
+        e.preventDefault()
+        setFeedback(null)
+        mutation.mutate()
+      }}
+    >
+      <strong>{status.provider}</strong>
+      <span className="hint">
+        {status.agents.length ? `Usada por: ${status.agents.join(', ')}` : 'Ningún agente la usa hoy'} ·{' '}
+        {status.hint || '—'} ({SOURCE_LABELS[status.source]}
+        {status.updatedAt ? `, ${new Date(status.updatedAt).toLocaleString()}` : ''})
+      </span>
+      <input
+        type="password"
+        value={apiKey}
+        onChange={(e) => setApiKey(e.target.value)}
+        placeholder="Pegar la key nueva (nvapi-…)"
+        autoComplete="new-password"
+      />
+      <button type="submit" disabled={mutation.isPending || !apiKey.trim()}>
+        {mutation.isPending ? 'Comprobando...' : 'Comprobar y guardar'}
+      </button>
+      {feedback && <p className={mutation.isError ? 'error' : 'feedback'}>{feedback}</p>}
+    </form>
+  )
+}
+
+function ApiKeysSection() {
+  const { data, isLoading, error } = useQuery({ queryKey: ['api-keys'], queryFn: api.apiKeys })
+  return (
+    <>
+      <h2>Keys de modelos</h2>
+      <p className="hint">
+        Una key por proveedor de NVIDIA. Antes de guardarla se prueba con una llamada mínima; si NVIDIA la rechaza, se
+        conserva la anterior. Se guarda cifrada y nunca se vuelve a mostrar completa.
+      </p>
+      {isLoading && <p>Cargando keys...</p>}
+      {error && <p className="error">No se pudieron cargar las keys.</p>}
+      {data?.map((status) => <ApiKeyRow key={status.provider} status={status} />)}
+    </>
   )
 }
 
@@ -175,6 +244,8 @@ export default function SettingsPage() {
       {policiesQuery.isLoading && <p>Cargando políticas...</p>}
       {policiesQuery.error && <p className="error">No se pudieron cargar las políticas.</p>}
       {policiesQuery.data?.map((policy) => <PolicyRow key={policy.key} policy={policy} />)}
+
+      <ApiKeysSection />
     </div>
   )
 }

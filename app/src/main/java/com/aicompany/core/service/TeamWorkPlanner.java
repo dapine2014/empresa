@@ -348,7 +348,15 @@ public class TeamWorkPlanner {
                         t.requiredCapabilities(), t.ownedPaths(), t.assignments()))
                 .toList();
 
-        return new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts(),
+        // Verificado en vivo (2026-09-29, glm-5.3): el líder omitía summary en planes por lo demás válidos. Es un campo
+        // descriptivo, así que Java lo arma desde las tareas en vez de gastar un intento.
+        var summary = plan.summary() == null || plan.summary().isBlank()
+                ? tasks.stream().filter(java.util.Objects::nonNull)
+                        .map(t -> t.agentId() + ": " + t.action() + (t.objective() == null ? "" : " (" + t.objective() + ")"))
+                        .collect(java.util.stream.Collectors.joining("; ", "Plan del equipo (resumen armado por Java): ", "."))
+                : plan.summary();
+
+        return new TeamPlan(summary, plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts(),
                 plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage());
     }
 

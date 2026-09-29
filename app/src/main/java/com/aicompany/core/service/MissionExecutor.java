@@ -96,6 +96,39 @@ public class MissionExecutor {
         this.productAutomation = productAutomation;
     }
 
+    private ProductOrchestrator productOrchestrator;
+
+    /**
+     * Spec orquestador §2 (2026-09-28): hilo propio, así el orquestador (que puede lanzar misiones) nunca bloquea ni
+     * ocupa el pool de misiones.
+     */
+    private static final java.util.concurrent.ExecutorService ORCHESTRATOR_NOTIFIER =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                var thread = new Thread(r, "orchestrator-notifier");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    /** {@code @Lazy}: el orquestador depende de MissionService, que depende de este executor (ciclo de beans). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setProductOrchestrator(@org.springframework.context.annotation.Lazy ProductOrchestrator productOrchestrator) {
+        this.productOrchestrator = productOrchestrator;
+    }
+
+    /** El orquestador tampoco puede tumbar una misión: se avisa en otro hilo y un fallo solo se registra. */
+    private void notifyOrchestrator(String missionId) {
+        if (productOrchestrator == null) {
+            return;
+        }
+        ORCHESTRATOR_NOTIFIER.execute(() -> {
+            try {
+                productOrchestrator.onMissionFinished(missionId);
+            } catch (Exception ex) {
+                log.warn("MISSION {} - orchestrator notification failed: {}", missionId, ex.getMessage());
+            }
+        });
+    }
+
     /** El catálogo nunca puede tumbar una misión: si falla, solo se registra. */
     private void catalog(String missionId, String what, Runnable action) {
         if (productAutomation == null) {
@@ -741,6 +774,10 @@ public class MissionExecutor {
                     "La misión " + missionId + " terminó en FAILED: " + message,
                     true
             );
+        }
+
+        if (status == MissionStatus.AWAITING_INVESTOR || status == MissionStatus.FAILED) {
+            notifyOrchestrator(missionId);
         }
     }
 }

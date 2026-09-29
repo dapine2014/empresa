@@ -79,6 +79,11 @@ sandbox:
     url: ${SANDBOX_RUNNER_URL:http://localhost:8090}
     token: ${SANDBOX_RUNNER_TOKEN:}
     timeout: ${SANDBOX_RUNNER_TIMEOUT:30m}
+# Keys de modelos editables desde Settings (2026-09-29): llave maestra AES-256 (32 bytes en base64) con la que se
+# cifran en Neo4j. Solo vive en .env; sin ella las keys solo salen del .env.
+forjai:
+  secrets-key: ${FORJAI_SECRETS_KEY:}
+
 remote-models:
   base-url: ${REMOTE_MODELS_BASE_URL:https://integrate.api.nvidia.com/v1}
   read-timeout: ${REMOTE_MODELS_READ_TIMEOUT:10m}
