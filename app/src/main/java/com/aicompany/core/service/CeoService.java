@@ -1225,6 +1225,75 @@ public class CeoService {
      * reintento con corrección vive en el llamador (TeamWorkPlanner /
      * DevelopmentRuntime), igual que el turno final de executeAgentTask.
      */
+    private static final Map<String, Object> CHOICE_SCHEMA = Map.of("type", "object",
+            "properties", Map.of("productId", Map.of("type", "string"), "reason", Map.of("type", "string")),
+            "required", List.of("productId", "reason"));
+
+    private static final Map<String, Object> SHEET_SCHEMA = Map.of("type", "object",
+            "properties", Map.of(
+                    "kind", Map.of("type", "string", "enum", List.of("SOFTWARE", "SERVICE")),
+                    "targetCustomer", Map.of("type", "string"),
+                    "markets", Map.of("type", "array", "items", Map.of("type", "string")),
+                    "languages", Map.of("type", "array", "items", Map.of("type", "string")),
+                    "priceUsd", Map.of("type", "number"),
+                    "priceOnRequest", Map.of("type", "boolean"),
+                    "estimatedCostUsd", Map.of("type", "number"),
+                    "delivery", Map.of("type", "string")),
+            "required", List.of("kind", "targetCustomer", "markets", "languages", "priceUsd", "priceOnRequest",
+                    "estimatedCostUsd", "delivery"));
+
+    private static final Map<String, Object> DELIVERY_SCHEMA = Map.of("type", "object",
+            "properties", Map.of("delivery", Map.of("type", "string")), "required", List.of("delivery"));
+
+    private record DeliveryAnswer(String delivery) {
+    }
+
+    /** Spec orquestador (2026-09-28): Alex elige qué construir; Java valida que el id esté entre los candidatos. */
+    public com.aicompany.core.model.ProductChoice chooseProduct(String candidatesText, String model) {
+        var prompt = """
+                Forjai no tiene ningún producto listo para vender ni en construcción. Elige UNA de estas ideas para
+                construir ahora: la de mejor potencial de ventas y ganancias, con clientes en cualquier país, según la
+                evidencia indicada. Usa solo los datos dados, sin inventar.
+                IDEAS CANDIDATAS:
+                %s
+                FORMATO: {"productId": "<id exacto de la lista>", "reason": "<por qué, en una o dos frases>"}
+                """.formatted(candidatesText);
+        return callStructured("ORCHESTRATOR_CHOICE", "ceo", prompt, null, model, CHOICE_SCHEMA,
+                com.aicompany.core.model.ProductChoice.class);
+    }
+
+    /** Ficha del producto a partir de la evidencia de las misiones (Java la valida antes de aplicarla). */
+    public com.aicompany.core.model.ProductSheet proposeProductSheet(String productText, String evidenceText, String model) {
+        var prompt = """
+                Completa la ficha de este producto de Forjai para construirlo y venderlo. kind: SOFTWARE si hay que
+                programarlo, SERVICE si se entrega como servicio. Mercados: WORLDWIDE salvo que la evidencia diga otra
+                cosa; idiomas en código ISO (en, es...). Precio y costo estimado por venta en USD, sacados de la evidencia;
+                si no hay precio sustentado, priceOnRequest=true y priceUsd=0. delivery: cómo se entrega (vacío si es
+                software). No inventes datos.
+                PRODUCTO:
+                %s
+                EVIDENCIA DE LAS MISIONES:
+                %s
+                """.formatted(productText, evidenceText);
+        return callStructured("ORCHESTRATOR_SHEET", "ceo", prompt, null, model, SHEET_SCHEMA,
+                com.aicompany.core.model.ProductSheet.class);
+    }
+
+    /** Forma de entrega de un servicio, resumida de los resultados del equipo Creative. */
+    public String summarizeDelivery(String productText, String creativeResults, String model) {
+        var prompt = """
+                Resume en un párrafo cómo se entrega este servicio de Forjai (pasos, entregables y tiempos), usando solo
+                lo que diseñó el equipo Creative.
+                SERVICIO:
+                %s
+                DISEÑO DEL EQUIPO CREATIVE:
+                %s
+                FORMATO: {"delivery": "<cómo se entrega>"}
+                """.formatted(productText, creativeResults);
+        return callStructured("ORCHESTRATOR_DELIVERY", "ceo", prompt, null, model, DELIVERY_SCHEMA, DeliveryAnswer.class)
+                .delivery();
+    }
+
     private <T> T callStructured(
             String operation, String agentId, String prompt, String agentPrompt, String model,
             Object schema, Class<T> type) {
