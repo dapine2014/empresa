@@ -27,4 +27,19 @@ class CompanyPolicyDefaultsTest {
         assertTrue(OrchestratorStatus.BUILDING.active());
         assertFalse(OrchestratorStatus.READY.active());
     }
+
+    // Revisión en vivo (2026-09-29): "pausa el orquestador" fallaba porque toda policy exigía un valor > 0.
+    @Test
+    void theOrchestratorSwitchAcceptsZeroAndOneOnly() {
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.ORCHESTRATOR_ENABLED, 0));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.ORCHESTRATOR_ENABLED, 1));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.ORCHESTRATOR_ENABLED, 0.5));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.ORCHESTRATOR_ENABLED, 2));
+    }
+
+    @Test
+    void theOtherPoliciesStillMustBePositive() {
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.SEED_CAPITAL_USD, 0));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.SEED_CAPITAL_USD, 50));
+    }
 }

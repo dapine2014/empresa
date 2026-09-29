@@ -454,6 +454,8 @@ export interface OrchestratorView {
   run: OrchestratorRun | null
   steps: OrchestratorStep[]
   enabled: boolean
+  // Motivo de la versión activa de ORCHESTRATOR_ENABLED cuando está pausado (p. ej. se pausó solo tras 2 fallos).
+  pauseReason: string | null
 }
 
 // Keys de modelos editables desde Settings (2026-09-29): reflejo a mano de ApiKeyService.ApiKeyStatus. Nunca trae la key.

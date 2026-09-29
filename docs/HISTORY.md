@@ -896,3 +896,10 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 **Verificado en vivo con la caída real de kimi-k3**: tras un redeploy todo arrancó `UP`; dos preguntas en paralelo a Neo y Vera fallaron por timeout/cuerpo ilegible y a las 22:22 UTC kimi-k3 quedó `DOWN` (`EMPRESA_MODEL_DOWN`, correo); la llamada de Neo que detectó la caída se rehízo con `qwen3-coder:30b` y respondió; la de Vera (primer fallo) devolvió el motivo. Después, **@Iris respondió en 14 s por el suplente** (antes: 10 min de espera y fallo); "estado de los modelos" y "dame un status" muestran kimi-k3 caído desde las 22:22 y quién usa suplente.
 
 **Límite conocido**: la primera detección cuesta hasta 2 timeouts (10 min c/u) porque glm-5.3 llegó a tardar 8,6 min en una tarea legítima; lo que se elimina es la espera repetida (horas).
+
+### Orquestador: bucle de fichas con costo 0 y corte por fallos
+
+**Bug real en vivo** (2026-09-29, 17:13–19:22 UTC): tres ciclos seguidos terminaron en `FAILED` con el mismo motivo ("El costo estimado por venta debe ser mayor que 0"). La evidencia decía "costo marginal ~$0" y Alex, con "no inventes datos" y un solo reintento, repetía 0. Cada fallo excluía el producto y el ciclo siguiente lanzaba otra discovery (~45 min de modelos remotos por vuelta, una misión más esperando al fundador). Al intentar pausarlo apareció otro bug: `createVersion` exigía valor > 0 para toda policy, así que `ORCHESTRATOR_ENABLED = 0` era imposible desde Settings y desde "pausa el orquestador" en el chat.
+
+**Arreglo** (aprobado por el fundador): el prompt de la ficha explica que el costo por venta nunca es 0 y qué suma (comisión de la plataforma de pago, IA/infra por venta, entrega) con los valores de la evidencia; la ficha se pide hasta 3 veces. Con 2 ciclos seguidos en `FAILED` (contados desde el último encendido, para que reanudar no lo vuelva a pausar enseguida) el orquestador no arranca otro y se pausa solo con el motivo. `ORCHESTRATOR_ENABLED` admite solo 0/1.
+

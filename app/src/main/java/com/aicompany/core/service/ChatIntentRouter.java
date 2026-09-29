@@ -1535,7 +1535,8 @@ public class ChatIntentRouter {
     /** Spec orquestador §4: paso actual, producto, misiones y motivo de la elección, formateados en Java. */
     private String formatOrchestrator() {
         var view = orchestrator.current();
-        var power = view.enabled() ? "encendido" : "pausado (\"reanuda el orquestador\" para seguir)";
+        var power = view.enabled() ? "encendido" : "pausado" + (view.pauseReason() == null ? "" : " (" + view.pauseReason() + ")")
+                + "; \"reanuda el orquestador\" para seguir";
         var run = view.run();
         if (run == null) {
             return "El orquestador está " + power + " y no hay ningún ciclo en curso: arranca uno solo cuando Forjai no "

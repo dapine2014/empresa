@@ -1268,8 +1268,11 @@ public class CeoService {
                 Completa la ficha de este producto de Forjai para construirlo y venderlo. kind: SOFTWARE si hay que
                 programarlo, SERVICE si se entrega como servicio. Mercados: WORLDWIDE salvo que la evidencia diga otra
                 cosa; idiomas en código ISO (en, es...). Precio y costo estimado por venta en USD, sacados de la evidencia;
-                si no hay precio sustentado, priceOnRequest=true y priceUsd=0. delivery: cómo se entrega (vacío si es
-                software). No inventes datos.
+                si no hay precio sustentado, priceOnRequest=true y priceUsd=0. estimatedCostUsd es el costo de cada venta
+                y SIEMPRE es mayor que 0, aunque la evidencia hable de "costo marginal ~0": incluye la comisión de la
+                plataforma de pago o de venta (por ejemplo, un porcentaje del precio más un fijo), el costo de IA o de
+                infraestructura por venta y el de la entrega, con los valores de la evidencia; súmalos. delivery: cómo se
+                entrega (vacío si es software). No inventes datos.
                 PRODUCTO:
                 %s
                 EVIDENCIA DE LAS MISIONES:

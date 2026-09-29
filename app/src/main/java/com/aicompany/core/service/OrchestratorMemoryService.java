@@ -52,6 +52,17 @@ public class OrchestratorMemoryService {
         }
     }
 
+    /** Estados de los últimos {@code limit} ciclos terminados que arrancaron desde {@code since}, del más reciente al más viejo. */
+    public List<OrchestratorStatus> finishedStatusesSince(Instant since, int limit) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (r:OrchestratorRun) WHERE NOT r.status IN ['CHOOSING','DISCOVERING','PROPOSING','BUILDING'] "
+                            + "AND datetime(r.startedAt) >= datetime($since) RETURN r.status AS status "
+                            + "ORDER BY r.startedAt DESC LIMIT $limit",
+                    Map.of("since", since.toString(), "limit", limit))
+                    .list(r -> OrchestratorStatus.valueOf(r.get("status").asString()));
+        }
+    }
+
     public Optional<OrchestratorRun> latest() {
         try (var session = driver.session()) {
             return session.run("MATCH (r:OrchestratorRun) RETURN r ORDER BY r.startedAt DESC LIMIT 1")
