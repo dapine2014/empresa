@@ -199,8 +199,9 @@ public class ChatIntentRouter {
 
     /** Spec modo automático (2026-09-29): comandos del fundador, en la gobernanza junto al orquestador. */
     private static final Pattern AUTONOMY_COMMAND = Pattern.compile(
-            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(pon todo en automatico|activa el modo automatico"
-                    + "|apaga el (?:modo )?automatico|desactiva el modo automatico)\\s*[.!]?\\s*$");
+            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(?:(pon) todo en automatico"
+                    + "|(pausa|reanuda|enciende|activa|apaga|desactiva)(?:\\s+el)?(?:\\s+modo)?\\s+automatico)"
+                    + "(?:[\\s,]+por favor)?\\s*[.!]?\\s*$");
 
     /** Spec catálogo §6 B (2026-09-28): comandos del fundador sobre un producto, interpretados en Java. */
     private static final Pattern PRODUCT_COMMAND = Pattern.compile(
@@ -519,8 +520,8 @@ public class ChatIntentRouter {
 
         var autonomyCommand = AUTONOMY_COMMAND.matcher(normalize(message));
         if (autonomyCommand.matches()) {
-            var command = autonomyCommand.group(1);
-            return handleAutonomyCommand(command.startsWith("pon") || command.startsWith("activa"));
+            var verb = autonomyCommand.group(1) != null ? autonomyCommand.group(1) : autonomyCommand.group(2);
+            return handleAutonomyCommand(List.of("pon", "reanuda", "enciende", "activa").contains(verb));
         }
 
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));

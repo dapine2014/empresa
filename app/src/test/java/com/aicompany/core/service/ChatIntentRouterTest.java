@@ -1838,6 +1838,27 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("ya estaba apagado"), response);
     }
 
+    // Revisión final (2026-09-29): frases naturales del fundador que deben llegar al comando, no al de producto ni a la consulta.
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "pausa el modo automático", "apaga el modo automático por favor", "desactiva el automático"})
+    void naturalPhrasesTurnAutonomyOff(String phrase) {
+        router.route(phrase);
+
+        verify(autonomy).setProducts(false, "el chat");
+        verify(products, never()).changeStatus(anyString(), any(), anyString(), anyString());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "reanuda el modo automático", "enciende el modo automático", "activa el automático",
+            "pon todo en automático, por favor"})
+    void naturalPhrasesTurnAutonomyOn(String phrase) {
+        router.route(phrase);
+
+        verify(autonomy).setProducts(true, "el chat");
+    }
+
     @Test
     void autonomyCommandsDoNotCaptureOrchestratorCommands() {
         router.route("pausa el orquestador");
