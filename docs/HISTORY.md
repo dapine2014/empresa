@@ -911,3 +911,9 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 
 **Verificado en vivo** (2026-09-30 00:20 UTC, tras el redeploy): `GET /api/company/autonomy` → productos apagados con el `pauseReason` del corte por fallos, clientes `available=false`, 8 misiones del orquestador esperando decisión y 0 dependencias; `PUT {"clients":true}` → 500 "La búsqueda de clientes todavía no existe (próximamente)."; `PUT {}` → misma vista y la policy sigue en la versión 2 (sin versión nueva). El bundle servido incluye el panel. No se encendió el orquestador (lanza un ciclo con costo de modelos): queda para cuando el fundador lo encienda desde el Dashboard.
 
+### Imagen de Flutter: SDK duplicado por `chown -R`
+
+**Pedido del fundador** (2026-09-30): "borra el duplicado pero no cambies nada más". La imagen `flutter-web-app` pesaba 5,01 GB: el `chown -R 1000:1000 /sdks/flutter` copiaba a una capa nueva todo el SDK de la imagen base (967 MB, dueño root). Ahora el uid 1000 recibe solo los directorios del SDK (para crear `bin/cache/lockfile`, y git ve el repo como propio) y los archivos que escribe ese mismo paso. Base, Chrome y resto sin cambios.
+
+**Verificado en vivo**: 5,01 → 4,01 GB. `VERIFY` de `MISSION-SANDBOX-VERIFY-22` (39 tests) y `-23` (35 tests) antes y después: mismos resultados, los 5 pasos `PASS` y tiempos iguales (el primer `restore` con la imagen nueva tardó 18 s por el primer montaje; al repetirlo, 2,6 s).
+
