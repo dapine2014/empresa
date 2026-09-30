@@ -657,7 +657,7 @@ public class CeoService {
             );
 
             var toolExecution =
-                    executeTool(agentId, missionId, taskId, toolCall);
+                    executeTool(agentId, missionId, taskId, toolCall, null);
 
             confirmedEvidenceUrls = toolExecution.confirmedUrls();
 
@@ -806,7 +806,8 @@ public class CeoService {
             String agentId,
             String missionId,
             String taskId,
-            ToolCall toolCall) {
+            ToolCall toolCall,
+            SearchScope scope) {
 
         events.publish(
                 "EMPRESA_EVIDENCE_SEARCH_STARTED",
@@ -824,9 +825,10 @@ public class CeoService {
             var searchTimer = Timer.start(meterRegistry);
 
             var candidates =
-                    evidenceAcquisitionService.searchEvidence(
-                            toolCall.query()
-                    );
+                    scope == null
+                            ? evidenceAcquisitionService.searchEvidence(toolCall.query())
+                            : evidenceAcquisitionService.searchEvidence(toolCall.query(), scope.country(),
+                                    scope.language());
 
             searchTimer.stop(
                     meterRegistry.timer("evidence.search.duration", "agent", agentId)
@@ -1059,6 +1061,10 @@ public class CeoService {
     private record ToolCall(String name, String query) {
     }
 
+    /** Spec búsqueda de prospectos §1: país/idioma de la búsqueda (null = sin restringir). */
+    private record SearchScope(String country, String language) {
+    }
+
     @SuppressWarnings("unchecked")
     String parseCompanyMemoryTopic(Map<String, Object> rawToolCall) {
 
@@ -1229,6 +1235,25 @@ public class CeoService {
             "properties", Map.of("productId", Map.of("type", "string"), "reason", Map.of("type", "string")),
             "required", List.of("productId", "reason"));
 
+    private static final Map<String, Object> PROSPECTS_SCHEMA = Map.of("type", "object",
+            "properties", Map.of("prospects", Map.of("type", "array", "items", Map.of("type", "object",
+                    "properties", Map.of(
+                            "name", Map.of("type", "string"),
+                            "url", Map.of("type", "string"),
+                            "contactEmail", Map.of("type", "string"),
+                            "contactFormUrl", Map.of("type", "string"),
+                            "contactSourceUrl", Map.of("type", "string"),
+                            "fitReason", Map.of("type", "string")),
+                    "required", List.of("name", "url", "contactEmail", "contactFormUrl", "contactSourceUrl", "fitReason")))),
+            "required", List.of("prospects"));
+
+    private static final Map<String, Object> STRATEGY_SCHEMA = Map.of("type", "object",
+            "properties", Map.of(
+                    "name", Map.of("type", "string"),
+                    "description", Map.of("type", "string"),
+                    "searchHints", Map.of("type", "string")),
+            "required", List.of("name", "description", "searchHints"));
+
     private static final Map<String, Object> SHEET_SCHEMA = Map.of("type", "object",
             "properties", Map.of(
                     "kind", Map.of("type", "string", "enum", List.of("SOFTWARE", "SERVICE")),
@@ -1260,6 +1285,73 @@ public class CeoService {
                 """.formatted(candidatesText);
         return callStructured("ORCHESTRATOR_CHOICE", "ceo", prompt, null, model, CHOICE_SCHEMA,
                 com.aicompany.core.model.ProductChoice.class);
+    }
+
+    /**
+     * Spec búsqueda de prospectos §1: Sofía busca prospectos reales para un producto con la estrategia del día. Mismo
+     * patrón de dos turnos que las tareas (nunca format + tools); el alcance de la búsqueda sale de la ficha. Java valida
+     * cada prospecto después (ProspectValidator).
+     */
+    public com.aicompany.core.prospecting.ProspectBatch searchProspects(
+            String productText, com.aicompany.core.prospecting.StrategyOption strategy, String country, String language,
+            String model) {
+
+        var task = """
+                Busca en la web EMPRESAS O PERSONAS CONCRETAS que podrían comprar este producto de Forjai hoy.
+                Estrategia del día: %s — %s (pistas de búsqueda: %s).
+                PRODUCTO:
+                %s
+                """.formatted(strategy.name(), strategy.description(), strategy.searchHints(), productText);
+
+        var toolTurn = callModel("PROSPECTING_TOOL_CALL", "sales", model, List.of(
+                Map.of("role", "system", "content", toolDecisionSystemPrompt("sales")),
+                Map.of("role", "user", "content", task)), null, AGENT_TOOLS, true);
+
+        var toolCall = !toolTurn.toolCalls().isEmpty()
+                ? parseStructuredToolCall(toolTurn.toolCalls().get(0))
+                : detectInlineToolCall(toolTurn.content());
+
+        var messages = new ArrayList<Map<String, Object>>();
+        messages.add(Map.of("role", "system", "content", teamSystemPrompt("sales", null)));
+        messages.add(Map.of("role", "user", "content", task + """
+
+                REGLAS:
+                - Solo empresas o personas reales y nombradas, con su propia página web (url). Nunca un segmento de
+                  mercado ni un artículo genérico.
+                - contactEmail: solo si el email figura en una página pública; contactSourceUrl es esa página. Si no hay
+                  email, contactFormUrl con la página del formulario de contacto. Deja vacío lo que no tengas.
+                - fitReason: por qué este producto le sirve, en una frase.
+                - No inventes nada: Forjai verifica que el nombre esté en su página y el email en su fuente.
+                - Lista vacía si no encontraste ninguno.
+                FORMATO: {"prospects": [{"name", "url", "contactEmail", "contactFormUrl", "contactSourceUrl", "fitReason"}]}
+                """));
+
+        if (toolCall != null) {
+            var execution = executeTool("sales", null, null, toolCall, new SearchScope(country, language));
+            messages.add(Map.of("role", "assistant", "content", "", "tool_calls", List.of(Map.of("function",
+                    Map.of("name", toolCall.name(), "arguments", Map.of("query", toolCall.query()))))));
+            messages.add(Map.of("role", "tool", "content", execution.json()));
+        }
+
+        var response = callModel("PROSPECTING_SEARCH", "sales", model, messages, PROSPECTS_SCHEMA, null, false).content();
+        try {
+            return jsonMapper.readValue(normalizeJsonResponse(response), com.aicompany.core.prospecting.ProspectBatch.class);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Sofía no devolvió prospectos en JSON válido: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** Spec búsqueda de prospectos §2: Kira propone una estrategia nueva (la aprueba el fundador). */
+    public com.aicompany.core.prospecting.StrategyProposal proposeProspectingStrategy(String performanceText, String model) {
+        var prompt = """
+                Propón UNA estrategia nueva para encontrar prospectos (clientes posibles) de los productos de Forjai,
+                distinta de las que ya existen. Mira el rendimiento: válidos por corrida de cada estrategia.
+                RENDIMIENTO Y ESTRATEGIAS EXISTENTES:
+                %s
+                FORMATO: {"name": "<nombre corto>", "description": "<dónde y cómo buscar>", "searchHints": "<palabras clave>"}
+                """.formatted(performanceText);
+        return callStructured("PROSPECTING_STRATEGY", "growth-content", prompt, null, model, STRATEGY_SCHEMA,
+                com.aicompany.core.prospecting.StrategyProposal.class);
     }
 
     /** Ficha del producto a partir de la evidencia de las misiones (Java la valida antes de aplicarla). */
