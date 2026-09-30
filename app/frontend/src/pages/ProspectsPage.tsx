@@ -18,7 +18,8 @@ function DraftsSection() {
   const queryClient = useQueryClient()
   const [feedback, setFeedback] = useState<string | null>(null)
   const [editing, setEditing] = useState<Record<string, { subject: string; body: string }>>({})
-  const drafts = useQuery({ queryKey: ['drafts'], queryFn: () => api.outreachDrafts('PENDING_APPROVAL'), refetchInterval: 30_000 })
+  // Revisión final: también los aprobados que no salieron (tope o fallo), con su motivo, para poder descartarlos.
+  const drafts = useQuery({ queryKey: ['drafts'], queryFn: () => api.outreachDrafts(), refetchInterval: 30_000 })
   const done = (message: string) => {
     setFeedback(message)
     for (const key of ['drafts', 'prospects', 'autonomy']) void queryClient.invalidateQueries({ queryKey: [key] })
@@ -30,8 +31,14 @@ function DraftsSection() {
       const e = editing[id]
       return api.editDraft(id, e.subject, e.body)
     },
-    onSuccess: (d) =>
-      done(d.status === 'SENT' ? `Enviado a ${d.to}.` : d.status === 'APPROVED' ? `Aprobado; pendiente: ${d.error}` : 'Listo.'),
+    onSuccess: (d, vars) => {
+      if (vars.action === 'save') {
+        const next = { ...editing }
+        delete next[d.id]
+        setEditing(next)
+      }
+      done(d.status === 'SENT' ? `Enviado a ${d.to}.` : d.status === 'APPROVED' ? `Aprobado; pendiente: ${d.error}` : 'Listo.')
+    },
     onError: (e: Error) => setFeedback(e.message),
   })
   const all = useMutation({
@@ -39,7 +46,7 @@ function DraftsSection() {
     onSuccess: (list) => done(`${list.filter((d) => d.status === 'SENT').length} enviados de ${list.length}.`),
     onError: (e: Error) => setFeedback(e.message),
   })
-  const list = drafts.data ?? []
+  const list = (drafts.data ?? []).filter((d) => d.status === 'PENDING_APPROVAL' || d.status === 'APPROVED')
   return (
     <>
       <h2>Correos por aprobar ({list.length})</h2>
@@ -55,6 +62,7 @@ function DraftsSection() {
         return (
           <div key={d.id} className="card">
             <strong>{d.prospectName}</strong> &lt;{d.to}&gt;
+            {d.status === 'APPROVED' && <p className="error">Aprobado, sin enviar: {d.error}</p>}
             {e ? (
               <>
                 <input value={e.subject} onChange={(x) => setEditing({ ...editing, [d.id]: { ...e, subject: x.target.value } })} />
@@ -68,7 +76,13 @@ function DraftsSection() {
                 <button onClick={() => setEditing({ ...editing, [d.id]: { subject: d.subject, body: d.body } })}>Editar</button>
               </>
             )}{' '}
-            <button disabled={act.isPending} onClick={() => act.mutate({ id: d.id, action: 'approve' })}>Aprobar y enviar</button>{' '}
+            {!e && (
+              <>
+                <button disabled={act.isPending} onClick={() => act.mutate({ id: d.id, action: 'approve' })}>
+                  {d.status === 'APPROVED' ? 'Reintentar envío' : 'Aprobar y enviar'}
+                </button>{' '}
+              </>
+            )}
             <button className="danger" disabled={act.isPending} onClick={() => act.mutate({ id: d.id, action: 'discard' })}>
               Descartar
             </button>
@@ -165,7 +179,7 @@ export default function ProspectsPage() {
                 {(p.outreachStatus === 'CONTACTED' || p.outreachStatus === 'INTERESTED') && (
                   <>
                     {' '}
-                    <button onClick={() => convert.mutate(p.id)}>Convertir en cliente</button>
+                    <button disabled={convert.isPending} onClick={() => convert.mutate(p.id)}>Convertir en cliente</button>
                   </>
                 )}
                 {!p.contactEmail && p.contactFormUrl && <span className="hint"> · contactar a mano</span>}

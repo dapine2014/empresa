@@ -63,4 +63,12 @@ class OutreachDraftValidatorTest {
         assertFalse(check("", "Email Signature Generator por US$39.", 39.0, false).problems().isEmpty());
         assertFalse(check("A", "Email Signature Generator por US$39. " + "x".repeat(1200), 39.0, false).problems().isEmpty());
     }
+
+    // Revisión final: un asunto con saltos de línea podría inyectar cabeceras (Bcc:).
+    @Test
+    void aSubjectWithLineBreaksIsRejected() {
+        var r = check("Hola\r\nBcc: x@evil.com", "Email Signature Generator por US$39.", 39.0, false);
+
+        assertFalse(r.problems().isEmpty());
+    }
 }

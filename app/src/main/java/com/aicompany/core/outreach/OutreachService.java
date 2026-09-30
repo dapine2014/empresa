@@ -75,6 +75,7 @@ public class OutreachService {
         var count = 0;
         for (var p : prospecting.prospectsOfRun(runId)) {
             if (p.contactEmail() == null || p.contactEmail().isBlank() || memory.optedOut(p.contactEmail())
+                    || memory.optedOutDomains().contains(ProspectValidator.domain(p.url()))
                     || memory.outreachStatus(p.id()).isPresent()) {
                 continue;
             }
@@ -139,7 +140,9 @@ public class OutreachService {
             return withStatus(d, "APPROVED", reason, null);
         }
         if (!memory.claimForContact(d.prospectId())) {
-            return memory.draft(draftId).orElse(d);
+            // Revisión final: nunca "no hacer nada" en silencio (el fundador creería que se envió).
+            throw new IllegalArgumentException("El prospecto " + d.prospectName() + " no está disponible para contactar"
+                    + " (estado " + memory.outreachStatus(d.prospectId()).orElse("sin contactar") + ").");
         }
         var attemptId = memory.recordAttempt(d.prospectId(), draftId, d.to(), d.subject());
         var result = mail.sendToExternal(d.to(), d.subject(), d.body());
@@ -169,12 +172,14 @@ public class OutreachService {
     /** Lo aprobado que quedó por el tope o por un fallo se envía en el chequeo horario siguiente. */
     @Scheduled(fixedDelay = 3_600_000, initialDelay = 240_000)
     public void sendDue() {
+        // Revisión final: solo el tope diario corta la cola; un correo que falla no atasca a los demás.
+        var cap = (int) policies.activeValue(PolicyKey.MAX_OUTREACH_PER_DAY);
         for (var d : memory.drafts("APPROVED")) {
+            if (memory.sentOn(LocalDate.now(ZoneOffset.UTC)) >= cap) {
+                return;
+            }
             try {
-                var result = approve(d.id());
-                if ("APPROVED".equals(result.status())) {
-                    return;
-                }
+                approve(d.id());
             } catch (Exception ex) {
                 log.warn("OUTREACH send of {} failed: {}", d.id(), ex.getMessage());
             }
@@ -218,9 +223,13 @@ public class OutreachService {
         memory.setOutreachStatus(prospectId, response);
         if ("OPTED_OUT".equals(response)) {
             var p = prospecting.prospect(prospectId).orElse(null);
-            if (p != null && p.contactEmail() != null) {
-                memory.optOut(p.contactEmail());
-                var domain = ProspectValidator.domain("https://" + p.contactEmail().substring(p.contactEmail().indexOf('@') + 1));
+            if (p != null) {
+                // Revisión final: se bloquea el email y el dominio del SITIO del prospecto, nunca el del proveedor de
+                // correo (una baja desde hola@gmail.com no puede bloquear a todo Gmail).
+                if (p.contactEmail() != null) {
+                    memory.optOut(p.contactEmail());
+                }
+                var domain = ProspectValidator.domain(p.url());
                 if (domain != null) {
                     memory.optOut(domain);
                 }
@@ -229,7 +238,8 @@ public class OutreachService {
         events.publish("EMPRESA_PROSPECT_RESPONDED", null, null, "human", Map.of("prospectId", prospectId, "response", response));
     }
 
-    public String convert(String prospectId) {
+    /** synchronized: dos "convertir" a la vez (pantalla + chat, doble clic) crean un solo cliente real. */
+    public synchronized String convert(String prospectId) {
         var p = prospecting.prospect(prospectId)
                 .orElseThrow(() -> new IllegalArgumentException("No existe el prospecto " + prospectId + "."));
         var status = memory.outreachStatus(prospectId).orElse(null);

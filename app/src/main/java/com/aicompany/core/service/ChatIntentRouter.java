@@ -1659,7 +1659,7 @@ public class ChatIntentRouter {
 
     private String handleOneDraft(boolean approve, String name) {
         var wanted = com.aicompany.core.prospecting.ProspectValidator.normalize(name);
-        var pending = outreachMemory.drafts("PENDING_APPROVAL");
+        var pending = openDrafts();
         var exact = pending.stream().filter(d -> com.aicompany.core.prospecting.ProspectValidator.normalize(d.prospectName()).equals(wanted)).toList();
         var matches = exact.isEmpty()
                 ? pending.stream().filter(d -> com.aicompany.core.prospecting.ProspectValidator.normalize(d.prospectName()).contains(wanted)).toList()
@@ -1713,14 +1713,22 @@ public class ChatIntentRouter {
         return prospect.get().name() + " ya es cliente real (" + customerId + "): puedes registrarle ventas en Finanzas.";
     }
 
+    /** Revisión final: los aprobados que no salieron (tope o fallo SMTP) siguen visibles y se pueden descartar. */
+    private List<com.aicompany.core.outreach.ContactDraft> openDrafts() {
+        var open = new java.util.ArrayList<>(outreachMemory.drafts("PENDING_APPROVAL"));
+        open.addAll(outreachMemory.drafts("APPROVED"));
+        return open;
+    }
+
     private String formatDrafts() {
-        var drafts = outreachMemory.drafts("PENDING_APPROVAL");
+        var drafts = openDrafts();
         if (drafts.isEmpty()) {
             return "No hay correos por aprobar.";
         }
-        return "Correos por aprobar (" + drafts.size() + "; nada se envía sin tu aprobación — \"aprueba los correos\" o "
-                + "\"aprueba el correo a X\"):\n" + drafts.stream()
-                .map(d -> "- " + d.prospectName() + " <" + d.to() + ">: " + d.subject())
+        return "Correos por aprobar o en cola (" + drafts.size() + "; nada se envía sin tu aprobación — \"aprueba los "
+                + "correos\", \"aprueba el correo a X\" o \"descarta el correo a X\"):\n" + drafts.stream()
+                .map(d -> "- " + d.prospectName() + " <" + d.to() + ">: " + d.subject()
+                        + ("APPROVED".equals(d.status()) ? " [aprobado, sin enviar: " + d.error() + "]" : ""))
                 .collect(Collectors.joining("\n"));
     }
 

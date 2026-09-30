@@ -34,7 +34,9 @@ public final class OutreachDraftValidator {
         var problems = new ArrayList<String>();
         var subject = draft == null || draft.subject() == null ? "" : draft.subject().strip();
         var body = draft == null || draft.body() == null ? "" : draft.body().strip();
-        if (subject.isEmpty() || subject.length() > MAX_SUBJECT) {
+        if (subject.chars().anyMatch(Character::isISOControl)) {
+            problems.add("El asunto no puede tener saltos de línea ni caracteres de control.");
+        } else if (subject.isEmpty() || subject.length() > MAX_SUBJECT) {
             problems.add("El asunto debe tener entre 1 y " + MAX_SUBJECT + " caracteres.");
         }
         if (body.isEmpty() || body.length() > MAX_BODY) {

@@ -126,10 +126,9 @@ public class OutreachMemoryService {
         if (email == null || email.isBlank()) {
             return false;
         }
-        var value = email.strip().toLowerCase(Locale.ROOT);
-        var domain = value.substring(value.indexOf('@') + 1);
-        return !read("MATCH (o:OptOut) WHERE o.value IN [$email, $domain] RETURN o LIMIT 1",
-                Map.of("email", value, "domain", domain), rec -> rec).isEmpty();
+        // Solo el email exacto: los dominios bloqueados son los de los sitios (optedOutDomains), no el del proveedor.
+        return !read("MATCH (o:OptOut {value:$email}) RETURN o LIMIT 1",
+                Map.of("email", email.strip().toLowerCase(Locale.ROOT)), rec -> rec).isEmpty();
     }
 
     public void optOut(String value) {

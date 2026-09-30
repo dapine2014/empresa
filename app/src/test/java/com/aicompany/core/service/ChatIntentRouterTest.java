@@ -2019,6 +2019,22 @@ class ChatIntentRouterTest {
         verify(outreachService).approve("D2");
     }
 
+    // Revisión final: un correo aprobado que no salió (tope o fallo SMTP) sigue visible y se puede descartar.
+    @Test
+    void approvedButUnsentDraftsAreListedAndCanBeDiscarded() {
+        var stuck = new com.aicompany.core.outreach.ContactDraft("D9", "C9", "Gamma Law", "P1", "x@gamma.com", "Asunto",
+                "Cuerpo", "APPROVED", "550 mailbox unavailable", Instant.now(), null);
+        when(outreachMemory.drafts("PENDING_APPROVAL")).thenReturn(List.of());
+        when(outreachMemory.drafts("APPROVED")).thenReturn(List.of(stuck));
+
+        var listed = router.route("¿qué correos hay por aprobar?");
+        router.route("descarta el correo a Gamma Law");
+
+        assertTrue(listed.contains("Gamma Law"), listed);
+        assertTrue(listed.contains("550"), listed);
+        verify(outreachService).discard("D9");
+    }
+
     @Test
     void outreachCommandsDoNotCollideWithStrategies() {
         router.route("aprueba los correos");

@@ -127,7 +127,7 @@ class OutreachServiceTest {
         when(mail.sendToExternal(anyString(), anyString(), anyString())).thenReturn(new AlertMailService.ExternalMailResult(true, null));
 
         service.approve("D1");
-        service.approve("D1");
+        assertThrows(IllegalArgumentException.class, () -> service.approve("D1"));
 
         verify(mail, times(1)).sendToExternal(anyString(), anyString(), anyString());
     }
@@ -237,5 +237,95 @@ class OutreachServiceTest {
         service.sendDue();
 
         verify(mail).sendToExternal("hola@acme.com", "Asunto", "Email Signature Generator por US$39.");
+    }
+
+    // Revisión final: un correo que falla no puede atascar a los demás aprobados.
+    @Test
+    void sendDueKeepsGoingAfterAFailure() {
+        var failing = new ContactDraft("D1", "C1", "Acme Legal", "P1", "malo@acme.com", "Asunto",
+                "Email Signature Generator por US$39.", "APPROVED", null, Instant.now(), null);
+        var good = new ContactDraft("D2", "C2", "Beta Law", "P1", "hola@beta.com", "Asunto",
+                "Email Signature Generator por US$39.", "APPROVED", null, Instant.now(), null);
+        when(memory.drafts("APPROVED")).thenReturn(List.of(failing, good));
+        when(memory.draft("D1")).thenReturn(Optional.of(failing));
+        when(memory.draft("D2")).thenReturn(Optional.of(good));
+        when(memory.claimForContact(anyString())).thenReturn(true);
+        when(memory.recordAttempt(anyString(), anyString(), anyString(), anyString())).thenReturn("A1", "A2");
+        when(mail.sendToExternal(eq("malo@acme.com"), anyString(), anyString()))
+                .thenReturn(new AlertMailService.ExternalMailResult(false, "550 mailbox unavailable"));
+        when(mail.sendToExternal(eq("hola@beta.com"), anyString(), anyString()))
+                .thenReturn(new AlertMailService.ExternalMailResult(true, null));
+
+        service.sendDue();
+
+        verify(mail).sendToExternal(eq("hola@beta.com"), anyString(), anyString());
+    }
+
+    @Test
+    void sendDueStopsWhenTheDailyCapIsReached() {
+        when(policies.activeValue(PolicyKey.MAX_OUTREACH_PER_DAY)).thenReturn(1.0);
+        when(memory.sentOn(any())).thenReturn(1);
+        when(memory.drafts("APPROVED")).thenReturn(List.of(draft("APPROVED")));
+        when(memory.draft("D1")).thenReturn(Optional.of(draft("APPROVED")));
+
+        service.sendDue();
+
+        verifyNoInteractions(mail);
+    }
+
+    // Revisión final: la baja bloquea el email y el dominio del SITIO, nunca el del proveedor de correo.
+    @Test
+    void anOptOutFromAFreeMailboxBlocksTheSiteNotTheProvider() {
+        when(memory.outreachStatus("C1")).thenReturn(Optional.of("CONTACTED"));
+        when(prospecting.prospect("C1")).thenReturn(Optional.of(prospect("C1", "hola@gmail.com")));
+
+        service.respond("C1", "OPTED_OUT");
+
+        verify(memory).optOut("hola@gmail.com");
+        verify(memory).optOut("acme.com");
+        verify(memory, never()).optOut("gmail.com");
+    }
+
+    @Test
+    void aProspectWhoseSiteOptedOutGetsNoDraft() {
+        when(prospecting.prospectsOfRun("RUN-1")).thenReturn(List.of(prospect("C1", "otro@acme.com")));
+        when(memory.optedOutDomains()).thenReturn(Set.of("acme.com"));
+
+        assertEquals(0, service.draftFor("RUN-1", "P1"));
+        verifyNoInteractions(ceo);
+    }
+
+    // Revisión final: aprobar nunca "no hace nada" en silencio.
+    @Test
+    void approvingAProspectThatIsNoLongerAvailableSaysWhy() {
+        when(memory.draft("D1")).thenReturn(Optional.of(draft("PENDING_APPROVAL")));
+        when(memory.claimForContact("C1")).thenReturn(false);
+        when(memory.outreachStatus("C1")).thenReturn(Optional.of("CONVERTED"));
+
+        var ex = assertThrows(IllegalArgumentException.class, () -> service.approve("D1"));
+        assertTrue(ex.getMessage().contains("CONVERTED"), ex.getMessage());
+        verifyNoInteractions(mail);
+    }
+
+    // Revisión final: dos "convertir" simultáneos no crean dos clientes reales.
+    @Test
+    void concurrentConversionsCreateOneCustomer() throws Exception {
+        when(prospecting.prospect("C1")).thenReturn(Optional.of(prospect("C1", "hola@acme.com")));
+        var status = new java.util.concurrent.atomic.AtomicReference<String>("INTERESTED");
+        when(memory.outreachStatus("C1")).thenAnswer(inv -> Optional.ofNullable(status.get()));
+        doAnswer(inv -> { status.set(inv.getArgument(1)); return null; }).when(memory).setOutreachStatus(eq("C1"), anyString());
+        when(finance.registerCustomer(any())).thenAnswer(inv -> {
+            Thread.sleep(50);
+            return new FinanceCustomer("CUSTOMER-1", "Acme Legal", "hola@acme.com", null, Instant.now());
+        });
+
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        var a = pool.submit(() -> { try { service.convert("C1"); } catch (IllegalArgumentException ignored) { } });
+        var b = pool.submit(() -> { try { service.convert("C1"); } catch (IllegalArgumentException ignored) { } });
+        a.get();
+        b.get();
+        pool.shutdown();
+
+        verify(finance, times(1)).registerCustomer(any());
     }
 }
