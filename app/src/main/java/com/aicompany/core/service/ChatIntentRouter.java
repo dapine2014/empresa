@@ -194,6 +194,8 @@ public class ChatIntentRouter {
     private final AutonomyService autonomy;
     private final com.aicompany.core.prospecting.ProspectingMemoryService prospectingMemory;
     private final com.aicompany.core.prospecting.StrategyProposalService strategyService;
+    private final com.aicompany.core.outreach.OutreachService outreachService;
+    private final com.aicompany.core.outreach.OutreachMemoryService outreachMemory;
 
     /** Spec orquestador §4 (2026-09-28): gobernanza del ciclo de producto, antes que los comandos de producto. */
     private static final Pattern ORCHESTRATOR_COMMAND = Pattern.compile(
@@ -208,6 +210,16 @@ public class ChatIntentRouter {
     /** Spec búsqueda de prospectos §3: decisión del fundador sobre una estrategia propuesta (🔴). */
     private static final Pattern STRATEGY_COMMAND = Pattern.compile(
             "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(aprueba|rechaza)\\s+la\\s+estrategia\\s+(.+?)\\s*[.!]?\\s*$");
+
+    /** Spec contacto con prospectos §5: decisiones del fundador sobre correos y prospectos (🔴). */
+    private static final Pattern OUTREACH_APPROVE_ALL = Pattern.compile(
+            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?aprueba\\s+(?:todos\\s+)?los\\s+correos\\s*[.!]?\\s*$");
+    private static final Pattern OUTREACH_ONE = Pattern.compile(
+            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(aprueba|descarta)\\s+el\\s+correo\\s+(?:a|para|de)\\s+(.+?)\\s*[.!]?\\s*$");
+    private static final Pattern PROSPECT_RESPONSE = Pattern.compile(
+            "^\\s*(.+?)\\s+respondio\\s+(interesado|no interesado|pidio baja|que no)\\s*[.!]?\\s*$");
+    private static final Pattern PROSPECT_CONVERT = Pattern.compile(
+            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?convierte\\s+a\\s+(.+?)\\s+en\\s+cliente\\s*[.!]?\\s*$");
 
     /** Spec catálogo §6 B (2026-09-28): comandos del fundador sobre un producto, interpretados en Java. */
     private static final Pattern PRODUCT_COMMAND = Pattern.compile(
@@ -237,7 +249,9 @@ public class ChatIntentRouter {
             ApiKeyService apiKeys,
             AutonomyService autonomy,
             com.aicompany.core.prospecting.ProspectingMemoryService prospectingMemory,
-            com.aicompany.core.prospecting.StrategyProposalService strategyService) {
+            com.aicompany.core.prospecting.StrategyProposalService strategyService,
+            com.aicompany.core.outreach.OutreachService outreachService,
+            com.aicompany.core.outreach.OutreachMemoryService outreachMemory) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -261,6 +275,8 @@ public class ChatIntentRouter {
         this.autonomy = autonomy;
         this.prospectingMemory = prospectingMemory;
         this.strategyService = strategyService;
+        this.outreachService = outreachService;
+        this.outreachMemory = outreachMemory;
     }
 
     /**
@@ -317,6 +333,10 @@ public class ChatIntentRouter {
     private boolean isGovernance(String message) {
         return AUTONOMY_COMMAND.matcher(normalize(message)).matches()
                 || STRATEGY_COMMAND.matcher(normalize(message)).matches()
+                || OUTREACH_APPROVE_ALL.matcher(normalize(message)).matches()
+                || OUTREACH_ONE.matcher(normalize(message)).matches()
+                || PROSPECT_RESPONSE.matcher(normalize(message)).matches()
+                || PROSPECT_CONVERT.matcher(normalize(message)).matches()
                 || ORCHESTRATOR_COMMAND.matcher(normalize(message)).matches()
                 || PRODUCT_COMMAND.matcher(normalize(message)).matches()
                 || MISSION_START.matcher(message).find()
@@ -538,6 +558,23 @@ public class ChatIntentRouter {
         var strategyCommand = STRATEGY_COMMAND.matcher(normalize(message));
         if (strategyCommand.matches()) {
             return handleStrategyCommand("aprueba".equals(strategyCommand.group(1)), strategyCommand.group(2));
+        }
+
+        var normalizedMessage = normalize(message);
+        if (OUTREACH_APPROVE_ALL.matcher(normalizedMessage).matches()) {
+            return handleApproveAllDrafts();
+        }
+        var outreachOne = OUTREACH_ONE.matcher(normalizedMessage);
+        if (outreachOne.matches()) {
+            return handleOneDraft("aprueba".equals(outreachOne.group(1)), outreachOne.group(2));
+        }
+        var prospectResponse = PROSPECT_RESPONSE.matcher(normalizedMessage);
+        if (prospectResponse.matches()) {
+            return handleProspectResponse(prospectResponse.group(1), prospectResponse.group(2));
+        }
+        var prospectConvert = PROSPECT_CONVERT.matcher(normalizedMessage);
+        if (prospectConvert.matches()) {
+            return handleProspectConvert(prospectConvert.group(1));
         }
 
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));
@@ -1176,6 +1213,8 @@ public class ChatIntentRouter {
         COMPANY_STATUS,
         DEPENDENCIES,
         MODELS,
+        OUTREACH_DRAFTS,
+        OUTREACH_STATUS,
         PROSPECTS,
         PROSPECTING,
         AUTONOMY,
@@ -1230,6 +1269,14 @@ public class ChatIntentRouter {
         // Keys de modelos editables desde Settings (2026-09-29).
         if (normalized.matches(".*\\b(api ?keys?|keys?)\\b.*")) {
             return new QueryMatch(QueryIntent.API_KEYS, null);
+        }
+
+        // Spec contacto con prospectos (2026-09-30).
+        if (normalized.matches(".*\\bcorreos?\\b.*\\b(aprobar|pendientes?)\\b.*")) {
+            return new QueryMatch(QueryIntent.OUTREACH_DRAFTS, null);
+        }
+        if (normalized.contains("a quien contactamos") || normalized.contains("quien respondio")) {
+            return new QueryMatch(QueryIntent.OUTREACH_STATUS, null);
         }
 
         // Spec búsqueda de prospectos (2026-09-30).
@@ -1413,6 +1460,8 @@ public class ChatIntentRouter {
             case "DEPENDENCIES" -> formatPendingDependencies();
             case "PRODUCTS" -> formatCatalog();
             case "MODELS" -> formatModelsHealth();
+            case "OUTREACH_DRAFTS" -> formatDrafts();
+            case "OUTREACH_STATUS" -> formatOutreachStatus();
             case "PROSPECTS" -> formatProspects();
             case "PROSPECTING" -> formatProspecting();
             case "AUTONOMY" -> formatAutonomy();
@@ -1594,6 +1643,96 @@ public class ChatIntentRouter {
                         : " dependencias pendientes")
                 + " y " + waiting.pendingStrategies() + " estrategias por aprobar."
                 + " Contactar clientes o vender sigue siendo decisión tuya.";
+    }
+
+    private String handleApproveAllDrafts() {
+        var results = outreachService.approveAll();
+        if (results.isEmpty()) {
+            return "No hay correos por aprobar.";
+        }
+        var sent = results.stream().filter(d -> "SENT".equals(d.status())).count();
+        var queued = results.stream().filter(d -> "APPROVED".equals(d.status())).toList();
+        return "Correos aprobados: " + sent + " enviado(s)"
+                + (queued.isEmpty() ? "." : "; " + queued.size() + " quedan para después: "
+                        + queued.stream().map(d -> d.prospectName() + " (" + d.error() + ")").collect(Collectors.joining("; ")) + ".");
+    }
+
+    private String handleOneDraft(boolean approve, String name) {
+        var wanted = com.aicompany.core.prospecting.ProspectValidator.normalize(name);
+        var pending = outreachMemory.drafts("PENDING_APPROVAL");
+        var exact = pending.stream().filter(d -> com.aicompany.core.prospecting.ProspectValidator.normalize(d.prospectName()).equals(wanted)).toList();
+        var matches = exact.isEmpty()
+                ? pending.stream().filter(d -> com.aicompany.core.prospecting.ProspectValidator.normalize(d.prospectName()).contains(wanted)).toList()
+                : exact;
+        if (matches.size() != 1) {
+            return matches.isEmpty() ? "No hay un correo por aprobar para \"" + name + "\"."
+                    : "Coinciden varios: " + matches.stream().map(d -> d.prospectName()).collect(Collectors.joining(", "))
+                            + ". Escribe el nombre exacto.";
+        }
+        var draft = matches.get(0);
+        if (!approve) {
+            outreachService.discard(draft.id());
+            return "Correo a " + draft.prospectName() + " descartado.";
+        }
+        var result = outreachService.approve(draft.id());
+        return "SENT".equals(result.status()) ? "Correo a " + draft.prospectName() + " enviado a " + draft.to() + "."
+                : "Correo a " + draft.prospectName() + " aprobado; queda pendiente: " + result.error();
+    }
+
+    private Optional<com.aicompany.core.prospecting.Prospect> prospectByName(String name) {
+        var wanted = com.aicompany.core.prospecting.ProspectValidator.normalize(name);
+        var all = prospectingMemory.prospects();
+        var exact = all.stream().filter(p -> com.aicompany.core.prospecting.ProspectValidator.normalize(p.name()).equals(wanted)).toList();
+        var matches = exact.isEmpty()
+                ? all.stream().filter(p -> com.aicompany.core.prospecting.ProspectValidator.normalize(p.name()).contains(wanted)).toList()
+                : exact;
+        return matches.size() == 1 ? Optional.of(matches.get(0)) : Optional.empty();
+    }
+
+    private String handleProspectResponse(String name, String answer) {
+        var prospect = prospectByName(name);
+        if (prospect.isEmpty()) {
+            return "No encontré un único prospecto que se llame \"" + name + "\".";
+        }
+        var response = switch (answer) {
+            case "interesado" -> "INTERESTED";
+            case "no interesado", "que no" -> "NOT_INTERESTED";
+            default -> "OPTED_OUT";
+        };
+        outreachService.respond(prospect.get().id(), response);
+        return "Anotado: " + prospect.get().name() + " → " + answer
+                + ("OPTED_OUT".equals(response) ? " (no se le vuelve a escribir, ni a su dominio)." : ".");
+    }
+
+    private String handleProspectConvert(String name) {
+        var prospect = prospectByName(name);
+        if (prospect.isEmpty()) {
+            return "No encontré un único prospecto que se llame \"" + name + "\".";
+        }
+        var customerId = outreachService.convert(prospect.get().id());
+        return prospect.get().name() + " ya es cliente real (" + customerId + "): puedes registrarle ventas en Finanzas.";
+    }
+
+    private String formatDrafts() {
+        var drafts = outreachMemory.drafts("PENDING_APPROVAL");
+        if (drafts.isEmpty()) {
+            return "No hay correos por aprobar.";
+        }
+        return "Correos por aprobar (" + drafts.size() + "; nada se envía sin tu aprobación — \"aprueba los correos\" o "
+                + "\"aprueba el correo a X\"):\n" + drafts.stream()
+                .map(d -> "- " + d.prospectName() + " <" + d.to() + ">: " + d.subject())
+                .collect(Collectors.joining("\n"));
+    }
+
+    private String formatOutreachStatus() {
+        var contacted = prospectingMemory.prospects().stream()
+                .filter(p -> p.outreachStatus() != null && !"DRAFTED".equals(p.outreachStatus())).toList();
+        if (contacted.isEmpty()) {
+            return "Todavía no contactamos a ningún prospecto.";
+        }
+        return "Prospectos contactados:\n" + contacted.stream()
+                .map(p -> "- " + p.name() + " (" + p.productName() + "): " + p.outreachStatus())
+                .collect(Collectors.joining("\n"));
     }
 
     private String handleStrategyCommand(boolean approve, String name) {

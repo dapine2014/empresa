@@ -58,12 +58,16 @@ class ChatIntentRouterTest {
             mock(com.aicompany.core.prospecting.ProspectingMemoryService.class);
     private final com.aicompany.core.prospecting.StrategyProposalService strategyService =
             mock(com.aicompany.core.prospecting.StrategyProposalService.class);
+    private final com.aicompany.core.outreach.OutreachService outreachService =
+            mock(com.aicompany.core.outreach.OutreachService.class);
+    private final com.aicompany.core.outreach.OutreachMemoryService outreachMemory =
+            mock(com.aicompany.core.outreach.OutreachMemoryService.class);
     private final ApiKeyService apiKeys = mock(ApiKeyService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
             "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products, modelHealth,
-            orchestrator, apiKeys, autonomy, prospectingMemory, strategyService
+            orchestrator, apiKeys, autonomy, prospectingMemory, strategyService, outreachService, outreachMemory
     );
 
     {
@@ -1974,6 +1978,67 @@ class ChatIntentRouterTest {
 
         verify(autonomy).setProducts(true, "el chat");
         verify(autonomy).setClients(true, "el chat");
+    }
+
+    // Spec contacto con prospectos §5: el fundador decide los contactos desde el chat, en Java.
+    private static com.aicompany.core.outreach.ContactDraft pendingDraft(String id, String name) {
+        return new com.aicompany.core.outreach.ContactDraft(id, "C-" + id, name, "P1", "hola@" + id + ".com", "Asunto",
+                "Cuerpo", "PENDING_APPROVAL", null, Instant.now(), null);
+    }
+
+    @Test
+    void theDraftsQueryListsWhatWaitsForApproval() {
+        when(outreachMemory.drafts("PENDING_APPROVAL")).thenReturn(List.of(pendingDraft("D1", "Acme Legal")));
+
+        var response = router.route("¿qué correos hay por aprobar?");
+
+        assertTrue(response.contains("Acme Legal"), response);
+        assertTrue(response.contains("hola@D1.com"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void approveAllDrafts() {
+        when(outreachService.approveAll()).thenReturn(List.of(new com.aicompany.core.outreach.ContactDraft("D1", "C1",
+                "Acme Legal", "P1", "a@acme.com", "s", "b", "SENT", null, Instant.now(), Instant.now())));
+
+        var response = router.route("aprueba los correos");
+
+        verify(outreachService).approveAll();
+        assertTrue(response.contains("1 enviado"), response);
+    }
+
+    @Test
+    void approveOneDraftByProspectName() {
+        when(outreachMemory.drafts("PENDING_APPROVAL")).thenReturn(List.of(pendingDraft("D1", "Acme Legal"),
+                pendingDraft("D2", "Beta Law")));
+        when(outreachService.approve("D2")).thenReturn(pendingDraft("D2", "Beta Law"));
+
+        router.route("aprueba el correo a Beta Law");
+
+        verify(outreachService).approve("D2");
+    }
+
+    @Test
+    void outreachCommandsDoNotCollideWithStrategies() {
+        router.route("aprueba los correos");
+
+        verify(strategyService, never()).approve(anyString());
+        verify(missionService, never()).recordDecision(anyString(), any());
+    }
+
+    @Test
+    void aResponseAndAConversionByName() {
+        when(prospectingMemory.prospects()).thenReturn(List.of(new com.aicompany.core.prospecting.Prospect("C1", "P1",
+                "Pack", "Acme Legal", "https://acme.com", "a@acme.com", "https://acme.com/c", null, "x",
+                "BASE-DIRECTORIES", Instant.now(), "CONTACTED")));
+        when(outreachService.convert("C1")).thenReturn("CUSTOMER-1");
+
+        router.route("Acme Legal respondió interesado");
+        var response = router.route("convierte a Acme Legal en cliente");
+
+        verify(outreachService).respond("C1", "INTERESTED");
+        assertTrue(response.contains("CUSTOMER-1"), response);
     }
 
     @Test
