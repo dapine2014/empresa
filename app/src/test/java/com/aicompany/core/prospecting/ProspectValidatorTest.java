@@ -150,4 +150,35 @@ class ProspectValidatorTest {
 
         assertTrue(result.valid().isEmpty());
     }
+
+    // Revisión final: un agregador no es la página propia de la empresa (y bloquearía su dominio para siempre).
+    @Test
+    void aggregatorAndSocialSitesAreNotTheProspectsOwnPage() {
+        pages.put("https://www.reddit.com/r/podcasting", "Acme Studio busca editor");
+        pages.put("https://old.reddit.com/r/podcasting", "Acme Studio busca editor");
+        pages.put("https://acme.com/c", "a@acme.com");
+
+        var result = validator.validate(List.of(
+                withEmail("Acme Studio", "https://www.reddit.com/r/podcasting", "a@acme.com", "https://acme.com/c"),
+                withEmail("Acme Studio", "https://old.reddit.com/r/podcasting", "a@acme.com", "https://acme.com/c")),
+                Set.of());
+
+        assertTrue(result.valid().isEmpty());
+        assertTrue(result.rejections().get(0).contains("página propia"), result.rejections().toString());
+    }
+
+    // Revisión final: el schema exige contactEmail y el modelo rellena "N/A"; el formulario válido sigue sirviendo,
+    // pero el email no verificado nunca se guarda.
+    @Test
+    void anInvalidEmailFallsBackToAWorkingFormWithoutKeepingTheEmail() {
+        pages.put("https://acme.com", "Acme Studio");
+        pages.put("https://acme.com/form", "<form>");
+
+        var result = validator.validate(List.of(new ProspectCandidate("Acme Studio", "https://acme.com", "N/A",
+                "https://acme.com/form", "", "Necesitan repurposing")), Set.of());
+
+        assertEquals(1, result.valid().size());
+        assertNull(result.valid().get(0).contactEmail());
+        assertEquals("https://acme.com/form", result.valid().get(0).contactFormUrl());
+    }
 }

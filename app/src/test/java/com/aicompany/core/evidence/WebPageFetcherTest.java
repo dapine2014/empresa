@@ -74,4 +74,20 @@ class WebPageFetcherTest {
         assertNotNull(content);
         assertTrue(content.toLowerCase().contains("example"));
     }
+
+    // Revisión final prospectos: seguir redirecciones a mano, validando cada destino.
+    @Test
+    void redirectLocationsResolveAgainstTheCurrentUrl() {
+        assertEquals("https://www.acme.com/", WebPageFetcher.resolveRedirect(
+                java.net.URI.create("https://acme.com/"), "https://www.acme.com/").toString());
+        assertEquals("https://acme.com/contact/", WebPageFetcher.resolveRedirect(
+                java.net.URI.create("https://acme.com/contact"), "/contact/").toString());
+    }
+
+    @Test
+    void aRedirectToAPrivateAddressIsStillBlocked() {
+        var next = WebPageFetcher.resolveRedirect(java.net.URI.create("https://acme.com/"), "http://127.0.0.1/admin");
+
+        assertThrows(IllegalArgumentException.class, () -> fetcher.parseAndValidate(next.toString()));
+    }
 }

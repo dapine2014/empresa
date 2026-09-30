@@ -1235,7 +1235,8 @@ public class ChatIntentRouter {
         // Spec búsqueda de prospectos (2026-09-30).
         // "estrategias" solo con contexto de búsqueda: suelto capturaba preguntas de negocio (revisión final).
         if (normalized.contains("busqueda de clientes")
-                || normalized.matches(".*\\bestrategias?\\b.*\\b(pendientes?|busqueda|prospect\\w*|clientes)\\b.*")) {
+                || normalized.matches(".*\\bestrategias?\\b(\\s+\\w+){0,2}\\s+pendientes?\\b.*")
+                || normalized.matches(".*\\bestrategias?\\s+de\\s+(busqueda|prospeccion|prospectos)\\b.*")) {
             return new QueryMatch(QueryIntent.PROSPECTING, null);
         }
         if (normalized.matches(".*\\bprospectos?\\b.*")) {
@@ -1623,11 +1624,18 @@ public class ChatIntentRouter {
 
     private String formatProspects() {
         var prospects = prospectingMemory.prospects();
+        // Revisión final: "dame un status" cuenta todos los LEAD; acá se separan los de la búsqueda de los que
+        // mencionaron las discoveries, para que las dos respuestas no se contradigan.
+        var fromDiscoveries = Math.max(0, customerMemory.countCustomersAndProspects()[1] - prospects.size());
+        var discoveries = fromDiscoveries == 0 ? ""
+                : " Además hay " + fromDiscoveries + " candidatos que mencionaron las discoveries (sin contacto "
+                        + "verificado): pregunta por las oportunidades para verlos.";
         if (prospects.isEmpty()) {
-            return "Todavía no hay prospectos: la búsqueda solo trabaja para productos listos para vender y con "
-                    + "\"Buscar clientes\" encendido.";
+            return "Todavía no hay prospectos de la búsqueda de clientes: solo trabaja para productos listos para vender "
+                    + "y con \"Buscar clientes\" encendido." + discoveries;
         }
-        return "Prospectos (" + prospects.size() + "; contactarlos es decisión tuya):\n" + prospects.stream().limit(30)
+        return "Prospectos de la búsqueda de clientes (" + prospects.size() + "; contactarlos es decisión tuya):"
+                + discoveries + "\n" + prospects.stream().limit(30)
                 .map(p -> "- " + p.name() + " (" + p.productName() + "): "
                         + (p.contactEmail() != null ? p.contactEmail() + " (fuente: " + p.contactEmailSource() + ")"
                                 : "formulario " + p.contactFormUrl())

@@ -22,6 +22,15 @@ public final class ProspectValidator {
 
     private static final Pattern EMAIL = Pattern.compile("^[\\w.+-]+@[\\w-]+(\\.[\\w-]+)+$");
 
+    /**
+     * Revisión final: redes sociales, foros, directorios y marketplaces no son la página propia de una empresa; guardarlos
+     * además bloquearía su dominio para todo prospecto futuro. Sirven como fuente del contacto, no como {@code url}.
+     */
+    private static final Set<String> NOT_OWN_PAGE = Set.of("reddit.com", "facebook.com", "linkedin.com",
+            "instagram.com", "x.com", "twitter.com", "youtube.com", "tiktok.com", "medium.com", "quora.com",
+            "clutch.co", "g2.com", "capterra.com", "trustpilot.com", "yelp.com", "producthunt.com", "crunchbase.com",
+            "wikipedia.org", "google.com", "upwork.com", "fiverr.com", "amazon.com", "github.com", "substack.com");
+
     private final Function<String, String> fetch;
 
     public ProspectValidator(Function<String, String> fetch) {
@@ -35,7 +44,8 @@ public final class ProspectValidator {
         for (var c : candidates) {
             var problem = problem(c, seen);
             if (problem == null) {
-                valid.add(c);
+                valid.add(verifiedEmail(c) ? c : new ProspectCandidate(c.name(), c.url(), null, c.contactFormUrl(),
+                        null, c.fitReason()));
                 seen.add(domain(c.url()));
             } else {
                 rejections.add((blank(c.name()) ? "(sin nombre)" : c.name()) + ": " + problem);
@@ -52,6 +62,9 @@ public final class ProspectValidator {
         if (!http(c.url()) || domain == null) {
             return "la URL no es http(s)";
         }
+        if (NOT_OWN_PAGE.stream().anyMatch(d -> domain.equals(d) || domain.endsWith("." + d))) {
+            return "no es su página propia (" + domain + " es un sitio de terceros)";
+        }
         if (seen.contains(domain)) {
             return "repetido (" + domain + " ya fue prospectado)";
         }
@@ -62,21 +75,28 @@ public final class ProspectValidator {
         if (!normalize(page).contains(normalize(c.name()))) {
             return "el nombre no aparece en su página";
         }
-        if (!blank(c.contactEmail())) {
-            var email = c.contactEmail().strip();
-            if (!EMAIL.matcher(email).matches() || !http(c.contactSourceUrl())) {
-                return "contacto no verificable (email o página de origen inválidos)";
-            }
-            var source = page(c.contactSourceUrl());
-            if (source != null && source.toLowerCase(Locale.ROOT).contains(email.toLowerCase(Locale.ROOT))) {
-                return null;
-            }
-            return "contacto no verificable (el email no aparece en " + c.contactSourceUrl() + ")";
+        if (verifiedEmail(c)) {
+            return null;
         }
+        // Sin email verificable (vacío, "N/A" o ausente de su fuente) vale el formulario que responde; el email no se guarda.
         if (http(c.contactFormUrl()) && page(c.contactFormUrl()) != null) {
             return null;
         }
-        return "sin contacto verificable (ni email ni formulario)";
+        return blank(c.contactEmail())
+                ? "sin contacto verificable (ni email ni formulario)"
+                : "contacto no verificable (el email no aparece en su fuente y no hay formulario que responda)";
+    }
+
+    private boolean verifiedEmail(ProspectCandidate c) {
+        if (blank(c.contactEmail()) || !http(c.contactSourceUrl())) {
+            return false;
+        }
+        var email = c.contactEmail().strip();
+        if (!EMAIL.matcher(email).matches()) {
+            return false;
+        }
+        var source = page(c.contactSourceUrl());
+        return source != null && source.toLowerCase(Locale.ROOT).contains(email.toLowerCase(Locale.ROOT));
     }
 
     private String page(String url) {

@@ -1872,6 +1872,7 @@ class ChatIntentRouterTest {
     @Test
     void theProspectsQueryListsThemWithContactAndSource() {
         when(prospectingMemory.prospects()).thenReturn(List.of(prospect("Acme Studio", "Pack")));
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0, 1});
 
         var response = router.route("¿qué prospectos tenemos?");
 
@@ -1907,6 +1908,28 @@ class ChatIntentRouterTest {
 
         verify(prospectingMemory, never()).runs(anyInt());
         verify(strategyService, never()).views();
+    }
+
+    @Test
+    void aBusinessQuestionAboutCustomersIsNotTheProspectingStatus() {
+        when(ceoService.chat(any(), any(), any(), anyString(), any(), any(), any())).thenReturn("respuesta de Alex");
+
+        router.route("¿qué estrategia me recomiendas para conseguir más clientes en Europa?");
+
+        verify(strategyService, never()).views();
+        verify(prospectingMemory, never()).runs(anyInt());
+    }
+
+    // Revisión final: "dame un status" cuenta todos los LEAD; la lista de prospectos no puede decir que no hay ninguno.
+    @Test
+    void theProspectsAnswerMentionsDiscoveryCandidatesToo() {
+        when(prospectingMemory.prospects()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0, 37});
+
+        var response = router.route("¿qué prospectos tenemos?");
+
+        assertTrue(response.contains("37"), response);
+        assertTrue(response.contains("oportunidades"), response);
     }
 
     @Test

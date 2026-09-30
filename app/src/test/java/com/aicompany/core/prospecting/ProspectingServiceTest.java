@@ -46,8 +46,8 @@ class ProspectingServiceTest {
         when(memory.strategies()).thenReturn(List.of());
         when(memory.knownDomains(anyString())).thenReturn(Set.of());
         doAnswer(inv -> saved.add(inv.getArgument(0))).when(memory).saveRun(any());
-        when(fetcher.fetch("https://acme.com")).thenReturn("Acme Studio");
-        when(fetcher.fetch("https://acme.com/c")).thenReturn("hola@acme.com");
+        when(fetcher.fetchFollowingRedirects("https://acme.com", 3)).thenReturn("Acme Studio");
+        when(fetcher.fetchFollowingRedirects("https://acme.com/c", 3)).thenReturn("hola@acme.com");
     }
 
     private static CatalogProduct product(String id, CatalogStatus status, String target, List<String> markets,

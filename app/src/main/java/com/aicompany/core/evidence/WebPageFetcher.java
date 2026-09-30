@@ -82,6 +82,59 @@ public class WebPageFetcher {
                 });
     }
 
+    private record Hop(String body, String next) {
+    }
+
+    /**
+     * Revisión final de prospectos (2026-09-30): muchos sitios redirigen (acme.com → www.acme.com, http → https,
+     * /contact → /contact/). Se siguen hasta {@code maxRedirects} a mano: cada destino pasa por {@link #parseAndValidate}
+     * antes de conectar, así una redirección nunca lleva a la red interna.
+     */
+    public String fetchFollowingRedirects(String url, int maxRedirects) {
+
+        var current = url;
+
+        for (int hop = 0; hop <= maxRedirects; hop++) {
+
+            var uri = parseAndValidate(current);
+            var requested = current;
+
+            var outcome = client.get()
+                    .uri(uri)
+                    .header("User-Agent", "AI-Company-EvidenceBot/1.0")
+                    .exchange((request, response) -> {
+
+                        var status = response.getStatusCode();
+
+                        if (status.is3xxRedirection()) {
+                            var location = response.getHeaders().getFirst("Location");
+                            if (location == null || location.isBlank()) {
+                                throw new IllegalStateException("Redirección sin destino: " + requested);
+                            }
+                            return new Hop(null, resolveRedirect(uri, location).toString());
+                        }
+
+                        if (!isSuccess(status)) {
+                            throw new IllegalStateException(
+                                    "La URL respondió con estado " + status.value() + ": " + requested);
+                        }
+
+                        return new Hop(readBounded(response.getBody(), requested), null);
+                    });
+
+            if (outcome.body() != null) {
+                return outcome.body();
+            }
+            current = outcome.next();
+        }
+
+        throw new IllegalStateException("Demasiadas redirecciones: " + url);
+    }
+
+    static URI resolveRedirect(URI current, String location) {
+        return current.resolve(location.strip());
+    }
+
     private boolean isSuccess(HttpStatusCode status) {
         return status.is2xxSuccessful();
     }

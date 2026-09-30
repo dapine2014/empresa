@@ -104,7 +104,7 @@ public class ProspectingService {
             var runsForProduct = (int) stats.stream().filter(s -> product.id().equals(s.productId())).count();
             var batch = ceo.searchProspects(sheet(product), strategy, country(product), language(product, runsForProduct),
                     companyMemory.agentModel("sales", defaultModel));
-            var validation = new ProspectValidator(fetcher::fetch).validate(batch.prospects(), memory.knownDomains(product.id()));
+            var validation = new ProspectValidator(url -> fetcher.fetchFollowingRedirects(url, 3)).validate(batch.prospects(), memory.knownDomains(product.id()));
             var rejections = new ArrayList<>(validation.rejections());
             var room = (int) policies.activeValue(PolicyKey.MAX_PROSPECTS_PER_DAY)
                     - memory.prospectsOn(LocalDate.now(ZoneOffset.UTC));
