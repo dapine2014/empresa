@@ -78,7 +78,8 @@ class ProductOrchestratorTest {
     }
 
     private static ProductSheet sheet(String target, double price, double cost) {
-        return new ProductSheet("SERVICE", target, List.of("WORLDWIDE"), List.of("en", "es"), price, false, cost, "Entrega en 48 h");
+        return new ProductSheet("SERVICE", target, List.of("WORLDWIDE"), List.of("en", "es"), price, false, cost, "Entrega en 48 h",
+                "Pack de Contenido", "10 posts listos para redes a partir de una pieza larga.");
     }
 
     private static ProductView view(CatalogProduct p, List<String> missing) {
@@ -226,14 +227,15 @@ class ProductOrchestratorTest {
         when(runs.active()).thenReturn(List.of(run(OrchestratorStatus.PROPOSING, "P1", null, null)));
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of())));
         when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(new ProductSheet("SOFTWARE",
-                "Pequeñas empresas", List.of("WORLDWIDE"), List.of("en", "es"), 120.0, false, 10.0, ""));
+                "Pequeñas empresas", List.of("WORLDWIDE"), List.of("en", "es"), 120.0, false, 10.0, "",
+                "Email Signature Generator", "Genera firmas de email profesionales en HTML."));
         when(products.update(eq("P1"), any(), eq("orchestrator"))).thenReturn(view(p, List.of()));
 
         orchestrator.tick();
 
         verify(products).update(eq("P1"), argThat(c -> c.priceUsd() == 120.0 && "SOFTWARE".equals(c.kind())), eq("orchestrator"));
         verify(products).changeStatus(eq("P1"), eq(CatalogStatus.IN_CONSTRUCTION), anyString(), eq("orchestrator"));
-        verify(missions).start(startsWith("MISSION-ORQ-"), contains("Producto P1"), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
+        verify(missions).start(startsWith("MISSION-ORQ-"), contains("Email Signature Generator"), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
         verify(products).linkMissions(eq("P1"), isNull(), argThat(l -> l.size() == 1), eq("orchestrator"));
         assertEquals(OrchestratorStatus.BUILDING, lastSaved().status());
         assertNotNull(lastSaved().buildMissionId());
@@ -245,7 +247,7 @@ class ProductOrchestratorTest {
         when(runs.active()).thenReturn(List.of(run(OrchestratorStatus.PROPOSING, "P2", null, null)));
         when(products.view("P2")).thenReturn(Optional.of(view(p, List.of())));
         when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(new ProductSheet("SERVICE",
-                "Pymes", List.of(), List.of(), 150.0, false, 20.0, "borrador"));
+                "Pymes", List.of(), List.of(), 150.0, false, 20.0, "borrador", "Auditoría Express", "Revisión de procesos en 48 h."));
         when(products.update(eq("P2"), any(), eq("orchestrator"))).thenReturn(view(p, List.of()));
 
         orchestrator.tick();
@@ -260,7 +262,7 @@ class ProductOrchestratorTest {
         when(runs.active()).thenReturn(List.of(run(OrchestratorStatus.PROPOSING, "P1", null, null)));
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of())));
         when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(new ProductSheet("SOFTWARE",
-                "Pymes", List.of(), List.of(), -5.0, false, 1.0, ""));
+                "Pymes", List.of(), List.of(), -5.0, false, 1.0, "", "Producto X", "Descripción."));
         when(products.update(eq("P1"), any(), eq("orchestrator")))
                 .thenThrow(new IllegalArgumentException("El precio no puede ser negativo."));
 
@@ -570,5 +572,47 @@ class ProductOrchestratorTest {
         when(runs.latest()).thenReturn(Optional.empty());
 
         assertEquals("Pausado por 2 ciclos seguidos fallidos", orchestrator.current().pauseReason());
+    }
+
+    // Revisión en vivo (2026-09-30): el nombre de la idea era la primera oración del plan de Luna ("Priorizar 3
+    // candidatos…") y Engineering construyó una app para priorizar candidatos. La ficha define el producto concreto.
+    @Test
+    void aPlanLikeNameIsAskedAgainAndTheValidNameRenamesTheProduct() {
+        var p = product("P1", CatalogStatus.IDEA, "product", "SOFTWARE", 1);
+        proposing(p);
+        var text = org.mockito.ArgumentCaptor.forClass(String.class);
+        var plan = new ProductSheet("SOFTWARE", "Freelancers", List.of("WORLDWIDE"), List.of("en"), 19.0, false, 2.0, "",
+                "Priorizar 3 candidatos de producto digital", "Elegir entre plantilla y generador.");
+        var concrete = new ProductSheet("SOFTWARE", "Freelancers", List.of("WORLDWIDE"), List.of("en"), 19.0, false, 2.0,
+                "", "Email Signature Generator", "Genera firmas de email profesionales en HTML listas para copiar.");
+        when(ceo.proposeProductSheet(text.capture(), anyString(), anyString())).thenReturn(plan, concrete);
+
+        orchestrator.tick();
+
+        assertTrue(text.getAllValues().get(1).contains("CORRECCIÓN"), text.getAllValues().get(1));
+        assertTrue(text.getAllValues().get(1).contains("nombre"), text.getAllValues().get(1));
+        verify(products).update(eq("P1"), argThat(c -> "Email Signature Generator".equals(c.name())
+                && c.description().startsWith("Genera firmas")), eq("orchestrator"));
+        verify(missions).start(anyString(), argThat(i -> i.contains("Email Signature Generator")
+                && i.contains("Genera firmas")), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
+    }
+
+    @Test
+    void aSheetWithoutNameOrDescriptionIsIncomplete() {
+        var problems = ProductOrchestrator.sheetProblems(new ProductSheet("SOFTWARE", "Freelancers", List.of(), List.of(),
+                19.0, false, 2.0, "", " ", null), product("P1", CatalogStatus.IDEA, "product", "SOFTWARE", 1));
+
+        assertTrue(problems.stream().anyMatch(x -> x.contains("nombre")), problems.toString());
+        assertTrue(problems.stream().anyMatch(x -> x.contains("descripción")), problems.toString());
+    }
+
+    @Test
+    void planVerbsAreRejectedAsProductNames() {
+        for (var name : List.of("Seleccionar un nicho de micro-SaaS", "Antes de definir el producto", "Validar demanda")) {
+            var problems = ProductOrchestrator.sheetProblems(new ProductSheet("SOFTWARE", "Freelancers", List.of(),
+                    List.of(), 19.0, false, 2.0, "", name, "Algo concreto."), product("P1", CatalogStatus.IDEA, "product",
+                    "SOFTWARE", 1));
+            assertTrue(problems.stream().anyMatch(x -> x.contains("nombre")), name + " → " + problems);
+        }
     }
 }
