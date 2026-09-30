@@ -922,3 +922,8 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 **Decisiones del fundador** (2026-09-30): solo para productos listos para vender; Java rota estrategias y Sofía ejecuta, y cada semana Marketing propone una nueva que el fundador aprueba; prospecto válido = contacto público verificable. Lección de la rama del 18-sep (segmentos con nombre y fuente genérica, corregido solo por prompt): acá la validez la decide Java (nombre en su propia página, email literal en su fuente).
 
 **Verificado en vivo** (2026-09-30, tras el redeploy): policies sembradas (`PROSPECTING_ENABLED = 0`, `MAX_PROSPECTS_PER_DAY = 10`); `GET /api/company/autonomy` → `clients.available=true`, apagado, `pendingStrategies = 0`; `GET /prospecting/strategies` → las 4 base; `POST /prospecting/runs` sin productos listos → 500 "No hay productos listos para vender: no hay a quién buscarle clientes."; `/prospectos` servida por la SPA. Pendiente: una corrida real con un producto `READY_TO_SELL` (hoy no hay ninguno; el fundador decide cuál usar).
+
+### Contacto con prospectos (subproyecto 6)
+
+**Decisiones del fundador** (2026-09-30): lote diario aprobado (un borrador por prospecto nuevo; solo lo aprobado se envía); Sofía redacta y Java verifica; se envía desde la cuenta SMTP de alertas con Reply-To al fundador y tope diario; sin seguimientos automáticos. Se porta (sin mergear) lo útil de `worktree-prospect-chat-quality` (`sendToExternal`, `ContactAttempt`, CAS contra doble envío). **Decisión técnica**: el estado del contacto vive en `Customer.outreachStatus` y `Customer.status` sigue `'LEAD'`, porque `FinanceMemoryService` trata como cliente real todo `Customer` cuyo status no es `'LEAD'` (cambiarlo habría habilitado ventas a un prospecto).
+
