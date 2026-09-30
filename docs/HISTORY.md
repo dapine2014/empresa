@@ -904,3 +904,8 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 **Arreglo** (aprobado por el fundador): el prompt de la ficha explica que el costo por venta nunca es 0 y qué suma (comisión de la plataforma de pago, IA/infra por venta, entrega) con los valores de la evidencia; la ficha se pide hasta 3 veces. Con 2 ciclos seguidos en `FAILED` (contados desde el último encendido, para que reanudar no lo vuelva a pausar enseguida) el orquestador no arranca otro y se pausa solo con el motivo. `ORCHESTRATOR_ENABLED` admite solo 0/1.
 
 **Verificado en vivo** (19:33 UTC, primer chequeo tras el redeploy): con los 2 últimos ciclos en `FAILED`, el orquestador no lanzó otra discovery, quedó `enabled=false` y `GET /api/company/orchestrator` devolvió `pauseReason` "Pausado solo: 2 ciclos seguidos fallidos. Último motivo: … costo estimado por venta debe ser mayor que 0 …". Pendiente de ver en vivo: una ficha con costo > 0 tras reanudarlo.
+
+### Modo automático (entrega A)
+
+**Decisiones del fundador** (2026-09-29): "debe existir un botón donde yo ponga todo en automático… y un dashboard donde vea qué están haciendo". Un interruptor por frente más uno general; arriba del Dashboard; dos entregas (A: interruptores + panel; B: búsqueda de prospectos, que se engancha a "Buscar clientes"). Los interruptores son la policy versionada (una sola fuente de verdad con Settings y el chat).
+
