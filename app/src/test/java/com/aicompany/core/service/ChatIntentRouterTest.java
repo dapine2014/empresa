@@ -1897,6 +1897,28 @@ class ChatIntentRouterTest {
         verifyNoInteractions(ceoService);
     }
 
+    // Auto-revisión final: "estrategias" suelto capturaba preguntas de negocio que no son sobre la búsqueda de clientes.
+    @Test
+    void aGeneralQuestionAboutStrategiesIsNotTheProspectingStatus() {
+        when(teamMemory.snapshot("TEAM-CREATIVE-PRODUCT-INTELLIGENCE")).thenReturn(new TeamSnapshot(
+                "TEAM-CREATIVE-PRODUCT-INTELLIGENCE", "Creative", "ACTIVE", "interaction-design", List.of()));
+
+        router.route("¿qué estrategias de marketing propone el equipo creativo?");
+
+        verify(prospectingMemory, never()).runs(anyInt());
+        verify(strategyService, never()).views();
+    }
+
+    @Test
+    void pendingStrategiesAreStillTheProspectingStatus() {
+        when(prospectingMemory.runs(5)).thenReturn(List.of());
+        when(strategyService.views()).thenReturn(List.of());
+
+        var response = router.route("¿qué estrategias hay pendientes?");
+
+        assertTrue(response.contains("Búsqueda de clientes"), response);
+    }
+
     @Test
     void strategyCommandsGoToStrategies() {
         var pending = new com.aicompany.core.prospecting.StoredStrategy("S1", "Podcasts", "d", "h", "PENDING_APPROVAL",

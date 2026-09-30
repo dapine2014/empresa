@@ -1233,7 +1233,9 @@ public class ChatIntentRouter {
         }
 
         // Spec búsqueda de prospectos (2026-09-30).
-        if (normalized.contains("busqueda de clientes") || normalized.contains("estrategias")) {
+        // "estrategias" solo con contexto de búsqueda: suelto capturaba preguntas de negocio (revisión final).
+        if (normalized.contains("busqueda de clientes")
+                || normalized.matches(".*\\bestrategias?\\b.*\\b(pendientes?|busqueda|prospect\\w*|clientes)\\b.*")) {
             return new QueryMatch(QueryIntent.PROSPECTING, null);
         }
         if (normalized.matches(".*\\bprospectos?\\b.*")) {
