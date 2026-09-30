@@ -54,12 +54,16 @@ class ChatIntentRouterTest {
     private final ModelHealthService modelHealth = mock(ModelHealthService.class);
     private final ProductOrchestrator orchestrator = mock(ProductOrchestrator.class);
     private final AutonomyService autonomy = mock(AutonomyService.class);
+    private final com.aicompany.core.prospecting.ProspectingMemoryService prospectingMemory =
+            mock(com.aicompany.core.prospecting.ProspectingMemoryService.class);
+    private final com.aicompany.core.prospecting.StrategyProposalService strategyService =
+            mock(com.aicompany.core.prospecting.StrategyProposalService.class);
     private final ApiKeyService apiKeys = mock(ApiKeyService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
             "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products, modelHealth,
-            orchestrator, apiKeys, autonomy
+            orchestrator, apiKeys, autonomy, prospectingMemory, strategyService
     );
 
     {
@@ -1810,7 +1814,7 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("Crear productos y servicios: apagado"), response);
         assertTrue(response.contains("2 ciclos seguidos fallidos"), response);
-        assertTrue(response.contains("Buscar clientes: próximamente"), response);
+        assertTrue(response.contains("Buscar clientes: apagado"), response);
         assertTrue(response.contains("3 misiones del orquestador"), response);
         assertTrue(response.contains("1 dependencia"), response);
         verifyNoInteractions(ceoService);
@@ -1824,7 +1828,7 @@ class ChatIntentRouterTest {
 
         verify(autonomy).setProducts(true, "el chat");
         assertTrue(response.contains("encendido"), response);
-        assertTrue(response.contains("próximamente"), response);
+        assertTrue(response.contains("Buscar clientes"), response);
         verifyNoInteractions(ceoService);
     }
 
@@ -1857,6 +1861,74 @@ class ChatIntentRouterTest {
         router.route(phrase);
 
         verify(autonomy).setProducts(true, "el chat");
+    }
+
+    // Spec búsqueda de prospectos §3: el fundador ve y decide desde el chat, en Java.
+    private static com.aicompany.core.prospecting.Prospect prospect(String name, String product) {
+        return new com.aicompany.core.prospecting.Prospect("C1", "P1", product, name, "https://acme.com", "hola@acme.com",
+                "https://acme.com/c", null, "Publican mucho", "BASE-DIRECTORIES", Instant.parse("2026-09-30T08:10:00Z"));
+    }
+
+    @Test
+    void theProspectsQueryListsThemWithContactAndSource() {
+        when(prospectingMemory.prospects()).thenReturn(List.of(prospect("Acme Studio", "Pack")));
+
+        var response = router.route("¿qué prospectos tenemos?");
+
+        assertTrue(response.contains("Acme Studio"), response);
+        assertTrue(response.contains("hola@acme.com"), response);
+        assertTrue(response.contains("https://acme.com/c"), response);
+        assertTrue(response.contains("Pack"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void theSearchStatusShowsTheLastRunAndStrategies() {
+        when(prospectingMemory.runs(5)).thenReturn(List.of(new com.aicompany.core.prospecting.ProspectingRun("R1", "P1",
+                "BASE-DIRECTORIES", "COMPLETED", 6, 2, List.of("X: repetido"), null,
+                Instant.parse("2026-09-30T08:00:00Z"), Instant.parse("2026-09-30T08:05:00Z"))));
+        when(strategyService.views()).thenReturn(List.of(new com.aicompany.core.prospecting.StrategyProposalService.StrategyView(
+                "BASE-DIRECTORIES", "Directorios del rubro", "d", "BASE", null, 1, 2.0)));
+
+        var response = router.route("¿cómo va la búsqueda de clientes?");
+
+        assertTrue(response.contains("2 válidos de 6"), response);
+        assertTrue(response.contains("Directorios del rubro"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void strategyCommandsGoToStrategies() {
+        var pending = new com.aicompany.core.prospecting.StoredStrategy("S1", "Podcasts", "d", "h", "PENDING_APPROVAL",
+                "growth-content", Instant.now(), null);
+        when(strategyService.findByName("podcasts")).thenReturn(List.of(pending));
+
+        var response = router.route("aprueba la estrategia Podcasts");
+
+        verify(strategyService).approve("S1");
+        verify(products, never()).changeStatus(anyString(), any(), anyString(), anyString());
+        verify(missionService, never()).recordDecision(anyString(), any());
+        assertTrue(response.contains("Podcasts"), response);
+    }
+
+    @Test
+    void anAmbiguousStrategyNameListsWithoutDeciding() {
+        when(strategyService.findByName("pod")).thenReturn(List.of(
+                new com.aicompany.core.prospecting.StoredStrategy("S1", "Podcasts", "d", "h", "PENDING_APPROVAL", "g", Instant.now(), null),
+                new com.aicompany.core.prospecting.StoredStrategy("S2", "Podcasts B2B", "d", "h", "PENDING_APPROVAL", "g", Instant.now(), null)));
+
+        var response = router.route("rechaza la estrategia pod");
+
+        verify(strategyService, never()).reject(anyString());
+        assertTrue(response.contains("Podcasts B2B"), response);
+    }
+
+    @Test
+    void turnEverythingOnIncludesClients() {
+        router.route("pon todo en automático");
+
+        verify(autonomy).setProducts(true, "el chat");
+        verify(autonomy).setClients(true, "el chat");
     }
 
     @Test
