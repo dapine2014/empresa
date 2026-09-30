@@ -909,3 +909,5 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 
 **Decisiones del fundador** (2026-09-29): "debe existir un botón donde yo ponga todo en automático… y un dashboard donde vea qué están haciendo". Un interruptor por frente más uno general; arriba del Dashboard; dos entregas (A: interruptores + panel; B: búsqueda de prospectos, que se engancha a "Buscar clientes"). Los interruptores son la policy versionada (una sola fuente de verdad con Settings y el chat).
 
+**Verificado en vivo** (2026-09-30 00:20 UTC, tras el redeploy): `GET /api/company/autonomy` → productos apagados con el `pauseReason` del corte por fallos, clientes `available=false`, 8 misiones del orquestador esperando decisión y 0 dependencias; `PUT {"clients":true}` → 500 "La búsqueda de clientes todavía no existe (próximamente)."; `PUT {}` → misma vista y la policy sigue en la versión 2 (sin versión nueva). El bundle servido incluye el panel. No se encendió el orquestador (lanza un ciclo con costo de modelos): queda para cuando el fundador lo encienda desde el Dashboard.
+
