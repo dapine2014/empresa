@@ -302,7 +302,7 @@ public class ProductOrchestrator {
         var builtBy = new ArrayList<>(p.builtBy());
         builtBy.add(missionId);
         products.linkMissions(p.id(), null, builtBy, ACTOR);
-        step(building, "BUILDING", "Lanzó " + missionId + " (" + team + ") para construir " + p.name() + ".");
+        step(building, "BUILDING", "Lanzó " + missionId + " (" + team + ") para construir " + (sheet.name() == null || sheet.name().isBlank() ? p.name() : sheet.name().strip()) + ".");
         events.publish("EMPRESA_ORCHESTRATOR_BUILDING", null, null, ACTOR,
                 Map.of("runId", run.id(), "productId", p.id(), "missionId", missionId, "teamId", team));
     }

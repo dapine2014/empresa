@@ -595,6 +595,7 @@ class ProductOrchestratorTest {
                 && c.description().startsWith("Genera firmas")), eq("orchestrator"));
         verify(missions).start(anyString(), argThat(i -> i.contains("Email Signature Generator")
                 && i.contains("Genera firmas")), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
+        verify(runs).addStep(anyString(), eq("BUILDING"), contains("Email Signature Generator"));
     }
 
     @Test
