@@ -13,6 +13,8 @@ export default function AutonomyPanel() {
   const autonomy = useQuery({ queryKey: ['autonomy'], queryFn: api.autonomy, refetchInterval: 15_000 })
   const orchestrator = useQuery({ queryKey: ['orchestrator'], queryFn: api.orchestrator, refetchInterval: 15_000 })
   const agents = useQuery({ queryKey: ['agentsStatus'], queryFn: api.agentsStatus, refetchInterval: 5_000 })
+  const products = useQuery({ queryKey: ['products'], queryFn: api.products, refetchInterval: 15_000 })
+  const missions = useQuery({ queryKey: ['missions'], queryFn: api.missions, refetchInterval: 10_000 })
   const mutation = useMutation({
     mutationFn: (command: AutonomyCommand) => api.setAutonomy(command),
     onSuccess: (view) => {
@@ -33,6 +35,15 @@ export default function AutonomyPanel() {
   const run = orchestrator.data?.run
   const active = run && ['CHOOSING', 'DISCOVERING', 'PROPOSING', 'BUILDING'].includes(run.status)
   const missionId = run?.buildMissionId ?? run?.discoveryMissionId
+  const catalog = (products.data ?? []).map((v) => v.product)
+  const productName = run?.productId ? (catalog.find((p) => p.id === run.productId)?.name ?? run.productId) : null
+  const progress = missionId ? missions.data?.find((m) => m.missionId === missionId)?.progress : undefined
+  // Spec §2: sin ciclo en curso se dice por qué (el orquestador no arranca con algo listo o en construcción).
+  const idleReason = catalog.some((p) => p.status === 'READY_TO_SELL')
+    ? 'no arranca: hay un producto listo para vender'
+    : catalog.some((p) => p.status === 'IN_CONSTRUCTION')
+      ? 'no arranca: hay un producto en construcción'
+      : 'sin ciclo en curso: arranca en el próximo chequeo (cada 15 minutos o al terminar una misión)'
   const working = (agents.data ?? []).filter((a) => a.status === 'WORKING')
 
   return (
@@ -66,9 +77,6 @@ export default function AutonomyPanel() {
       </div>
       {error && <p className="error">{error}</p>}
       {!view.products.enabled && view.products.pauseReason && <p className="error">{view.products.pauseReason}</p>}
-      {view.products.enabled && !active && (
-        <p className="hint">Retoma en el próximo chequeo (cada 15 minutos o al terminar una misión).</p>
-      )}
       <p className="hint">Contactar clientes o vender sigue siendo decisión tuya.</p>
 
       <h3>Qué están haciendo</h3>
@@ -79,10 +87,12 @@ export default function AutonomyPanel() {
         ) : active && run ? (
           <>
             {ORCHESTRATOR_LABELS[run.status]}
+            {productName && ` · ${productName}`}
             {missionId && (
               <>
                 {' · '}
                 <Link to={`/missions/${missionId}`}>{missionId}</Link>
+                {progress !== undefined && ` (${progress}%)`}
               </>
             )}
             <ul className="autonomy-steps">
@@ -96,7 +106,7 @@ export default function AutonomyPanel() {
         ) : !view.products.enabled ? (
           'pausado'
         ) : (
-          'sin ciclo en curso (arranca solo cuando no hay productos listos para vender ni en construcción)'
+          idleReason
         )}
       </div>
       <div className="autonomy-front">
