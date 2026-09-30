@@ -541,3 +541,23 @@ button.danger {
 .delete-mission button {
   padding: 6px 12px;
 }
+
+.autonomy {
+  margin-bottom: 1.5rem;
+}
+
+.autonomy-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.autonomy-front {
+  margin: 0.4rem 0;
+}
+
+.autonomy-steps {
+  margin: 0.3rem 0 0 1rem;
+  font-size: 0.9em;
+}

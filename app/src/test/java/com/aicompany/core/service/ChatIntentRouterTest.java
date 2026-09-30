@@ -53,12 +53,13 @@ class ChatIntentRouterTest {
     private final ProductService products = mock(ProductService.class);
     private final ModelHealthService modelHealth = mock(ModelHealthService.class);
     private final ProductOrchestrator orchestrator = mock(ProductOrchestrator.class);
+    private final AutonomyService autonomy = mock(AutonomyService.class);
     private final ApiKeyService apiKeys = mock(ApiKeyService.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
             "qwen2.5-coder:14b", teamMemory, promptMemory, finance, dependencies, products, modelHealth,
-            orchestrator, apiKeys
+            orchestrator, apiKeys, autonomy
     );
 
     {
@@ -1792,6 +1793,90 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("pausado"), response);
         assertTrue(response.contains("2 ciclos seguidos fallidos"), response);
+    }
+
+    // Spec modo automático (2026-09-29): el fundador consulta y cambia el modo automático desde el chat.
+    private void autonomyView(boolean productsOn, String reason) {
+        when(autonomy.view()).thenReturn(new AutonomyService.AutonomyView(
+                new AutonomyService.Front(productsOn, true, reason), new AutonomyService.Front(false, false, null),
+                new AutonomyService.Waiting(3, 1)));
+    }
+
+    @Test
+    void theAutonomyQueryShowsEachFrontAndWhatWaitsForTheFounder() {
+        autonomyView(false, "Pausado solo: 2 ciclos seguidos fallidos");
+
+        var response = router.route("¿qué está en automático?");
+
+        assertTrue(response.contains("Crear productos y servicios: apagado"), response);
+        assertTrue(response.contains("2 ciclos seguidos fallidos"), response);
+        assertTrue(response.contains("Buscar clientes: próximamente"), response);
+        assertTrue(response.contains("3 misiones del orquestador"), response);
+        assertTrue(response.contains("1 dependencia"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void turnEverythingOnFromTheChat() {
+        when(autonomy.setProducts(true, "el chat")).thenReturn(true);
+
+        var response = router.route("pon todo en automático");
+
+        verify(autonomy).setProducts(true, "el chat");
+        assertTrue(response.contains("encendido"), response);
+        assertTrue(response.contains("próximamente"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void turnEverythingOffFromTheChat() {
+        when(autonomy.setProducts(false, "el chat")).thenReturn(false);
+
+        var response = router.route("apaga el automático");
+
+        verify(autonomy).setProducts(false, "el chat");
+        assertTrue(response.contains("ya estaba apagado"), response);
+    }
+
+    // Revisión final (2026-09-29): frases naturales del fundador que deben llegar al comando, no al de producto ni a la consulta.
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "pausa el modo automático", "apaga el modo automático por favor", "desactiva el automático"})
+    void naturalPhrasesTurnAutonomyOff(String phrase) {
+        router.route(phrase);
+
+        verify(autonomy).setProducts(false, "el chat");
+        verify(products, never()).changeStatus(anyString(), any(), anyString(), anyString());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "reanuda el modo automático", "enciende el modo automático", "activa el automático",
+            "pon todo en automático, por favor"})
+    void naturalPhrasesTurnAutonomyOn(String phrase) {
+        router.route(phrase);
+
+        verify(autonomy).setProducts(true, "el chat");
+    }
+
+    @Test
+    void autonomyCommandsDoNotCaptureOrchestratorCommands() {
+        router.route("pausa el orquestador");
+
+        verify(companyPolicyService).createVersion(eq(PolicyKey.ORCHESTRATOR_ENABLED), eq(0.0), anyString());
+        verify(autonomy, never()).setProducts(anyBoolean(), anyString());
+    }
+
+    @Test
+    void aMissionAboutAutomationIsNotTheAutonomyQuery() {
+        var instruction = "inicia una misión para investigar servicios de automatización para pymes";
+        when(missionService.start(startsWith("MISSION-"), eq(instruction), eq("PRODUCTION"), isNull()))
+                .thenReturn(new MissionResponse("MISSION-1", MissionStatus.CREATED, "PRODUCTION", 0, "Creada",
+                        "Misión recibida", Instant.now(), null));
+
+        router.route(instruction);
+
+        verify(autonomy, never()).view();
     }
 
     @Test

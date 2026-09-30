@@ -191,10 +191,17 @@ public class ChatIntentRouter {
     private final ModelHealthService modelHealth;
     private final ProductOrchestrator orchestrator;
     private final ApiKeyService apiKeys;
+    private final AutonomyService autonomy;
 
     /** Spec orquestador §4 (2026-09-28): gobernanza del ciclo de producto, antes que los comandos de producto. */
     private static final Pattern ORCHESTRATOR_COMMAND = Pattern.compile(
             "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(pausa|reanuda)(?:\\s+(?:el|al))?\\s+orquestador\\s*[.!]?\\s*$");
+
+    /** Spec modo automático (2026-09-29): comandos del fundador, en la gobernanza junto al orquestador. */
+    private static final Pattern AUTONOMY_COMMAND = Pattern.compile(
+            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(?:(pon) todo en automatico"
+                    + "|(pausa|reanuda|enciende|activa|apaga|desactiva)(?:\\s+el)?(?:\\s+modo)?\\s+automatico)"
+                    + "(?:[\\s,]+por favor)?\\s*[.!]?\\s*$");
 
     /** Spec catálogo §6 B (2026-09-28): comandos del fundador sobre un producto, interpretados en Java. */
     private static final Pattern PRODUCT_COMMAND = Pattern.compile(
@@ -221,7 +228,8 @@ public class ChatIntentRouter {
             ProductService productService,
             ModelHealthService modelHealth,
             ProductOrchestrator orchestrator,
-            ApiKeyService apiKeys) {
+            ApiKeyService apiKeys,
+            AutonomyService autonomy) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -242,6 +250,7 @@ public class ChatIntentRouter {
         this.modelHealth = modelHealth;
         this.orchestrator = orchestrator;
         this.apiKeys = apiKeys;
+        this.autonomy = autonomy;
     }
 
     /**
@@ -296,7 +305,8 @@ public class ChatIntentRouter {
     }
 
     private boolean isGovernance(String message) {
-        return ORCHESTRATOR_COMMAND.matcher(normalize(message)).matches()
+        return AUTONOMY_COMMAND.matcher(normalize(message)).matches()
+                || ORCHESTRATOR_COMMAND.matcher(normalize(message)).matches()
                 || PRODUCT_COMMAND.matcher(normalize(message)).matches()
                 || MISSION_START.matcher(message).find()
                 || detectFreeMissionStart(normalize(message))
@@ -506,6 +516,12 @@ public class ChatIntentRouter {
         var orchestratorCommand = ORCHESTRATOR_COMMAND.matcher(normalize(message));
         if (orchestratorCommand.matches()) {
             return handleOrchestratorCommand("pausa".equals(orchestratorCommand.group(1)));
+        }
+
+        var autonomyCommand = AUTONOMY_COMMAND.matcher(normalize(message));
+        if (autonomyCommand.matches()) {
+            var verb = autonomyCommand.group(1) != null ? autonomyCommand.group(1) : autonomyCommand.group(2);
+            return handleAutonomyCommand(List.of("pon", "reanuda", "enciende", "activa").contains(verb));
         }
 
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));
@@ -1144,6 +1160,7 @@ public class ChatIntentRouter {
         COMPANY_STATUS,
         DEPENDENCIES,
         MODELS,
+        AUTONOMY,
         ORCHESTRATOR,
         API_KEYS,
         PRODUCTS,
@@ -1195,6 +1212,11 @@ public class ChatIntentRouter {
         // Keys de modelos editables desde Settings (2026-09-29).
         if (normalized.matches(".*\\b(api ?keys?|keys?)\\b.*")) {
             return new QueryMatch(QueryIntent.API_KEYS, null);
+        }
+
+        // Spec modo automático (2026-09-29): "¿qué está en automático?", "modo automático".
+        if (normalized.matches(".*\\b(modo automatico|en automatico)\\b.*")) {
+            return new QueryMatch(QueryIntent.AUTONOMY, null);
         }
 
         // Spec orquestador (2026-09-28).
@@ -1362,6 +1384,7 @@ public class ChatIntentRouter {
             case "DEPENDENCIES" -> formatPendingDependencies();
             case "PRODUCTS" -> formatCatalog();
             case "MODELS" -> formatModelsHealth();
+            case "AUTONOMY" -> formatAutonomy();
             case "ORCHESTRATOR" -> formatOrchestrator();
             case "API_KEYS" -> formatApiKeys();
             default -> "Dato no reconocido: " + topic + ".";
@@ -1511,6 +1534,31 @@ public class ChatIntentRouter {
                 ? "Orquestador pausado: no arranca ciclos nuevos ni avanza el actual (las misiones ya lanzadas terminan igual). "
                         + "Para seguir: \"reanuda el orquestador\"."
                 : "Orquestador reanudado: en el próximo chequeo (cada 15 minutos o al terminar una misión) retoma el ciclo.";
+    }
+
+    private String handleAutonomyCommand(boolean on) {
+        var changed = autonomy.setProducts(on, "el chat");
+        log.info("CHAT_INTENT_AUTONOMY_{} changed={}", on ? "ON" : "OFF", changed);
+        var products = changed
+                ? "Crear productos y servicios: " + (on ? "encendido (retoma en el próximo chequeo, cada 15 minutos o al "
+                        + "terminar una misión)" : "apagado (las misiones ya lanzadas terminan igual)")
+                : "Crear productos y servicios: ya estaba " + (on ? "encendido" : "apagado");
+        return "Modo automático — " + products + ". Buscar clientes: próximamente (todavía no existe). "
+                + "Contactar clientes o vender sigue siendo decisión tuya.";
+    }
+
+    /** Spec modo automático (2026-09-29): cada frente, qué hace el orquestador y lo que espera al fundador, en Java. */
+    private String formatAutonomy() {
+        var view = autonomy.view();
+        var products = view.products().enabled() ? "encendido"
+                : "apagado" + (view.products().pauseReason() == null ? "" : " (" + view.products().pauseReason() + ")");
+        var waiting = view.waiting();
+        return "Modo automático — Crear productos y servicios: " + products
+                + ". Buscar clientes: próximamente (todavía no existe). " + formatOrchestrator()
+                + " Esperando tu decisión: " + waiting.orchestratorMissions() + " misiones del orquestador y "
+                + waiting.pendingDependencies() + (waiting.pendingDependencies() == 1 ? " dependencia pendiente."
+                        : " dependencias pendientes.")
+                + " Contactar clientes o vender sigue siendo decisión tuya.";
     }
 
     private static String orchestratorStep(com.aicompany.core.model.OrchestratorStatus status) {
