@@ -56,6 +56,7 @@ public class CompanyPolicyService {
         map.put(PolicyKey.MAX_AUTONOMOUS_PRODUCTS, 1.0);
         map.put(PolicyKey.PROSPECTING_ENABLED, 0.0);
         map.put(PolicyKey.MAX_PROSPECTS_PER_DAY, 10.0);
+        map.put(PolicyKey.MAX_OUTREACH_PER_DAY, 10.0);
         return map;
     }
 

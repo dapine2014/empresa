@@ -20,7 +20,10 @@ class AutonomyServiceTest {
     private final DependencyMemoryService dependencies = mock(DependencyMemoryService.class);
     private final com.aicompany.core.prospecting.ProspectingMemoryService prospectingMemory =
             mock(com.aicompany.core.prospecting.ProspectingMemoryService.class);
-    private final AutonomyService service = new AutonomyService(policies, missionMemory, dependencies, prospectingMemory);
+    private final com.aicompany.core.outreach.OutreachMemoryService outreachMemory =
+            mock(com.aicompany.core.outreach.OutreachMemoryService.class);
+    private final AutonomyService service = new AutonomyService(policies, missionMemory, dependencies, prospectingMemory,
+            outreachMemory);
 
     {
         when(dependencies.list()).thenReturn(List.of());
@@ -129,5 +132,16 @@ class AutonomyServiceTest {
         service.update(new AutonomyService.AutonomyCommand(true, null), "el Dashboard");
 
         verify(policies).createVersion(PolicyKey.ORCHESTRATOR_ENABLED, 1, "Encendido desde el Dashboard");
+    }
+
+    @Test
+    void draftsWaitingForApprovalAreCounted() {
+        productsOn(true, "seed");
+        clientsOn(true);
+        when(outreachMemory.drafts("PENDING_APPROVAL")).thenReturn(List.of(
+                new com.aicompany.core.outreach.ContactDraft("D1", "C1", "Acme", "P1", "a@acme.com", "s", "b",
+                        "PENDING_APPROVAL", null, Instant.now(), null)));
+
+        assertEquals(1, service.view().waiting().pendingDrafts());
     }
 }

@@ -561,3 +561,8 @@ button.danger {
   margin: 0.3rem 0 0 1rem;
   font-size: 0.9em;
 }
+
+.draft-body {
+  white-space: pre-wrap;
+  font-family: inherit;
+}

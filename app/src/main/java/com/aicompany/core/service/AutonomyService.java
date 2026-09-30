@@ -15,7 +15,7 @@ public class AutonomyService {
     public record Front(boolean enabled, boolean available, String pauseReason) {
     }
 
-    public record Waiting(int orchestratorMissions, int pendingDependencies, int pendingStrategies) {
+    public record Waiting(int orchestratorMissions, int pendingDependencies, int pendingStrategies, int pendingDrafts) {
     }
 
     public record AutonomyView(Front products, Front clients, Waiting waiting) {
@@ -29,20 +29,23 @@ public class AutonomyService {
     private final MissionMemoryService missionMemory;
     private final DependencyMemoryService dependencies;
     private final ProspectingMemoryService prospectingMemory;
+    private final com.aicompany.core.outreach.OutreachMemoryService outreachMemory;
 
     public AutonomyService(CompanyPolicyService policies, MissionMemoryService missionMemory,
-                           DependencyMemoryService dependencies, ProspectingMemoryService prospectingMemory) {
+                           DependencyMemoryService dependencies, ProspectingMemoryService prospectingMemory,
+                           com.aicompany.core.outreach.OutreachMemoryService outreachMemory) {
         this.policies = policies;
         this.missionMemory = missionMemory;
         this.dependencies = dependencies;
         this.prospectingMemory = prospectingMemory;
+        this.outreachMemory = outreachMemory;
     }
 
     public AutonomyView view() {
         var pending = (int) dependencies.list().stream().filter(d -> "PENDING_APPROVAL".equals(d.get("status"))).count();
         return new AutonomyView(front(PolicyKey.ORCHESTRATOR_ENABLED), front(PolicyKey.PROSPECTING_ENABLED),
                 new Waiting(missionMemory.countAwaitingLaunchedBy("orchestrator"), pending,
-                        prospectingMemory.pendingStrategies()));
+                        prospectingMemory.pendingStrategies(), outreachMemory.drafts("PENDING_APPROVAL").size()));
     }
 
     private Front front(PolicyKey key) {

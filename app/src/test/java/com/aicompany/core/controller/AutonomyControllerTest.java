@@ -12,7 +12,7 @@ class AutonomyControllerTest {
     private final AutonomyController controller = new AutonomyController(service);
     private final AutonomyService.AutonomyView view = new AutonomyService.AutonomyView(
             new AutonomyService.Front(true, true, null), new AutonomyService.Front(false, false, null),
-            new AutonomyService.Waiting(0, 0, 0));
+            new AutonomyService.Waiting(0, 0, 0, 0));
 
     // Spec modo automático (2026-09-29): el Dashboard lee y cambia los interruptores.
     @Test

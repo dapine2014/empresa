@@ -1343,6 +1343,34 @@ public class CeoService {
         }
     }
 
+    private static final Map<String, Object> OUTREACH_SCHEMA = Map.of("type", "object",
+            "properties", Map.of("subject", Map.of("type", "string"), "body", Map.of("type", "string")),
+            "required", List.of("subject", "body"));
+
+    /**
+     * Spec contacto con prospectos §1: Sofía redacta el primer correo a un prospecto. Java lo verifica después
+     * (OutreachDraftValidator) y el fundador lo aprueba antes de enviarlo (🔴).
+     */
+    public com.aicompany.core.outreach.OutreachDraft draftOutreach(String productSheet, String prospectText,
+                                                                   String correction, String model) {
+        var prompt = """
+                Escribe el primer correo de Forjai a este prospecto para ofrecerle el producto. Breve (máximo 150
+                palabras), cordial, en el idioma del prospecto si se deduce de sus datos (si no, en inglés), sin
+                exagerar ni prometer nada que no esté en la descripción del producto. Menciona el nombre exacto del
+                producto y, si la ficha tiene precio, ese precio exacto en US$ (ningún otro monto). No incluyas links ni
+                emails, ni la firma, ni una línea para darse de baja: Forjai los agrega.
+                PRODUCTO (ficha):
+                %s
+                PROSPECTO:
+                %s
+                FORMATO: {"subject": "<asunto>", "body": "<cuerpo>"}
+                """.formatted(productSheet, prospectText)
+                + (correction == null || correction.isBlank() ? ""
+                        : "\nCORRECCIÓN DEL INTENTO ANTERIOR: " + correction);
+        return callStructured("OUTREACH_DRAFT", "sales", prompt, null, model, OUTREACH_SCHEMA,
+                com.aicompany.core.outreach.OutreachDraft.class);
+    }
+
     /** Spec búsqueda de prospectos §2: Kira propone una estrategia nueva (la aprueba el fundador). */
     public com.aicompany.core.prospecting.StrategyProposal proposeProspectingStrategy(String performanceText, String model) {
         var prompt = """

@@ -59,4 +59,13 @@ class CompanyPolicyDefaultsTest {
         assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.PROSPECTING_ENABLED, 3));
         assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.MAX_PROSPECTS_PER_DAY, 0));
     }
+
+    // Spec contacto con prospectos §3: tope diario de envíos, 10 por defecto.
+    @Test
+    void outreachIsCappedAtTenPerDayByDefault() {
+        var defaults = CompanyPolicyService.defaults(new AppProperties("Forjai", 50, 60));
+
+        assertEquals(10.0, defaults.get(PolicyKey.MAX_OUTREACH_PER_DAY));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.MAX_OUTREACH_PER_DAY, 0));
+    }
 }

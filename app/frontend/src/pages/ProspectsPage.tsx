@@ -4,6 +4,95 @@ import { api } from '../api/client'
 
 // Búsqueda de prospectos (spec 2026-09-30 §3): prospectos por producto, estrategias con rendimiento y corridas.
 // Contactar es decisión del fundador (subproyecto 6); acá solo se ven.
+const OUTREACH_LABELS: Record<string, string> = {
+  DRAFTED: 'borrador',
+  CONTACT_IN_PROGRESS: 'enviando',
+  CONTACTED: 'contactado',
+  INTERESTED: 'interesado',
+  NOT_INTERESTED: 'no interesado',
+  OPTED_OUT: 'baja',
+  CONVERTED: 'cliente',
+}
+
+function DraftsSection() {
+  const queryClient = useQueryClient()
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [editing, setEditing] = useState<Record<string, { subject: string; body: string }>>({})
+  // Revisión final: también los aprobados que no salieron (tope o fallo), con su motivo, para poder descartarlos.
+  const drafts = useQuery({ queryKey: ['drafts'], queryFn: () => api.outreachDrafts(), refetchInterval: 30_000 })
+  const done = (message: string) => {
+    setFeedback(message)
+    for (const key of ['drafts', 'prospects', 'autonomy']) void queryClient.invalidateQueries({ queryKey: [key] })
+  }
+  const act = useMutation({
+    mutationFn: async ({ id, action }: { id: string; action: 'approve' | 'discard' | 'save' }) => {
+      if (action === 'approve') return api.approveDraft(id)
+      if (action === 'discard') return api.discardDraft(id)
+      const e = editing[id]
+      return api.editDraft(id, e.subject, e.body)
+    },
+    onSuccess: (d, vars) => {
+      if (vars.action === 'save') {
+        const next = { ...editing }
+        delete next[d.id]
+        setEditing(next)
+      }
+      done(d.status === 'SENT' ? `Enviado a ${d.to}.` : d.status === 'APPROVED' ? `Aprobado; pendiente: ${d.error}` : 'Listo.')
+    },
+    onError: (e: Error) => setFeedback(e.message),
+  })
+  const all = useMutation({
+    mutationFn: api.approveAllDrafts,
+    onSuccess: (list) => done(`${list.filter((d) => d.status === 'SENT').length} enviados de ${list.length}.`),
+    onError: (e: Error) => setFeedback(e.message),
+  })
+  const list = (drafts.data ?? []).filter((d) => d.status === 'PENDING_APPROVAL' || d.status === 'APPROVED')
+  return (
+    <>
+      <h2>Correos por aprobar ({list.length})</h2>
+      <p className="hint">Nada se envía sin tu aprobación. Las respuestas llegan a tu correo.</p>
+      {feedback && <p className={act.isError || all.isError ? 'error' : 'feedback'}>{feedback}</p>}
+      {list.length > 0 && (
+        <button disabled={all.isPending} onClick={() => all.mutate()}>
+          Aprobar todos
+        </button>
+      )}
+      {list.map((d) => {
+        const e = editing[d.id]
+        return (
+          <div key={d.id} className="card">
+            <strong>{d.prospectName}</strong> &lt;{d.to}&gt;
+            {d.status === 'APPROVED' && <p className="error">Aprobado, sin enviar: {d.error}</p>}
+            {e ? (
+              <>
+                <input value={e.subject} onChange={(x) => setEditing({ ...editing, [d.id]: { ...e, subject: x.target.value } })} />
+                <textarea rows={8} value={e.body} onChange={(x) => setEditing({ ...editing, [d.id]: { ...e, body: x.target.value } })} />
+                <button disabled={act.isPending} onClick={() => act.mutate({ id: d.id, action: 'save' })}>Guardar</button>
+              </>
+            ) : (
+              <>
+                <p><strong>{d.subject}</strong></p>
+                <pre className="draft-body">{d.body}</pre>
+                <button onClick={() => setEditing({ ...editing, [d.id]: { subject: d.subject, body: d.body } })}>Editar</button>
+              </>
+            )}{' '}
+            {!e && (
+              <>
+                <button disabled={act.isPending} onClick={() => act.mutate({ id: d.id, action: 'approve' })}>
+                  {d.status === 'APPROVED' ? 'Reintentar envío' : 'Aprobar y enviar'}
+                </button>{' '}
+              </>
+            )}
+            <button className="danger" disabled={act.isPending} onClick={() => act.mutate({ id: d.id, action: 'discard' })}>
+              Descartar
+            </button>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 export default function ProspectsPage() {
   const queryClient = useQueryClient()
   const [feedback, setFeedback] = useState<string | null>(null)
@@ -11,10 +100,20 @@ export default function ProspectsPage() {
   const runs = useQuery({ queryKey: ['prospectingRuns'], queryFn: api.prospectingRuns, refetchInterval: 30_000 })
   const strategies = useQuery({ queryKey: ['prospectingStrategies'], queryFn: api.prospectingStrategies, refetchInterval: 30_000 })
   const refresh = () => {
-    for (const key of ['prospects', 'prospectingRuns', 'prospectingStrategies', 'autonomy']) {
+    for (const key of ['prospects', 'prospectingRuns', 'prospectingStrategies', 'autonomy', 'drafts']) {
       void queryClient.invalidateQueries({ queryKey: [key] })
     }
   }
+  const respond = useMutation({
+    mutationFn: ({ id, r }: { id: string; r: 'INTERESTED' | 'NOT_INTERESTED' | 'OPTED_OUT' }) => api.prospectResponse(id, r),
+    onSuccess: () => { setFeedback('Respuesta anotada.'); refresh() },
+    onError: (e: Error) => setFeedback(e.message),
+  })
+  const convert = useMutation({
+    mutationFn: (id: string) => api.convertProspect(id),
+    onSuccess: (r) => { setFeedback(`Ahora es cliente (${r.customerId}): regístrale ventas en Finanzas.`); refresh() },
+    onError: (e: Error) => setFeedback(e.message),
+  })
   const runNow = useMutation({
     mutationFn: api.runProspectingNow,
     onSuccess: (run) => {
@@ -42,6 +141,7 @@ export default function ProspectsPage() {
     <div>
       <h1>Prospectos</h1>
       <p className="hint">Contactar prospectos o venderles sigue siendo decisión tuya.</p>
+      <DraftsSection />
       <button disabled={runNow.isPending} onClick={() => runNow.mutate()}>
         {runNow.isPending ? 'Buscando… (puede tardar varios minutos)' : 'Buscar ahora'}
       </button>
@@ -66,6 +166,23 @@ export default function ProspectsPage() {
                   <a href={p.contactFormUrl ?? '#'} target="_blank" rel="noreferrer">formulario</a>
                 )}{' '}
                 · {p.fitReason} · <span className="hint">{p.strategyId} · {new Date(p.foundAt).toLocaleString()}</span>
+                {' · '}
+                <span className="hint">{OUTREACH_LABELS[p.outreachStatus ?? ''] ?? 'sin contactar'}</span>
+                {p.outreachStatus === 'CONTACTED' && (
+                  <>
+                    {' '}
+                    <button onClick={() => respond.mutate({ id: p.id, r: 'INTERESTED' })}>Interesado</button>{' '}
+                    <button onClick={() => respond.mutate({ id: p.id, r: 'NOT_INTERESTED' })}>No interesado</button>{' '}
+                    <button onClick={() => respond.mutate({ id: p.id, r: 'OPTED_OUT' })}>Pidió baja</button>
+                  </>
+                )}
+                {(p.outreachStatus === 'CONTACTED' || p.outreachStatus === 'INTERESTED') && (
+                  <>
+                    {' '}
+                    <button disabled={convert.isPending} onClick={() => convert.mutate(p.id)}>Convertir en cliente</button>
+                  </>
+                )}
+                {!p.contactEmail && p.contactFormUrl && <span className="hint"> · contactar a mano</span>}
               </li>
             ))}
           </ul>

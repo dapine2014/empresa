@@ -78,4 +78,37 @@ public class AlertMailService {
             log.warn("No se pudo enviar la alerta por correo: {}", ex.getMessage());
         }
     }
+
+    /** Spec contacto con prospectos §3: resultado real de un envío externo (SMTP genérico: sin id de proveedor). */
+    public record ExternalMailResult(boolean accepted, String errorMessage) {
+    }
+
+    /**
+     * Envío a un prospecto (🔴, solo tras aprobación del fundador): mismo SMTP que las alertas, Reply-To al fundador y
+     * texto plano (no debe verse como una alerta interna). Nunca lanza: devuelve la verdad para que el fundador la vea.
+     */
+    public synchronized ExternalMailResult sendToExternal(String to, String subject, String body) {
+        try {
+            var systemEmail = memory.systemEmail();
+            var password = memory.mailPassword();
+            if (systemEmail == null || systemEmail.isBlank() || password == null || password.isBlank()) {
+                return new ExternalMailResult(false,
+                        "El correo propio del sistema no está configurado (Settings del Command Center).");
+            }
+            mailSender.setUsername(systemEmail);
+            mailSender.setPassword(password);
+            var mimeMessage = mailSender.createMimeMessage();
+            var helper = new MimeMessageHelper(mimeMessage, false, "UTF-8");
+            helper.setFrom(systemEmail);
+            helper.setTo(to);
+            helper.setReplyTo(memory.alertEmail());
+            helper.setSubject(subject);
+            helper.setText(body, false);
+            mailSender.send(mimeMessage);
+            return new ExternalMailResult(true, null);
+        } catch (Exception ex) {
+            log.warn("No se pudo enviar el correo a {}: {}", to, ex.getMessage());
+            return new ExternalMailResult(false, ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+        }
+    }
 }
