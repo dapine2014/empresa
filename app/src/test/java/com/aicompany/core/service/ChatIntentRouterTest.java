@@ -1803,7 +1803,7 @@ class ChatIntentRouterTest {
     private void autonomyView(boolean productsOn, String reason) {
         when(autonomy.view()).thenReturn(new AutonomyService.AutonomyView(
                 new AutonomyService.Front(productsOn, true, reason), new AutonomyService.Front(false, false, null),
-                new AutonomyService.Waiting(3, 1, 0)));
+                new AutonomyService.Waiting(3, 1, 0, 0)));
     }
 
     @Test
@@ -1866,7 +1866,7 @@ class ChatIntentRouterTest {
     // Spec búsqueda de prospectos §3: el fundador ve y decide desde el chat, en Java.
     private static com.aicompany.core.prospecting.Prospect prospect(String name, String product) {
         return new com.aicompany.core.prospecting.Prospect("C1", "P1", product, name, "https://acme.com", "hola@acme.com",
-                "https://acme.com/c", null, "Publican mucho", "BASE-DIRECTORIES", Instant.parse("2026-09-30T08:10:00Z"));
+                "https://acme.com/c", null, "Publican mucho", "BASE-DIRECTORIES", Instant.parse("2026-09-30T08:10:00Z"), null);
     }
 
     @Test

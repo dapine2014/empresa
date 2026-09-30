@@ -59,7 +59,7 @@ class OutreachServiceTest {
     private static Prospect prospect(String id, String email) {
         return new Prospect(id, "P1", "Email Signature Generator", "Acme Legal", "https://acme.com", email,
                 email == null ? null : "https://acme.com/c", email == null ? "https://acme.com/form" : null,
-                "Despacho de abogados", "BASE-DIRECTORIES", Instant.now());
+                "Despacho de abogados", "BASE-DIRECTORIES", Instant.now(), null);
     }
 
     private static ContactDraft draft(String status) {

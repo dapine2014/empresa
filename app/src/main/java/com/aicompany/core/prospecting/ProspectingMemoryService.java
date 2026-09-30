@@ -118,7 +118,7 @@ public class ProspectingMemoryService {
                             c.get("name").asString(), c.get("url").asString(null), c.get("contactEmail").asString(null),
                             c.get("contactEmailSource").asString(null), c.get("contactFormUrl").asString(null),
                             c.get("fitReason").asString(null), c.get("strategy").asString(null),
-                            Instant.parse(c.get("foundAt").asString()));
+                            Instant.parse(c.get("foundAt").asString()), c.get("outreachStatus").asString(null));
                 });
     }
 
