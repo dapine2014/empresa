@@ -31,6 +31,9 @@ import type {
   SettingsCommand,
   SettingsResponse,
   TeamSnapshot,
+  Prospect,
+  ProspectingRun,
+  StrategyView,
 } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -83,6 +86,12 @@ export const api = {
   products: () => request<ProductView[]>('/api/company/products'),
   orchestrator: () => request<OrchestratorView>('/api/company/orchestrator'),
   autonomy: () => request<AutonomyView>('/api/company/autonomy'),
+  prospects: () => request<Prospect[]>('/api/company/prospecting/prospects'),
+  prospectingRuns: () => request<ProspectingRun[]>('/api/company/prospecting/runs'),
+  runProspectingNow: () => request<ProspectingRun>('/api/company/prospecting/runs', { method: 'POST' }),
+  prospectingStrategies: () => request<StrategyView[]>('/api/company/prospecting/strategies'),
+  decideStrategy: (id: string, decision: 'approve' | 'reject') =>
+    request<unknown>(`/api/company/prospecting/strategies/${encodeURIComponent(id)}/${decision}`, { method: 'PUT' }),
   setAutonomy: (command: AutonomyCommand) =>
     request<AutonomyView>('/api/company/autonomy', { method: 'PUT', body: JSON.stringify(command) }),
   apiKeys: () => request<ApiKeyStatus[]>('/api/company/api-keys'),

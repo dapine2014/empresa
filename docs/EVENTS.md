@@ -68,3 +68,5 @@ EMPRESA_DEPENDENCY_REQUESTED (`DependencyService`, `agentId` = quien pidió el p
 EMPRESA_DEPENDENCY_APPROVED (`DependencyService` con `approvedBy=policy`, o `DependencyController` con `agentId=human` y `approvedBy=founder`): el paquete quedó aprobado y promovido a la caché. `data: {dependency, approvedBy}`.
 
 EMPRESA_DEPENDENCY_REJECTED (`DependencyController`, `agentId=human`): el fundador rechazó el paquete. `data: {dependency}`.
+
+EMPRESA_PROSPECTING_RUN_COMPLETED, EMPRESA_PROSPECTING_RUN_FAILED, EMPRESA_PROSPECTING_STRATEGY_PROPOSED, EMPRESA_PROSPECTING_STRATEGY_APPROVED, EMPRESA_PROSPECTING_STRATEGY_REJECTED (`ProspectingService` / `StrategyProposalService`, `agentId` = `sales`, `growth-content` o `human`, sin `missionId`; spec `2026-09-30-busqueda-de-prospectos-design.md`): búsqueda diaria de prospectos. `data`: `{runId, productId, strategy, found, valid}`, `{runId, productId, error}` y `{strategyId, name}` para las tres de estrategias.

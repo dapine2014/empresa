@@ -42,4 +42,21 @@ class CompanyPolicyDefaultsTest {
         assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.SEED_CAPITAL_USD, 0));
         assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.SEED_CAPITAL_USD, 50));
     }
+
+    // Spec búsqueda de prospectos (2026-09-30): apagada por defecto, 10 prospectos por día.
+    @Test
+    void prospectingIsOffByDefaultWithTenPerDay() {
+        var defaults = CompanyPolicyService.defaults(new AppProperties("Forjai", 50, 60));
+
+        assertEquals(0.0, defaults.get(PolicyKey.PROSPECTING_ENABLED));
+        assertEquals(10.0, defaults.get(PolicyKey.MAX_PROSPECTS_PER_DAY));
+    }
+
+    @Test
+    void theProspectingSwitchAcceptsZeroAndOneOnly() {
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.PROSPECTING_ENABLED, 0));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.PROSPECTING_ENABLED, 1));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.PROSPECTING_ENABLED, 3));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.MAX_PROSPECTS_PER_DAY, 0));
+    }
 }

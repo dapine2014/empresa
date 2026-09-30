@@ -54,6 +54,8 @@ public class CompanyPolicyService {
         // Orquestador (spec 2026-09-28): encendido (1) y uno a la vez; el fundador lo cambia en Settings o en el chat.
         map.put(PolicyKey.ORCHESTRATOR_ENABLED, 1.0);
         map.put(PolicyKey.MAX_AUTONOMOUS_PRODUCTS, 1.0);
+        map.put(PolicyKey.PROSPECTING_ENABLED, 0.0);
+        map.put(PolicyKey.MAX_PROSPECTS_PER_DAY, 10.0);
         return map;
     }
 
@@ -164,9 +166,9 @@ public class CompanyPolicyService {
      * un valor positivo hacía imposible pausar el orquestador, desde Settings y desde el chat. El resto sigue siendo > 0.
      */
     static void validateValue(PolicyKey key, double value) {
-        if (key == PolicyKey.ORCHESTRATOR_ENABLED) {
+        if (key == PolicyKey.ORCHESTRATOR_ENABLED || key == PolicyKey.PROSPECTING_ENABLED) {
             if (value != 0 && value != 1) {
-                throw new IllegalArgumentException("ORCHESTRATOR_ENABLED solo admite 0 (pausado) o 1 (encendido)");
+                throw new IllegalArgumentException(key + " solo admite 0 (apagado) o 1 (encendido)");
             }
             return;
         }

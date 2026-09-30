@@ -192,6 +192,8 @@ public class ChatIntentRouter {
     private final ProductOrchestrator orchestrator;
     private final ApiKeyService apiKeys;
     private final AutonomyService autonomy;
+    private final com.aicompany.core.prospecting.ProspectingMemoryService prospectingMemory;
+    private final com.aicompany.core.prospecting.StrategyProposalService strategyService;
 
     /** Spec orquestador §4 (2026-09-28): gobernanza del ciclo de producto, antes que los comandos de producto. */
     private static final Pattern ORCHESTRATOR_COMMAND = Pattern.compile(
@@ -202,6 +204,10 @@ public class ChatIntentRouter {
             "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(?:(pon) todo en automatico"
                     + "|(pausa|reanuda|enciende|activa|apaga|desactiva)(?:\\s+el)?(?:\\s+modo)?\\s+automatico)"
                     + "(?:[\\s,]+por favor)?\\s*[.!]?\\s*$");
+
+    /** Spec búsqueda de prospectos §3: decisión del fundador sobre una estrategia propuesta (🔴). */
+    private static final Pattern STRATEGY_COMMAND = Pattern.compile(
+            "^\\s*(?:@\\S+[\\s,]+)*(?:por favor\\s+)?(aprueba|rechaza)\\s+la\\s+estrategia\\s+(.+?)\\s*[.!]?\\s*$");
 
     /** Spec catálogo §6 B (2026-09-28): comandos del fundador sobre un producto, interpretados en Java. */
     private static final Pattern PRODUCT_COMMAND = Pattern.compile(
@@ -229,7 +235,9 @@ public class ChatIntentRouter {
             ModelHealthService modelHealth,
             ProductOrchestrator orchestrator,
             ApiKeyService apiKeys,
-            AutonomyService autonomy) {
+            AutonomyService autonomy,
+            com.aicompany.core.prospecting.ProspectingMemoryService prospectingMemory,
+            com.aicompany.core.prospecting.StrategyProposalService strategyService) {
 
         this.missionService = missionService;
         this.ceoService = ceoService;
@@ -251,6 +259,8 @@ public class ChatIntentRouter {
         this.orchestrator = orchestrator;
         this.apiKeys = apiKeys;
         this.autonomy = autonomy;
+        this.prospectingMemory = prospectingMemory;
+        this.strategyService = strategyService;
     }
 
     /**
@@ -306,6 +316,7 @@ public class ChatIntentRouter {
 
     private boolean isGovernance(String message) {
         return AUTONOMY_COMMAND.matcher(normalize(message)).matches()
+                || STRATEGY_COMMAND.matcher(normalize(message)).matches()
                 || ORCHESTRATOR_COMMAND.matcher(normalize(message)).matches()
                 || PRODUCT_COMMAND.matcher(normalize(message)).matches()
                 || MISSION_START.matcher(message).find()
@@ -522,6 +533,11 @@ public class ChatIntentRouter {
         if (autonomyCommand.matches()) {
             var verb = autonomyCommand.group(1) != null ? autonomyCommand.group(1) : autonomyCommand.group(2);
             return handleAutonomyCommand(List.of("pon", "reanuda", "enciende", "activa").contains(verb));
+        }
+
+        var strategyCommand = STRATEGY_COMMAND.matcher(normalize(message));
+        if (strategyCommand.matches()) {
+            return handleStrategyCommand("aprueba".equals(strategyCommand.group(1)), strategyCommand.group(2));
         }
 
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));
@@ -1160,6 +1176,8 @@ public class ChatIntentRouter {
         COMPANY_STATUS,
         DEPENDENCIES,
         MODELS,
+        PROSPECTS,
+        PROSPECTING,
         AUTONOMY,
         ORCHESTRATOR,
         API_KEYS,
@@ -1212,6 +1230,17 @@ public class ChatIntentRouter {
         // Keys de modelos editables desde Settings (2026-09-29).
         if (normalized.matches(".*\\b(api ?keys?|keys?)\\b.*")) {
             return new QueryMatch(QueryIntent.API_KEYS, null);
+        }
+
+        // Spec búsqueda de prospectos (2026-09-30).
+        // "estrategias" solo con contexto de búsqueda: suelto capturaba preguntas de negocio (revisión final).
+        if (normalized.contains("busqueda de clientes")
+                || normalized.matches(".*\\bestrategias?\\b(\\s+\\w+){0,2}\\s+pendientes?\\b.*")
+                || normalized.matches(".*\\bestrategias?\\s+de\\s+(busqueda|prospeccion|prospectos)\\b.*")) {
+            return new QueryMatch(QueryIntent.PROSPECTING, null);
+        }
+        if (normalized.matches(".*\\bprospectos?\\b.*")) {
+            return new QueryMatch(QueryIntent.PROSPECTS, null);
         }
 
         // Spec modo automático (2026-09-29): "¿qué está en automático?", "modo automático".
@@ -1384,6 +1413,8 @@ public class ChatIntentRouter {
             case "DEPENDENCIES" -> formatPendingDependencies();
             case "PRODUCTS" -> formatCatalog();
             case "MODELS" -> formatModelsHealth();
+            case "PROSPECTS" -> formatProspects();
+            case "PROSPECTING" -> formatProspecting();
             case "AUTONOMY" -> formatAutonomy();
             case "ORCHESTRATOR" -> formatOrchestrator();
             case "API_KEYS" -> formatApiKeys();
@@ -1537,28 +1568,94 @@ public class ChatIntentRouter {
     }
 
     private String handleAutonomyCommand(boolean on) {
-        var changed = autonomy.setProducts(on, "el chat");
-        log.info("CHAT_INTENT_AUTONOMY_{} changed={}", on ? "ON" : "OFF", changed);
-        var products = changed
-                ? "Crear productos y servicios: " + (on ? "encendido (retoma en el próximo chequeo, cada 15 minutos o al "
-                        + "terminar una misión)" : "apagado (las misiones ya lanzadas terminan igual)")
-                : "Crear productos y servicios: ya estaba " + (on ? "encendido" : "apagado");
-        return "Modo automático — " + products + ". Buscar clientes: próximamente (todavía no existe). "
-                + "Contactar clientes o vender sigue siendo decisión tuya.";
+        var products = autonomy.setProducts(on, "el chat");
+        var clients = autonomy.setClients(on, "el chat");
+        log.info("CHAT_INTENT_AUTONOMY_{} products={} clients={}", on ? "ON" : "OFF", products, clients);
+        var state = on ? "encendido" : "apagado";
+        return "Modo automático — Crear productos y servicios: " + (products ? state : "ya estaba " + state)
+                + ". Buscar clientes: " + (clients ? state : "ya estaba " + state) + "."
+                + (on ? " Retoman en su próximo chequeo." : " Lo ya lanzado termina igual.")
+                + " Contactar clientes o vender sigue siendo decisión tuya.";
+    }
+
+    private static String frontText(AutonomyService.Front front) {
+        return front.enabled() ? "encendido"
+                : "apagado" + (front.pauseReason() == null ? "" : " (" + front.pauseReason() + ")");
     }
 
     /** Spec modo automático (2026-09-29): cada frente, qué hace el orquestador y lo que espera al fundador, en Java. */
     private String formatAutonomy() {
         var view = autonomy.view();
-        var products = view.products().enabled() ? "encendido"
-                : "apagado" + (view.products().pauseReason() == null ? "" : " (" + view.products().pauseReason() + ")");
         var waiting = view.waiting();
-        return "Modo automático — Crear productos y servicios: " + products
-                + ". Buscar clientes: próximamente (todavía no existe). " + formatOrchestrator()
-                + " Esperando tu decisión: " + waiting.orchestratorMissions() + " misiones del orquestador y "
-                + waiting.pendingDependencies() + (waiting.pendingDependencies() == 1 ? " dependencia pendiente."
-                        : " dependencias pendientes.")
+        return "Modo automático — Crear productos y servicios: " + frontText(view.products())
+                + ". Buscar clientes: " + frontText(view.clients()) + ". " + formatOrchestrator()
+                + " Esperando tu decisión: " + waiting.orchestratorMissions() + " misiones del orquestador, "
+                + waiting.pendingDependencies() + (waiting.pendingDependencies() == 1 ? " dependencia pendiente"
+                        : " dependencias pendientes")
+                + " y " + waiting.pendingStrategies() + " estrategias por aprobar."
                 + " Contactar clientes o vender sigue siendo decisión tuya.";
+    }
+
+    private String handleStrategyCommand(boolean approve, String name) {
+        var matches = strategyService.findByName(name);
+        if (matches.isEmpty()) {
+            return "No hay ninguna estrategia pendiente que se llame \"" + name + "\". Pendientes: "
+                    + pendingStrategyNames() + ".";
+        }
+        if (matches.size() > 1) {
+            return "Hay varias estrategias pendientes que coinciden: "
+                    + matches.stream().map(s -> s.name()).collect(Collectors.joining(", "))
+                    + ". Escribe el nombre exacto.";
+        }
+        var strategy = matches.get(0);
+        if (approve) {
+            strategyService.approve(strategy.id());
+            return "Estrategia \"" + strategy.name() + "\" aprobada: entra a la rotación de la búsqueda de clientes.";
+        }
+        strategyService.reject(strategy.id());
+        return "Estrategia \"" + strategy.name() + "\" rechazada: no se vuelve a proponer.";
+    }
+
+    private String pendingStrategyNames() {
+        var names = strategyService.views().stream().filter(v -> "PENDING_APPROVAL".equals(v.status()))
+                .map(v -> v.name()).toList();
+        return names.isEmpty() ? "ninguna" : String.join(", ", names);
+    }
+
+    private String formatProspects() {
+        var prospects = prospectingMemory.prospects();
+        // Revisión final: "dame un status" cuenta todos los LEAD; acá se separan los de la búsqueda de los que
+        // mencionaron las discoveries, para que las dos respuestas no se contradigan.
+        var fromDiscoveries = Math.max(0, customerMemory.countCustomersAndProspects()[1] - prospects.size());
+        var discoveries = fromDiscoveries == 0 ? ""
+                : " Además hay " + fromDiscoveries + " candidatos que mencionaron las discoveries (sin contacto "
+                        + "verificado): pregunta por las oportunidades para verlos.";
+        if (prospects.isEmpty()) {
+            return "Todavía no hay prospectos de la búsqueda de clientes: solo trabaja para productos listos para vender "
+                    + "y con \"Buscar clientes\" encendido." + discoveries;
+        }
+        return "Prospectos de la búsqueda de clientes (" + prospects.size() + "; contactarlos es decisión tuya):"
+                + discoveries + "\n" + prospects.stream().limit(30)
+                .map(p -> "- " + p.name() + " (" + p.productName() + "): "
+                        + (p.contactEmail() != null ? p.contactEmail() + " (fuente: " + p.contactEmailSource() + ")"
+                                : "formulario " + p.contactFormUrl())
+                        + " — " + p.fitReason() + " [" + p.url() + "]")
+                .collect(Collectors.joining("\n"));
+    }
+
+    private String formatProspecting() {
+        var runs = prospectingMemory.runs(5);
+        var last = runs.isEmpty() ? "todavía no corrió"
+                : runs.get(0).status().equals("COMPLETED")
+                        ? "última corrida " + SINCE.format(runs.get(0).startedAt()) + ": " + runs.get(0).valid()
+                                + " válidos de " + runs.get(0).found() + " (" + runs.get(0).strategyId() + ")"
+                        : "última corrida falló: " + runs.get(0).error();
+        var strategies = strategyService.views().stream()
+                .map(v -> v.name() + " [" + v.status() + "] " + v.runs() + " corridas, "
+                        + String.format(Locale.ROOT, "%.1f", v.validPerRun()) + " válidos/corrida")
+                .collect(Collectors.joining("; "));
+        return "Búsqueda de clientes: " + last + ". Estrategias: " + strategies + ". Pendientes de aprobar: "
+                + pendingStrategyNames() + ".";
     }
 
     private static String orchestratorStep(com.aicompany.core.model.OrchestratorStatus status) {

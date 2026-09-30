@@ -1,6 +1,12 @@
 spring:
   application:
     name: company-core
+  task:
+    scheduling:
+      # Búsqueda de prospectos (2026-09-30): una corrida puede tardar minutos (modelo + búsqueda + fetch); con el pool
+      # por defecto de un hilo bloqueaba el sondeo de modelos caídos (cada 30 s) y el orquestador.
+      pool:
+        size: 4
   web:
     # Finanzas (2026-09-27): la pantalla muestra el motivo real de un rechazo (p. ej. "es un prospecto").
     # Verificado en vivo: en Spring Boot 4 server.error.include-message no aplica a este error.

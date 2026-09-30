@@ -52,8 +52,13 @@ public class EvidenceAcquisitionService {
     }
 
     public List<EvidenceCandidate> searchEvidence(String query) {
+        return searchEvidence(query, defaultCountry, defaultLanguage);
+    }
 
-        var results = searchPort.search(query, defaultCountry, defaultLanguage, 10);
+    /** Spec búsqueda de prospectos §1: alcance explícito (country/language null = sin restringir). */
+    public List<EvidenceCandidate> searchEvidence(String query, String country, String language) {
+
+        var results = searchPort.search(query, country, language, 10);
 
         return results.stream()
                 .map(result -> new EvidenceCandidate(

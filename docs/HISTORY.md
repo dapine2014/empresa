@@ -917,3 +917,8 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 
 **Verificado en vivo**: 5,01 → 4,01 GB. `VERIFY` de `MISSION-SANDBOX-VERIFY-22` (39 tests) y `-23` (35 tests) antes y después: mismos resultados, los 5 pasos `PASS` y tiempos iguales (el primer `restore` con la imagen nueva tardó 18 s por el primer montaje; al repetirlo, 2,6 s).
 
+### Búsqueda diaria de prospectos (subproyecto 3)
+
+**Decisiones del fundador** (2026-09-30): solo para productos listos para vender; Java rota estrategias y Sofía ejecuta, y cada semana Marketing propone una nueva que el fundador aprueba; prospecto válido = contacto público verificable. Lección de la rama del 18-sep (segmentos con nombre y fuente genérica, corregido solo por prompt): acá la validez la decide Java (nombre en su propia página, email literal en su fuente).
+
+**Verificado en vivo** (2026-09-30, tras el redeploy): policies sembradas (`PROSPECTING_ENABLED = 0`, `MAX_PROSPECTS_PER_DAY = 10`); `GET /api/company/autonomy` → `clients.available=true`, apagado, `pendingStrategies = 0`; `GET /prospecting/strategies` → las 4 base; `POST /prospecting/runs` sin productos listos → 500 "No hay productos listos para vender: no hay a quién buscarle clientes."; `/prospectos` servida por la SPA. Pendiente: una corrida real con un producto `READY_TO_SELL` (hoy no hay ninguno; el fundador decide cuál usar).

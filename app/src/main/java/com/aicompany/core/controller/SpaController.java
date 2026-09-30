@@ -31,6 +31,7 @@ public class SpaController {
             "/missions/{missionId}",
             "/activity",
             "/productos",
+            "/prospectos",
             "/finanzas",
             "/dependencias",
             "/settings"

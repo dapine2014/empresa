@@ -1,11 +1,13 @@
 package com.aicompany.core.service;
 
 import com.aicompany.core.model.PolicyKey;
+import com.aicompany.core.prospecting.ProspectingMemoryService;
 import org.springframework.stereotype.Service;
 
 /**
- * Spec modo automático (2026-09-29): los interruptores son la policy versionada {@code ORCHESTRATOR_ENABLED} (una sola
- * fuente de verdad con Settings y el chat). "Buscar clientes" queda como próximamente hasta la entrega B.
+ * Spec modo automático (2026-09-29): los interruptores son policies versionadas (una sola fuente de verdad con Settings
+ * y el chat): "Crear productos y servicios" = {@code ORCHESTRATOR_ENABLED}, "Buscar clientes" = {@code
+ * PROSPECTING_ENABLED} (spec búsqueda de prospectos, 2026-09-30).
  */
 @Service
 public class AutonomyService {
@@ -13,60 +15,70 @@ public class AutonomyService {
     public record Front(boolean enabled, boolean available, String pauseReason) {
     }
 
-    public record Waiting(int orchestratorMissions, int pendingDependencies) {
+    public record Waiting(int orchestratorMissions, int pendingDependencies, int pendingStrategies) {
     }
 
     public record AutonomyView(Front products, Front clients, Waiting waiting) {
     }
 
-    /** Campos null = no se tocan. {@code clients} está reservado para la búsqueda de prospectos. */
+    /** Campos null = no se tocan. */
     public record AutonomyCommand(Boolean products, Boolean clients) {
     }
 
     private final CompanyPolicyService policies;
     private final MissionMemoryService missionMemory;
     private final DependencyMemoryService dependencies;
+    private final ProspectingMemoryService prospectingMemory;
 
     public AutonomyService(CompanyPolicyService policies, MissionMemoryService missionMemory,
-                           DependencyMemoryService dependencies) {
+                           DependencyMemoryService dependencies, ProspectingMemoryService prospectingMemory) {
         this.policies = policies;
         this.missionMemory = missionMemory;
         this.dependencies = dependencies;
+        this.prospectingMemory = prospectingMemory;
     }
 
     public AutonomyView view() {
-        var on = productsOn();
+        var pending = (int) dependencies.list().stream().filter(d -> "PENDING_APPROVAL".equals(d.get("status"))).count();
+        return new AutonomyView(front(PolicyKey.ORCHESTRATOR_ENABLED), front(PolicyKey.PROSPECTING_ENABLED),
+                new Waiting(missionMemory.countAwaitingLaunchedBy("orchestrator"), pending,
+                        prospectingMemory.pendingStrategies()));
+    }
+
+    private Front front(PolicyKey key) {
+        var on = policies.activeValue(key) >= 1;
         String reason = null;
         if (!on) {
-            var policy = policies.snapshot(PolicyKey.ORCHESTRATOR_ENABLED);
+            var policy = policies.snapshot(key);
             reason = policy == null ? null : policy.changeReason();
         }
-        var pending = (int) dependencies.list().stream().filter(d -> "PENDING_APPROVAL".equals(d.get("status"))).count();
-        return new AutonomyView(new Front(on, true, reason), new Front(false, false, null),
-                new Waiting(missionMemory.countAwaitingLaunchedBy("orchestrator"), pending));
+        return new Front(on, true, reason);
     }
 
     /** Devuelve true si cambió; sin cambio no crea versión (el historial no se llena de ruido). */
     public boolean setProducts(boolean on, String origin) {
-        if (productsOn() == on) {
+        return set(PolicyKey.ORCHESTRATOR_ENABLED, on, origin);
+    }
+
+    public boolean setClients(boolean on, String origin) {
+        return set(PolicyKey.PROSPECTING_ENABLED, on, origin);
+    }
+
+    private boolean set(PolicyKey key, boolean on, String origin) {
+        if ((policies.activeValue(key) >= 1) == on) {
             return false;
         }
-        policies.createVersion(PolicyKey.ORCHESTRATOR_ENABLED, on ? 1 : 0,
-                (on ? "Encendido" : "Apagado") + " desde " + origin);
+        policies.createVersion(key, on ? 1 : 0, (on ? "Encendido" : "Apagado") + " desde " + origin);
         return true;
     }
 
     public AutonomyView update(AutonomyCommand command, String origin) {
-        if (command.clients() != null) {
-            throw new IllegalArgumentException("La búsqueda de clientes todavía no existe (próximamente).");
-        }
         if (command.products() != null) {
             setProducts(command.products(), origin);
         }
+        if (command.clients() != null) {
+            setClients(command.clients(), origin);
+        }
         return view();
-    }
-
-    private boolean productsOn() {
-        return policies.activeValue(PolicyKey.ORCHESTRATOR_ENABLED) >= 1;
     }
 }

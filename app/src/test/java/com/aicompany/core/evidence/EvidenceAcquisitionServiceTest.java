@@ -126,4 +126,18 @@ class EvidenceAcquisitionServiceTest {
         assertFalse(evidence.verified());
         assertEquals("https://example.com/", evidence.source());
     }
+
+    // Spec búsqueda de prospectos §1: WORLDWIDE → sin país (el sesgo a CO no aplica a la prospección).
+    @Test
+    void aScopedSearchUsesTheGivenCountryAndLanguageEvenWhenNull() {
+        var searchPort = mock(WebSearchPort.class);
+        when(searchPort.search("agencias de contenido", null, "en", 10)).thenReturn(List.of(
+                new WebSearchResult("Acme", "https://acme.com", "agencia")));
+        var service = new EvidenceAcquisitionService(searchPort, mock(WebPageFetcher.class), "CO", "es");
+
+        var candidates = service.searchEvidence("agencias de contenido", null, "en");
+
+        assertEquals(1, candidates.size());
+        verify(searchPort).search("agencias de contenido", null, "en", 10);
+    }
 }
