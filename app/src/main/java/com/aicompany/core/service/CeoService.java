@@ -1305,13 +1305,30 @@ public class CeoService {
                 %s
                 """.formatted(strategy.name(), strategy.description(), strategy.searchHints(), productText);
 
-        var toolTurn = callModel("PROSPECTING_TOOL_CALL", "sales", model, List.of(
-                Map.of("role", "system", "content", toolDecisionSystemPrompt("sales")),
-                Map.of("role", "user", "content", task)), null, AGENT_TOOLS, true);
-
-        var toolCall = !toolTurn.toolCalls().isEmpty()
-                ? parseStructuredToolCall(toolTurn.toolCalls().get(0))
-                : detectInlineToolCall(toolTurn.content());
+        // Verificado en vivo (2026-09-30): la consulta salía en español para un producto en inglés, y una sola búsqueda
+        // no alcanzaba para ir de un listado a los contactos. Hasta 2 búsquedas, en el idioma de la ficha.
+        var decision = new ArrayList<Map<String, Object>>();
+        decision.add(Map.of("role", "system", "content", toolDecisionSystemPrompt("sales")));
+        decision.add(Map.of("role", "user", "content", task + "\nEscribe cada consulta de búsqueda en el idioma \""
+                + (language == null ? "en" : language) + "\" (el de los clientes del producto). Puedes buscar hasta "
+                + MAX_PROSPECT_SEARCHES + " veces; si ya tienes suficiente, responde NINGUNA."));
+        var exchanges = new ArrayList<Map<String, Object>>();
+        for (int search = 0; search < MAX_PROSPECT_SEARCHES; search++) {
+            var turn = callModel("PROSPECTING_TOOL_CALL", "sales", model, decision, null, AGENT_TOOLS, true);
+            var call = !turn.toolCalls().isEmpty()
+                    ? parseStructuredToolCall(turn.toolCalls().get(0))
+                    : detectInlineToolCall(turn.content());
+            if (call == null) {
+                break;
+            }
+            var assistant = Map.<String, Object>of("role", "assistant", "content", "", "tool_calls", List.of(Map.of(
+                    "function", Map.of("name", call.name(), "arguments", Map.of("query", call.query())))));
+            var tool = Map.<String, Object>of("role", "tool", "content", prospectSearch(call.query(), country, language));
+            decision.add(assistant);
+            decision.add(tool);
+            exchanges.add(assistant);
+            exchanges.add(tool);
+        }
 
         var messages = new ArrayList<Map<String, Object>>();
         messages.add(Map.of("role", "system", "content", teamSystemPrompt("sales", null)));
@@ -1328,12 +1345,7 @@ public class CeoService {
                 FORMATO: {"prospects": [{"name", "url", "contactEmail", "contactFormUrl", "contactSourceUrl", "fitReason"}]}
                 """));
 
-        if (toolCall != null) {
-            var execution = executeTool("sales", null, null, toolCall, new SearchScope(country, language));
-            messages.add(Map.of("role", "assistant", "content", "", "tool_calls", List.of(Map.of("function",
-                    Map.of("name", toolCall.name(), "arguments", Map.of("query", toolCall.query()))))));
-            messages.add(Map.of("role", "tool", "content", execution.json()));
-        }
+        messages.addAll(exchanges);
 
         var response = callModel("PROSPECTING_SEARCH", "sales", model, messages, PROSPECTS_SCHEMA, null, false).content();
         try {
@@ -1369,6 +1381,42 @@ public class CeoService {
                         : "\nCORRECCIÓN DEL INTENTO ANTERIOR: " + correction);
         return callStructured("OUTREACH_DRAFT", "sales", prompt, null, model, OUTREACH_SCHEMA,
                 com.aicompany.core.outreach.OutreachDraft.class);
+    }
+
+    static final int MAX_PROSPECT_SEARCHES = 2;
+    static final int PROSPECT_PAGES_PER_SEARCH = 5;
+
+    /**
+     * Verificado en vivo (2026-09-30, primera búsqueda real): con título y fragmento Sofía no veía contactos, y el filtro
+     * de relevancia de la evidencia (≥30% de términos) descartaba los directorios. Para prospectar, Java entrega el texto
+     * de cada página y los contactos que encuentra; la validez la decide ProspectValidator.
+     */
+    private String prospectSearch(String query, String country, String language) {
+        var pages = new ArrayList<Map<String, Object>>();
+        try {
+            for (var candidate : evidenceAcquisitionService.searchEvidence(query, country, language)) {
+                if (pages.size() >= PROSPECT_PAGES_PER_SEARCH) {
+                    break;
+                }
+                try {
+                    var digest = com.aicompany.core.prospecting.PageDigest.of(
+                            evidenceAcquisitionService.fetchPage(candidate.url()), candidate.url());
+                    pages.add(Map.of("title", candidate.title() == null ? "" : candidate.title(), "url", candidate.url(),
+                            "text", digest.excerpt(), "emails", digest.emails(), "contactLinks", digest.contactLinks()));
+                } catch (Exception ex) {
+                    log.info("PROSPECTING_PAGE_SKIPPED url={} reason={}", candidate.url(), ex.getMessage());
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("PROSPECTING_SEARCH_FAILED query={} reason={}", query, ex.getMessage());
+            return "{\"error\": \"La búsqueda web falló: " + ex.getMessage().replace("\"", "'") + "\"}";
+        }
+        log.info("PROSPECTING_SEARCH query={} pages={}", query, pages.size());
+        try {
+            return jsonMapper.writeValueAsString(Map.of("query", query, "pages", pages));
+        } catch (Exception ex) {
+            return "{\"pages\": []}";
+        }
     }
 
     /** Spec búsqueda de prospectos §2: Kira propone una estrategia nueva (la aprueba el fundador). */
