@@ -149,10 +149,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 // repositorio, así que no se exige un archivo por ruta (reenviar todo alargaba la respuesta hasta fallar).
                 result = context.round() > 0
                         ? runtime.generate(id, missionId, task.agentId(),
-                                buildWorkPrompt(context, task) + ROUND_RULE + existingCode(missionId, generationHead),
+                                buildWorkPrompt(context, task) + ROUND_RULE
+                                        + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
                                 task.ownedPathsOrEmpty(), expectedProjects, List.of()).join()
                         : runtime.generate(id, missionId, task.agentId(),
-                                buildWorkPrompt(context, task) + existingCode(missionId, generationHead),
+                                buildWorkPrompt(context, task)
+                                        + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
                                 task.ownedPathsOrEmpty(), expectedProjects).join();
             } catch (Exception ex) {
                 failures.add(task.agentId() + ": " + safeMessage(ex, "no generó código"));
@@ -290,7 +292,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                             .anyMatch(e -> OwnedPaths.coveredByAny(List.of(owned), e.path()))).toList();
                     var basePrompt = buildWorkPrompt(context, task) + repairBlock(entry.getValue(), current)
                             + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
-                            + "commit " + headSha + "); devuelve tus archivos corregidos y completos:");
+                            + "commit " + headSha + "); devuelve tus archivos corregidos y completos:",
+                            validatorModel(context, task.agentId()));
                     DevelopmentResult result = null;
                     var insist = "";
                     // Verificado en vivo (MISSION-SANDBOX-VERIFY-14): la corrección devolvía el archivo idéntico.
@@ -474,6 +477,25 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * Verificado en vivo (MISSION-DEPS-VERIFY-4): el tope pensado para los 16K de contexto de qwen3:8b dejaba archivos
      * fuera de la revisión con modelos remotos de contexto grande.
      */
+    /**
+     * Verificado en vivo (MISSION-ORQ-1790736885126): 92K de código previo contra un tope de 18K pensado para los 16K de
+     * contexto de un modelo local; con un modelo remoto el código previo usa el presupuesto grande de la revisión.
+     */
+    static ReviewBudget codeBudget(String agentModel) {
+        return agentModel != null && agentModel.startsWith("nvidia")
+                ? new ReviewBudget(REMOTE_REVIEW_TOTAL_BUDGET_CHARS, REMOTE_REVIEW_FILE_BUDGET_CHARS)
+                : new ReviewBudget(EXISTING_CODE_TOTAL_BUDGET_CHARS, EXISTING_CODE_FILE_BUDGET_CHARS);
+    }
+
+    /** El contrato de API (firmas exactas, extraídas por Java) va primero y nunca se recorta; el código, con presupuesto. */
+    static String renderWithContract(Map<String, String> contentsByPath, int totalBudgetChars, int perFileBudgetChars) {
+        var api = PublicApiExtractor.extract(contentsByPath);
+        var contract = api.isBlank() ? ""
+                : "API PÚBLICA YA EXISTENTE (contrato obligatorio: usa estos namespaces, tipos, nombres y firmas tal cual; "
+                        + "no inventes miembros que no estén acá):\n" + api + "\nCÓDIGO COMPLETO (puede venir recortado):\n";
+        return contract + renderRepositoryContext(contentsByPath, totalBudgetChars, perFileBudgetChars);
+    }
+
     static ReviewBudget reviewBudget(String validatorModel) {
         return validatorModel != null && validatorModel.startsWith("nvidia")
                 ? new ReviewBudget(REMOTE_REVIEW_TOTAL_BUDGET_CHARS, REMOTE_REVIEW_FILE_BUDGET_CHARS)
@@ -658,13 +680,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     /** Código real ya commiteado (sin .csproj/.sln, que son de Forjai), con tope explícito. */
-    private String existingCode(String missionId, String headSha) {
+    private String existingCode(String missionId, String headSha, String agentModel) {
         return repositoryCode(missionId, headSha, "CÓDIGO YA ESCRITO POR EL EQUIPO (capas anteriores, commit " + headSha
                 + "). Úsalo tal cual: mismos namespaces, clases, métodos y firmas. No lo reescribas ni lo devuelvas; "
-                + "escribe solo tus archivos.");
+                + "escribe solo tus archivos.", agentModel);
     }
 
-    private String repositoryCode(String missionId, String headSha, String header) {
+    private String repositoryCode(String missionId, String headSha, String header, String agentModel) {
         if (headSha == null) {
             return "";
         }
@@ -679,8 +701,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             if (contents.isEmpty()) {
                 return "";
             }
-            return "\n\n" + header + "\n" + renderRepositoryContext(contents, EXISTING_CODE_TOTAL_BUDGET_CHARS,
-                    EXISTING_CODE_FILE_BUDGET_CHARS);
+            var budget = codeBudget(agentModel);
+            return "\n\n" + header + "\n" + renderWithContract(contents, budget.total(), budget.perFile());
         } catch (Exception ex) {
             log.warn("MISSION {} - could not read existing code at {}: {}", missionId, headSha, ex.getMessage());
             return "";
