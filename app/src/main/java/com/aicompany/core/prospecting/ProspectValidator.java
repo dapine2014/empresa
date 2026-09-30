@@ -109,7 +109,7 @@ public final class ProspectValidator {
         return s == null || s.isBlank();
     }
 
-    static String normalize(String text) {
+    public static String normalize(String text) {
         return Normalizer.normalize(text.toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
                 .replaceAll("\\p{M}", "").replaceAll("\\s+", " ").strip();
     }
