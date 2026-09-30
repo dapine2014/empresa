@@ -701,4 +701,28 @@ class DevelopmentTeamStrategyTest {
         assertEquals(DevelopmentTeamStrategy.REVIEW_TOTAL_BUDGET_CHARS, DevelopmentTeamStrategy.reviewBudget("qwen3:8b").total());
         assertTrue(DevelopmentTeamStrategy.reviewBudget("nvidia:moonshotai/kimi-k3").total() >= 100_000);
     }
+
+    // Verificado en vivo (MISSION-ORQ-1790736885126): 92K de código contra un tope de 18K; con un modelo remoto el
+    // código previo usa el mismo presupuesto grande que la revisión, y el contrato de API llega siempre completo.
+    @Test
+    void theGenerationBudgetFollowsTheAgentsModel() {
+        assertEquals(DevelopmentTeamStrategy.EXISTING_CODE_TOTAL_BUDGET_CHARS,
+                DevelopmentTeamStrategy.codeBudget("qwen3-coder:30b").total());
+        assertTrue(DevelopmentTeamStrategy.codeBudget("nvidia:moonshotai/kimi-k3").total() >= 100_000);
+    }
+
+    @Test
+    void theApiContractSurvivesWhenBodiesAreTruncated() {
+        var contents = new java.util.LinkedHashMap<String, String>();
+        contents.put("src/Firmas.Domain/ResultadoValidacion.cs", "namespace Firmas.Domain;\n\n"
+                + "public sealed class ResultadoValidacion\n{\n" + "    // relleno\n".repeat(200)
+                + "    public static ResultadoValidacion ConErrores(IEnumerable<string> errores) => new();\n}\n");
+
+        var rendered = DevelopmentTeamStrategy.renderWithContract(contents, 300, 200);
+
+        assertTrue(rendered.contains("API PÚBLICA"), rendered);
+        assertTrue(rendered.contains("public static ResultadoValidacion ConErrores(IEnumerable<string> errores)"), rendered);
+        assertTrue(rendered.contains("TRUNCADO"), rendered);
+        assertTrue(rendered.indexOf("API PÚBLICA") < rendered.indexOf("TRUNCADO"), rendered);
+    }
 }
