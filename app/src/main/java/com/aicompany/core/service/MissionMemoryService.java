@@ -243,6 +243,14 @@ public class MissionMemoryService {
         }
     }
 
+    /** Spec modo automático (2026-09-29): misiones lanzadas por {@code who} que esperan la decisión del fundador. */
+    public int countAwaitingLaunchedBy(String who) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {status:'AWAITING_INVESTOR', launchedBy:$who}) RETURN count(m) AS n",
+                    Map.of("who", who)).single().get("n").asInt();
+        }
+    }
+
     public void recordDecision(
             String missionId,
             String decisionId,
