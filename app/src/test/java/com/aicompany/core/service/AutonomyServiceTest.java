@@ -18,7 +18,9 @@ class AutonomyServiceTest {
     private final CompanyPolicyService policies = mock(CompanyPolicyService.class);
     private final MissionMemoryService missionMemory = mock(MissionMemoryService.class);
     private final DependencyMemoryService dependencies = mock(DependencyMemoryService.class);
-    private final AutonomyService service = new AutonomyService(policies, missionMemory, dependencies);
+    private final com.aicompany.core.prospecting.ProspectingMemoryService prospectingMemory =
+            mock(com.aicompany.core.prospecting.ProspectingMemoryService.class);
+    private final AutonomyService service = new AutonomyService(policies, missionMemory, dependencies, prospectingMemory);
 
     {
         when(dependencies.list()).thenReturn(List.of());
@@ -57,14 +59,39 @@ class AutonomyServiceTest {
         verify(policies, never()).createVersion(any(), anyDouble(), anyString());
     }
 
-    @Test
-    void clientsCannotBeTurnedOnYet() {
-        productsOn(true, "seed");
+    private void clientsOn(boolean on) {
+        when(policies.activeValue(PolicyKey.PROSPECTING_ENABLED)).thenReturn(on ? 1.0 : 0.0);
+        when(policies.snapshot(PolicyKey.PROSPECTING_ENABLED)).thenReturn(new PolicySnapshot(
+                "PROSPECTING_ENABLED", 1, on ? 1.0 : 0.0, "system", "Valor inicial de seed", Instant.now(), List.of()));
+    }
 
-        var ex = assertThrows(IllegalArgumentException.class,
-                () -> service.update(new AutonomyService.AutonomyCommand(null, true), "el Dashboard"));
-        assertTrue(ex.getMessage().contains("próximamente"), ex.getMessage());
-        verify(policies, never()).createVersion(any(), anyDouble(), anyString());
+    // Spec búsqueda de prospectos §3: el interruptor de clientes ya existe.
+    @Test
+    void clientsCanBeTurnedOnFromTheDashboard() {
+        productsOn(true, "seed");
+        clientsOn(false);
+
+        var view = service.update(new AutonomyService.AutonomyCommand(null, true), "el Dashboard");
+
+        verify(policies).createVersion(PolicyKey.PROSPECTING_ENABLED, 1, "Encendido desde el Dashboard");
+        assertTrue(view.clients().available());
+    }
+
+    @Test
+    void turningClientsOnWhenOnCreatesNoVersion() {
+        clientsOn(true);
+
+        assertFalse(service.setClients(true, "el chat"));
+        verify(policies, never()).createVersion(eq(PolicyKey.PROSPECTING_ENABLED), anyDouble(), anyString());
+    }
+
+    @Test
+    void pendingStrategiesWaitForTheFounder() {
+        productsOn(true, "seed");
+        clientsOn(true);
+        when(prospectingMemory.pendingStrategies()).thenReturn(1);
+
+        assertEquals(1, service.view().waiting().pendingStrategies());
     }
 
     @Test
@@ -77,8 +104,9 @@ class AutonomyServiceTest {
     }
 
     @Test
-    void theViewCountsWhatWaitsForTheFounderAndClientsAreNotAvailable() {
+    void theViewCountsWhatWaitsForTheFounder() {
         productsOn(true, "seed");
+        clientsOn(false);
         when(missionMemory.countAwaitingLaunchedBy("orchestrator")).thenReturn(4);
         when(dependencies.list()).thenReturn(List.of(
                 Map.<String, Object>of("status", "PENDING_APPROVAL"), Map.<String, Object>of("status", "APPROVED"),
@@ -89,7 +117,7 @@ class AutonomyServiceTest {
         assertTrue(view.products().enabled());
         assertTrue(view.products().available());
         assertFalse(view.clients().enabled());
-        assertFalse(view.clients().available());
+        assertTrue(view.clients().available());
         assertEquals(4, view.waiting().orchestratorMissions());
         assertEquals(2, view.waiting().pendingDependencies());
     }

@@ -1799,7 +1799,7 @@ class ChatIntentRouterTest {
     private void autonomyView(boolean productsOn, String reason) {
         when(autonomy.view()).thenReturn(new AutonomyService.AutonomyView(
                 new AutonomyService.Front(productsOn, true, reason), new AutonomyService.Front(false, false, null),
-                new AutonomyService.Waiting(3, 1)));
+                new AutonomyService.Waiting(3, 1, 0)));
     }
 
     @Test
