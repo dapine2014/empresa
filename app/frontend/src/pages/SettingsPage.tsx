@@ -14,6 +14,8 @@ const POLICY_LABELS: Record<string, string> = {
   MAX_EVIDENCE_ROUNDS: 'Vueltas máximas de "más evidencia" por misión',
   ORCHESTRATOR_ENABLED: 'Orquestador de productos encendido (1 = sí, 0 = no)',
   MAX_AUTONOMOUS_PRODUCTS: 'Productos que el orquestador crea a la vez',
+  PROSPECTING_ENABLED: 'Búsqueda de clientes encendida (1 = sí, 0 = no)',
+  MAX_PROSPECTS_PER_DAY: 'Prospectos nuevos por día (máximo)',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {

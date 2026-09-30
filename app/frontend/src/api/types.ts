@@ -478,10 +478,48 @@ export interface AutonomyFront {
 export interface AutonomyView {
   products: AutonomyFront
   clients: AutonomyFront
-  waiting: { orchestratorMissions: number; pendingDependencies: number }
+  waiting: { orchestratorMissions: number; pendingDependencies: number; pendingStrategies: number }
 }
 
 export interface AutonomyCommand {
   products?: boolean
   clients?: boolean
+}
+
+// Búsqueda de prospectos (spec 2026-09-30): reflejo a mano de Prospect / ProspectingRun / StrategyView / StoredStrategy.
+export interface Prospect {
+  id: string
+  productId: string
+  productName: string | null
+  name: string
+  url: string | null
+  contactEmail: string | null
+  contactEmailSource: string | null
+  contactFormUrl: string | null
+  fitReason: string | null
+  strategyId: string | null
+  foundAt: string
+}
+
+export interface ProspectingRun {
+  id: string
+  productId: string | null
+  strategyId: string | null
+  status: 'COMPLETED' | 'FAILED'
+  found: number
+  valid: number
+  rejections: string[]
+  error: string | null
+  startedAt: string
+  endedAt: string | null
+}
+
+export interface StrategyView {
+  id: string
+  name: string
+  description: string | null
+  status: 'BASE' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED'
+  proposedBy: string | null
+  runs: number
+  validPerRun: number
 }

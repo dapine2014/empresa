@@ -36,6 +36,7 @@ export default function Layout() {
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/missions">Missions</NavLink>
           <NavLink to="/productos">Productos</NavLink>
+          <NavLink to="/prospectos">Prospectos</NavLink>
           <NavLink to="/finanzas">Finanzas</NavLink>
           <NavLink to="/dependencias">Dependencias</NavLink>
           <NavLink to="/activity">Activity</NavLink>

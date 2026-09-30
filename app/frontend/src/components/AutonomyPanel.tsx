@@ -15,6 +15,7 @@ export default function AutonomyPanel() {
   const agents = useQuery({ queryKey: ['agentsStatus'], queryFn: api.agentsStatus, refetchInterval: 5_000 })
   const products = useQuery({ queryKey: ['products'], queryFn: api.products, refetchInterval: 15_000 })
   const missions = useQuery({ queryKey: ['missions'], queryFn: api.missions, refetchInterval: 10_000 })
+  const runs = useQuery({ queryKey: ['prospectingRuns'], queryFn: api.prospectingRuns, refetchInterval: 30_000 })
   const mutation = useMutation({
     mutationFn: (command: AutonomyCommand) => api.setAutonomy(command),
     onSuccess: (view) => {
@@ -45,6 +46,7 @@ export default function AutonomyPanel() {
       ? 'no arranca: hay un producto en construcción'
       : 'sin ciclo en curso: arranca en el próximo chequeo (cada 15 minutos o al terminar una misión)'
   const working = (agents.data ?? []).filter((a) => a.status === 'WORKING')
+  const lastRun = runs.data?.[0]
 
   return (
     <div className="card autonomy">
@@ -58,7 +60,7 @@ export default function AutonomyPanel() {
               if (el) el.indeterminate = someOn && !allOn
             }}
             disabled={mutation.isPending}
-            onChange={() => mutation.mutate({ products: !allOn })}
+            onChange={() => mutation.mutate({ products: !allOn, ...(view.clients.available ? { clients: !allOn } : {}) })}
           />{' '}
           <strong>Todo en automático</strong> {someOn && !allOn && <span className="hint">(parcial)</span>}
         </label>
@@ -71,12 +73,21 @@ export default function AutonomyPanel() {
           />{' '}
           Crear productos y servicios
         </label>
-        <label className="hint">
-          <input type="checkbox" checked={false} disabled /> Buscar clientes (próximamente)
+        <label>
+          <input
+            type="checkbox"
+            checked={view.clients.enabled}
+            disabled={mutation.isPending || !view.clients.available}
+            onChange={() => mutation.mutate({ clients: !view.clients.enabled })}
+          />{' '}
+          Buscar clientes
         </label>
       </div>
       {error && <p className="error">{error}</p>}
       {!view.products.enabled && view.products.pauseReason && <p className="error">{view.products.pauseReason}</p>}
+      {!view.clients.enabled && view.clients.pauseReason && view.clients.pauseReason !== 'Valor inicial de seed' && (
+        <p className="hint">Clientes: {view.clients.pauseReason}</p>
+      )}
       <p className="hint">Contactar clientes o vender sigue siendo decisión tuya.</p>
 
       <h3>Qué están haciendo</h3>
@@ -110,7 +121,15 @@ export default function AutonomyPanel() {
         )}
       </div>
       <div className="autonomy-front">
-        <strong>Clientes:</strong> próximamente
+        <strong>Clientes:</strong>{' '}
+        {runs.isError
+          ? 'no disponible'
+          : lastRun
+            ? `última corrida ${new Date(lastRun.startedAt).toLocaleString()} · ${lastRun.strategyId} · ${
+                lastRun.status === 'COMPLETED' ? `${lastRun.valid} válidos de ${lastRun.found}` : `falló: ${lastRun.error}`
+              }`
+            : 'todavía no corrió'}{' '}
+        · <Link to="/prospectos">ver prospectos</Link>
       </div>
       <div className="autonomy-front">
         <strong>Agentes trabajando ahora:</strong>{' '}
@@ -121,7 +140,8 @@ export default function AutonomyPanel() {
       <div className="autonomy-front">
         <strong>Esperando tu decisión:</strong>{' '}
         <Link to="/missions">{view.waiting.orchestratorMissions} misiones del orquestador</Link> ·{' '}
-        <Link to="/dependencias">{view.waiting.pendingDependencies} dependencias pendientes</Link>
+        <Link to="/dependencias">{view.waiting.pendingDependencies} dependencias pendientes</Link> ·{' '}
+        <Link to="/prospectos">{view.waiting.pendingStrategies} estrategias por aprobar</Link>
       </div>
     </div>
   )
