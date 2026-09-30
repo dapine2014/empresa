@@ -926,4 +926,7 @@ Conclusión: con este nivel de restricciones, `qwen3:8b` resuelve una regla y ro
 ### Contacto con prospectos (subproyecto 6)
 
 **Decisiones del fundador** (2026-09-30): lote diario aprobado (un borrador por prospecto nuevo; solo lo aprobado se envía); Sofía redacta y Java verifica; se envía desde la cuenta SMTP de alertas con Reply-To al fundador y tope diario; sin seguimientos automáticos. Se porta (sin mergear) lo útil de `worktree-prospect-chat-quality` (`sendToExternal`, `ContactAttempt`, CAS contra doble envío). **Decisión técnica**: el estado del contacto vive en `Customer.outreachStatus` y `Customer.status` sigue `'LEAD'`, porque `FinanceMemoryService` trata como cliente real todo `Customer` cuyo status no es `'LEAD'` (cambiarlo habría habilitado ventas a un prospecto).
+### Orquestador: la ficha define el producto (nombre y descripción)
+
+**Bug real en vivo** (2026-09-29): las ideas nacen con la primera oración de la recomendación de Luna, que es un plan ("Priorizar 3 candidatos de producto digital…", "Seleccionar un nicho…"). Esa frase llegaba como nombre a la construcción y Engineering construyó una app `ProductCandidates` para priorizar candidatos en vez del producto. **Arreglo** (aprobado por el fundador el 2026-09-30): la ficha de Alex gana `name` y `description` de UN producto concreto; Java rechaza nombres vacíos, de más de 80 caracteres o que empiezan con un verbo de plan, y lo vuelve a pedir con la corrección; al aplicarla renombra el producto y la instrucción de construcción usa el nombre y la descripción de la ficha.
 

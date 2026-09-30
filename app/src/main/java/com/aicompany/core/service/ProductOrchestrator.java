@@ -278,7 +278,8 @@ public class ProductOrchestrator {
             sheet = validSheet(p, null);
             var markets = sheet.markets() == null || sheet.markets().isEmpty() ? List.of("WORLDWIDE") : sheet.markets();
             var languages = sheet.languages() == null || sheet.languages().isEmpty() ? List.of("en", "es") : sheet.languages();
-            products.update(p.id(), new ProductCommand(null, null, sheet.kind(), target(sheet, p), sheet.priceUsd(),
+            products.update(p.id(), new ProductCommand(sheet.name().strip(), sheet.description().strip(), sheet.kind(),
+                    target(sheet, p), sheet.priceUsd(),
                     sheet.priceOnRequest(), sheet.estimatedCostUsd(), sheet.delivery(), markets, languages,
                     "Ficha completada por el orquestador"), ACTOR);
         } catch (Exception ex) {
@@ -301,7 +302,7 @@ public class ProductOrchestrator {
         var builtBy = new ArrayList<>(p.builtBy());
         builtBy.add(missionId);
         products.linkMissions(p.id(), null, builtBy, ACTOR);
-        step(building, "BUILDING", "Lanzó " + missionId + " (" + team + ") para construir " + p.name() + ".");
+        step(building, "BUILDING", "Lanzó " + missionId + " (" + team + ") para construir " + (sheet.name() == null || sheet.name().isBlank() ? p.name() : sheet.name().strip()) + ".");
         events.publish("EMPRESA_ORCHESTRATOR_BUILDING", null, null, ACTOR,
                 Map.of("runId", run.id(), "productId", p.id(), "missionId", missionId, "teamId", team));
     }
@@ -329,11 +330,30 @@ public class ProductOrchestrator {
         throw new IllegalArgumentException("la ficha quedó incompleta: " + String.join(" ", problems));
     }
 
+    /** Nombres que son planes o tareas, no productos (revisión en vivo 2026-09-30). */
+    private static final java.util.regex.Pattern PLAN_NAME = java.util.regex.Pattern.compile(
+            "^(priorizar|seleccionar|investigar|validar|definir|identificar|crear|lanzar|analizar|elegir|evaluar|antes de)\\b");
+
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
+    }
+
     static List<String> sheetProblems(ProductSheet sheet, CatalogProduct p) {
         var out = new ArrayList<String>();
         if (sheet == null) {
             out.add("No devolvió ficha.");
             return out;
+        }
+        if (blank(sheet.name())) {
+            out.add("Falta el nombre comercial del producto.");
+        } else if (sheet.name().strip().length() > 80) {
+            out.add("El nombre del producto no puede superar 80 caracteres.");
+        } else if (PLAN_NAME.matcher(com.aicompany.core.prospecting.ProspectValidator.normalize(sheet.name())).find()) {
+            out.add("El nombre debe ser el de un producto concreto, no un plan ni una tarea (\"" + sheet.name().strip()
+                    + "\").");
+        }
+        if (blank(sheet.description())) {
+            out.add("Falta la descripción del producto (qué es y qué recibe el cliente).");
         }
         var target = sheet.targetCustomer() == null || sheet.targetCustomer().isBlank() ? p.targetCustomer() : sheet.targetCustomer();
         if (target == null || target.isBlank()) {
@@ -521,12 +541,16 @@ public class ProductOrchestrator {
 
     private static String buildInstruction(CatalogProduct p, ProductSheet sheet, String kind) {
         var target = sheet.targetCustomer() == null ? p.targetCustomer() : sheet.targetCustomer();
+        // Revisión en vivo (2026-09-30): el nombre y la descripción salen de la ficha validada, no de la idea original
+        // (la primera oración del plan de Luna).
+        var name = blank(sheet.name()) ? p.name() : sheet.name().strip();
+        var description = blank(sheet.description()) ? p.description() : sheet.description().strip();
         if ("SERVICE".equals(kind)) {
-            return "Diseñar cómo se entrega el servicio \"" + p.name() + "\" de Forjai a " + target + ": pasos, entregables, "
+            return "Diseñar cómo se entrega el servicio \"" + name + "\" de Forjai a " + target + ": pasos, entregables, "
                     + "plantillas y tiempos, listo para venderse online a clientes de cualquier país. Descripción: "
-                    + p.description();
+                    + description;
         }
-        return "Construir el producto de software \"" + p.name() + "\" de Forjai para " + target + ", listo para venderse "
-                + "online a clientes de cualquier país. Descripción: " + p.description();
+        return "Construir el producto de software \"" + name + "\" de Forjai para " + target + ", listo para venderse "
+                + "online a clientes de cualquier país. Descripción: " + description;
     }
 }

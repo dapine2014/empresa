@@ -1263,9 +1263,11 @@ public class CeoService {
                     "priceUsd", Map.of("type", "number"),
                     "priceOnRequest", Map.of("type", "boolean"),
                     "estimatedCostUsd", Map.of("type", "number"),
-                    "delivery", Map.of("type", "string")),
+                    "delivery", Map.of("type", "string"),
+                    "name", Map.of("type", "string"),
+                    "description", Map.of("type", "string")),
             "required", List.of("kind", "targetCustomer", "markets", "languages", "priceUsd", "priceOnRequest",
-                    "estimatedCostUsd", "delivery"));
+                    "estimatedCostUsd", "delivery", "name", "description"));
 
     private static final Map<String, Object> DELIVERY_SCHEMA = Map.of("type", "object",
             "properties", Map.of("delivery", Map.of("type", "string")), "required", List.of("delivery"));
@@ -1392,7 +1394,10 @@ public class CeoService {
                 y SIEMPRE es mayor que 0, aunque la evidencia hable de "costo marginal ~0": incluye la comisión de la
                 plataforma de pago o de venta (por ejemplo, un porcentaje del precio más un fijo), el costo de IA o de
                 infraestructura por venta y el de la entrega, con los valores de la evidencia; súmalos. delivery: cómo se
-                entrega (vacío si es software). No inventes datos.
+                entrega (vacío si es software). name: el nombre comercial de UN solo producto concreto (por ejemplo
+                "Email Signature Generator"), nunca un plan ni una tarea ("Priorizar…", "Seleccionar…", "Antes de…"):
+                si la oferta menciona varios candidatos, elige uno. description: qué es y qué recibe el cliente, en 1 a 3
+                frases. No inventes datos.
                 PRODUCTO:
                 %s
                 EVIDENCIA DE LAS MISIONES:
