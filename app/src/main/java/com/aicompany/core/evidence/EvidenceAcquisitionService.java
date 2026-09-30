@@ -82,6 +82,11 @@ public class EvidenceAcquisitionService {
      * ya no se acepta como evidencia (antes sí se aceptaba: la URL podía
      * ser sobre cualquier cosa, con tal de que respondiera).
      */
+    /** Búsqueda de prospectos: el HTML de una página (SSRF y redirecciones como en ProspectValidator). */
+    public String fetchPage(String url) {
+        return pageFetcher.fetchFollowingRedirects(url, 3);
+    }
+
     public AgentResult.Evidence confirmReachable(EvidenceCandidate candidate) {
 
         var content = pageFetcher.fetch(candidate.url());
