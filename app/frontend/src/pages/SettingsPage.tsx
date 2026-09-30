@@ -16,6 +16,7 @@ const POLICY_LABELS: Record<string, string> = {
   MAX_AUTONOMOUS_PRODUCTS: 'Productos que el orquestador crea a la vez',
   PROSPECTING_ENABLED: 'Búsqueda de clientes encendida (1 = sí, 0 = no)',
   MAX_PROSPECTS_PER_DAY: 'Prospectos nuevos por día (máximo)',
+  MAX_OUTREACH_PER_DAY: 'Correos a prospectos por día (máximo)',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {
@@ -152,6 +153,35 @@ function ApiKeysSection() {
   )
 }
 
+// Contacto con prospectos (spec 2026-09-30): firma que Java agrega al final de cada correo.
+function OutreachSignature() {
+  const queryClient = useQueryClient()
+  const settings = useQuery({ queryKey: ['outreachSettings'], queryFn: api.outreachSettings })
+  const [draft, setDraft] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const save = useMutation({
+    mutationFn: (signature: string) => api.updateOutreachSettings(signature),
+    onSuccess: () => {
+      setMessage('Firma guardada.')
+      setDraft(null)
+      void queryClient.invalidateQueries({ queryKey: ['outreachSettings'] })
+    },
+    onError: (e: Error) => setMessage(e.message),
+  })
+  const value = draft ?? settings.data?.signature ?? ''
+  return (
+    <>
+      <h2>Firma de los correos a prospectos</h2>
+      <p className="hint">Se agrega al final de cada correo que apruebes.</p>
+      <input value={value} onChange={(e) => setDraft(e.target.value)} />{' '}
+      <button disabled={save.isPending || draft === null} onClick={() => save.mutate(value)}>
+        Guardar
+      </button>
+      {message && <p className={save.isError ? 'error' : 'feedback'}>{message}</p>}
+    </>
+  )
+}
+
 export default function SettingsPage() {
   const queryClient = useQueryClient()
   const [alertEmail, setAlertEmail] = useState('')
@@ -236,6 +266,8 @@ export default function SettingsPage() {
         </button>
       </form>
       {feedback && <p className="feedback">{feedback}</p>}
+
+      <OutreachSignature />
 
       <h2>Financial Policies</h2>
       <p className="hint">

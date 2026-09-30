@@ -31,6 +31,7 @@ import type {
   SettingsCommand,
   SettingsResponse,
   TeamSnapshot,
+  ContactDraft,
   Prospect,
   ProspectingRun,
   StrategyView,
@@ -86,6 +87,26 @@ export const api = {
   products: () => request<ProductView[]>('/api/company/products'),
   orchestrator: () => request<OrchestratorView>('/api/company/orchestrator'),
   autonomy: () => request<AutonomyView>('/api/company/autonomy'),
+  outreachDrafts: (status?: string) =>
+    request<ContactDraft[]>(`/api/company/outreach/drafts${status ? `?status=${status}` : ''}`),
+  editDraft: (id: string, subject: string, body: string) =>
+    request<ContactDraft>(`/api/company/outreach/drafts/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ subject, body }),
+    }),
+  approveDraft: (id: string) => request<ContactDraft>(`/api/company/outreach/drafts/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
+  discardDraft: (id: string) => request<ContactDraft>(`/api/company/outreach/drafts/${encodeURIComponent(id)}/discard`, { method: 'POST' }),
+  approveAllDrafts: () => request<ContactDraft[]>('/api/company/outreach/drafts/approve-all', { method: 'POST' }),
+  prospectResponse: (id: string, response: 'INTERESTED' | 'NOT_INTERESTED' | 'OPTED_OUT') =>
+    request<unknown>(`/api/company/outreach/prospects/${encodeURIComponent(id)}/response`, {
+      method: 'POST',
+      body: JSON.stringify({ response }),
+    }),
+  convertProspect: (id: string) =>
+    request<{ customerId: string }>(`/api/company/outreach/prospects/${encodeURIComponent(id)}/convert`, { method: 'POST' }),
+  outreachSettings: () => request<{ signature: string }>('/api/company/outreach/settings'),
+  updateOutreachSettings: (signature: string) =>
+    request<{ signature: string }>('/api/company/outreach/settings', { method: 'PUT', body: JSON.stringify({ signature }) }),
   prospects: () => request<Prospect[]>('/api/company/prospecting/prospects'),
   prospectingRuns: () => request<ProspectingRun[]>('/api/company/prospecting/runs'),
   runProspectingNow: () => request<ProspectingRun>('/api/company/prospecting/runs', { method: 'POST' }),

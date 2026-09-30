@@ -478,7 +478,7 @@ export interface AutonomyFront {
 export interface AutonomyView {
   products: AutonomyFront
   clients: AutonomyFront
-  waiting: { orchestratorMissions: number; pendingDependencies: number; pendingStrategies: number }
+  waiting: { orchestratorMissions: number; pendingDependencies: number; pendingStrategies: number; pendingDrafts: number }
 }
 
 export interface AutonomyCommand {
@@ -499,6 +499,7 @@ export interface Prospect {
   fitReason: string | null
   strategyId: string | null
   foundAt: string
+  outreachStatus: string | null
 }
 
 export interface ProspectingRun {
@@ -522,4 +523,19 @@ export interface StrategyView {
   proposedBy: string | null
   runs: number
   validPerRun: number
+}
+
+// Contacto con prospectos (spec 2026-09-30): reflejo a mano de ContactDraft.
+export interface ContactDraft {
+  id: string
+  prospectId: string
+  prospectName: string | null
+  productId: string | null
+  to: string
+  subject: string
+  body: string
+  status: 'PENDING_APPROVAL' | 'APPROVED' | 'SENT' | 'DISCARDED'
+  error: string | null
+  createdAt: string
+  sentAt: string | null
 }

@@ -141,7 +141,8 @@ export default function AutonomyPanel() {
         <strong>Esperando tu decisión:</strong>{' '}
         <Link to="/missions">{view.waiting.orchestratorMissions} misiones del orquestador</Link> ·{' '}
         <Link to="/dependencias">{view.waiting.pendingDependencies} dependencias pendientes</Link> ·{' '}
-        <Link to="/prospectos">{view.waiting.pendingStrategies} estrategias por aprobar</Link>
+        <Link to="/prospectos">{view.waiting.pendingStrategies} estrategias por aprobar</Link> ·{' '}
+        <Link to="/prospectos">{view.waiting.pendingDrafts} correos por aprobar</Link>
       </div>
     </div>
   )
