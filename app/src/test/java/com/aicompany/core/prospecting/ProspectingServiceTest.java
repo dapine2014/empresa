@@ -34,8 +34,10 @@ class ProspectingServiceTest {
     private final WebPageFetcher fetcher = mock(WebPageFetcher.class);
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final AlertMailService mail = mock(AlertMailService.class);
+    private final com.aicompany.core.outreach.OutreachService outreach = mock(com.aicompany.core.outreach.OutreachService.class);
+    private final com.aicompany.core.outreach.OutreachMemoryService outreachMemory = mock(com.aicompany.core.outreach.OutreachMemoryService.class);
     private final ProspectingService service = new ProspectingService(memory, products, ceo, companyMemory, policies,
-            fetcher, events, mail, "qwen3:8b");
+            fetcher, events, mail, "qwen3:8b", outreach, outreachMemory);
     private final List<ProspectingRun> saved = new ArrayList<>();
 
     {
@@ -45,6 +47,7 @@ class ProspectingServiceTest {
         when(memory.stats()).thenReturn(List.of());
         when(memory.strategies()).thenReturn(List.of());
         when(memory.knownDomains(anyString())).thenReturn(Set.of());
+        when(outreachMemory.optedOutDomains()).thenReturn(Set.of());
         doAnswer(inv -> saved.add(inv.getArgument(0))).when(memory).saveRun(any());
         when(fetcher.fetchFollowingRedirects("https://acme.com", 3)).thenReturn("Acme Studio");
         when(fetcher.fetchFollowingRedirects("https://acme.com/c", 3)).thenReturn("hola@acme.com");
@@ -189,5 +192,37 @@ class ProspectingServiceTest {
         assertTrue(ids.contains("S1"));
         assertFalse(ids.contains("S2"));
         assertEquals(5, ids.size());
+    }
+
+    // Spec contacto con prospectos §1: al terminar la corrida se piden los borradores; una baja nunca vuelve.
+    @Test
+    void aCompletedRunWithProspectsAsksForDrafts() {
+        catalog(product("P1", CatalogStatus.READY_TO_SELL, "Creadores", List.of("WORLDWIDE"), List.of("en")));
+        when(ceo.searchProspects(anyString(), any(), any(), any(), anyString())).thenReturn(new ProspectBatch(List.of(acme())));
+
+        var run = service.runNow();
+
+        verify(outreach).draftFor(run.id(), "P1");
+    }
+
+    @Test
+    void aDraftingFailureNeverBreaksTheRun() {
+        catalog(product("P1", CatalogStatus.READY_TO_SELL, "Creadores", List.of("WORLDWIDE"), List.of("en")));
+        when(ceo.searchProspects(anyString(), any(), any(), any(), anyString())).thenReturn(new ProspectBatch(List.of(acme())));
+        when(outreach.draftFor(anyString(), anyString())).thenThrow(new IllegalStateException("modelo caído"));
+
+        assertEquals("COMPLETED", service.runNow().status());
+    }
+
+    @Test
+    void optedOutDomainsAreTreatedAsKnown() {
+        catalog(product("P1", CatalogStatus.READY_TO_SELL, "Creadores", List.of("WORLDWIDE"), List.of("en")));
+        when(outreachMemory.optedOutDomains()).thenReturn(Set.of("acme.com"));
+        when(ceo.searchProspects(anyString(), any(), any(), any(), anyString())).thenReturn(new ProspectBatch(List.of(acme())));
+
+        var run = service.runNow();
+
+        assertEquals(0, run.valid());
+        assertTrue(run.rejections().get(0).contains("repetido"), run.rejections().toString());
     }
 }

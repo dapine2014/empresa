@@ -48,11 +48,15 @@ public class ProspectingService {
     private final CompanyEventPublisher events;
     private final AlertMailService mail;
     private final String defaultModel;
+    private final com.aicompany.core.outreach.OutreachService outreach;
+    private final com.aicompany.core.outreach.OutreachMemoryService outreachMemory;
 
     public ProspectingService(ProspectingMemoryService memory, ProductService products, CeoService ceo,
                               CompanyMemoryService companyMemory, CompanyPolicyService policies, WebPageFetcher fetcher,
                               CompanyEventPublisher events, AlertMailService mail,
-                              @Value("${ollama.agent-model}") String defaultModel) {
+                              @Value("${ollama.agent-model}") String defaultModel,
+                              com.aicompany.core.outreach.OutreachService outreach,
+                              com.aicompany.core.outreach.OutreachMemoryService outreachMemory) {
         this.memory = memory;
         this.products = products;
         this.ceo = ceo;
@@ -62,6 +66,8 @@ public class ProspectingService {
         this.events = events;
         this.mail = mail;
         this.defaultModel = defaultModel;
+        this.outreach = outreach;
+        this.outreachMemory = outreachMemory;
     }
 
     public boolean enabled() {
@@ -104,7 +110,7 @@ public class ProspectingService {
             var runsForProduct = (int) stats.stream().filter(s -> product.id().equals(s.productId())).count();
             var batch = ceo.searchProspects(sheet(product), strategy, country(product), language(product, runsForProduct),
                     companyMemory.agentModel("sales", defaultModel));
-            var validation = new ProspectValidator(url -> fetcher.fetchFollowingRedirects(url, 3)).validate(batch.prospects(), memory.knownDomains(product.id()));
+            var validation = new ProspectValidator(url -> fetcher.fetchFollowingRedirects(url, 3)).validate(batch.prospects(), known(product.id()));
             var rejections = new ArrayList<>(validation.rejections());
             var room = (int) policies.activeValue(PolicyKey.MAX_PROSPECTS_PER_DAY)
                     - memory.prospectsOn(LocalDate.now(ZoneOffset.UTC));
@@ -120,6 +126,13 @@ public class ProspectingService {
             var run = new ProspectingRun(id, product.id(), strategy.id(), "COMPLETED", batch.prospects().size(),
                     saved.size(), rejections, null, started, Instant.now());
             memory.saveRun(run);
+            if (!saved.isEmpty()) {
+                try {
+                    outreach.draftFor(id, product.id());
+                } catch (Exception ex) {
+                    log.warn("PROSPECTING run {}: drafting failed: {}", id, ex.getMessage());
+                }
+            }
             events.publish("EMPRESA_PROSPECTING_RUN_COMPLETED", null, null, "sales", Map.of("runId", id,
                     "productId", product.id(), "strategy", strategy.id(), "found", run.found(), "valid", run.valid()));
             if (!saved.isEmpty()) {
@@ -144,6 +157,13 @@ public class ProspectingService {
         events.publish("EMPRESA_PROSPECTING_RUN_FAILED", null, null, "sales",
                 Map.of("runId", id, "productId", product.id(), "error", error));
         return run;
+    }
+
+    /** Dominios ya prospectados para el producto más los que pidieron baja (spec contacto con prospectos §4). */
+    private java.util.Set<String> known(String productId) {
+        var known = new java.util.HashSet<>(memory.knownDomains(productId));
+        known.addAll(outreachMemory.optedOutDomains());
+        return known;
     }
 
     private List<CatalogProduct> ready() {
