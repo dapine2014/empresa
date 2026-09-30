@@ -67,4 +67,18 @@ class CeoServiceProspectingTest {
 
         assertEquals("Podcasts del nicho", proposal.name());
     }
+
+    @Test
+    void sofiaDraftsAnOutreachEmailWithoutTools() {
+        var prompt = org.mockito.ArgumentCaptor.forClass(List.class);
+        when(remote.complete(anyString(), prompt.capture(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("{\"subject\":\"Firmas\",\"body\":\"Hola\"}", List.of()));
+
+        var draft = ceoService.draftOutreach("Producto: Email Signature Generator", "Acme Studio: publican mucho",
+                "Debe mencionar el precio", "nvidia-discovery:m");
+
+        assertEquals("Firmas", draft.subject());
+        assertTrue(prompt.getValue().toString().contains("CORRECCIÓN DEL INTENTO ANTERIOR"));
+        verify(remote, never()).complete(anyString(), anyList(), isNotNull(), anyBoolean(), anyInt());
+    }
 }
