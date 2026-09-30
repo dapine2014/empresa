@@ -24,9 +24,11 @@ fuente genérica, y solo se intentó corregir por prompt. Acá lo valida Java.
 
 ## 1. Ciclo diario (`ProspectingService`)
 
-- **Cuándo**: `@Scheduled` una vez por día (08:00 UTC) y al arrancar si hoy no hubo corrida. Corre solo si
+- **Cuándo**: un chequeo cada hora (`@Scheduled(fixedDelay = 1 h, initialDelay = 3 min)`) corre la búsqueda si hoy
+  (UTC) no hubo corrida y ya son las 08:00 UTC o más — cubre la hora fija y el arranque. Corre solo si
   `PROSPECTING_ENABLED = 1` y hay productos `READY_TO_SELL`. Un producto por corrida, rotando (el que lleva más tiempo sin
-  corrida). Nunca dos corridas simultáneas (`synchronized` + corrida del día persistida).
+  corrida). Nunca dos corridas simultáneas (`synchronized`). El fundador puede forzar una corrida
+  (`POST /api/company/prospecting/runs`), aunque el interruptor esté apagado o ya haya corrido hoy.
 - **Estrategia del día (Java, `StrategySelector`, función pura)**: catálogo base fijo (`ProspectingStrategy` enum):
   - `DIRECTORIES` — directorios y asociaciones de empresas del rubro del cliente objetivo.
   - `COMMUNITIES` — foros, comunidades y grupos donde se pide o se sufre el problema que resuelve el producto.
@@ -70,7 +72,7 @@ fuente genérica, y solo se intentó corregir por prompt. Acá lo valida Java.
   gana `setClients(boolean, origin)` y `clients.available = true`; "Todo en automático" manda los dos campos. Policy
   `MAX_PROSPECTS_PER_DAY` (default 10) en Settings.
 - **API** (`ProspectingController`, `/api/company/prospecting`): `GET /prospects` (por producto), `GET /runs` (últimas
-  20), `GET /strategies` (catálogo base + guardadas, con rendimiento), `PUT /strategies/{id}/approve|reject`.
+  20), `GET /strategies` (catálogo base + guardadas, con rendimiento), `POST /runs` (buscar ahora), `PUT /strategies/{id}/approve|reject`.
   `GET /api/company/autonomy` suma `waiting.pendingStrategies` y la fila de clientes muestra la última corrida.
 - **Command Center**: pantalla nueva **Prospectos** (`/prospectos`, agregar a `App.tsx` y a `SpaController`): prospectos
   por producto (nombre, contacto + fuente, por qué encaja, estrategia, fecha), estrategias con rendimiento y
