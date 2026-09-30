@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import type { CatalogStatus, OrchestratorStatus, ProductView } from '../api/types'
+import { ORCHESTRATOR_LABELS } from '../orchestratorLabels'
+import type { CatalogStatus, ProductView } from '../api/types'
 
 // Catálogo (spec 2026-09-28). Los agentes pueden llevar un producto hasta "listo para vender" si Java verifica los
 // requisitos; tú (el Command Center actúa como el fundador) editas, pausas, reanudas, retiras y reactivas.
@@ -179,15 +180,6 @@ function ProductEditor({ view }: { view: ProductView }) {
   )
 }
 
-const ORCHESTRATOR_LABELS: Record<OrchestratorStatus, string> = {
-  CHOOSING: 'Eligiendo qué construir',
-  DISCOVERING: 'Buscando ideas (discovery)',
-  PROPOSING: 'Completando la ficha',
-  BUILDING: 'Construyendo',
-  READY: 'Listo para vender',
-  FAILED: 'Falló',
-  STOPPED: 'Detenido',
-}
 const missionLink = (id: string | null) => (id ? <Link to={`/missions/${id}`}>{id}</Link> : '—')
 
 // Orquestador (spec 2026-09-28 §4): el ciclo en curso o el último, con su historial. Se pausa con la policy

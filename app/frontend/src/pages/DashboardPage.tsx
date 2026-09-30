@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import AutonomyPanel from '../components/AutonomyPanel'
 
 const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED'])
 
@@ -19,6 +20,7 @@ export default function DashboardPage() {
   return (
     <div>
       <h1>Dashboard</h1>
+      <AutonomyPanel />
       <div className="dashboard-cards">
         <div className="card">
           <div className="card-title">Misiones activas</div>

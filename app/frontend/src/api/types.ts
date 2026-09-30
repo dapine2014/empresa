@@ -467,3 +467,21 @@ export interface ApiKeyStatus {
   updatedBy: string | null
   agents: string[]
 }
+
+// Modo automático (spec 2026-09-29): reflejo a mano de AutonomyService.AutonomyView/AutonomyCommand.
+export interface AutonomyFront {
+  enabled: boolean
+  available: boolean
+  pauseReason: string | null
+}
+
+export interface AutonomyView {
+  products: AutonomyFront
+  clients: AutonomyFront
+  waiting: { orchestratorMissions: number; pendingDependencies: number }
+}
+
+export interface AutonomyCommand {
+  products?: boolean
+  clients?: boolean
+}

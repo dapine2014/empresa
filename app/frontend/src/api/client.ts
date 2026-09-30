@@ -2,6 +2,8 @@ import type {
   ActivityItem,
   AgentInfo,
   AgentStatusResponse,
+  AutonomyCommand,
+  AutonomyView,
   ChatResponse,
   DecisionCommand,
   DecisionResponse,
@@ -80,6 +82,9 @@ export const api = {
     ),
   products: () => request<ProductView[]>('/api/company/products'),
   orchestrator: () => request<OrchestratorView>('/api/company/orchestrator'),
+  autonomy: () => request<AutonomyView>('/api/company/autonomy'),
+  setAutonomy: (command: AutonomyCommand) =>
+    request<AutonomyView>('/api/company/autonomy', { method: 'PUT', body: JSON.stringify(command) }),
   apiKeys: () => request<ApiKeyStatus[]>('/api/company/api-keys'),
   updateApiKey: (provider: string, apiKey: string) =>
     request<ApiKeyStatus>(`/api/company/api-keys/${provider}`, { method: 'PUT', body: JSON.stringify({ apiKey }) }),
