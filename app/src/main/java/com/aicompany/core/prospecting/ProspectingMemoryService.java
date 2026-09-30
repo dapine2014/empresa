@@ -99,8 +99,20 @@ public class ProspectingMemoryService {
     }
 
     public List<Prospect> prospects() {
-        return read("MATCH (p:Product)-[:HAS_PROSPECT]->(c:Customer) RETURN p.id AS pid, p.name AS pname, c "
-                + "ORDER BY c.foundAt DESC", Map.of(), rec -> {
+        return prospectsWhere("true", Map.of());
+    }
+
+    public List<Prospect> prospectsOfRun(String runId) {
+        return prospectsWhere("c.prospectingRunId = $runId", Map.of("runId", runId));
+    }
+
+    public Optional<Prospect> prospect(String id) {
+        return prospectsWhere("c.id = $id", Map.of("id", id)).stream().findFirst();
+    }
+
+    private List<Prospect> prospectsWhere(String condition, Map<String, Object> params) {
+        return read("MATCH (p:Product)-[:HAS_PROSPECT]->(c:Customer) WHERE " + condition
+                + " RETURN p.id AS pid, p.name AS pname, c ORDER BY c.foundAt DESC", params, rec -> {
                     var c = rec.get("c");
                     return new Prospect(c.get("id").asString(), rec.get("pid").asString(), rec.get("pname").asString(null),
                             c.get("name").asString(), c.get("url").asString(null), c.get("contactEmail").asString(null),
