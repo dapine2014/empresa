@@ -42,7 +42,7 @@ class DevelopmentTeamStrategyTest {
             memory, runtime, workspace, validator, events, JsonMapper.builder().build(), sandbox, dependencies);
 
     private static TeamMissionContext context() {
-        var team = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "R", List.of("arquitectura backend"), "m"),
                 new TeamMemberInfo("frontend-ui", "Mila", "UI", "R", List.of("Game UI"), "m"),
                 new TeamMemberInfo("qa", "Vera", "QA", "R", List.of("QA"), "m")));

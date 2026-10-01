@@ -291,7 +291,7 @@ public class ProductOrchestrator {
         }
         var kind = sheet.kind() == null ? p.kind() : sheet.kind();
         var team = "SERVICE".equals(kind) ? TeamMemoryService.TEAM_CREATIVE_PRODUCT_INTELLIGENCE
-                : TeamMemoryService.TEAM_ENGINEERING;
+                : TeamMemoryService.TEAM_DEVELOPMENT;
         var missionId = "MISSION-ORQ-" + System.currentTimeMillis();
         // Idempotencia: el ciclo queda en BUILDING con la misión antes de lanzarla.
         var building = new OrchestratorRun(run.id(), OrchestratorStatus.BUILDING, p.id(), run.discoveryMissionId(),

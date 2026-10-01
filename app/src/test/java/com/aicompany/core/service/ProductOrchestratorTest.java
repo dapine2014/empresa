@@ -235,7 +235,7 @@ class ProductOrchestratorTest {
 
         verify(products).update(eq("P1"), argThat(c -> c.priceUsd() == 120.0 && "SOFTWARE".equals(c.kind())), eq("orchestrator"));
         verify(products).changeStatus(eq("P1"), eq(CatalogStatus.IN_CONSTRUCTION), anyString(), eq("orchestrator"));
-        verify(missions).start(startsWith("MISSION-ORQ-"), contains("Email Signature Generator"), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
+        verify(missions).start(startsWith("MISSION-ORQ-"), contains("Email Signature Generator"), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"));
         verify(products).linkMissions(eq("P1"), isNull(), argThat(l -> l.size() == 1), eq("orchestrator"));
         assertEquals(OrchestratorStatus.BUILDING, lastSaved().status());
         assertNotNull(lastSaved().buildMissionId());
@@ -594,7 +594,7 @@ class ProductOrchestratorTest {
         verify(products).update(eq("P1"), argThat(c -> "Email Signature Generator".equals(c.name())
                 && c.description().startsWith("Genera firmas")), eq("orchestrator"));
         verify(missions).start(anyString(), argThat(i -> i.contains("Email Signature Generator")
-                && i.contains("Genera firmas")), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
+                && i.contains("Genera firmas")), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"));
         verify(runs).addStep(anyString(), eq("BUILDING"), contains("Email Signature Generator"));
     }
 

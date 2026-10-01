@@ -218,7 +218,7 @@ class TeamWorkPlannerTest {
     // misión se cortó, aunque el reparto fijo le da la capa API en DOTNET_APP. Java lo sabe: es un error que se corrige.
     @Test
     void aConflictForAMemberThatOwnsALayerOfTheProfileIsCorrectedNotReported() {
-        var team = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("arq"), "m"),
                 new TeamMemberInfo("frontend-ui", "Mila", "Frontend", "FRONTEND_GAME_UI_SPECIALIST", List.of("ui"), "m")));
         var plan = new TeamPlan("API de facturas", null, null, List.of(
@@ -242,7 +242,7 @@ class TeamWorkPlannerTest {
     }
 
     private static TeamSnapshot engineering() {
-        return new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+        return new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND",
                         List.of("arquitectura backend"), "qwen3:8b"),
                 new TeamMemberInfo("qa", "Vera", "QA", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "qwen3:8b"),
@@ -264,11 +264,11 @@ class TeamWorkPlannerTest {
 
     @Test
     void theDevelopmentPromptPresentsTheStackCatalogAndDddRules() {
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
         var prompt = ArgumentCaptor.forClass(String.class);
         when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
 
-        var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+        var result = planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         assertTrue(prompt.getValue().contains("GODOT_DOTNET_GAME"));
         assertTrue(prompt.getValue().contains("src/<Ctx>.Domain"));
@@ -289,11 +289,11 @@ class TeamWorkPlannerTest {
     // por capa, repitiendo agentes y carpetas. El prompt aclara una sola tarea por agente y da un ejemplo.
     @Test
     void theDevelopmentPromptExplainsOneTaskPerAgentAcrossLayersWithAnExample() {
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
         var prompt = ArgumentCaptor.forClass(String.class);
         when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
 
-        planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+        planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         assertTrue(prompt.getValue().contains("UNA sola tarea"), prompt.getValue());
         assertTrue(prompt.getValue().contains("Neo/CLOUD_ARCHITECT_LEAD_BACKEND (líder) → DOMAIN"), prompt.getValue());
@@ -319,21 +319,21 @@ class TeamWorkPlannerTest {
 
     @Test
     void developmentPlansGetFiveAttempts() {
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
         when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(planWithOutsider());
 
         assertThrows(IllegalStateException.class,
-                () -> planner.plan("M-1", "TEAM-ENGINEERING", "x", TeamExecutionMode.DEVELOPMENT));
+                () -> planner.plan("M-1", "TEAM-DEVELOPMENT", "x", TeamExecutionMode.DEVELOPMENT));
         verify(ceoService, times(5)).planTeamWork(anyString(), anyString(), anyString(), anyString());
     }
 
     // Revisión 2026-09-26 (opción B): Java calcula rutas, VALIDATION y archivos de entrada antes de validar.
     @Test
     void developmentPlansAreResolvedBeforeValidation() {
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
         when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(dddPlan());
 
-        var result = planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+        var result = planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).findFirst().orElseThrow();
         // Revisión 3: el líder hace DOMAIN; en este equipo nadie tiene GAME, así que también recibe project.godot.
@@ -344,7 +344,7 @@ class TeamWorkPlannerTest {
 
     @Test
     void invalidDevelopmentPlansAreRetriedWithTheirCorrection() {
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(engineering());
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
         var noAssignments = new TeamPlan("Juego", null, null, List.of(
                 new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"), List.of()),
                 new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
@@ -354,7 +354,7 @@ class TeamWorkPlannerTest {
                 .thenReturn(noAssignments)
                 .thenReturn(dddPlan());
 
-        planner.plan("M-1", "TEAM-ENGINEERING", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+        planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
         // Revisión 3: DOMAIN ya siempre tiene dueño (el líder); el error que queda es la tarea faltante de Iris.
         assertTrue(prompt.getAllValues().get(1).contains("CORRECCIÓN"), prompt.getAllValues().get(1));

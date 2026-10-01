@@ -198,7 +198,7 @@ public class CeoService {
                                             "teamId", Map.of(
                                                     "type", "string",
                                                     "enum", List.of(
-                                                            TeamMemoryService.TEAM_ENGINEERING,
+                                                            TeamMemoryService.TEAM_DEVELOPMENT,
                                                             TeamMemoryService.TEAM_CREATIVE_PRODUCT_INTELLIGENCE,
                                                             TeamMemoryService.TEAM_MARKETING_GROWTH
                                                     ),
@@ -206,10 +206,11 @@ public class CeoService {
                                                     "Obligatorio solo si "
                                                             + "topic=TEAM_DETAILS: "
                                                             + "qué equipo. "
-                                                            + "TEAM-ENGINEERING: "
-                                                            + "arquitectura, "
-                                                            + "backend, devops, "
-                                                            + "frontend/UI, QA. "
+                                                            + "TEAM-DEVELOPMENT: "
+                                                            + "Development Group "
+                                                            + "(desarrollo de "
+                                                            + "software: apps, "
+                                                            + "servicios y juegos). "
                                                             + "TEAM-CREATIVE-PRODUCT-INTELLIGENCE: "
                                                             + "diseño de "
                                                             + "interacción/UX/"

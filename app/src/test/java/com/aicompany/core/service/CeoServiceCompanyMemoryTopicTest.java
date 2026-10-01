@@ -40,11 +40,11 @@ class CeoServiceCompanyMemoryTopicTest {
         var toolCall = Map.<String, Object>of(
                 "function", Map.of(
                         "name", "query_company_memory",
-                        "arguments", Map.of("topic", "TEAM_DETAILS", "teamId", "TEAM-ENGINEERING")
+                        "arguments", Map.of("topic", "TEAM_DETAILS", "teamId", "TEAM-DEVELOPMENT")
                 )
         );
 
-        assertEquals("TEAM_DETAILS:TEAM-ENGINEERING", ceoService.parseCompanyMemoryTopic(toolCall));
+        assertEquals("TEAM_DETAILS:TEAM-DEVELOPMENT", ceoService.parseCompanyMemoryTopic(toolCall));
     }
 
     @Test
@@ -79,7 +79,7 @@ class CeoServiceCompanyMemoryTopicTest {
         var toolCall = Map.<String, Object>of(
                 "function", Map.of(
                         "name", "search_web_evidence",
-                        "arguments", Map.of("topic", "TEAM_DETAILS", "teamId", "TEAM-ENGINEERING")
+                        "arguments", Map.of("topic", "TEAM_DETAILS", "teamId", "TEAM-DEVELOPMENT")
                 )
         );
 

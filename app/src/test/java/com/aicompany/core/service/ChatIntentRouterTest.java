@@ -677,7 +677,7 @@ class ChatIntentRouterTest {
     void routesEngineeringTeamQueryToADeterministicFormatting() {
 
         var snapshot = new TeamSnapshot(
-                "TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering",
+                "TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering",
                 List.of(
                         new TeamMemberInfo("engineering", "Neo", "Cloud Architect & Lead Backend",
                                 "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("AWS", "C#"), "qwen2.5-coder:14b"),
@@ -685,7 +685,7 @@ class ChatIntentRouterTest {
                                 "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA", "pruebas de carga"), "qwen3:8b")
                 )
         );
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(snapshot);
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(snapshot);
         when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(
                 new AgentStatusResponse("engineering", "Neo", "Cloud Architect & Lead Backend", "x",
                         "IDLE", null, null, null, Instant.now())
@@ -703,8 +703,8 @@ class ChatIntentRouterTest {
     @Test
     void engineeringTeamQueryNeverInventsDataWhenTeamNotYetRegistered() {
 
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(
-                new TeamSnapshot("TEAM-ENGINEERING", null, null, null, List.of())
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(
+                new TeamSnapshot("TEAM-DEVELOPMENT", null, null, null, List.of())
         );
 
         var response = router.route("cuéntame del engineering team");
@@ -843,8 +843,8 @@ class ChatIntentRouterTest {
         when(opportunityMemory.listRecent(20)).thenReturn(List.of());
         when(finance.summary(null)).thenReturn(new FinanceSummary(50, 100.0, 40.0, 60.0, 110.0, List.of()));
         when(conversationMemory.lastMentioned()).thenReturn(Optional.empty());
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(
-                new TeamSnapshot("TEAM-ENGINEERING", null, null, null, List.of())
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(
+                new TeamSnapshot("TEAM-DEVELOPMENT", null, null, null, List.of())
         );
 
         router.route("Hola, ¿cómo estás?");
@@ -863,7 +863,7 @@ class ChatIntentRouterTest {
         assertTrue(companyMemoryQuery.apply("COMPANY_STATUS").contains("Estado actual de Forjai"));
         assertTrue(companyMemoryQuery.apply("PRODUCTS").contains("catálogo"));
         assertTrue(companyMemoryQuery.apply("ALGO_INEXISTENTE").contains("Dato no reconocido"));
-        assertTrue(companyMemoryQuery.apply("TEAM_DETAILS:TEAM-ENGINEERING").contains("No tengo ese dato registrado"));
+        assertTrue(companyMemoryQuery.apply("TEAM_DETAILS:TEAM-DEVELOPMENT").contains("No tengo ese dato registrado"));
     }
 
     @Test
@@ -1168,14 +1168,14 @@ class ChatIntentRouterTest {
 
     @Test
     void anExplicitExactTeamIdStartsATeamMission() {
-        var message = "CEO, inicia una misión para TEAM-ENGINEERING para crear un videojuego.";
-        when(missionService.start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING")))
-                .thenReturn(created("MISSION-1", "TEAM-ENGINEERING"));
+        var message = "CEO, inicia una misión para TEAM-DEVELOPMENT para crear un videojuego.";
+        when(missionService.start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT")))
+                .thenReturn(created("MISSION-1", "TEAM-DEVELOPMENT"));
 
         var response = router.route(message);
 
-        verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-ENGINEERING"));
-        assertTrue(response.contains("TEAM-ENGINEERING"));
+        verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"));
+        assertTrue(response.contains("TEAM-DEVELOPMENT"));
     }
 
     @Test
@@ -1211,7 +1211,7 @@ class ChatIntentRouterTest {
     @Test
     void theMissionStatusLookupShowsTeamCommitsAndValidation() {
         var mission = new MissionResponse("MISSION-77", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 95, "Recomendación",
-                "ok", Instant.parse("2026-09-24T00:00:00Z"), null, "TEAM-ENGINEERING");
+                "ok", Instant.parse("2026-09-24T00:00:00Z"), null, "TEAM-DEVELOPMENT");
         when(missionMemory.find("MISSION-77")).thenReturn(Optional.of(mission));
         when(missionMemory.tasks("MISSION-77")).thenReturn(List.of(
                 new AgentTask("MISSION-77-BACKEND", "MISSION-77", "backend", "GAME_LOGIC", "COMPLETED", "{}",
@@ -1223,7 +1223,7 @@ class ChatIntentRouterTest {
 
         var response = router.route("¿Cómo va MISSION-77?");
 
-        assertTrue(response.contains("TEAM-ENGINEERING"));
+        assertTrue(response.contains("TEAM-DEVELOPMENT"));
         assertTrue(response.contains("backend=abcdef1"));
         assertTrue(response.contains("STATICALLY_VALIDATED"));
     }
@@ -1761,7 +1761,7 @@ class ChatIntentRouterTest {
                 Instant.parse("2026-09-28T11:00:00Z"), null);
         when(orchestrator.current()).thenReturn(new ProductOrchestrator.OrchestratorView(run, List.of(
                 new com.aicompany.core.model.OrchestratorStep(Instant.parse("2026-09-28T11:00:00Z"), "BUILDING",
-                        "Lanzó MISSION-ORQ-2 (TEAM-ENGINEERING)")), true, null));
+                        "Lanzó MISSION-ORQ-2 (TEAM-DEVELOPMENT)")), true, null));
         when(products.view("P1")).thenReturn(Optional.of(productView(
                 catalogProduct("P1", "Landing", com.aicompany.core.model.CatalogStatus.IN_CONSTRUCTION, 120), List.of())));
     }

@@ -52,7 +52,7 @@ class CompanyControllerTest {
 
     @Test
     void teamsEndpointDelegatesEntirelyToTeamMemoryServiceSnapshotAll() {
-        var engineering = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering",
+        var engineering = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering",
                 List.of(new TeamMemberInfo("engineering", "Neo", "Cloud Architect & Lead Backend",
                         "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("AWS"), "qwen3:8b")));
         when(teamMemory.snapshotAll()).thenReturn(List.of(engineering));

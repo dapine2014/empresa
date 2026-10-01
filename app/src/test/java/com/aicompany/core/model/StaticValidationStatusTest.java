@@ -71,8 +71,9 @@ class StaticValidationStatusTest {
     }
 
     @Test
-    void onlyEngineeringUsesTheDevelopmentMode() {
-        assertEquals(TeamExecutionMode.DEVELOPMENT, TeamExecutionMode.forTeamType("ENGINEERING"));
+    void onlyTheDevelopmentGroupUsesTheDevelopmentMode() {
+        assertEquals(TeamExecutionMode.DEVELOPMENT, TeamExecutionMode.forTeamType("DEVELOPMENT"));
+        assertEquals(TeamExecutionMode.ANALYSIS, TeamExecutionMode.forTeamType("ENGINEERING"));
         assertEquals(TeamExecutionMode.ANALYSIS, TeamExecutionMode.forTeamType("MARKETING_GROWTH"));
         assertEquals(TeamExecutionMode.ANALYSIS, TeamExecutionMode.forTeamType("CREATIVE_PRODUCT_INTELLIGENCE"));
     }

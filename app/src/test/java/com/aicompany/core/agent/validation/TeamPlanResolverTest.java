@@ -24,7 +24,7 @@ class TeamPlanResolverTest {
         return new TeamMemberInfo(id, id, "rol", "ROLE", capabilities, "qwen3:8b");
     }
 
-    private static final TeamSnapshot ENGINEERING = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE",
+    private static final TeamSnapshot ENGINEERING = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE",
             "engineering", List.of(
             member("engineering", List.of("arquitectura backend")),
             member("qa", List.of("QA")),
@@ -190,7 +190,7 @@ class TeamPlanResolverTest {
     }
 
     // Revisión 2 (opción 1, tras MISSION-DDD-VERIFY-4/-5): las capas salen del roleCode, no del modelo.
-    private static final TeamSnapshot REAL_ENGINEERING = new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE",
+    private static final TeamSnapshot REAL_ENGINEERING = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE",
             "engineering", List.of(
             new TeamMemberInfo("engineering", "Neo", "rol", "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("arquitectura backend"), "m"),
             new TeamMemberInfo("qa", "Vera", "rol", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "m"),

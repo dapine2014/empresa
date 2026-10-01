@@ -36,12 +36,14 @@ public class TeamMemoryService {
     private static final Logger log =
             LoggerFactory.getLogger(TeamMemoryService.class);
 
-    public static final String TEAM_ENGINEERING = "TEAM-ENGINEERING";
+    public static final String TEAM_DEVELOPMENT = "TEAM-DEVELOPMENT";
+    /** Id anterior del equipo de desarrollo; solo lo usa la migración de arranque. */
+    static final String LEGACY_TEAM_ENGINEERING = "TEAM-ENGINEERING";
     public static final String TEAM_CREATIVE_PRODUCT_INTELLIGENCE = "TEAM-CREATIVE-PRODUCT-INTELLIGENCE";
     public static final String TEAM_MARKETING_GROWTH = "TEAM-MARKETING-GROWTH";
 
     public static final Set<String> KNOWN_TEAM_IDS = Set.of(
-            TEAM_ENGINEERING, TEAM_CREATIVE_PRODUCT_INTELLIGENCE, TEAM_MARKETING_GROWTH
+            TEAM_DEVELOPMENT, TEAM_CREATIVE_PRODUCT_INTELLIGENCE, TEAM_MARKETING_GROWTH
     );
 
     /** Tipo real del equipo desde el catálogo fijo en código ({@link #TEAMS}); vacío si el id no existe. */
@@ -50,6 +52,14 @@ public class TeamMemoryService {
                 .filter(team -> team.teamId().equals(teamId))
                 .map(TeamDefinition::teamType)
                 .findFirst();
+    }
+
+    /** Todas las capabilities del catálogo fijo (para verificar que sean atómicas). */
+    static List<String> allCapabilities() {
+        return TEAMS.stream()
+                .flatMap(team -> team.roles().stream())
+                .flatMap(role -> role.capabilities().stream())
+                .toList();
     }
 
     private record RoleDefinition(
@@ -68,59 +78,41 @@ public class TeamMemoryService {
 
     private static final List<TeamDefinition> TEAMS = List.of(
 
-            new TeamDefinition(TEAM_ENGINEERING, "Engineering Team", "ENGINEERING", "engineering", List.of(
-                    new RoleDefinition("engineering", "CLOUD_ARCHITECT_LEAD_BACKEND", List.of(
-                            "arquitectura de soluciones", "arquitectura cloud AWS", "arquitectura backend",
-                            "decisiones técnicas", "diseño de sistemas",
-                            "diseño de arquitectura de videojuegos y aplicaciones cuando aplique",
-                            "descomposición técnica del trabajo", "liderazgo técnico", "revisión técnica",
-                            "coordinación del Engineering Team", "AWS", "bases de datos SQL",
-                            "bases de datos NoSQL", "C#", "Java", "JavaScript / TypeScript", "Flutter"
-                    )),
-                    new RoleDefinition("qa", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of(
-                            "QA", "pruebas funcionales", "pruebas de integración", "pruebas de regresión",
-                            "pruebas de rendimiento", "pruebas de carga", "validación de estabilidad",
-                            "análisis de errores", "playtesting cuando corresponda",
-                            "validación de performance", "validación de calidad"
-                    )),
-                    new RoleDefinition("devops", "CLOUD_DB_SRE_DEVOPS", List.of(
-                            "PostgreSQL", "Redis", "bases de datos SQL", "bases de datos NoSQL",
-                            "bases de datos cloud", "infraestructura", "SRE", "observabilidad",
-                            "rendimiento", "backups", "recuperación", "Terraform / Pulumi",
-                            "operación cloud AWS", "capacidades de infraestructura cuando el Proyecto B esté implementado"
-                    )),
-                    new RoleDefinition("backend", "DEV_BACKEND_INTEGRATIONS", List.of(
-                            "backend", "APIs", "integraciones", "microservicios", "lógica de negocio",
-                            "servicios backend", "integraciones con terceros",
-                            "componentes backend para aplicaciones y videojuegos",
-                            "C#", "Java", "JavaScript / TypeScript", "Flutter"
-                    )),
-                    new RoleDefinition("frontend-ui", "FRONTEND_GAME_UI_SPECIALIST", List.of(
-                            "frontend", "interfaces web", "UI", "UX técnica", "Game UI", "HUD", "menús",
-                            "interfaces de aplicaciones y videojuegos",
-                            "C#", "Java", "JavaScript / TypeScript", "Flutter"
-                    ))
+            new TeamDefinition(TEAM_DEVELOPMENT, "Development Group", "DEVELOPMENT", "engineering", List.of(
+                    new RoleDefinition("product-owner", "PRODUCT_OWNER", List.of(
+                            "requirements", "user-stories", "bdd", "acceptance-criteria", "backlog")),
+                    new RoleDefinition("engineering", "TECH_LEAD", List.of(
+                            "architecture", "planning", "technical-review", "integration")),
+                    new RoleDefinition("backend", "BACKEND", List.of(
+                            "backend", "api", "csharp", "dotnet", "business-logic", "integrations", "authentication")),
+                    new RoleDefinition("devops", "DATA_ARCHITECT", List.of(
+                            "postgresql", "data-modeling", "persistence", "migrations", "ef-core")),
+                    new RoleDefinition("frontend-ui", "UI_UX", List.of(
+                            "flutter", "dart", "ui", "ux", "design-system", "web-ui", "game-ui")),
+                    new RoleDefinition("interaction-design", "GAME_DEV", List.of(
+                            "godot", "csharp", "gameplay", "game-loop", "physics")),
+                    new RoleDefinition("specialist-3d", "SPECIALIST_3D", List.of(
+                            "blender", "3d-modeling", "rigging", "gltf")),
+                    new RoleDefinition("product", "CREATIVE", List.of(
+                            "2d-art", "textures", "audio", "sfx")),
+                    new RoleDefinition("qa", "QA", List.of(
+                            "qa", "bdd", "tests", "regression", "code-review")),
+                    new RoleDefinition("delivery", "DEVOPS", List.of(
+                            "ci-cd", "docker", "aws", "packaging"))
             )),
 
+            // Kael pasó al Development Group (spec 2026-10-01 §1): Creative lo lidera Maya.
             new TeamDefinition(TEAM_CREATIVE_PRODUCT_INTELLIGENCE, "Creative / Product Intelligence",
-                    "CREATIVE_PRODUCT_INTELLIGENCE", "interaction-design", List.of(
-                    new RoleDefinition("interaction-design", "INTERACTIVE_LOGIC_PRODUCT_DESIGNER", List.of(
-                            "UX y arquitectura de interacción", "flujos de usuario", "sistemas de gamificación",
-                            "engagement y retención", "game design", "game loop", "reglas y mecánicas",
-                            "curva de aprendizaje", "balance de gameplay",
-                            "economía interna de productos interactivos"
-                    )),
+                    "CREATIVE_PRODUCT_INTELLIGENCE", "visual-design", List.of(
                     new RoleDefinition("visual-design", "VISUAL_ASSET_DIRECTOR", List.of(
                             "identidad visual", "dirección artística", "branding", "ilustraciones",
-                            "assets de marketing", "assets 2D/3D", "sprites", "animaciones", "iluminación",
-                            "consistencia visual del producto", "dirección visual para videojuegos y aplicaciones"
-                    )),
+                            "assets de marketing", "assets 2D", "assets 3D", "sprites", "animaciones", "iluminación",
+                            "consistencia visual", "dirección visual")),
                     new RoleDefinition("telemetry", "TELEMETRY_ANALYTICS", List.of(
                             "análisis de producto", "funnels de conversión", "activación", "retención",
                             "churn", "comportamiento de usuarios", "métricas de sesión",
                             "telemetría de videojuegos", "análisis de gameplay", "análisis de monetización",
-                            "experimentación", "generación de insights y recomendaciones basadas en datos"
-                    ))
+                            "experimentación", "insights de datos"))
             )),
 
             new TeamDefinition(TEAM_MARKETING_GROWTH, "Marketing & Growth",
@@ -128,16 +120,12 @@ public class TeamMemoryService {
                     new RoleDefinition("growth-content", "GROWTH_CONTENT_COMMUNITY", List.of(
                             "growth", "marketing de contenidos", "SEO", "adquisición orgánica",
                             "Product-Led Growth", "newsletters", "redes sociales", "devlogs", "campañas",
-                            "estrategia de adquisición", "construcción de audiencia",
-                            "coordinación de iniciativas de comunidad"
-                    )),
+                            "estrategia de adquisición", "construcción de audiencia", "iniciativas de comunidad")),
                     new RoleDefinition("community", "COMMUNITY_MANAGER", List.of(
-                            "gestión diaria de comunidades", "interacción con usuarios", "moderación",
+                            "gestión de comunidades", "interacción con usuarios", "moderación",
                             "Discord", "redes sociales", "recopilación de feedback",
-                            "comunicación con la comunidad", "eventos y actividades",
-                            "identificación de necesidades y problemas de usuarios",
-                            "escalamiento de feedback relevante hacia Product, Growth y CEO"
-                    ))
+                            "comunicación con comunidad", "eventos comunitarios",
+                            "necesidades de usuarios", "escalamiento de feedback"))
             ))
     );
 
@@ -160,12 +148,45 @@ public class TeamMemoryService {
     public void ensureAllTeams() {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
+                migrateEngineeringTeam(tx);
                 for (var team : TEAMS) {
                     ensureTeam(tx, team);
                 }
+                removeStaleMemberships(tx);
                 return null;
             });
         }
+    }
+
+    /**
+     * Spec 2026-10-01 §1: TEAM-ENGINEERING pasa a llamarse TEAM-DEVELOPMENT. Idempotente: si el equipo nuevo
+     * ya existe no hace nada; las misiones viejas pasan a apuntar al id nuevo.
+     */
+    private void migrateEngineeringTeam(TransactionContext tx) {
+        tx.run("MATCH (old:Team {id:$legacy}) WHERE NOT EXISTS { MATCH (:Team {id:$current}) } "
+                        + "SET old.id = $current",
+                Map.of("legacy", LEGACY_TEAM_ENGINEERING, "current", TEAM_DEVELOPMENT));
+        tx.run("MATCH (m:Mission {teamId:$legacy}) SET m.teamId = $current",
+                Map.of("legacy", LEGACY_TEAM_ENGINEERING, "current", TEAM_DEVELOPMENT));
+    }
+
+    /**
+     * Un agente que cambió de equipo (Kael, de Creative a Development) conserva MEMBER_OF/LEADS viejos porque
+     * ensureTeam solo hace MERGE. Se borran las relaciones con equipos del catálogo que el catálogo ya no declara.
+     */
+    private void removeStaleMemberships(TransactionContext tx) {
+        var members = new ArrayList<String>();
+        var leaders = new ArrayList<String>();
+        for (var team : TEAMS) {
+            team.roles().forEach(role -> members.add(role.agentId() + "|" + team.teamId()));
+            leaders.add(team.leaderAgentId() + "|" + team.teamId());
+        }
+        tx.run("MATCH (a:Agent)-[r:MEMBER_OF]->(t:Team) WHERE t.id IN $teams AND NOT (a.id + '|' + t.id) IN $pairs "
+                        + "DELETE r",
+                Map.of("teams", new ArrayList<>(KNOWN_TEAM_IDS), "pairs", members));
+        tx.run("MATCH (a:Agent)-[r:LEADS]->(t:Team) WHERE t.id IN $teams AND NOT (a.id + '|' + t.id) IN $pairs "
+                        + "DELETE r",
+                Map.of("teams", new ArrayList<>(KNOWN_TEAM_IDS), "pairs", leaders));
     }
 
     private void ensureTeam(TransactionContext tx, TeamDefinition team) {

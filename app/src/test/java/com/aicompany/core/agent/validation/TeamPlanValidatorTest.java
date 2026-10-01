@@ -21,7 +21,7 @@ class TeamPlanValidatorTest {
     }
 
     private static TeamSnapshot engineeringTeam() {
-        return new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+        return new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
                 member("engineering", "Neo", List.of("arquitectura backend", "descomposición técnica del trabajo")),
                 member("qa", "Vera", List.of("QA", "análisis de errores")),
                 member("devops", "Diego", List.of("infraestructura", "SRE")),
