@@ -151,7 +151,8 @@ capas (p. ej. PRESENTATION depende de DOMAIN). Neo puede agregar aristas, no qui
 `TeamPlanValidator` (reglas de desarrollo reescritas) rechaza si:
 - un agente no existe, no es miembro o su roleCode no está soportado en esta fase;
 - `selectedStack` no está soportado (fase 1: `FLUTTER_WEB_APP`, `DOTNET_APP`);
-- una capa del perfil o el `entryPoint` queda sin dueño;
+- la capa DOMAIN de algún contexto o los archivos de entrada del perfil quedan sin dueño (las demás capas pueden
+  quedar vacías; Mila toma DOMAIN/APPLICATION/INFRASTRUCTURE por respaldo si no participa Iris);
 - una `requiredCapability` no es atómica (contiene `,` `;` `/` o más de 3 palabras) o no figura textualmente entre las
   del agente (nunca se modifican las capacidades para que el plan pase);
 - un agente tiene más de una tarea, salvo el agente `QA`, que tiene exactamente una WORK (tests) y una VALIDATION;
