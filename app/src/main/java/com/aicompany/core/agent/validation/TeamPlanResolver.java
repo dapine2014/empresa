@@ -10,25 +10,23 @@ import com.aicompany.core.model.TeamSnapshot;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Java decide lo mecánico del plan de desarrollo (spec 2026-09-26 §1,
- * revisión opción B): a partir de las capas que el líder asignó a cada
- * miembro calcula los ownedPaths desde el catálogo, asigna la única tarea
- * VALIDATION al primer miembro con la capability QA, y le da al líder los
- * archivos de entrada del perfil. Verificado en vivo: qwen3:8b no convergía
- * haciendo esto él mismo. Los errores son accionables y se reintentan.
+ * Java decide lo mecánico del plan de desarrollo (spec 2026-10-01 §4, revisión 4): Neo elige qué agentes
+ * participan; las capas y rutas de cada uno salen de {@link RoleLayerCatalog}; el agente QA termina siempre con
+ * una tarea WORK de tests y una VALIDATION de revisión; los archivos de entrada van al dueño de la capa más
+ * externa. Nunca reescribe requiredCapabilities: si no son reales, lo rechaza el validador.
  */
 @Component
 public class TeamPlanResolver {
+
+    static final String REVIEW_ACTION = "CODE_REVIEW";
 
     public record Resolution(TeamPlan plan, List<String> errors) {
     }
@@ -42,123 +40,121 @@ public class TeamPlanResolver {
 
         var errors = new ArrayList<String>();
         var contexts = plan.contextNames();
-        var qaAgentId = team.members().stream()
-                .filter(m -> m.capabilities().contains("QA"))
-                .map(TeamMemberInfo::agentId)
-                .findFirst()
-                .orElse(null);
+        var membersById = new LinkedHashMap<String, TeamMemberInfo>();
+        team.members().forEach(member -> membersById.put(member.agentId(), member));
 
-        var ownerByRoot = new HashMap<String, String>();
+        var merged = mergeRepeatedTasks(plan.tasksOrEmpty());
+
+        var roleCodeByAgent = new LinkedHashMap<String, String>();
+        for (var task : merged) {
+            var member = membersById.get(task.agentId());
+            if (member != null) {
+                roleCodeByAgent.put(task.agentId(), member.roleCode());
+            }
+        }
+        var layersByAgent = RoleLayerCatalog.assign(roleCodeByAgent, profile.get().layers());
+
+        var ownerByLayerRoot = new LinkedHashMap<String, String>();
         var resolved = new ArrayList<PlannedTask>();
-        var needFreeLayers = new ArrayList<String>();
 
-        for (var task : mergeRepeatedTasks(plan.tasksOrEmpty())) {
+        for (var task : merged) {
 
-            if (Objects.equals(task.agentId(), qaAgentId)) {
-                resolved.add(withKindAndPaths(task, TeamPlan.KIND_VALIDATION, List.of()));
+            var member = membersById.get(task.agentId());
+            var role = member == null ? Optional.<RoleLayerCatalog.RoleLayers>empty()
+                    : RoleLayerCatalog.of(member.roleCode());
+            var writesCode = role.isPresent() && role.get().writesCode() && RoleLayerCatalog.enabledNow(member.roleCode());
+
+            if (!writesCode) {
+                resolved.add(task);
                 continue;
             }
 
-            var paths = new LinkedHashSet<String>();
-            var roleLayers = team.members().stream()
-                    .filter(m -> m.agentId().equals(task.agentId()))
-                    .findFirst()
-                    .flatMap(m -> RoleLayerCatalog.layersFor(m.roleCode()));
-            var assignments = roleLayers
-                    .map(layers -> roleAssignments(profile.get(), contexts, layers))
-                    .orElse(task.assignmentsOrEmpty());
-
-            for (var assignment : assignments) {
-                resolveAssignment(profile.get(), contexts, task.agentId(), assignment, ownerByRoot, errors, needFreeLayers)
-                        .ifPresent(paths::add);
+            var paths = new ArrayList<String>();
+            for (var layer : layersByAgent.getOrDefault(task.agentId(), List.of())) {
+                for (var root : roots(profile.get(), contexts, layer)) {
+                    paths.add(root);
+                    ownerByLayerRoot.put(root, task.agentId());
+                }
             }
 
-            if (roleLayers.isEmpty() && assignments.isEmpty()) {
-                needFreeLayers.add("La tarea de " + task.agentId() + " no tiene assignments: asígnale al menos una capa "
-                        + "{context, layer} de " + profile.get().name() + ".");
+            if (paths.isEmpty()) {
+                errors.add(task.agentId() + " (" + member.roleCode() + ") no tiene capas en " + profile.get().name()
+                        + ": otro miembro elegido ya las cubre o el perfil no las tiene. Quítalo del plan.");
             }
 
-            resolved.add(withKindAndPaths(task, TeamPlan.KIND_WORK, new ArrayList<>(paths)));
+            resolved.add(withKindAndPaths(task, TeamPlan.KIND_WORK, task.action(), paths));
+
+            if ("QA".equals(member.roleCode())) {
+                resolved.add(new PlannedTask(task.agentId(), TeamPlan.KIND_VALIDATION, REVIEW_ACTION,
+                        "Revisar el código commiteado y los resultados reales del sandbox.",
+                        task.requiredCapabilities(), List.of(), List.of()));
+            }
         }
 
         for (var context : contexts) {
-            var domainRoot = profile.get().resolveRoot(context, Layer.DOMAIN);
-            if (domainRoot.isPresent() && !ownerByRoot.containsKey(domainRoot.get())) {
-                errors.add("La capa DOMAIN del contexto " + context + " no tiene dueño: asígnala a un miembro.");
+            profile.get().resolveRoot(context, Layer.DOMAIN)
+                    .filter(root -> !ownerByLayerRoot.containsKey(root))
+                    .ifPresent(root -> errors.add("La capa DOMAIN del contexto " + context + " no tiene dueño: "
+                            + "incluye a un miembro que escriba domain (BACKEND o UI_UX)."));
+        }
+
+        addEntryFiles(profile.get(), contexts, ownerByLayerRoot, resolved, errors);
+
+        return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
+                List.of(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage()), errors);
+    }
+
+    private static List<String> roots(StackProfile profile, List<String> contexts, Layer layer) {
+        if (profile.isSharedLayer(layer)) {
+            return profile.resolveRoot(null, layer).map(List::of).orElse(List.of());
+        }
+        var roots = new ArrayList<String>();
+        for (var context : contexts) {
+            profile.resolveRoot(context, layer).ifPresent(roots::add);
+        }
+        return roots;
+    }
+
+    /**
+     * Verificado en vivo (MISSION-SANDBOX-VERIFY-22): los archivos de entrada (composition root) van al dueño de
+     * la capa más externa, que se genera después de las demás. Sin dueño de esas capas es un error del plan.
+     */
+    private static void addEntryFiles(StackProfile profile, List<String> contexts,
+                                      Map<String, String> ownerByLayerRoot, List<PlannedTask> tasks,
+                                      List<String> errors) {
+
+        var entryFiles = profile.leaderOwnedPaths();
+        if (entryFiles.isEmpty()) {
+            return;
+        }
+
+        String owner = null;
+        for (var layer : List.of(Layer.PRESENTATION, Layer.API, Layer.GAME)) {
+            for (var root : roots(profile, contexts, layer)) {
+                if (owner == null && ownerByLayerRoot.containsKey(root)) {
+                    owner = ownerByLayerRoot.get(root);
+                }
             }
         }
 
-        if (!needFreeLayers.isEmpty()) {
-            var free = freeLayers(profile.get(), contexts, ownerByRoot);
-            var suffix = free.isEmpty()
-                    ? " No quedan capas libres: reparte de nuevo las capas entre los miembros."
-                    : " Capas libres: " + free + ".";
-            needFreeLayers.forEach(error -> errors.add(error + suffix));
+        if (owner == null) {
+            errors.add("Los archivos de entrada " + entryFiles + " de " + profile.name() + " necesitan un dueño de "
+                    + "la capa PRESENTATION, API o GAME: incluye a ese miembro en el plan.");
+            return;
         }
 
-        addLeaderFiles(profile.get(), entryFilesOwner(profile.get(), contexts, team.leaderAgentId(), ownerByRoot),
-                ownerByRoot, resolved);
-
-        return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(),
-                withRealCapabilities(resolved, team),
-                plan.participationConflicts(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage()),
-                errors);
-    }
-
-    private static Optional<String> resolveAssignment(
-            StackProfile profile, List<String> contexts, String agentId, TeamPlan.LayerAssignment assignment,
-            HashMap<String, String> ownerByRoot, List<String> errors, List<String> needFreeLayers) {
-
-        if (assignment == null) {
-            return Optional.empty();
-        }
-
-        var layer = parseLayer(assignment.layer());
-        if (layer.isEmpty() || !profile.layers().contains(layer.get())) {
-            errors.add("La capa \"" + assignment.layer() + "\" de " + agentId + " no existe en " + profile.name()
-                    + ". Capas disponibles: " + profile.layers() + ".");
-            return Optional.empty();
-        }
-
-        var shared = profile.isSharedLayer(layer.get());
-        if (!shared && !contexts.contains(assignment.context())) {
-            errors.add("El contexto \"" + assignment.context() + "\" asignado a " + agentId
-                    + " no está en boundedContexts " + contexts + ".");
-            return Optional.empty();
-        }
-
-        var root = profile.resolveRoot(assignment.context(), layer.get()).orElseThrow();
-        var owner = ownerByRoot.putIfAbsent(root, agentId);
-
-        if (owner != null && !owner.equals(agentId)) {
-            var what = shared ? "La capa " + layer.get() : "La capa " + layer.get() + " del contexto " + assignment.context();
-            needFreeLayers.add(what + " está asignada a " + owner + " y a " + agentId
-                    + ": déjala en uno solo y da al otro una capa libre.");
-            return Optional.empty();
-        }
-
-        return Optional.of(root);
-    }
-
-    /** Revisión 2: las capas del rol, las que tenga el perfil, en todos los contextos. */
-    private static List<TeamPlan.LayerAssignment> roleAssignments(
-            StackProfile profile, List<String> contexts, List<Layer> roleLayers) {
-
-        var assignments = new ArrayList<TeamPlan.LayerAssignment>();
-        for (var layer : roleLayers) {
-            if (!profile.layers().contains(layer)) {
-                continue;
-            }
-            if (profile.isSharedLayer(layer)) {
-                assignments.add(new TeamPlan.LayerAssignment(null, layer.name()));
-            } else {
-                contexts.forEach(context -> assignments.add(new TeamPlan.LayerAssignment(context, layer.name())));
+        for (int i = 0; i < tasks.size(); i++) {
+            var task = tasks.get(i);
+            if (task.agentId().equals(owner) && TeamPlan.KIND_WORK.equals(task.kind())) {
+                var paths = new ArrayList<>(task.ownedPathsOrEmpty());
+                entryFiles.stream().filter(file -> !paths.contains(file)).forEach(paths::add);
+                tasks.set(i, withKindAndPaths(task, task.kind(), task.action(), paths));
+                return;
             }
         }
-        return assignments;
     }
 
-    /** Corrección mecánica: tareas repetidas de un mismo agente se unen (rutas y tipo los calcula Java igual). */
+    /** Tareas repetidas de un mismo agente se unen (Java calcula rutas y tipos igual). */
     private static List<PlannedTask> mergeRepeatedTasks(List<PlannedTask> tasks) {
 
         var byAgent = new LinkedHashMap<String, PlannedTask>();
@@ -174,107 +170,17 @@ public class TeamPlanResolver {
             }
             var capabilities = new LinkedHashSet<>(previous.requiredCapabilitiesOrEmpty());
             capabilities.addAll(task.requiredCapabilitiesOrEmpty());
-            var assignments = new ArrayList<>(previous.assignmentsOrEmpty());
-            assignments.addAll(task.assignmentsOrEmpty());
-            byAgent.put(task.agentId(), new PlannedTask(previous.agentId(), previous.kind(), previous.action(),
+            var keep = TeamPlan.KIND_WORK.equals(previous.kind()) ? previous : task;
+            byAgent.put(task.agentId(), new PlannedTask(keep.agentId(), TeamPlan.KIND_WORK, keep.action(),
                     previous.objective() + " / " + task.objective(), new ArrayList<>(capabilities),
-                    previous.ownedPathsOrEmpty(), assignments));
+                    List.of(), List.of()));
         }
 
         return new ArrayList<>(byAgent.values());
     }
 
-    private static List<String> freeLayers(StackProfile profile, List<String> contexts, HashMap<String, String> ownerByRoot) {
-        var free = new ArrayList<String>();
-        for (var layer : profile.layers()) {
-            if (profile.isSharedLayer(layer)) {
-                profile.resolveRoot(null, layer).filter(root -> !ownerByRoot.containsKey(root))
-                        .ifPresent(root -> free.add(layer.name()));
-                continue;
-            }
-            for (var context : contexts) {
-                profile.resolveRoot(context, layer).filter(root -> !ownerByRoot.containsKey(root))
-                        .ifPresent(root -> free.add(layer.name() + " de " + context));
-            }
-        }
-        return free;
-    }
-
-    /**
-     * Verificado en vivo (MISSION-SANDBOX-VERIFY-22): lib/main.dart es el composition root y el líder (DOMAIN) lo
-     * escribía primero, sin pantalla todavía; la presentación terminaba cableando la infraestructura (violación
-     * DDD). Los archivos de entrada van al dueño de la capa más externa (API/PRESENTATION/GAME), que se genera
-     * después de las demás; si no hay, al líder.
-     */
-    private static String entryFilesOwner(
-            StackProfile profile, List<String> contexts, String leaderId, HashMap<String, String> ownerByRoot) {
-        for (var layer : List.of(Layer.PRESENTATION, Layer.API, Layer.GAME)) {
-            for (var entry : ownerByRoot.entrySet()) {
-                var located = profile.locate(entry.getKey() + "/x", contexts)
-                        .filter(location -> location.layer() == layer);
-                if (located.isPresent()) {
-                    return entry.getValue();
-                }
-            }
-        }
-        return leaderId;
-    }
-
-    private static void addLeaderFiles(
-            StackProfile profile, String leaderId, HashMap<String, String> ownerByRoot, List<PlannedTask> tasks) {
-
-        for (int i = 0; i < tasks.size(); i++) {
-
-            var task = tasks.get(i);
-            if (!Objects.equals(task.agentId(), leaderId) || TeamPlan.KIND_VALIDATION.equals(task.kind())) {
-                continue;
-            }
-
-            var paths = new ArrayList<>(task.ownedPathsOrEmpty());
-            for (var file : profile.leaderOwnedPaths()) {
-                var covered = ownerByRoot.keySet().stream().anyMatch(root -> OwnedPaths.covers(root, file));
-                if (!covered && !paths.contains(file)) {
-                    paths.add(file);
-                }
-            }
-
-            tasks.set(i, withKindAndPaths(task, task.kind(), paths));
-        }
-    }
-
-    private static Optional<Layer> parseLayer(String layer) {
-        if (layer == null) {
-            return Optional.empty();
-        }
-        var normalized = layer.strip().toUpperCase(Locale.ROOT);
-        return Arrays.stream(Layer.values()).filter(l -> l.name().equals(normalized)).findFirst();
-    }
-
-    private static PlannedTask withKindAndPaths(PlannedTask task, String kind, List<String> ownedPaths) {
-        return new PlannedTask(task.agentId(), kind, task.action(), task.objective(),
-                task.requiredCapabilities(), List.copyOf(ownedPaths), task.assignments());
-    }
-
-    /**
-     * Verificado en vivo (MISSION-SANDBOX-VERIFY-17): en desarrollo las capas salen del rol, así que las
-     * capabilities son etiquetas; se conservan las reales del miembro o, si no acertó ninguna, su primera real.
-     */
-    private static List<PlannedTask> withRealCapabilities(List<PlannedTask> tasks, TeamSnapshot team) {
-        var result = new ArrayList<PlannedTask>();
-        for (var task : tasks) {
-            var member = team.members().stream().filter(m -> m.agentId().equals(task.agentId())).findFirst();
-            if (member.isEmpty() || member.get().capabilities().isEmpty()) {
-                result.add(task);
-                continue;
-            }
-            var real = task.requiredCapabilitiesOrEmpty().stream()
-                    .filter(member.get().capabilities()::contains)
-                    .distinct()
-                    .toList();
-            var capabilities = real.isEmpty() ? List.of(member.get().capabilities().get(0)) : real;
-            result.add(new PlannedTask(task.agentId(), task.kind(), task.action(), task.objective(),
-                    capabilities, task.ownedPathsOrEmpty(), task.assignments()));
-        }
-        return result;
+    private static PlannedTask withKindAndPaths(PlannedTask task, String kind, String action, List<String> ownedPaths) {
+        return new PlannedTask(task.agentId(), kind, Objects.requireNonNullElse(action, "WORK_ITEM"),
+                task.objective(), task.requiredCapabilities(), List.copyOf(ownedPaths), List.of());
     }
 }

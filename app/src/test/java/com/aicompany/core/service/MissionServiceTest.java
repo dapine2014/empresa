@@ -379,7 +379,7 @@ class MissionServiceTest {
     }
 
     private static TeamSnapshot activeEngineering() {
-        return new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "ACTIVE", "engineering", List.of(
+        return new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Cloud Architect", "CLOUD_ARCHITECT_LEAD_BACKEND",
                         List.of("arquitectura backend"), "qwen3:8b")));
     }
@@ -397,13 +397,13 @@ class MissionServiceTest {
     @Test
     void startRejectsATeamThatIsNotActive() {
         var memory = mock(MissionMemoryService.class);
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(
-                new TeamSnapshot("TEAM-ENGINEERING", "Engineering Team", "INACTIVE", "engineering",
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(
+                new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "INACTIVE", "engineering",
                         activeEngineering().members()));
         var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
 
         assertThrows(IllegalArgumentException.class,
-                () -> service.start("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-ENGINEERING"));
+                () -> service.start("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-DEVELOPMENT"));
         verify(memory, never()).ensureMission(any(), any(), any(), any(), any());
     }
 
@@ -412,15 +412,15 @@ class MissionServiceTest {
         var memory = mock(MissionMemoryService.class);
         var executor = mock(MissionExecutor.class);
         when(executor.executeAsync(anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
-        when(teamMemory.snapshot("TEAM-ENGINEERING")).thenReturn(activeEngineering());
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(activeEngineering());
         var mission = new MissionResponse("MISSION-7", MissionStatus.CREATED, "PRODUCTION", 0, "Creada",
-                "Misión recibida", Instant.now(), null, "TEAM-ENGINEERING");
+                "Misión recibida", Instant.now(), null, "TEAM-DEVELOPMENT");
         when(memory.find("MISSION-7")).thenReturn(Optional.of(mission));
         var service = new MissionService(memory, executor, mock(CompanyEventPublisher.class), teamMemory, workspace);
 
-        var response = service.start("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-ENGINEERING");
+        var response = service.start("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-DEVELOPMENT");
 
-        verify(memory).ensureMission("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-ENGINEERING");
-        assertEquals("TEAM-ENGINEERING", response.teamId());
+        verify(memory).ensureMission("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-DEVELOPMENT");
+        assertEquals("TEAM-DEVELOPMENT", response.teamId());
     }
 }

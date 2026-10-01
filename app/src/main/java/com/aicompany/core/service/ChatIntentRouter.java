@@ -1245,8 +1245,8 @@ public class ChatIntentRouter {
     }
 
     private static final List<TeamKeywordRule> TEAM_KEYWORD_RULES = List.of(
-            new TeamKeywordRule(TeamMemoryService.TEAM_ENGINEERING,
-                    compileTeamKeywordPatterns(List.of("ingenieria", "engineering"))),
+            new TeamKeywordRule(TeamMemoryService.TEAM_DEVELOPMENT,
+                    compileTeamKeywordPatterns(List.of("ingenieria", "engineering", "development"))),
             new TeamKeywordRule(TeamMemoryService.TEAM_CREATIVE_PRODUCT_INTELLIGENCE,
                     compileTeamKeywordPatterns(List.of(
                             "creativ", "product intelligence", "visual", "arte", "telemetria", "analytics"))),

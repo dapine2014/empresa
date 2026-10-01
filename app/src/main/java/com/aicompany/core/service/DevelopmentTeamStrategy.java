@@ -103,12 +103,16 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var work = plan.workTasks();
         var validation = plan.validationTask()
                 .orElseThrow(() -> new IllegalStateException("El plan no tiene tarea VALIDATION."));
-        var validationTaskId = taskId(context, validation.agentId());
+        // Spec 2026-10-01 §1: si quien revisa también escribió tests, la revisión es otra tarea (-REVIEW).
+        var validatorAlsoWrites = work.stream().anyMatch(t -> t.agentId().equals(validation.agentId()));
+        var validationTaskId = validatorAlsoWrites
+                ? com.aicompany.core.model.TaskIds.reviewTask(missionId, validation.agentId(), context.round())
+                : taskId(context, validation.agentId());
 
         for (var task : work) {
-            createTask(context, task, TeamPlan.KIND_WORK);
+            createTask(context, task, TeamPlan.KIND_WORK, taskId(context, task.agentId()));
         }
-        createTask(context, validation, TeamPlan.KIND_VALIDATION);
+        createTask(context, validation, TeamPlan.KIND_VALIDATION, validationTaskId);
 
         var expectedProjects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
         CommittedWork scaffold;
@@ -118,7 +122,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             // Sin estructura de proyectos no hay nada que generar: ninguna tarea queda colgada en PENDING.
             for (var task : plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
                     .toList()) {
-                var id = taskId(context, task.agentId());
+                var id = TeamPlan.KIND_VALIDATION.equals(task.kind()) ? validationTaskId : taskId(context, task.agentId());
                 memory.updateTask(id, "FAILED", ex.getMessage());
                 events.publishTask("EMPRESA_TASK_FAILED", id, missionId, task.agentId(), "FAILED", ex.getMessage());
             }
@@ -747,9 +751,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
     }
 
-    private void createTask(TeamMissionContext context, PlannedTask task, String kind) {
+    private void createTask(TeamMissionContext context, PlannedTask task, String kind, String id) {
         var missionId = context.missionId();
-        var id = taskId(context, task.agentId());
         memory.createTask(id, missionId, task.agentId(), task.action(), kind);
         events.publishTask("EMPRESA_TASK_CREATED", id, missionId, task.agentId(), "PENDING", "Tarea creada.");
     }

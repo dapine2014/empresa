@@ -129,21 +129,19 @@ public class TeamWorkPlanner {
 
                 plan = normalizeActions(plan);
 
-                var errors = new ArrayList<String>(invalidParticipationConflicts(plan, team));
+                // Revisión final del bloque 1 (I-1): el validador corre siempre y sus errores van primero, para
+                // que un error derivado del resolutor (p. ej. capa sin dueño) no oculte la causa real (un perfil o
+                // un rol no habilitado, un agente que no escribe código).
+                var resolverErrors = new ArrayList<String>();
 
-                if (errors.isEmpty() && !plan.participationConflictsOrEmpty().isEmpty()) {
-                    return reportParticipationConflict(missionId, taskId, leaderId, teamId, plan);
-                }
-
-                if (errors.isEmpty() && mode == TeamExecutionMode.DEVELOPMENT) {
+                if (mode == TeamExecutionMode.DEVELOPMENT) {
                     var resolution = resolver.resolve(plan, team);
-                    errors.addAll(resolution.errors());
+                    resolverErrors.addAll(resolution.errors());
                     plan = resolution.plan();
                 }
 
-                if (errors.isEmpty()) {
-                    errors.addAll(validator.validate(plan, team, mode));
-                }
+                var errors = new ArrayList<String>(validator.validate(plan, team, mode));
+                resolverErrors.stream().filter(error -> !errors.contains(error)).forEach(errors::add);
 
                 if (errors.isEmpty()) {
 
@@ -223,107 +221,22 @@ public class TeamWorkPlanner {
         }
 
         return common + """
-                - Este equipo produce CÓDIGO REAL en un repositorio Git: cada miembro recibe exactamente una tarea (nunca dos
-                  tareas para el mismo agentId).
-                - No inventes trabajo artificial: si el objetivo no requiere trabajo real de algún miembro, no le crees una
-                  tarea de relleno; decláralo en participationConflicts con agentId y el motivo, y el plan se reportará al
-                  fundador antes de ejecutar nada.
-                - ownedPaths: rutas literales (sin *, ?, [ ]); cada ruta pertenece a una sola tarea y aparece una sola vez.
-                - Exactamente una tarea kind="VALIDATION", asignada al miembro que tenga la capability "QA":
-                  revisará el código sin ejecutarlo. Esa tarea lleva ownedPaths [].
-                - Las demás tareas son kind="WORK" y declaran ownedPaths: rutas relativas (carpetas o archivos) que solo
-                  ese agente puede escribir. Los ownedPaths de agentes distintos no pueden solaparse.
-                  Nunca uses rutas absolutas, "..", "\\" ni ".git".
+                - Este equipo produce CÓDIGO REAL en un repositorio Git. Elige SOLO los miembros necesarios para este
+                  producto: no crees tareas de relleno para nadie. Un agente que no participa simplemente no aparece.
+                - Quién escribe qué lo decide Forjai según el rol: %s.
+                - Incluye siempre al miembro QA: escribe un test por escenario después del código y al final revisa.
+                - ownedPaths y assignments los calcula Forjai: pon kind "WORK", ownedPaths [] y assignments [] en todas
+                  las tareas.
                 - Metodología obligatoria: DDD.
                 - stackProfile: elige EXACTAMENTE uno de estos perfiles del catálogo (no existen otros):
                 %s
                 - boundedContexts: los bounded contexts del producto, cada uno con name (en el formato del perfil) y
-                  description. El name define las rutas de sus capas.
+                  description. El name define las rutas de sus capas. Para un producto chico, UN solo contexto.
                 - ubiquitousLanguage: al menos 3 términos del dominio, cada uno con term y definition.
-                - Cada miembro tiene UNA sola tarea (nunca dos tareas para el mismo agentId).
-                - Las capas de cada miembro las asigna Forjai según su rol (no las decides tú): %s.
-                  Tú decides el objective de cada miembro, coherente con esas capas y con el producto.
-                - kind, ownedPaths y assignments los calcula Forjai: pon kind "WORK", ownedPaths [] y
-                  assignments [] en todas las tareas.
-                - requiredCapabilities: solo capabilities que figuren en la lista de ESE agente (el nombre de una
-                  tecnología, como "Godot", no es una capability si no está en su lista).
+                - requiredCapabilities: solo capabilities que figuren en la lista de ESE agente, una por elemento.
                 - Reglas de capas: domain no depende de nada fuera de su domain ni de frameworks; application solo de
                   domain; infrastructure/api/presentation/game dependen de application y domain.
-                """.formatted(StackProfile.describeAll(), RoleLayerCatalog.describe());
-    }
-
-    /**
-     * El líder declaró que la regla de participación choca con el objetivo:
-     * no se reintenta ni se ejecuta nada, se reporta al fundador (la misión
-     * termina en FAILED con el reporte, decidible vía /decision).
-     */
-    /**
-     * Verificado en vivo (MISSION-SANDBOX-VERIFY-1): en un reintento el líder copió los errores del validador
-     * a participationConflicts y la misión se cortó sin corregir. Un conflicto solo es válido para un miembro
-     * real, que no sea el líder y que no tenga tarea en el plan; si no, es un error más que se corrige.
-     */
-    static java.util.List<String> invalidParticipationConflicts(TeamPlan plan, TeamSnapshot team) {
-        var members = team.members().stream().map(TeamMemberInfo::agentId).collect(java.util.stream.Collectors.toSet());
-        var withTask = plan.tasksOrEmpty().stream()
-                .filter(java.util.Objects::nonNull)
-                .map(TeamPlan.PlannedTask::agentId)
-                .collect(java.util.stream.Collectors.toSet());
-        var errors = new ArrayList<String>();
-        for (var conflict : plan.participationConflictsOrEmpty()) {
-            var agentId = conflict == null ? null : conflict.agentId();
-            if (agentId == null || !members.contains(agentId)) {
-                errors.add("participationConflicts: \"" + agentId + "\" no es miembro del equipo.");
-            } else if (agentId.equals(team.leaderAgentId())) {
-                errors.add("participationConflicts: el líder (" + agentId + ") no puede declararse sin trabajo; "
-                        + "los errores de validación se corrigen en el plan, no se declaran como conflicto.");
-            } else if (withTask.contains(agentId)) {
-                errors.add("participationConflicts: " + agentId + " tiene una tarea en el plan; un conflicto solo "
-                        + "es para un miembro sin trabajo real. Corrige los errores en el plan y deja "
-                        + "participationConflicts vacío.");
-            } else {
-                ownedLayersInProfile(plan, team, agentId).ifPresent(layers -> errors.add(
-                        "participationConflicts: " + agentId + " sí tiene trabajo real: según el reparto fijo de capas "
-                                + "es dueño de " + layers + " en " + plan.stackProfile() + ". Asígnale esa tarea y deja "
-                                + "participationConflicts vacío."));
-            }
-        }
-        return errors;
-    }
-
-    /**
-     * Verificado en vivo (MISSION-E2E-ENG): el líder declaró a Mila sin trabajo en una API .NET aunque
-     * {@link com.aicompany.core.model.RoleLayerCatalog} le da la capa API. Con perfil de stack, Java sabe qué capas
-     * le tocan a cada rol: si el miembro es dueño de alguna del perfil, su conflicto no es legítimo.
-     */
-    private static java.util.Optional<java.util.List<com.aicompany.core.model.StackProfile.Layer>> ownedLayersInProfile(
-            TeamPlan plan, TeamSnapshot team, String agentId) {
-        var profile = plan.profile();
-        if (profile.isEmpty()) {
-            return java.util.Optional.empty();
-        }
-        var roleCode = team.members().stream().filter(m -> agentId.equals(m.agentId()))
-                .map(TeamMemberInfo::roleCode).findFirst().orElse(null);
-        var owned = com.aicompany.core.model.RoleLayerCatalog.layersFor(roleCode).orElse(java.util.List.of()).stream()
-                .filter(profile.get().layers()::contains)
-                .toList();
-        return owned.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(owned);
-    }
-
-    private TeamPlanResult reportParticipationConflict(
-            String missionId, String taskId, String leaderId, String teamId, TeamPlan plan) {
-
-        var conflicts = plan.participationConflictsOrEmpty().stream()
-                .filter(java.util.Objects::nonNull)
-                .map(c -> c.agentId() + ": " + c.reason())
-                .collect(Collectors.joining("\n- ", "- ", ""));
-
-        var message = "El líder " + leaderId + " reporta una incompatibilidad entre el objetivo de la misión y la "
-                + "regla de participación de " + teamId + " (no se ejecutó nada):\n" + conflicts;
-
-        memory.updateTask(taskId, "FAILED", message);
-        publishRejected(missionId, taskId, leaderId, 0, message);
-
-        throw new IllegalStateException(message);
+                """.formatted(RoleLayerCatalog.describe(), StackProfile.describeAll());
     }
 
     private static String quotedList(java.util.List<String> values) {

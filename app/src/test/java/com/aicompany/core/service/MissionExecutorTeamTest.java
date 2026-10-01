@@ -98,8 +98,8 @@ class MissionExecutorTeamTest {
     // Spec catálogo §6 A: una construcción terminada intenta pasar sus productos a "listo para vender".
     @Test
     void aFinishedBuildTellsTheCatalog() throws Exception {
-        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-ENGINEERING"));
-        when(planner.plan(anyString(), anyString(), anyString(), any())).thenReturn(planned("TEAM-ENGINEERING"));
+        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));
+        when(planner.plan(anyString(), anyString(), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
         when(development.execute(any(), any())).thenReturn(new TeamExecutionResult.Development("reporte", "ESTADO"));
         var automation = mock(ProductAutomation.class);
         executor.setProductAutomation(automation);
@@ -112,9 +112,9 @@ class MissionExecutorTeamTest {
 
     @Test
     void anEngineeringMissionNeverCreatesDiscoveryTasks() throws Exception {
-        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-ENGINEERING"));
-        when(planner.plan("M-1", "TEAM-ENGINEERING", "crear un juego", TeamExecutionMode.DEVELOPMENT))
-                .thenReturn(planned("TEAM-ENGINEERING"));
+        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));
+        when(planner.plan("M-1", "TEAM-DEVELOPMENT", "crear un juego", TeamExecutionMode.DEVELOPMENT))
+                .thenReturn(planned("TEAM-DEVELOPMENT"));
         when(development.execute(any(), any()))
                 .thenReturn(new TeamExecutionResult.Development("reporte", "ESTADO VERIFICABLE ..."));
 
@@ -129,8 +129,8 @@ class MissionExecutorTeamTest {
 
     @Test
     void developmentResultsEndWithTheJavaGeneratedVerifiableState() throws Exception {
-        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-ENGINEERING"));
-        when(planner.plan(anyString(), anyString(), anyString(), any())).thenReturn(planned("TEAM-ENGINEERING"));
+        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));
+        when(planner.plan(anyString(), anyString(), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
         when(development.execute(any(), any()))
                 .thenReturn(new TeamExecutionResult.Development("reporte", "ESTADO VERIFICABLE X"));
 
@@ -162,7 +162,7 @@ class MissionExecutorTeamTest {
 
     @Test
     void anInvalidPlanFailsTheMission() throws Exception {
-        when(memory.teamId("M-3")).thenReturn(Optional.of("TEAM-ENGINEERING"));
+        when(memory.teamId("M-3")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));
         when(planner.plan(anyString(), anyString(), anyString(), any()))
                 .thenThrow(new IllegalStateException("El líder engineering no produjo un plan válido"));
 

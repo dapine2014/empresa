@@ -6,6 +6,6 @@ public enum TeamExecutionMode {
     DEVELOPMENT;
 
     public static TeamExecutionMode forTeamType(String teamType) {
-        return "ENGINEERING".equals(teamType) ? DEVELOPMENT : ANALYSIS;
+        return "DEVELOPMENT".equals(teamType) ? DEVELOPMENT : ANALYSIS;
     }
 }
