@@ -37,6 +37,11 @@ firmas, y ninguna corrección posible más allá de 2 rondas de compilación. En
    Cola persistente: primero lo urgente, después por orden de llegada.
 7. **El backlog entra según el plan de desarrollo**: Aria ordena el backlog en incrementos; cada incremento `VERIFIED`
    encola el siguiente sin esperar aprobación. Rechazar un incremento pausa el plan.
+8. **El fundador aprueba las HUs antes de que se programe nada**, mientras el equipo se entrena en aplicaciones y
+   juegos. Es temporal: queda detrás de la policy `SPEC_APPROVAL_REQUIRED` (1 = activa), para apagarlo sin cambiar
+   código cuando el equipo esté entrenado.
+9. **Instrucciones del fundador por chat**: antes de aprobar, ajustan las HUs; después de aprobar, todo cambio va al
+   final del backlog como un incremento nuevo, sin interrumpir lo que se está construyendo.
 
 ## 1. El grupo y sus agentes
 
@@ -77,7 +82,8 @@ Campos: `requestId`, `type` (`IDEA` | `HU` | `OBJECTIVE`), `title`, `description
 vacío), `environment` (`PRODUCTION` | `TEST`, default `PRODUCTION`), `requestedBy`, `priority` (`URGENT` | `NORMAL`,
 default `NORMAL`). Opcionales: `productType`, `constraints`, `suggestedStack`.
 
-- Nodo `(:DevelopmentRequest)` con `status` (`QUEUED` | `RUNNING` | `DONE` | `BLOCKED` | `PAUSED` | `CANCELLED`) y
+- Nodo `(:DevelopmentRequest)` con `status` (`QUEUED` | `RUNNING` | `AWAITING_SPEC_APPROVAL` | `DONE` | `BLOCKED` |
+  `PAUSED` | `CANCELLED`) y
   `queuedAt`. Validación Java al crear: `title` y `description` no vacíos, `type` del enum, `suggestedStack` (si viene)
   del catálogo.
 - `POST /api/company/development/requests` crea y encola; `GET` lista la cola en orden;
@@ -111,6 +117,24 @@ Según el tipo: `IDEA` → Aria la divide en HUs; `HU` → la conserva y la comp
 
 Si no pasa en 3 intentos, la misión termina `FAILED` con los motivos y Neo no corre. El spec queda en la tarea de Aria y
 en `(:DevelopmentPlan)-[:HAS_INCREMENT]->(:Increment)` unido al pedido. Los demás agentes reciben el spec armado por Java.
+
+### Aprobación de las HUs (mientras `SPEC_APPROVAL_REQUIRED = 1`)
+
+- Spec válido → el pedido pasa a `AWAITING_SPEC_APPROVAL` (y la misión del incremento 1 queda esperando antes del plan
+  de Neo). Correo al fundador, evento `EMPRESA_DEVELOPMENT_SPEC_READY` y aviso en el chat. El despachador toma el
+  siguiente pedido de la cola mientras tanto: un pedido esperando aprobación no ocupa el cupo de
+  `MAX_PARALLEL_DEVELOPMENT`.
+- El fundador ve HUs, criterios, escenarios, incrementos y supuestos en el chat ("muéstrame las HU de <pedido>") y en
+  Missions.
+- **Ajustar**: una instrucción del fundador (§11) sobre un pedido en `AWAITING_SPEC_APPROVAL` vuelve a correr Aria con
+  el spec anterior y todas las instrucciones recibidas; el nuevo spec pasa por el mismo validador y se vuelve a
+  presentar. Sin límite de ajustes.
+- **Aprobar**: `POST /api/company/development/requests/{id}/spec-approval` o chat ("apruebo las HU de <pedido>") →
+  `QUEUED` de nuevo y la misión sigue con el plan de Neo. Queda registrado quién y cuándo aprobó qué versión del spec
+  (`approvedSpecVersion`); lo que se construye es siempre esa versión.
+- **Rechazar**: "rechaza el pedido <pedido>" → `CANCELLED`.
+- Las HUs que se agregan después (instrucciones posteriores, §11) también esperan aprobación antes de programarse.
+- Con `SPEC_APPROVAL_REQUIRED = 0`, el spec válido pasa directo al plan de Neo.
 
 ## 4. Plan de Neo y validación
 
@@ -272,7 +296,19 @@ Chat (`ChatIntentRouter`, todo en Java antes de cualquier modelo):
 - Consultas: "¿cómo va MISSION-X?" (etapa por etapa), "¿por qué falla MISSION-X?" (errores abiertos con su historial),
   "muéstrame la ronda N de MISSION-X", "¿qué hay en el backlog?", "¿cómo va el plan de <producto>?", "¿qué misiones
   están bloqueadas?", "¿qué se retomó?"; línea de desarrollo en "dame un status".
-- Comandos del fundador: "marca <pedido> como urgente", "reanuda el plan de <producto>".
+- Comandos del fundador: "marca <pedido> como urgente", "reanuda el plan de <producto>", "apruebo las HU de
+  <pedido>", "rechaza el pedido <pedido>".
+- **Instrucciones del fundador** (comando de gobernanza, antes de las menciones): "para MISSION-X: …", "para <pedido>:
+  …" o "@Aria … <pedido>" con un pedido o misión de desarrollo identificable. Java las guarda como
+  `(:FounderInstruction {text, receivedAt, appliedIn, status})` unida al pedido y decide según la etapa:
+  - pedido sin spec todavía → se agrega a la entrada de Aria;
+  - `AWAITING_SPEC_APPROVAL` → Aria ajusta el spec y lo vuelve a presentar (§3);
+  - spec aprobado → Aria la convierte en HUs de un **incremento nuevo al final del plan** (mismo validador; los ids
+    siguen la numeración del plan), que espera aprobación antes de programarse. Nunca modifica el incremento en curso
+    ni los aprobados.
+  El chat confirma dónde quedó ("Instrucción registrada; quedó como HU-07 en el incremento 4, al final del plan").
+  Ninguna instrucción se descarta: todas aparecen en el log y en el `DeliveryResult`. Sin pedido identificable, Java
+  pide aclarar a cuál se refiere y no guarda nada. Las menciones sin forma de instrucción siguen siendo solo lectura.
 - Afirmaciones de builds, tests o commits sin respaldo en la memoria → nota `UNBACKED_MEMORY_CLAIM` (existente).
 
 Command Center, pantalla Missions: formulario "Nuevo desarrollo" (tipo, título, descripción, criterios, prioridad,
@@ -282,8 +318,9 @@ policies nuevas. `api/types.ts` y `SpaController` se actualizan.
 
 ## Policies nuevas
 
-`SAME_ERROR_ROUNDS_BEFORE_STRATEGY` (5), `MAX_STRATEGIES_BEFORE_BLOCK` (3), `MAX_PARALLEL_DEVELOPMENT` (1). Todas
-enteras > 0, versionadas como las demás.
+`SAME_ERROR_ROUNDS_BEFORE_STRATEGY` (5), `MAX_STRATEGIES_BEFORE_BLOCK` (3), `MAX_PARALLEL_DEVELOPMENT` (1): enteras
+> 0. `SPEC_APPROVAL_REQUIRED` (1): solo 0/1, como `ORCHESTRATOR_ENABLED`. Todas versionadas como las demás y editables
+en Settings.
 
 ## Eventos nuevos
 
@@ -314,11 +351,17 @@ Unitarios (JUnit + Mockito, como el resto):
   estrategia y de `BLOCKED`.
 - `DevelopmentDispatcher`: orden urgente/FIFO y límite de paralelas.
 - Reconciliación: etapas `RUNNING` → `PENDING`, `HEAD` distinto → reset, workspace faltante → `BLOCKED`.
-- `ChatIntentRouter`: los 3 tipos de arranque y que no se confundan con consultas.
+- `ChatIntentRouter`: los 3 tipos de arranque y que no se confundan con consultas; instrucciones con y sin pedido
+  identificable; aprobación y rechazo de HUs.
+- Aprobación de HUs: con la policy en 1 el plan de Neo no corre hasta aprobar; con 0 pasa directo; un pedido esperando
+  aprobación no ocupa cupo de la cola; se construye la versión aprobada del spec.
+- Instrucciones: antes del spec → entrada de Aria; esperando aprobación → spec ajustado y re-presentado; aprobado →
+  incremento nuevo al final, sin tocar los aprobados.
 - `sandbox-runner`: parseo de `testCases` de TRX y JSON de Flutter; pasos `startup` separados.
 
 **Prueba de aceptación en vivo** (registrar en `docs/HISTORY.md`):
-1. Por chat: "Construye una aplicación Hello World en Flutter Web" → Aria (spec con escenarios) → Neo (plan con Mila y
+1. Por chat: "Construye una aplicación Hello World en Flutter Web" → Aria (spec con escenarios) → el fundador ajusta
+   una vez con una instrucción y aprueba las HUs → Neo (plan con Mila y
    Vera) → commits de Mila y de Vera → los 6 pasos en PASS → todos los escenarios con test aprobado → `VERIFIED` → el
    chat informa el resultado con su evidencia.
 2. Repetir y reiniciar `company-core` a mitad de la misión: se retoma sola y llega a `VERIFIED`.
