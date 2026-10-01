@@ -1,270 +1,132 @@
 package com.aicompany.core.agent.validation;
 
 import com.aicompany.core.agent.model.TeamPlan;
-import com.aicompany.core.agent.model.TeamPlan.LayerAssignment;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.model.TeamMemberInfo;
 import com.aicompany.core.model.TeamSnapshot;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verificado en vivo (MISSION-DDD-VERIFY-1 a -3): qwen3:8b no convergía calculando carpetas exclusivas, la
- * única tarea VALIDATION y los archivos de entrada. Java decide lo mecánico a partir de las capas asignadas.
+ * Revisión 4 (spec 2026-10-01): Neo elige quién participa; Java reparte las capas por rol (primarias y de
+ * respaldo), desdobla a QA en tests + revisión y da los archivos de entrada al dueño de la capa más externa.
  */
 class TeamPlanResolverTest {
 
     private final TeamPlanResolver resolver = new TeamPlanResolver();
 
-    private static TeamMemberInfo member(String id, List<String> capabilities) {
-        return new TeamMemberInfo(id, id, "rol", "ROLE", capabilities, "qwen3:8b");
+    private static TeamMemberInfo m(String id, String roleCode, String... capabilities) {
+        return new TeamMemberInfo(id, id, "rol", roleCode, List.of(capabilities), "m");
     }
 
-    private static final TeamSnapshot ENGINEERING = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE",
+    static final TeamSnapshot DEVELOPMENT = new TeamSnapshot("TEAM-DEVELOPMENT", "Development Group", "ACTIVE",
             "engineering", List.of(
-            member("engineering", List.of("arquitectura backend")),
-            member("qa", List.of("QA")),
-            member("devops", List.of("infraestructura")),
-            member("backend", List.of("lógica de negocio")),
-            member("frontend-ui", List.of("Game UI"))));
+            m("product-owner", "PRODUCT_OWNER", "requirements"),
+            m("engineering", "TECH_LEAD", "architecture"),
+            m("backend", "BACKEND", "backend", "api"),
+            m("devops", "DATA_ARCHITECT", "persistence"),
+            m("frontend-ui", "UI_UX", "flutter", "ui"),
+            m("interaction-design", "GAME_DEV", "godot"),
+            m("qa", "QA", "qa", "tests")));
 
-    private static PlannedTask task(String agent, String kind, LayerAssignment... assignments) {
-        return new PlannedTask(agent, kind, "WORK_ITEM", "objetivo", List.of("x"), List.of(), List.of(assignments));
+    private static PlannedTask t(String agent, String kind, String capability) {
+        return new PlannedTask(agent, kind, "WORK_ITEM", "objetivo de " + agent, List.of(capability), List.of());
     }
 
-    private static LayerAssignment a(String context, String layer) {
-        return new LayerAssignment(context, layer);
-    }
-
-    private static TeamPlan plan(String profile, List<String> contexts, List<PlannedTask> tasks) {
-        return new TeamPlan("Juego", null, null, tasks, List.of(), profile,
-                contexts.stream().map(c -> new TeamPlan.BoundedContext(c, "desc")).toList(),
+    private static TeamPlan plan(String profile, String context, List<PlannedTask> tasks) {
+        return new TeamPlan("App", null, null, tasks, List.of(), profile,
+                List.of(new TeamPlan.BoundedContext(context, "desc")),
                 List.of(new TeamPlan.GlossaryTerm("a", "b"), new TeamPlan.GlossaryTerm("c", "d"),
                         new TeamPlan.GlossaryTerm("e", "f")));
     }
 
-    private static List<PlannedTask> godotTasks() {
-        return new ArrayList<>(List.of(
-                task("engineering", "WORK", a("Combate", "APPLICATION")),
-                task("backend", "WORK", a("Combate", "DOMAIN")),
-                task("frontend-ui", "WORK", a(null, "GAME")),
-                task("devops", "WORK", a("Combate", "TESTS")),
-                task("qa", "VALIDATION")));
-    }
-
-    private static PlannedTask of(TeamPlan plan, String agent) {
-        return plan.tasksOrEmpty().stream().filter(t -> t.agentId().equals(agent)).findFirst().orElseThrow();
+    private static List<PlannedTask> of(TeamPlan plan, String agent) {
+        return plan.tasksOrEmpty().stream().filter(t -> t.agentId().equals(agent)).toList();
     }
 
     @Test
-    void computesOwnedPathsKindsAndEntryFiles() {
-        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), godotTasks()), ENGINEERING);
+    void flutterWithOnlyUiAndQaGivesUiTheFallbackLayers() {
+        var result = resolver.resolve(plan("FLUTTER_WEB_APP", "saludo",
+                List.of(t("frontend-ui", "WORK", "flutter"), t("qa", "WORK", "tests"))), DEVELOPMENT);
 
         assertEquals(List.of(), result.errors());
-        // Revisión 3 (MISSION-SANDBOX-VERIFY-*): el .sln lo genera Forjai; game/project.godot es del dueño de game.
-        assertEquals(List.of("src/Combate.Application"), of(result.plan(), "engineering").ownedPaths());
-        assertEquals(List.of("src/Combate.Domain"), of(result.plan(), "backend").ownedPaths());
-        assertEquals(List.of("game"), of(result.plan(), "frontend-ui").ownedPaths());
-        assertEquals("VALIDATION", of(result.plan(), "qa").kind());
-        assertEquals(List.of(), of(result.plan(), "qa").ownedPaths());
-    }
-
-    // El bug observado en vivo: dos tareas VALIDATION. El kind lo decide Java, no el modelo.
-    @Test
-    void onlyTheQaMemberValidatesWhateverTheModelWrote() {
-        var tasks = godotTasks();
-        tasks.set(2, task("frontend-ui", "VALIDATION", a(null, "GAME")));
-        tasks.set(4, task("qa", "WORK"));
-
-        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), ENGINEERING);
-
-        assertEquals("WORK", of(result.plan(), "frontend-ui").kind());
-        assertEquals("VALIDATION", of(result.plan(), "qa").kind());
+        assertEquals(List.of("lib/saludo/domain", "lib/saludo/application", "lib/saludo/infrastructure",
+                        "lib/saludo/presentation", "pubspec.yaml", "lib/main.dart", "web"),
+                of(result.plan(), "frontend-ui").get(0).ownedPaths());
     }
 
     @Test
-    void theSameLayerForTwoMembersIsAnActionableError() {
-        var tasks = godotTasks();
-        tasks.set(0, task("engineering", "WORK", a("Combate", "DOMAIN")));
+    void qaAlwaysEndsWithOneTestsTaskAndOneReview() {
+        var result = resolver.resolve(plan("FLUTTER_WEB_APP", "saludo", List.of(
+                t("frontend-ui", "WORK", "flutter"),
+                t("qa", "VALIDATION", "qa"),
+                t("qa", "WORK", "tests"))), DEVELOPMENT);
 
-        var errors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), ENGINEERING).errors();
-
-        assertTrue(errors.stream().anyMatch(e -> e.contains("DOMAIN") && e.contains("backend") && e.contains("engineering")
-                && e.contains("uno solo")), errors.toString());
+        var qa = of(result.plan(), "qa");
+        assertEquals(2, qa.size());
+        assertEquals("WORK", qa.get(0).kind());
+        assertEquals(List.of("test/saludo"), qa.get(0).ownedPaths());
+        assertEquals("VALIDATION", qa.get(1).kind());
+        assertEquals("CODE_REVIEW", qa.get(1).action());
+        assertEquals(List.of(), qa.get(1).ownedPaths());
     }
 
     @Test
-    void unknownLayersAndContextsAreErrors() {
-        var tasks = godotTasks();
-        tasks.set(0, task("engineering", "WORK", a("Combate", "API")));
-        tasks.set(3, task("devops", "WORK", a("Inventario", "TESTS")));
-
-        var errors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), ENGINEERING).errors();
-
-        assertTrue(errors.stream().anyMatch(e -> e.contains("API") && e.contains("GODOT_DOTNET_GAME")), errors.toString());
-        assertTrue(errors.stream().anyMatch(e -> e.contains("Inventario") && e.contains("boundedContexts")), errors.toString());
-    }
-
-    @Test
-    void aWorkerWithoutAssignmentsIsAnError() {
-        var tasks = godotTasks();
-        tasks.set(3, task("devops", "WORK"));
-
-        var errors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), ENGINEERING).errors();
-
-        assertTrue(errors.stream().anyMatch(e -> e.contains("devops") && e.contains("assignments")), errors.toString());
-    }
-
-    @Test
-    void everyContextNeedsADomainOwner() {
-        var tasks = godotTasks();
-        tasks.set(1, task("backend", "WORK", a("Combate", "APPLICATION")));
-        tasks.set(0, task("engineering", "WORK", a("Combate", "TESTS")));
-        tasks.set(3, task("devops", "WORK", a(null, "GAME")));
-        tasks.set(2, task("frontend-ui", "WORK", a(null, "GAME")));
-
-        var errors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), ENGINEERING).errors();
-
-        assertTrue(errors.stream().anyMatch(e -> e.contains("DOMAIN") && e.contains("Combate") && e.contains("dueño")), errors.toString());
-    }
-
-    @Test
-    void godotProjectFileGoesToTheLeaderWhenNobodyOwnsGame() {
-        var tasks = godotTasks();
-        tasks.set(2, task("frontend-ui", "WORK", a("Combate", "APPLICATION")));
-        tasks.set(0, task("engineering", "WORK", a("Combate", "TESTS")));
-        tasks.set(3, task("devops", "WORK", a("Combate", "DOMAIN")));
-        tasks.set(1, task("backend", "WORK", a("Combate", "DOMAIN")));
-
-        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), ENGINEERING);
-
-        assertTrue(of(result.plan(), "engineering").ownedPaths().contains("game/project.godot"));
-    }
-
-    @Test
-    void flutterBootstrapFilesGoToThePresentationOwner() {
-        var tasks = new ArrayList<>(List.of(
-                task("engineering", "WORK", a("pedidos", "APPLICATION")),
-                task("backend", "WORK", a("pedidos", "DOMAIN")),
-                task("frontend-ui", "WORK", a("pedidos", "PRESENTATION")),
-                task("devops", "WORK", a("pedidos", "INFRASTRUCTURE")),
-                task("qa", "VALIDATION")));
-
-        var result = resolver.resolve(plan("FLUTTER_WEB_APP", List.of("pedidos"), tasks), ENGINEERING);
+    void dotnetSplitsLayersAmongBackendAndDataArchitect() {
+        var result = resolver.resolve(plan("DOTNET_APP", "Citas", List.of(
+                t("backend", "WORK", "backend"), t("devops", "WORK", "persistence"), t("qa", "WORK", "tests"))),
+                DEVELOPMENT);
 
         assertEquals(List.of(), result.errors());
-        // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): el composition root va con la capa más externa.
-        assertEquals(List.of("lib/pedidos/application"), of(result.plan(), "engineering").ownedPaths());
-        assertEquals(List.of("lib/pedidos/presentation", "pubspec.yaml", "lib/main.dart", "web"),
-                of(result.plan(), "frontend-ui").ownedPaths());
+        assertEquals(List.of("src/Citas.Domain", "src/Citas.Application", "src/Citas.Api"),
+                of(result.plan(), "backend").get(0).ownedPaths());
+        assertEquals(List.of("src/Citas.Infrastructure"), of(result.plan(), "devops").get(0).ownedPaths());
+    }
+
+    @Test
+    void requiredCapabilitiesAreNeverRewritten() {
+        var result = resolver.resolve(plan("FLUTTER_WEB_APP", "saludo", List.of(
+                t("frontend-ui", "WORK", "inventada"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+
+        assertEquals(List.of("inventada"), of(result.plan(), "frontend-ui").get(0).requiredCapabilities());
+    }
+
+    @Test
+    void tasksOfRolesWithoutCodeOrNotEnabledAreLeftForTheValidator() {
+        var result = resolver.resolve(plan("FLUTTER_WEB_APP", "saludo", List.of(
+                t("engineering", "WORK", "architecture"),
+                t("interaction-design", "WORK", "godot"),
+                t("frontend-ui", "WORK", "flutter"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+
+        assertEquals(List.of(), of(result.plan(), "engineering").get(0).ownedPaths());
+        assertEquals(List.of(), of(result.plan(), "interaction-design").get(0).ownedPaths());
+    }
+
+    @Test
+    void flutterEntryFilesWithoutAPresentationOwnerAreAnError() {
+        var result = resolver.resolve(plan("FLUTTER_WEB_APP", "saludo", List.of(
+                t("backend", "WORK", "backend"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("pubspec.yaml")), result.errors().toString());
+    }
+
+    @Test
+    void aDomainWithoutOwnerIsAnError() {
+        var result = resolver.resolve(plan("DOTNET_APP", "Citas", List.of(
+                t("devops", "WORK", "persistence"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("DOMAIN")), result.errors().toString());
     }
 
     @Test
     void aPlanWithoutProfileIsLeftForTheValidator() {
-        var original = plan("UNITY_GAME", List.of("Combate"), godotTasks());
-        var result = resolver.resolve(original, ENGINEERING);
-        assertEquals(List.of(), result.errors());
+        var original = plan(null, "saludo", List.of(t("frontend-ui", "WORK", "flutter")));
+        var result = resolver.resolve(original, DEVELOPMENT);
+
         assertSame(original, result.plan());
-    }
-
-    // Verificado en vivo (MISSION-DDD-VERIFY-4): Neo oscilaba entre "DOMAIN duplicada" y "backend sin capas".
-    // Ambos errores listan las capas libres para que haya una salida concreta.
-    @Test
-    void duplicateAndEmptyAssignmentErrorsListTheFreeLayers() {
-        var duplicate = godotTasks();
-        duplicate.set(0, task("engineering", "WORK", a("Combate", "DOMAIN")));
-        var dupErrors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), duplicate), ENGINEERING).errors();
-        assertTrue(dupErrors.stream().anyMatch(e -> e.contains("Capas libres") && e.contains("APPLICATION de Combate")),
-                dupErrors.toString());
-
-        var empty = godotTasks();
-        empty.set(1, task("backend", "WORK"));
-        empty.set(0, task("engineering", "WORK", a("Combate", "DOMAIN")));
-        var emptyErrors = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), empty), ENGINEERING).errors();
-        assertTrue(emptyErrors.stream().anyMatch(e -> e.contains("backend") && e.contains("Capas libres")
-                && e.contains("APPLICATION de Combate")), emptyErrors.toString());
-    }
-
-    // Revisión 2 (opción 1, tras MISSION-DDD-VERIFY-4/-5): las capas salen del roleCode, no del modelo.
-    private static final TeamSnapshot REAL_ENGINEERING = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE",
-            "engineering", List.of(
-            new TeamMemberInfo("engineering", "Neo", "rol", "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("arquitectura backend"), "m"),
-            new TeamMemberInfo("qa", "Vera", "rol", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "m"),
-            new TeamMemberInfo("devops", "Diego", "rol", "CLOUD_DB_SRE_DEVOPS", List.of("infraestructura"), "m"),
-            new TeamMemberInfo("backend", "Iris", "rol", "DEV_BACKEND_INTEGRATIONS", List.of("backend"), "m"),
-            new TeamMemberInfo("frontend-ui", "Mila", "rol", "FRONTEND_GAME_UI_SPECIALIST", List.of("Game UI"), "m")));
-
-    private static List<PlannedTask> tasksWithoutAssignments() {
-        return new ArrayList<>(List.of(
-                task("engineering", "WORK"), task("backend", "WORK"), task("frontend-ui", "VALIDATION"),
-                task("devops", "WORK"), task("qa", "WORK")));
-    }
-
-    @Test
-    void layersComeFromTheRoleCodeIgnoringTheModelsAssignments() {
-        var tasks = tasksWithoutAssignments();
-        tasks.set(1, task("backend", "WORK", a("Combate", "GAME")));
-
-        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate", "Inventario"), tasks), REAL_ENGINEERING);
-
         assertEquals(List.of(), result.errors());
-        // Revisión 3 (decisión del fundador tras MISSION-SANDBOX-VERIFY-8): el líder hace DOMAIN, Diego TESTS.
-        assertEquals(List.of("src/Combate.Application", "src/Inventario.Application"), of(result.plan(), "backend").ownedPaths());
-        assertEquals(List.of("game"), of(result.plan(), "frontend-ui").ownedPaths());
-        assertEquals(List.of("tests/Combate.Tests", "tests/Inventario.Tests"), of(result.plan(), "devops").ownedPaths());
-        assertEquals(List.of("src/Combate.Domain", "src/Inventario.Domain"), of(result.plan(), "engineering").ownedPaths());
-        assertEquals("WORK", of(result.plan(), "frontend-ui").kind());
-        assertEquals("VALIDATION", of(result.plan(), "qa").kind());
-    }
-
-    @Test
-    void flutterRolesMapToTheirLayers() {
-        var result = resolver.resolve(plan("FLUTTER_WEB_APP", List.of("pedidos"), tasksWithoutAssignments()), REAL_ENGINEERING);
-
-        assertEquals(List.of(), result.errors());
-        // Verificado en vivo (MISSION-SANDBOX-VERIFY-22): main.dart es el composition root y lo escribía el líder
-        // primero, sin pantalla todavía. Los archivos de entrada van al dueño de la capa más externa (va último).
-        assertEquals(List.of("lib/pedidos/presentation", "pubspec.yaml", "lib/main.dart", "web"),
-                of(result.plan(), "frontend-ui").ownedPaths());
-        assertEquals(List.of("test/pedidos"), of(result.plan(), "devops").ownedPaths());
-        assertEquals(List.of("lib/pedidos/application", "lib/pedidos/infrastructure"), of(result.plan(), "backend").ownedPaths());
-        assertEquals(List.of("lib/pedidos/domain"), of(result.plan(), "engineering").ownedPaths());
-    }
-
-    @Test
-    void repeatedTasksOfTheSameAgentAreMergedIntoOne() {
-        var tasks = tasksWithoutAssignments();
-        tasks.add(new PlannedTask("engineering", "WORK", "EXTRA", "otra cosa", List.of("y"), List.of()));
-
-        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", List.of("Combate"), tasks), REAL_ENGINEERING);
-
-        var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).toList();
-        assertEquals(1, neo.size());
-        assertTrue(neo.get(0).objective().contains("objetivo") && neo.get(0).objective().contains("otra cosa"));
-        // "x" e "y" no son capabilities reales de Neo: quedan las reales (MISSION-SANDBOX-VERIFY-17).
-        assertEquals(List.of("arquitectura backend"), neo.get(0).requiredCapabilitiesOrEmpty());
-    }
-
-    // Verificado en vivo (MISSION-SANDBOX-VERIFY-17): 5 intentos perdidos por capabilities ajenas ("APIs" para
-    // Mila, "tests xUnit" para Vera). En desarrollo las capas salen del rol: las capabilities son etiquetas y Java
-    // se queda con las reales del miembro (o su primera real si no acertó ninguna).
-    @Test
-    void developmentCapabilitiesAreReducedToTheMembersRealOnes() {
-        var tasks = new ArrayList<>(List.of(
-                new PlannedTask("engineering", "WORK", "W", "o", List.of("arquitectura backend"), List.of()),
-                new PlannedTask("backend", "WORK", "W", "o", List.of("backend", "inventada"), List.of()),
-                new PlannedTask("frontend-ui", "WORK", "W", "o", List.of("APIs"), List.of()),
-                new PlannedTask("devops", "WORK", "W", "o", List.of("infraestructura"), List.of()),
-                new PlannedTask("qa", "VALIDATION", "W", "o", List.of("tests xUnit"), List.of())));
-
-        var result = resolver.resolve(plan("DOTNET_APP", List.of("Tareas"), tasks), REAL_ENGINEERING);
-
-        assertEquals(List.of("backend"), of(result.plan(), "backend").requiredCapabilities());
-        assertEquals(List.of("Game UI"), of(result.plan(), "frontend-ui").requiredCapabilities());
-        assertEquals(List.of("QA"), of(result.plan(), "qa").requiredCapabilities());
     }
 }
