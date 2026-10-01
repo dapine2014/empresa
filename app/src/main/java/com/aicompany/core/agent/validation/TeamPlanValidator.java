@@ -1,5 +1,8 @@
 package com.aicompany.core.agent.validation;
 
+import com.aicompany.core.model.DevelopmentPhase;
+import com.aicompany.core.model.RoleLayerCatalog;
+
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.model.StackProfile;
@@ -41,16 +44,19 @@ public class TeamPlanValidator {
             errors.add("summary no puede estar vacío.");
         }
 
-        validateCommonTaskRules(plan, team, membersById, errors);
+        validateCommonTaskRules(plan, team, membersById, errors, mode);
 
         if (plan.workTasks().isEmpty()) {
             errors.add("El plan debe tener al menos una tarea WORK.");
         }
 
-        var leaderHasTask = plan.tasksOrEmpty().stream()
-                .anyMatch(t -> t != null && Objects.equals(t.agentId(), team.leaderAgentId()));
-        if (team.leaderAgentId() != null && !leaderHasTask) {
-            errors.add("El líder del equipo (" + team.leaderAgentId() + ") debe tener una tarea en el plan.");
+        // Spec 2026-10-01 §4: en desarrollo el líder (Neo) planifica y no escribe código.
+        if (mode == TeamExecutionMode.ANALYSIS) {
+            var leaderHasTask = plan.tasksOrEmpty().stream()
+                    .anyMatch(t -> t != null && Objects.equals(t.agentId(), team.leaderAgentId()));
+            if (team.leaderAgentId() != null && !leaderHasTask) {
+                errors.add("El líder del equipo (" + team.leaderAgentId() + ") debe tener una tarea en el plan.");
+            }
         }
 
         if (mode == TeamExecutionMode.ANALYSIS) {
@@ -65,7 +71,8 @@ public class TeamPlanValidator {
     }
 
     private void validateCommonTaskRules(
-            TeamPlan plan, TeamSnapshot team, Map<String, TeamMemberInfo> membersById, List<String> errors) {
+            TeamPlan plan, TeamSnapshot team, Map<String, TeamMemberInfo> membersById, List<String> errors,
+            TeamExecutionMode mode) {
 
         var seen = new HashSet<String>();
 
@@ -84,8 +91,14 @@ public class TeamPlanValidator {
                 continue;
             }
 
-            if (!seen.add(task.agentId())) {
-                errors.add("El agente " + task.agentId() + " tiene más de una tarea; asigna a lo sumo una por agente.");
+            // Spec 2026-10-01 §1: QA escribe los tests (WORK) y después revisa (VALIDATION).
+            var qaInDevelopment = mode == TeamExecutionMode.DEVELOPMENT && "QA".equals(member.roleCode());
+            var key = qaInDevelopment ? task.agentId() + "|" + task.kind() : task.agentId();
+            if (!seen.add(key)) {
+                errors.add(qaInDevelopment
+                        ? "El agente " + task.agentId() + " tiene más de una tarea " + task.kind()
+                                + ": QA lleva exactamente una WORK (tests) y una VALIDATION (revisión)."
+                        : "El agente " + task.agentId() + " tiene más de una tarea; asigna a lo sumo una por agente.");
             }
 
             if (!TeamPlan.KIND_WORK.equals(task.kind()) && !TeamPlan.KIND_VALIDATION.equals(task.kind())) {
@@ -107,7 +120,12 @@ public class TeamPlanValidator {
             }
 
             for (var capability : task.requiredCapabilitiesOrEmpty()) {
-                if (!member.capabilities().contains(capability)) {
+                if (!isAtomic(capability)) {
+                    errors.add("La capability \"" + capability + "\" de " + task.agentId() + " no es atómica: cada "
+                            + "elemento de requiredCapabilities es UNA capability de su lista, sin comas ni frases "
+                            + "(p. ej. " + member.capabilities().stream().limit(2).map(c -> "\"" + c + "\"")
+                            .collect(java.util.stream.Collectors.joining(", ", "[", "]")) + ").");
+                } else if (!member.capabilities().contains(capability)) {
                     errors.add(capabilityError(task.agentId(), capability, member.capabilities()));
                 }
             }
@@ -117,30 +135,38 @@ public class TeamPlanValidator {
     private void validateDevelopmentRules(
             TeamPlan plan, Map<String, TeamMemberInfo> membersById, List<String> errors) {
 
-        var assigned = plan.tasksOrEmpty().stream()
-                .filter(Objects::nonNull)
-                .map(PlannedTask::agentId)
-                .toList();
-
-        for (var memberId : membersById.keySet()) {
-            if (!assigned.contains(memberId)) {
-                errors.add("Falta una tarea para " + memberId
-                        + ": en un equipo de desarrollo todos los miembros deben recibir exactamente una tarea.");
+        for (var task : plan.tasksOrEmpty()) {
+            if (task == null || !membersById.containsKey(task.agentId())) {
+                continue;
+            }
+            var roleCode = membersById.get(task.agentId()).roleCode();
+            var role = RoleLayerCatalog.of(roleCode);
+            if (role.isEmpty()) {
+                errors.add(task.agentId() + " no tiene un rol de desarrollo reconocido (roleCode " + roleCode + ").");
+            } else if (!role.get().writesCode()) {
+                errors.add(task.agentId() + " (" + roleCode + ") no escribe código: no le asignes tareas en el plan.");
+            } else if (!RoleLayerCatalog.enabledNow(roleCode)) {
+                errors.add(task.agentId() + " (" + roleCode + ") todavía no está habilitado (fase "
+                        + role.get().phase() + "; fase actual " + DevelopmentPhase.CURRENT + "): no lo incluyas.");
             }
         }
 
-        var validationTasks = plan.tasksOrEmpty().stream()
-                .filter(Objects::nonNull)
-                .filter(t -> TeamPlan.KIND_VALIDATION.equals(t.kind()))
-                .toList();
+        var qaIds = membersById.values().stream().filter(m -> "QA".equals(m.roleCode()))
+                .map(TeamMemberInfo::agentId).toList();
+        var validationTasks = plan.tasksOrEmpty().stream().filter(Objects::nonNull)
+                .filter(t -> TeamPlan.KIND_VALIDATION.equals(t.kind())).toList();
 
         if (validationTasks.size() != 1) {
             errors.add("Debe haber exactamente una tarea VALIDATION (hay " + validationTasks.size() + ").");
-        } else {
-            var validator = membersById.get(validationTasks.get(0).agentId());
-            if (validator != null && !validator.capabilities().contains("QA")) {
-                errors.add("La tarea VALIDATION debe asignarse a un miembro con la capability QA; "
-                        + validator.agentId() + " no la tiene.");
+        } else if (!qaIds.contains(validationTasks.get(0).agentId())) {
+            errors.add("La tarea VALIDATION debe ser del miembro QA " + qaIds + ", no de "
+                    + validationTasks.get(0).agentId() + ".");
+        }
+
+        for (var qaId : qaIds) {
+            var hasTests = plan.workTasks().stream().anyMatch(t -> qaId.equals(t.agentId()));
+            if (!hasTests) {
+                errors.add("Falta la tarea WORK de tests de " + qaId + ": QA escribe un test por escenario.");
             }
         }
 
@@ -195,6 +221,11 @@ public class TeamPlanValidator {
             return;
         }
 
+        if (!profile.get().enabledNow()) {
+            errors.add("El stack " + profile.get().name() + " todavía no está habilitado (fase "
+                    + profile.get().phase() + "). Stacks disponibles: FLUTTER_WEB_APP, DOTNET_APP.");
+        }
+
         validateContextsAndGlossary(plan, profile.get(), errors);
 
         var contexts = plan.contextNames();
@@ -236,6 +267,15 @@ public class TeamPlanValidator {
         if (terms < 3) {
             errors.add("ubiquitousLanguage debe tener al menos 3 términos del dominio con su definición (hay " + terms + ").");
         }
+    }
+
+    /** Spec 2026-10-01 §4: una capability es una palabra o término corto, nunca una lista ni una frase. */
+    static boolean isAtomic(String capability) {
+        if (capability == null || capability.isBlank()) {
+            return false;
+        }
+        return !capability.contains(",") && !capability.contains(";") && !capability.contains("/")
+                && capability.strip().split("\\s+").length <= 3;
     }
 
     /**
