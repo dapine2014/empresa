@@ -32,14 +32,6 @@ public final class TeamPlanSchema {
             "additionalProperties", false
     );
 
-    private static final Map<String, Object> PARTICIPATION_CONFLICTS_SCHEMA = Map.of("type", "array", "items", Map.of(
-            "type", "object",
-            "properties", Map.of(
-                    "agentId", Map.of("type", "string", "minLength", 1),
-                    "reason", Map.of("type", "string", "minLength", 1)),
-            "required", List.of("agentId", "reason"),
-            "additionalProperties", false));
-
     private static final Map<String, Object> CONTEXT_SCHEMA = Map.of(
             "type", "object",
             "properties", Map.of(
@@ -63,8 +55,7 @@ public final class TeamPlanSchema {
                     "stackProfile", Map.of("type", "string"),
                     "boundedContexts", Map.of("type", "array", "items", CONTEXT_SCHEMA),
                     "ubiquitousLanguage", Map.of("type", "array", "items", TERM_SCHEMA),
-                    "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1),
-                    "participationConflicts", PARTICIPATION_CONFLICTS_SCHEMA
+                    "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1)
             ),
             "required", List.of("summary", "stackProfile", "boundedContexts", "ubiquitousLanguage", "tasks"),
             "additionalProperties", false

@@ -306,6 +306,7 @@ public enum StackProfile {
     }
 
     public static String describeAll() {
-        return Arrays.stream(values()).map(StackProfile::describe).collect(Collectors.joining("\n"));
+        return Arrays.stream(values()).filter(StackProfile::enabledNow).map(StackProfile::describe)
+                .collect(Collectors.joining("\n"));
     }
 }

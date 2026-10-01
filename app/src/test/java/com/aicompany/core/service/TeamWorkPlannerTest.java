@@ -163,42 +163,6 @@ class TeamWorkPlannerTest {
         assertTrue(prompt.getValue().contains("No copies ni concatenes el listado completo de capabilities."));
     }
 
-    @Test
-    void aReportedParticipationConflictStopsBeforeExecutingWithoutRetrying() {
-        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
-        var conflicted = new TeamPlan("Plan", "", "", validPlan().tasks(), List.of(
-                new TeamPlan.ParticipationConflict("community", "El objetivo no requiere trabajo de comunidad.")));
-        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(conflicted);
-
-        var ex = assertThrows(IllegalStateException.class,
-                () -> planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS));
-
-        assertTrue(ex.getMessage().contains("incompatibilidad"), ex.getMessage());
-        assertTrue(ex.getMessage().contains("community: El objetivo no requiere trabajo de comunidad."), ex.getMessage());
-        verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
-        verify(memory).updateTask(eq("MISSION-5-GROWTH-CONTENT-PLAN"), eq("FAILED"), contains("incompatibilidad"));
-    }
-
-    // Verificado en vivo (MISSION-SANDBOX-VERIFY-1): en el reintento, Neo copió los errores del validador a
-    // participationConflicts (sobre agentes con tarea y sobre él mismo) y la misión se cortó sin corregir.
-    // Un conflicto solo vale para un miembro real, que no sea el líder y sin tarea en el plan.
-    @Test
-    void aContradictoryParticipationConflictIsCorrectedInsteadOfStoppingTheMission() {
-        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
-        var prompt = ArgumentCaptor.forClass(String.class);
-        var contradictory = new TeamPlan("Plan", "", "", validPlan().tasks(), List.of(
-                new TeamPlan.ParticipationConflict("growth-content", "El líder debe tener una tarea en el plan.")));
-        when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
-                .thenReturn(contradictory)
-                .thenReturn(validPlan());
-
-        var result = planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS);
-
-        assertNotNull(result.plan());
-        verify(ceoService, times(2)).planTeamWork(anyString(), anyString(), anyString(), anyString());
-        assertTrue(prompt.getAllValues().get(1).contains("participationConflicts"), prompt.getAllValues().get(1));
-    }
-
     // Verificado en vivo (MISSION-TEAM-VERIFY-5): un plan válido se perdía por "DESIGN-ARCHITECTURE".
     // El formato del action es cosmético: se normaliza en Java antes de validar, nunca se inventa.
     @Test
@@ -214,52 +178,24 @@ class TeamWorkPlannerTest {
         verify(ceoService, times(1)).planTeamWork(anyString(), anyString(), anyString(), anyString());
     }
 
-    // Verificado en vivo (MISSION-E2E-ENG, kimi-k3): Neo declaró a Mila sin trabajo ("una API .NET no tiene UI") y la
-    // misión se cortó, aunque el reparto fijo le da la capa API en DOTNET_APP. Java lo sabe: es un error que se corrige.
-    @Test
-    void aConflictForAMemberThatOwnsALayerOfTheProfileIsCorrectedNotReported() {
-        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
-                new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND", List.of("arq"), "m"),
-                new TeamMemberInfo("frontend-ui", "Mila", "Frontend", "FRONTEND_GAME_UI_SPECIALIST", List.of("ui"), "m")));
-        var plan = new TeamPlan("API de facturas", null, null, List.of(
-                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arq"), List.of(), List.of())),
-                List.of(new TeamPlan.ParticipationConflict("frontend-ui", "Una API .NET no tiene interfaz de usuario.")),
-                "DOTNET_APP", List.of(), List.of());
-
-        var errors = TeamWorkPlanner.invalidParticipationConflicts(plan, team);
-
-        assertEquals(1, errors.size(), errors::toString);
-        assertTrue(errors.get(0).contains("frontend-ui") && errors.get(0).contains("API"), errors.get(0));
-    }
-
-    @Test
-    void aConflictOutsideDevelopmentPlansIsStillReported() {
-        var plan = new TeamPlan("Plan", null, null, List.of(
-                new PlannedTask("growth-content", "WORK", "SEO", "SEO", List.of("SEO"), List.of())),
-                List.of(new TeamPlan.ParticipationConflict("community", "No hay trabajo de comunidad.")));
-
-        assertTrue(TeamWorkPlanner.invalidParticipationConflicts(plan, marketing("ACTIVE")).isEmpty());
-    }
-
     private static TeamSnapshot engineering() {
-        return new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
-                new TeamMemberInfo("engineering", "Neo", "Arquitecto", "CLOUD_ARCHITECT_LEAD_BACKEND",
-                        List.of("arquitectura backend"), "qwen3:8b"),
-                new TeamMemberInfo("qa", "Vera", "QA", "QA_CLOUD_PERFORMANCE_ENGINEER", List.of("QA"), "qwen3:8b"),
-                new TeamMemberInfo("backend", "Iris", "Backend", "DEV_BACKEND_INTEGRATIONS", List.of("backend"), "qwen3:8b")));
+        return new TeamSnapshot("TEAM-DEVELOPMENT", "Development Group", "ACTIVE", "engineering", List.of(
+                new TeamMemberInfo("engineering", "Neo", "Tech Lead", "TECH_LEAD", List.of("architecture"), "qwen3:8b"),
+                new TeamMemberInfo("frontend-ui", "Mila", "UI", "UI_UX", List.of("flutter", "ui"), "qwen3:8b"),
+                new TeamMemberInfo("qa", "Vera", "QA", "QA", List.of("qa", "tests"), "qwen3:8b"),
+                new TeamMemberInfo("backend", "Iris", "Backend", "BACKEND", List.of("backend"), "qwen3:8b")));
     }
 
     private static TeamPlan dddPlan() {
-        return new TeamPlan("Juego", null, null, List.of(
-                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"),
+        return new TeamPlan("Hola mundo", null, null, List.of(
+                new PlannedTask("frontend-ui", "WORK", "HELLO_UI", "Pantalla de saludo", List.of("flutter"),
                         List.of(), List.of()),
-                new PlannedTask("backend", "WORK", "DOMAIN_LOGIC", "Reglas del combate", List.of("backend"), List.of()),
-                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
-                List.of(), "GODOT_DOTNET_GAME",
-                List.of(new TeamPlan.BoundedContext("Combate", "Combate por turnos")),
-                List.of(new TeamPlan.GlossaryTerm("Unidad", "Personaje"),
-                        new TeamPlan.GlossaryTerm("Turno", "Momento de acción"),
-                        new TeamPlan.GlossaryTerm("Daño", "Vida que resta un ataque")));
+                new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests de aceptación", List.of("tests"), List.of())),
+                List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("saludo", "Saludo al usuario")),
+                List.of(new TeamPlan.GlossaryTerm("Saludo", "Mensaje de bienvenida"),
+                        new TeamPlan.GlossaryTerm("Usuario", "Persona que abre la app"),
+                        new TeamPlan.GlossaryTerm("Pantalla", "Vista del saludo")));
     }
 
     @Test
@@ -270,33 +206,35 @@ class TeamWorkPlannerTest {
 
         var result = planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
 
-        assertTrue(prompt.getValue().contains("GODOT_DOTNET_GAME"));
+        assertTrue(prompt.getValue().contains("FLUTTER_WEB_APP"));
         assertTrue(prompt.getValue().contains("src/<Ctx>.Domain"));
+        assertFalse(prompt.getValue().contains("GODOT_DOTNET_GAME"), "Godot no está habilitado en fase 1");
         assertTrue(prompt.getValue().contains("boundedContexts"));
         assertTrue(prompt.getValue().contains("ubiquitousLanguage"));
-        assertEquals("GODOT_DOTNET_GAME", result.plan().stackProfile());
+        assertEquals("FLUTTER_WEB_APP", result.plan().stackProfile());
     }
 
     @Test
     void normalizingActionsKeepsTheDddFields() {
         var normalized = TeamWorkPlanner.normalizeActions(dddPlan());
-        assertEquals("GODOT_DOTNET_GAME", normalized.stackProfile());
-        assertEquals(List.of("Combate"), normalized.contextNames());
+        assertEquals("FLUTTER_WEB_APP", normalized.stackProfile());
+        assertEquals(List.of("saludo"), normalized.contextNames());
         assertEquals(3, normalized.ubiquitousLanguageOrEmpty().size());
     }
 
-    // Verificado en vivo (MISSION-DDD-VERIFY-1): con "reparte por contexto y capa", qwen3:8b armó una tarea
-    // por capa, repitiendo agentes y carpetas. El prompt aclara una sola tarea por agente y da un ejemplo.
+    // Spec 2026-10-01 §5: Neo elige solo a los agentes necesarios; nadie recibe trabajo de relleno.
     @Test
-    void theDevelopmentPromptExplainsOneTaskPerAgentAcrossLayersWithAnExample() {
+    void theDevelopmentPromptAsksForOnlyTheNecessaryAgents() {
         when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
         var prompt = ArgumentCaptor.forClass(String.class);
         when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
 
-        planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+        planner.plan("M-1", "TEAM-DEVELOPMENT", "Hola mundo", TeamExecutionMode.DEVELOPMENT);
 
-        assertTrue(prompt.getValue().contains("UNA sola tarea"), prompt.getValue());
-        assertTrue(prompt.getValue().contains("Neo/CLOUD_ARCHITECT_LEAD_BACKEND (líder) → DOMAIN"), prompt.getValue());
+        var text = prompt.getValue();
+        assertTrue(text.contains("SOLO los miembros necesarios"), text);
+        assertTrue(text.contains("no escriben código"), text);
+        assertFalse(text.contains("participationConflicts"), text);
     }
 
     // Verificado en vivo (MISSION-DDD-VERIFY-2): sin el plan anterior, cada reintento regeneraba desde cero y
@@ -327,37 +265,38 @@ class TeamWorkPlannerTest {
         verify(ceoService, times(5)).planTeamWork(anyString(), anyString(), anyString(), anyString());
     }
 
-    // Revisión 2026-09-26 (opción B): Java calcula rutas, VALIDATION y archivos de entrada antes de validar.
+    // Revisión 4 (spec 2026-10-01): Java reparte capas por rol y desdobla QA antes de validar.
     @Test
     void developmentPlansAreResolvedBeforeValidation() {
         when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
         when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString())).thenReturn(dddPlan());
 
-        var result = planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+        var result = planner.plan("M-1", "TEAM-DEVELOPMENT", "Hola mundo", TeamExecutionMode.DEVELOPMENT);
 
-        var neo = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("engineering")).findFirst().orElseThrow();
-        // Revisión 3: el líder hace DOMAIN; en este equipo nadie tiene GAME, así que también recibe project.godot.
-        assertEquals(List.of("src/Combate.Domain", "game/project.godot"), neo.ownedPaths());
-        var iris = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("backend")).findFirst().orElseThrow();
-        assertEquals(List.of("src/Combate.Application"), iris.ownedPaths());
+        var mila = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("frontend-ui")).findFirst().orElseThrow();
+        assertEquals(List.of("lib/saludo/domain", "lib/saludo/application", "lib/saludo/infrastructure",
+                "lib/saludo/presentation", "pubspec.yaml", "lib/main.dart", "web"), mila.ownedPaths());
+        var vera = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("qa")).toList();
+        assertEquals(List.of("WORK", "VALIDATION"), vera.stream().map(TeamPlan.PlannedTask::kind).toList());
     }
 
     @Test
     void invalidDevelopmentPlansAreRetriedWithTheirCorrection() {
         when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
-        var noAssignments = new TeamPlan("Juego", null, null, List.of(
-                new PlannedTask("engineering", "WORK", "DOMAIN_MODEL", "Dominio", List.of("arquitectura backend"), List.of()),
-                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
-                List.of(), "GODOT_DOTNET_GAME", dddPlan().boundedContexts(), dddPlan().ubiquitousLanguage());
+        var withLeader = new TeamPlan("Hola mundo", null, null, List.of(
+                new PlannedTask("engineering", "WORK", "ARCHITECTURE", "Arquitectura", List.of("architecture"), List.of()),
+                new PlannedTask("frontend-ui", "WORK", "HELLO_UI", "Pantalla", List.of("flutter"), List.of()),
+                new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests", List.of("tests"), List.of())),
+                List.of(), "FLUTTER_WEB_APP", dddPlan().boundedContexts(), dddPlan().ubiquitousLanguage());
         var prompt = ArgumentCaptor.forClass(String.class);
         when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
-                .thenReturn(noAssignments)
+                .thenReturn(withLeader)
                 .thenReturn(dddPlan());
 
-        planner.plan("M-1", "TEAM-DEVELOPMENT", "Crear un juego", TeamExecutionMode.DEVELOPMENT);
+        planner.plan("M-1", "TEAM-DEVELOPMENT", "Hola mundo", TeamExecutionMode.DEVELOPMENT);
 
-        // Revisión 3: DOMAIN ya siempre tiene dueño (el líder); el error que queda es la tarea faltante de Iris.
-        assertTrue(prompt.getAllValues().get(1).contains("CORRECCIÓN"), prompt.getAllValues().get(1));
-        assertTrue(prompt.getAllValues().get(1).contains("backend"), prompt.getAllValues().get(1));
+        var second = prompt.getAllValues().get(1);
+        assertTrue(second.contains("CORRECCIÓN"), second);
+        assertTrue(second.contains("engineering (TECH_LEAD) no escribe código"), second);
     }
 }

@@ -59,9 +59,10 @@ class StackProfileTest {
     }
 
     @Test
-    void theCatalogDescriptionShowsEveryProfileAndItsStructure() {
+    void theCatalogDescriptionShowsOnlyTheEnabledProfilesAndTheirStructure() {
         var all = StackProfile.describeAll();
-        assertTrue(all.contains("DOTNET_APP") && all.contains("GODOT_DOTNET_GAME") && all.contains("FLUTTER_WEB_APP"));
+        assertTrue(all.contains("DOTNET_APP") && all.contains("FLUTTER_WEB_APP"));
+        assertFalse(all.contains("GODOT_DOTNET_GAME"), "Godot es fase 3 (spec 2026-10-01)");
         assertTrue(all.contains("src/<Ctx>.Domain"));
         assertTrue(all.contains("lib/<ctx>/domain"));
     }

@@ -83,15 +83,6 @@ public final class RoleLayerCatalog {
         return null;
     }
 
-    /**
-     * Transitorio: lo usan TeamPlanResolver (hasta la Task 3 del plan dg1) y
-     * TeamWorkPlanner.invalidParticipationConflicts (hasta la Task 5). Se borra en la Task 5.
-     */
-    @Deprecated
-    public static Optional<List<Layer>> layersFor(String roleCode) {
-        return of(roleCode).map(RoleLayers::primary);
-    }
-
     public static String describe() {
         return "Aria/PRODUCT_OWNER y Neo/TECH_LEAD no escriben código (no les asignes tareas); "
                 + "Iris/BACKEND → DOMAIN, APPLICATION y API (e INFRASTRUCTURE si no participa Diego); "
