@@ -70,4 +70,18 @@ class RoleLayerCatalogTest {
         assertTrue(StackProfile.DOTNET_APP.enabledNow());
         assertFalse(StackProfile.GODOT_DOTNET_GAME.enabledNow());
     }
+
+    // Revisión final (I-2): el respaldo no puede depender del orden en que Neo listó las tareas.
+    @Test
+    void fallbackLayersFollowAFixedRolePriorityNotThePlanOrder() {
+        var dotnet = RoleLayerCatalog.assign(roles("frontend-ui", "UI_UX", "backend", "BACKEND", "qa", "QA"),
+                StackProfile.DOTNET_APP.layers());
+        assertEquals(List.of(Layer.DOMAIN, Layer.APPLICATION, Layer.INFRASTRUCTURE, Layer.API), dotnet.get("backend"));
+        assertEquals(List.of(), dotnet.get("frontend-ui"));
+
+        var flutter = RoleLayerCatalog.assign(roles("frontend-ui", "UI_UX", "backend", "BACKEND", "qa", "QA"),
+                StackProfile.FLUTTER_WEB_APP.layers());
+        assertEquals(List.of(Layer.DOMAIN, Layer.APPLICATION, Layer.INFRASTRUCTURE), flutter.get("backend"));
+        assertEquals(List.of(Layer.PRESENTATION), flutter.get("frontend-ui"));
+    }
 }

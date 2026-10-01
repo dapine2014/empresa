@@ -299,4 +299,32 @@ class TeamWorkPlannerTest {
         assertTrue(second.contains("CORRECCIÓN"), second);
         assertTrue(second.contains("engineering (TECH_LEAD) no escribe código"), second);
     }
+
+    // Revisión final (I-1): un error del resolutor no puede ocultar la causa real (perfil o rol no habilitado).
+    @Test
+    void validatorErrorsAreReportedEvenWhenTheResolverAlsoFails() {
+        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Development Group", "ACTIVE", "engineering", List.of(
+                new TeamMemberInfo("engineering", "Neo", "Tech Lead", "TECH_LEAD", List.of("architecture"), "qwen3:8b"),
+                new TeamMemberInfo("backend", "Iris", "Backend", "BACKEND", List.of("backend"), "qwen3:8b"),
+                new TeamMemberInfo("interaction-design", "Kael", "Game", "GAME_DEV", List.of("godot"), "qwen3:8b"),
+                new TeamMemberInfo("frontend-ui", "Mila", "UI", "UI_UX", List.of("flutter", "ui"), "qwen3:8b"),
+                new TeamMemberInfo("qa", "Vera", "QA", "QA", List.of("qa", "tests"), "qwen3:8b")));
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(team);
+        var godot = new TeamPlan("Juego", null, null, List.of(
+                new PlannedTask("backend", "WORK", "DOMAIN_MODEL", "Dominio", List.of("backend"), List.of()),
+                new PlannedTask("interaction-design", "WORK", "GAMEPLAY", "Juego", List.of("godot"), List.of()),
+                new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests", List.of("tests"), List.of())),
+                List.of(), "GODOT_DOTNET_GAME", List.of(new TeamPlan.BoundedContext("Combate", "Combate")),
+                dddPlan().ubiquitousLanguage());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
+                .thenReturn(godot)
+                .thenReturn(dddPlan());
+
+        planner.plan("M-1", "TEAM-DEVELOPMENT", "Un juego", TeamExecutionMode.DEVELOPMENT);
+
+        var second = prompt.getAllValues().get(1);
+        assertTrue(second.contains("GODOT_DOTNET_GAME todavía no está habilitado"), second);
+        assertTrue(second.contains("interaction-design (GAME_DEV) todavía no está habilitado"), second);
+    }
 }

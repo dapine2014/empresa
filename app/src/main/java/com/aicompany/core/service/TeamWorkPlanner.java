@@ -129,17 +129,19 @@ public class TeamWorkPlanner {
 
                 plan = normalizeActions(plan);
 
-                var errors = new ArrayList<String>();
+                // Revisión final del bloque 1 (I-1): el validador corre siempre y sus errores van primero, para
+                // que un error derivado del resolutor (p. ej. capa sin dueño) no oculte la causa real (un perfil o
+                // un rol no habilitado, un agente que no escribe código).
+                var resolverErrors = new ArrayList<String>();
 
                 if (mode == TeamExecutionMode.DEVELOPMENT) {
                     var resolution = resolver.resolve(plan, team);
-                    errors.addAll(resolution.errors());
+                    resolverErrors.addAll(resolution.errors());
                     plan = resolution.plan();
                 }
 
-                if (errors.isEmpty()) {
-                    errors.addAll(validator.validate(plan, team, mode));
-                }
+                var errors = new ArrayList<String>(validator.validate(plan, team, mode));
+                resolverErrors.stream().filter(error -> !errors.contains(error)).forEach(errors::add);
 
                 if (errors.isEmpty()) {
 

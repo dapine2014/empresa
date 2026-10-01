@@ -69,15 +69,28 @@ public final class RoleLayerCatalog {
         return result;
     }
 
+    /**
+     * Revisión final del bloque 1 (I-2): el dueño de una capa no puede depender del orden en que Neo listó las
+     * tareas. Se elige por esta prioridad de rol fija (el especialista más cercano a la capa primero) y, solo
+     * entre agentes del mismo rol, por orden del plan.
+     */
+    private static final List<String> ROLE_PRIORITY =
+            List.of("BACKEND", "DATA_ARCHITECT", "UI_UX", "GAME_DEV", "QA", "SPECIALIST_3D", "CREATIVE", "DEVOPS");
+
     private static String firstWith(LinkedHashMap<String, String> roleCodeByAgent, Layer layer, boolean primary) {
-        for (var entry : roleCodeByAgent.entrySet()) {
-            var role = of(entry.getValue());
-            if (role.isEmpty() || !role.get().writesCode() || role.get().phase() > DevelopmentPhase.CURRENT) {
-                continue;
-            }
-            var layers = primary ? role.get().primary() : role.get().fallback();
-            if (layers.contains(layer)) {
-                return entry.getKey();
+        for (var roleCode : ROLE_PRIORITY) {
+            for (var entry : roleCodeByAgent.entrySet()) {
+                if (!roleCode.equals(entry.getValue())) {
+                    continue;
+                }
+                var role = of(roleCode).orElseThrow();
+                if (!role.writesCode() || role.phase() > DevelopmentPhase.CURRENT) {
+                    continue;
+                }
+                var layers = primary ? role.primary() : role.fallback();
+                if (layers.contains(layer)) {
+                    return entry.getKey();
+                }
             }
         }
         return null;
