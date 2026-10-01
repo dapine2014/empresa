@@ -190,6 +190,15 @@ public enum StackProfile {
     }
 
     /** Capas que ofrece el perfil (por contexto y compartidas). */
+    /** Fase del Development Group en que el perfil está habilitado (spec 2026-10-01). */
+    public int phase() {
+        return this == GODOT_DOTNET_GAME ? 3 : 1;
+    }
+
+    public boolean enabledNow() {
+        return phase() <= DevelopmentPhase.CURRENT;
+    }
+
     public List<Layer> layers() {
         var layers = new ArrayList<Layer>();
         contextRoots.forEach(r -> layers.add(r.layer()));
