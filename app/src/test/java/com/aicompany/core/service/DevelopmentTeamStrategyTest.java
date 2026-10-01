@@ -112,6 +112,32 @@ class DevelopmentTeamStrategyTest {
         verify(events).publish(eq("EMPRESA_TASK_COMMITTED"), eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), anyMap());
     }
 
+    // Spec 2026-10-01 §1: Vera escribe los tests (WORK) y revisa con una tarea propia.
+    @Test
+    void qaWithATestsTaskReviewsUnderItsOwnTaskId() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("tests/Combate.Tests/CombateTests.cs")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
+                        List.of("tests/Combate.Tests/CombateTests.cs")));
+        when(runtime.review(eq("M-1-QA-REVIEW"), eq("M-1"), eq("qa"), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        var base = context();
+        var tasks = new java.util.ArrayList<>(base.plan().tasksOrEmpty());
+        tasks.add(2, new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests de aceptación",
+                List.of("tests"), List.of("tests/Combate.Tests")));
+        var plan = new TeamPlan(base.plan().summary(), null, null, tasks, List.of(), base.plan().stackProfile(),
+                base.plan().boundedContexts(), base.plan().ubiquitousLanguage());
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", base.team(), plan), progress);
+
+        verify(memory).createTask("M-1-QA", "M-1", "qa", "ACCEPTANCE_TESTS", "WORK");
+        verify(memory).createTask("M-1-QA-REVIEW", "M-1", "qa", "STATIC_REVIEW", "VALIDATION");
+        verify(runtime).review(eq("M-1-QA-REVIEW"), eq("M-1"), eq("qa"), anyString(), anyMap());
+    }
+
     @Test
     void aCleanReviewWithAPassingSandboxCitesRealShas() throws Exception {
         stubHappyPath();

@@ -15,6 +15,11 @@ public final class TaskIds {
         return withRound(missionId + "-" + agentId.toUpperCase(Locale.ROOT), round);
     }
 
+    /** Revisión de QA cuando el mismo agente también escribe los tests (spec 2026-10-01 §1). */
+    public static String reviewTask(String missionId, String agentId, int round) {
+        return withRound(missionId + "-" + agentId.toUpperCase(Locale.ROOT) + "-REVIEW", round);
+    }
+
     public static String planTask(String missionId, String leaderId, int round) {
         return withRound(missionId + "-" + leaderId.toUpperCase(Locale.ROOT) + "-PLAN", round);
     }
