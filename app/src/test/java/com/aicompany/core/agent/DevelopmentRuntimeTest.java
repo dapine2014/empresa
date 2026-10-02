@@ -490,4 +490,17 @@ class DevelopmentRuntimeTest {
         assertEquals(1, result.files().size());
         assertEquals(1, result.packagesOrEmpty().size());
     }
+
+    // Spec 2026-10-02 §2.4: los chequeos de base de datos se reintentan con su motivo.
+    @Test
+    void extraChecksAreRetriedWithTheirMessage() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("devops"), anyString(), anyString(), anyString()))
+                .thenReturn(dev("web/game/a.js"))
+                .thenReturn(dev("web/game/b.js"));
+
+        runtime.generate("T-1", "MISSION-1", "devops", "prompt", List.of("web/game"), List.of(), List.of("web/game"),
+                r -> r.files().get(0).path().endsWith("a.js") ? List.of("motivo del chequeo extra") : List.of()).get();
+
+        verify(ceoService).generateDevelopmentArtifact(eq("devops"), contains("motivo del chequeo extra"), anyString(), anyString());
+    }
 }

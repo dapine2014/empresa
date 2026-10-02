@@ -141,13 +141,22 @@ public class DevelopmentRuntime {
     public CompletableFuture<DevelopmentResult> generate(
             String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths,
             List<String> expectedProjects, List<String> requiredPaths) {
+        return generate(taskId, missionId, agentId, prompt, ownedPaths, expectedProjects, requiredPaths, r -> List.of());
+    }
+
+    /** Spec 2026-10-02 §2.4: chequeos deterministas que arma quien llama (base de datos, secretos); se reintentan. */
+    public CompletableFuture<DevelopmentResult> generate(
+            String taskId, String missionId, String agentId, String prompt, List<String> ownedPaths,
+            List<String> expectedProjects, List<String> requiredPaths,
+            Function<DevelopmentResult, List<String>> extraChecks) {
 
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
                 (attemptPrompt, model, agentPrompt) -> discardForeignFiles(
                         collectBatches(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
                         !expectedProjects.isEmpty()),
-                result -> verifyGenerated(result, ownedPaths, expectedProjects, requiredPaths),
+                result -> withExtraChecks(verifyGenerated(result, ownedPaths, expectedProjects, requiredPaths),
+                        result, extraChecks),
                 "GENERATED"));
     }
 
@@ -392,6 +401,16 @@ public class DevelopmentRuntime {
         var summary = (result.summary() == null ? "" : result.summary()) + "\n" + DISCARDED_NOTE + discarded + "]";
         // Revisión final (m-11): descartar un archivo ajeno no puede borrar los paquetes pedidos.
         return new DevelopmentResult(summary, kept, result.packagesOrEmpty());
+    }
+
+    private static Verdict withExtraChecks(Verdict verdict, DevelopmentResult result,
+                                           Function<DevelopmentResult, List<String>> extraChecks) {
+        if (!verdict.fatal().isEmpty() || result == null || result.files() == null) {
+            return verdict;
+        }
+        var retryable = new ArrayList<>(verdict.retryable());
+        retryable.addAll(extraChecks.apply(result));
+        return new Verdict(verdict.fatal(), retryable);
     }
 
     private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects,
