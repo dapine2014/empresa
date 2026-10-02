@@ -22,6 +22,20 @@ public final class DependencyManifest {
     private DependencyManifest() {
     }
 
+    private static String yamlError(String yaml) {
+        try {
+            new org.yaml.snakeyaml.Yaml().load(yaml == null ? "" : yaml);
+            return null;
+        } catch (org.yaml.snakeyaml.error.MarkedYAMLException ex) {
+            var mark = ex.getProblemMark() != null ? ex.getProblemMark() : ex.getContextMark();
+            var line = mark == null ? "" : " (línea " + (mark.getLine() + 1) + ")";
+            return "pubspec.yaml no es YAML válido" + line + ": " + ex.getProblem()
+                    + ". Pon entre comillas los textos que contienen \": \" (p. ej. description: \"…\").";
+        } catch (RuntimeException ex) {
+            return "pubspec.yaml no es YAML válido: " + ex.getMessage();
+        }
+    }
+
     public static List<String> validateRequests(List<PackageRequest> requests) {
         var errors = new ArrayList<String>();
         for (var r : requests == null ? List.<PackageRequest>of() : requests) {
@@ -37,6 +51,13 @@ public final class DependencyManifest {
     public static Parsed pubspec(String yaml) {
         var deps = new ArrayList<DependencyRef>();
         var errors = new ArrayList<String>();
+        // Verificado en vivo (MISSION-B1-CRM-1790975402): un pubspec que no es YAML válido rompe el restore, cuyo error
+        // no vuelve a la dueña del archivo; se rechaza al generar, con la línea exacta.
+        var syntax = yamlError(yaml);
+        if (syntax != null) {
+            errors.add(syntax);
+            return new Parsed(deps, errors);
+        }
         var inSection = false;
         String pending = null;
         for (var line : (yaml == null ? "" : yaml).split("\\R")) {
