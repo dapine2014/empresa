@@ -310,4 +310,184 @@ class DevelopmentRuntimeTest {
         verify(ceoService).generateDevelopmentArtifact(anyString(),
                 argThat(p -> p.contains("CORRECCIÓN") && p.contains("versión exacta")), anyString(), anyString());
     }
+
+    // Spec 2026-10-01 §5: el código omitido se reintenta con la línea exacta.
+    @Test
+    void elidedCodeIsRetriedWithTheExactLine() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("r", List.of(new GeneratedFile("web/game/main.js", "function a() {\n  // ...\n}"))))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(2)).generateDevelopmentArtifact(eq("backend"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(1).contains("Código omitido en web/game/main.js (línea 2"),
+                prompts.getAllValues().get(1));
+    }
+
+    // Spec 2026-10-01 §5: entrega por lotes (MISSION-1790905978528: el JSON de Mila se cortó en los 3 intentos).
+    private static DevelopmentResult part(boolean complete, List<String> remaining, String... paths) {
+        return new DevelopmentResult("lote", java.util.Arrays.stream(paths)
+                .map(p -> new GeneratedFile(p, "contenido de " + p)).toList(), List.of(), complete, remaining);
+    }
+
+    @Test
+    void batchesAreJoinedUntilComplete() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenReturn(part(false, List.of("web/game/b.js"), "web/game/a.js"))
+                .thenReturn(part(true, List.of(), "web/game/b.js"));
+
+        var result = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game")).get();
+
+        assertEquals(List.of("web/game/a.js", "web/game/b.js"), result.files().stream().map(GeneratedFile::path).toList());
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(2)).generateDevelopmentArtifact(eq("frontend-ui"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(1).contains("YA RECIBIDOS: [web/game/a.js]"), prompts.getAllValues().get(1));
+        assertTrue(prompts.getAllValues().get(1).contains("web/game/b.js"), prompts.getAllValues().get(1));
+    }
+
+    @Test
+    void aCutBatchIsRequestedAgainWithFewerFiles() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenThrow(new com.aicompany.core.service.TruncatedResponseException("se cortó"))
+                .thenReturn(part(true, List.of(), "web/game/a.js"));
+
+        runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game")).get();
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(2)).generateDevelopmentArtifact(eq("frontend-ui"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(1).contains("SE CORTÓ"), prompts.getAllValues().get(1));
+    }
+
+    @Test
+    void twoCutsInARowEndTheAttempt() {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenThrow(new com.aicompany.core.service.TruncatedResponseException("se cortó"));
+
+        var future = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game"));
+
+        var ex = assertThrows(java.util.concurrent.ExecutionException.class, future::get);
+        assertTrue(ex.getCause().getMessage().contains("se cortó dos veces"), ex.getCause().getMessage());
+    }
+
+    @Test
+    void aBatchWithoutNewPathsEndsTheAttempt() {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenReturn(part(false, List.of("web/game/b.js"), "web/game/a.js"));
+
+        var future = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game"));
+
+        var ex = assertThrows(java.util.concurrent.ExecutionException.class, future::get);
+        assertTrue(ex.getCause().getMessage().contains("no trajo archivos nuevos"), ex.getCause().getMessage());
+    }
+
+    @Test
+    void aFileSentTwiceKeepsTheLastVersion() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenReturn(part(false, List.of("web/game/b.js"), "web/game/a.js"))
+                .thenReturn(new DevelopmentResult("lote", List.of(new GeneratedFile("web/game/a.js", "versión 2"),
+                        new GeneratedFile("web/game/b.js", "b")), List.of(), true, List.of()));
+
+        var result = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game")).get();
+
+        assertEquals(2, result.files().size());
+        assertEquals("versión 2", result.files().get(0).content());
+    }
+
+    @Test
+    void theBatchRuleIsAlwaysInThePrompt() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(ceoService).generateDevelopmentArtifact(eq("backend"), contains("ENTREGA POR LOTES"), anyString(), anyString());
+    }
+
+    // Revisión final (I-1): cada lote es una llamada nueva; ve el contrato público de lo ya entregado.
+    @Test
+    void theContinuationCarriesTheContractOfReceivedFiles() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("lote", List.of(new GeneratedFile("web/game/Order.cs",
+                        "namespace Shop.Domain;\npublic class Order\n{\n    public int Id { get; init; }\n}")),
+                        List.of(), false, List.of("web/game/OrderRepository.cs")))
+                .thenReturn(part(true, List.of(), "web/game/OrderRepository.cs"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(2)).generateDevelopmentArtifact(eq("backend"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(1).contains("public class Order"), prompts.getAllValues().get(1));
+    }
+
+    // Revisión final (I-3): tras un corte, el lote reducido se mantiene en todo el intento.
+    @Test
+    void afterACutEveryLaterBatchStaysSmall() throws Exception {
+        when(companyMemory.agentModel(anyString(), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenThrow(new com.aicompany.core.service.TruncatedResponseException("se cortó"))
+                .thenReturn(part(false, List.of("web/game/b.js"), "web/game/a.js"))
+                .thenReturn(part(true, List.of(), "web/game/b.js"));
+
+        runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game")).get();
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(3)).generateDevelopmentArtifact(eq("frontend-ui"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(0).contains("como máximo 4 archivos"), prompts.getAllValues().get(0));
+        assertTrue(prompts.getAllValues().get(2).contains("como máximo 2 archivos"), prompts.getAllValues().get(2));
+        assertTrue(prompts.getAllValues().get(2).contains("web/game/b.js"), "conserva lo que falta");
+    }
+
+    // Revisión final (I-3): un modelo local (o el suplente de un remoto caído) tiene menos salida que el remoto.
+    @Test
+    void aLocalModelGetsSmallerBatches() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(ceoService).generateDevelopmentArtifact(eq("backend"), contains("como máximo 2 archivos"), anyString(), anyString());
+    }
+
+    @Test
+    void aRemoteModelThatIsDownGetsTheLocalBatchSize() throws Exception {
+        when(companyMemory.agentModel(anyString(), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        when(health.isDown("nvidia:moonshotai/kimi-k3")).thenReturn(true);
+        runtime.setModelHealth(health);
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(ceoService).generateDevelopmentArtifact(eq("backend"), contains("como máximo 2 archivos"), anyString(), anyString());
+    }
+
+    // Revisión final (I-5): el modelo repite packages en cada lote; NuGet falla con PackageReference duplicados.
+    @Test
+    void packagesRepeatedAcrossBatchesAreDeduplicated() throws Exception {
+        var newtonsoft = new DevelopmentResult.PackageRequest("Newtonsoft.Json", "13.0.3");
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("lote", List.of(new GeneratedFile("web/game/a.js", "a")),
+                        List.of(newtonsoft), false, List.of("web/game/b.js")))
+                .thenReturn(new DevelopmentResult("lote", List.of(new GeneratedFile("web/game/b.js", "b")),
+                        List.of(newtonsoft, new DevelopmentResult.PackageRequest("Polly", "8.4.1")), true, List.of()));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        assertEquals(List.of("Newtonsoft.Json", "Polly"), result.packagesOrEmpty().stream()
+                .map(DevelopmentResult.PackageRequest::name).toList());
+    }
+
+    // Revisión final (m-11): descartar un archivo ajeno no puede borrar los paquetes pedidos.
+    @Test
+    void discardingForeignFilesKeepsThePackages() {
+        var result = DevelopmentRuntime.discardForeignFiles(new DevelopmentResult("r", List.of(
+                        new GeneratedFile("web/game/a.js", "a"), new GeneratedFile("otro/b.js", "b")),
+                List.of(new DevelopmentResult.PackageRequest("Polly", "8.4.1"))), List.of("web/game"), false);
+
+        assertEquals(1, result.files().size());
+        assertEquals(1, result.packagesOrEmpty().size());
+    }
 }

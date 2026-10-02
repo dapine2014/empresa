@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
  * {@code Exitoso()}, {@code SembrarAsync()}, {@code AddInfrastructureServices()} como extensión). Java extrae, con reglas
  * deterministas y sin cuerpos, los namespaces, tipos y firmas públicas de C# y Dart; el bloque nunca se recorta.
  */
-final class PublicApiExtractor {
+public final class PublicApiExtractor {
 
     private static final Pattern CS_TYPE = Pattern.compile(
             "^((public|internal)\\s+)?((static|sealed|abstract|partial|readonly)\\s+)*(class|record|interface|enum|struct)\\s+\\w+.*");
@@ -26,7 +26,7 @@ final class PublicApiExtractor {
     private PublicApiExtractor() {
     }
 
-    static String extract(Map<String, String> contentsByPath) {
+    public static String extract(Map<String, String> contentsByPath) {
         var out = new StringBuilder();
         for (var entry : contentsByPath.entrySet()) {
             var content = entry.getValue() == null ? "" : entry.getValue();

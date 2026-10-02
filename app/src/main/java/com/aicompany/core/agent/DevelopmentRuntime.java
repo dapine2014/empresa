@@ -145,7 +145,7 @@ public class DevelopmentRuntime {
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
                 (attemptPrompt, model, agentPrompt) -> discardForeignFiles(
-                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
+                        collectBatches(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
                         !expectedProjects.isEmpty()),
                 result -> verifyGenerated(result, ownedPaths, expectedProjects, requiredPaths),
                 "GENERATED"));
@@ -249,6 +249,113 @@ public class DevelopmentRuntime {
         }
     }
 
+    static final int MAX_BATCHES = 8;
+
+    /**
+     * Revisión final (I-3): el tamaño del lote depende de la salida del modelo que realmente responde (remoto
+     * 16.384 tokens; local o suplente de un remoto caído, 6.144) y tras un corte queda reducido todo el intento.
+     */
+    static String batchRule(boolean local, boolean reduced) {
+        var files = local ? (reduced ? 1 : 2) : (reduced ? 2 : 4);
+        var chars = local ? (reduced ? "8.000" : "15.000") : (reduced ? "15.000" : "30.000");
+        return "\n\nENTREGA POR LOTES (obligatorio): tu respuesta tiene un límite de salida. Entrega como máximo "
+                + files + " archivos o unos " + chars + " caracteres por respuesta, cada archivo COMPLETO. Si te "
+                + "faltan archivos, responde con \"complete\": false y \"remainingPaths\" con las rutas que todavía "
+                + "vas a entregar; Forjai te pedirá el resto. Cuando ya entregaste todo, \"complete\": true y "
+                + "\"remainingPaths\": [].\n";
+    }
+
+    private boolean runsLocally(String model) {
+        return model == null || !model.startsWith("nvidia") || (modelHealth != null && modelHealth.isDown(model));
+    }
+
+    /**
+     * Spec 2026-10-01 §5 (verificado en vivo: MISSION-1790905978528, el JSON de Mila se cortó en los 3 intentos).
+     * Junta lotes hasta complete=true. Un lote cortado se pide de nuevo con menos archivos; dos cortes seguidos, un
+     * lote sin rutas nuevas o más de MAX_BATCHES lotes terminan el intento (executeWithRetries reintenta).
+     */
+    DevelopmentResult collectBatches(String agentId, String prompt, String agentPrompt, String model) {
+        var byPath = new java.util.LinkedHashMap<String, DevelopmentResult.GeneratedFile>();
+        var packagesByName = new java.util.LinkedHashMap<String, DevelopmentResult.PackageRequest>();
+        var local = runsLocally(model);
+        String summary = null;
+        var continuation = "";
+        var lastRemaining = List.<String>of();
+        var reduced = false;
+        var cutInARow = 0;
+
+        for (int batch = 1; batch <= MAX_BATCHES; batch++) {
+            DevelopmentResult part;
+            try {
+                part = ceoService.generateDevelopmentArtifact(agentId,
+                        prompt + batchRule(local, reduced) + continuation, agentPrompt, model);
+                cutInARow = 0;
+            } catch (com.aicompany.core.service.TruncatedResponseException ex) {
+                cutInARow++;
+                if (cutInARow >= 2) {
+                    throw new IllegalStateException("La respuesta se cortó dos veces seguidas aun pidiendo menos "
+                            + "archivos: entrega de a 1 o 2 archivos por lote.");
+                }
+                reduced = true;
+                continuation = "\n\nTU RESPUESTA ANTERIOR SE CORTÓ por el límite de salida y se descartó: desde ahora "
+                        + "entrega lotes más chicos." + received(byPath) + pending(lastRemaining);
+                continue;
+            }
+
+            if (summary == null) {
+                summary = part.summary();
+            }
+            var newPaths = 0;
+            for (var file : part.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : part.files()) {
+                if (file == null || file.path() == null) {
+                    continue;
+                }
+                if (!byPath.containsKey(file.path())) {
+                    newPaths++;
+                }
+                byPath.put(file.path(), file);
+            }
+            // Revisión final (I-5): el modelo repite packages en cada lote; gana el último por nombre.
+            part.packagesOrEmpty().stream().filter(java.util.Objects::nonNull)
+                    .forEach(p -> packagesByName.put(p.name(), p));
+
+            if (part.isComplete()) {
+                return new DevelopmentResult(summary, new ArrayList<>(byPath.values()),
+                        new ArrayList<>(packagesByName.values()), true, List.of());
+            }
+            if (newPaths == 0) {
+                throw new IllegalStateException("El lote " + batch + " no trajo archivos nuevos y dijo complete=false: "
+                        + "entrega las rutas que faltan o responde complete=true.");
+            }
+            lastRemaining = part.remainingPathsOrEmpty();
+            continuation = "\n\nCONTINUACIÓN (lote " + (batch + 1) + "): no repitas lo ya entregado."
+                    + received(byPath) + pending(lastRemaining);
+        }
+
+        throw new IllegalStateException("Superaste " + MAX_BATCHES + " lotes sin marcar complete=true.");
+    }
+
+    /**
+     * Revisión final (I-1): cada lote es una llamada nueva sin memoria del anterior; va el contrato público (Java,
+     * PublicApiExtractor) de lo ya entregado para que no se reinventen nombres ni firmas dentro de la misma capa.
+     */
+    private static String received(java.util.Map<String, DevelopmentResult.GeneratedFile> byPath) {
+        if (byPath.isEmpty()) {
+            return "";
+        }
+        var contents = new java.util.LinkedHashMap<String, String>();
+        byPath.forEach((path, file) -> contents.put(path, file.content() == null ? "" : file.content()));
+        var contract = com.aicompany.core.service.PublicApiExtractor.extract(contents);
+        return "\nARCHIVOS YA RECIBIDOS: " + new ArrayList<>(byPath.keySet())
+                + (contract == null || contract.isBlank() ? ""
+                : "\nCONTRATO PÚBLICO DE LO QUE YA ENTREGASTE (úsalo tal cual, mismos nombres y firmas):\n" + contract);
+    }
+
+    private static String pending(List<String> remaining) {
+        return remaining.isEmpty() ? "" : "\nTe faltan, según tu lote anterior: " + remaining;
+    }
+
+
     static final String DISCARDED_NOTE = "[Forjai descartó archivos que no te corresponden (de otro agente, o "
             + ".csproj que genera Forjai): ";
 
@@ -283,7 +390,8 @@ public class DevelopmentRuntime {
             return result;
         }
         var summary = (result.summary() == null ? "" : result.summary()) + "\n" + DISCARDED_NOTE + discarded + "]";
-        return new DevelopmentResult(summary, kept);
+        // Revisión final (m-11): descartar un archivo ajeno no puede borrar los paquetes pedidos.
+        return new DevelopmentResult(summary, kept, result.packagesOrEmpty());
     }
 
     private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects,
@@ -326,6 +434,9 @@ public class DevelopmentRuntime {
 
         // Los .csproj esperados los genera Forjai (ProjectScaffold): el agente no puede pisarlos.
         retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects, expectedProjects));
+
+        // Spec 2026-10-01 §5: código omitido ("...", "resto del código") → reintento con la línea exacta.
+        retryable.addAll(com.aicompany.core.agent.validation.ElidedCodeGate.check(result.files()));
 
         // Verificado en vivo: dueños de dos capas entregaban solo una (o solo el .csproj).
         var paths = result.files().stream().filter(Objects::nonNull).map(f -> f.path()).toList();

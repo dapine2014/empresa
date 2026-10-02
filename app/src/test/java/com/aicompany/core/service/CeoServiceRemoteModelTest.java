@@ -110,4 +110,56 @@ class CeoServiceRemoteModelTest {
         assertEquals(List.of("AGENT_STATUS"), topics);
         verifyNoInteractions(ollama);
     }
+
+    // Spec 2026-10-01 §5 (MISSION-1790905978528: el JSON de Mila se cortó en los 3 intentos).
+    @Test
+    void aDevelopmentArtifactCutByTheTokenLimitIsReportedAsTruncated() {
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("{\"summary\":\"s\",\"files\":[{\"path\":\"a\",\"con",
+                        List.of(), "length"));
+
+        assertThrows(TruncatedResponseException.class,
+                () -> ceoService.generateDevelopmentArtifact("frontend-ui", "p", "", "nvidia:moonshotai/kimi-k3"));
+    }
+
+    @Test
+    void aJsonThatEndsMidwayIsTruncatedEvenWithoutAFinishReason() {
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("{\"summary\":\"s\",\"files\":[{\"pa", List.of()));
+
+        assertThrows(TruncatedResponseException.class,
+                () -> ceoService.generateDevelopmentArtifact("frontend-ui", "p", "", "nvidia:moonshotai/kimi-k3"));
+    }
+
+    @Test
+    void anInvalidButCompleteJsonIsNotTruncated() {
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("no es json", List.of(), "stop"));
+
+        var ex = assertThrows(IllegalStateException.class,
+                () -> ceoService.generateDevelopmentArtifact("frontend-ui", "p", "", "nvidia:moonshotai/kimi-k3"));
+        assertFalse(ex instanceof TruncatedResponseException);
+    }
+
+    // Revisión final (I-2): una respuesta vacía no es un corte (Jackson dice "No content ... end-of-input").
+    @Test
+    void anEmptyResponseIsNotATruncation() {
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("  ", List.of(), "stop"));
+
+        var ex = assertThrows(IllegalStateException.class,
+                () -> ceoService.generateDevelopmentArtifact("frontend-ui", "p", "", "nvidia:moonshotai/kimi-k3"));
+        assertFalse(ex instanceof TruncatedResponseException, ex.getMessage());
+    }
+
+    // Pendiente de la revisión (m-10): el aviso de corte le dice al modelo qué hacer (Neo, Vera, cualquier operación).
+    @Test
+    void aTruncationTellsTheModelToAnswerShorter() {
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("{\"summary\":\"s\",\"ta", List.of(), "length"));
+
+        var ex = assertThrows(TruncatedResponseException.class,
+                () -> ceoService.generateDevelopmentArtifact("engineering", "p", "", "nvidia:moonshotai/kimi-k3"));
+        assertTrue(ex.getMessage().contains("más breve"), ex.getMessage());
+    }
 }

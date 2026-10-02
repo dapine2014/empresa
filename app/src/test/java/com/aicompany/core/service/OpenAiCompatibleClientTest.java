@@ -260,4 +260,19 @@ class OpenAiCompatibleClientTest {
         assertEquals(OpenAiCompatibleClient.KeyCheck.UNAVAILABLE, client.checkKey("m", "otra"));
         assertEquals("…ente", client.keyHint());
     }
+
+    // Spec 2026-10-01 §5: el corte por límite de salida se detecta, no se adivina.
+    @Test
+    void theFinishReasonIsReturned() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andRespond(withSuccess("""
+                {"choices":[{"message":{"role":"assistant","content":"{\\"summary\\":\\"s\\",\\"fi"},
+                "finish_reason":"length"}]}""", MediaType.APPLICATION_JSON));
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        var reply = client.complete("m", MESSAGES, null, true, 100);
+
+        assertEquals("length", reply.finishReason());
+    }
 }
