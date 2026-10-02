@@ -29,7 +29,8 @@ public enum StackProfile {
                     new LayerRoot(Layer.TESTS, "tests/{ctx}.Tests")),
             List.of(),
             List.of(new EntryFile("[A-Za-z0-9]+\\.sln", "<Producto>.sln")),
-            List.of("README.md", ".gitignore", "docs", "Directory.Build.props"),
+            // Spec 2026-10-02 §2: migraciones de Diego (solo se admiten si el plan declara base; DatabaseContractGate).
+            List.of("README.md", ".gitignore", "docs", "Directory.Build.props", "db/postgres/migrations", ".env.example"),
             List.of("Microsoft.AspNetCore", "Godot")),
 
     GODOT_DOTNET_GAME(

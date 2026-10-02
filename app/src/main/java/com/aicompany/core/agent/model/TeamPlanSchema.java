@@ -55,7 +55,12 @@ public final class TeamPlanSchema {
                     "stackProfile", Map.of("type", "string"),
                     "boundedContexts", Map.of("type", "array", "items", CONTEXT_SCHEMA),
                     "ubiquitousLanguage", Map.of("type", "array", "items", TERM_SCHEMA),
-                    "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1)
+                    "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1),
+                    // Spec 2026-10-02 §2: base de datos del producto (opcional).
+                    "database", Map.of("type", "object", "properties", Map.of(
+                                    "engine", Map.of("type", "string"),
+                                    "connectionName", Map.of("type", "string")),
+                            "required", List.of("engine", "connectionName"))
             ),
             "required", List.of("summary", "stackProfile", "boundedContexts", "ubiquitousLanguage", "tasks"),
             "additionalProperties", false

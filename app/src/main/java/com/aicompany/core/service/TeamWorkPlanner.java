@@ -84,6 +84,14 @@ public class TeamWorkPlanner {
         this.agentAvailability = agentAvailability;
     }
 
+    private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
+
+    /** Spec 2026-10-02 §1: Neo conoce las conexiones de la misión por nombre y motor (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDatabaseConnections(com.aicompany.core.database.DatabaseConnectionService databaseConnections) {
+        this.databaseConnections = databaseConnections;
+    }
+
     private TeamSnapshot onlyEnabledMembers(TeamSnapshot team) {
         if (agentAvailability == null || team == null) {
             return team;
@@ -104,6 +112,9 @@ public class TeamWorkPlanner {
     public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode, int round) {
 
         var team = onlyEnabledMembers(teamMemory.snapshot(teamId));
+        var connections = databaseConnections == null
+                ? java.util.List.<com.aicompany.core.database.DatabaseConnection>of()
+                : databaseConnections.connectionsOf(missionId);
 
         if (team == null || !"ACTIVE".equals(team.status())) {
             throw new IllegalStateException("El equipo " + teamId + " no existe o no está ACTIVE en Company Memory.");
@@ -124,7 +135,7 @@ public class TeamWorkPlanner {
 
             var model = companyMemory.agentModel(leaderId, defaultAgentModel);
             var leaderPrompt = promptMemory.activePrompt(leaderId);
-            var basePrompt = buildPrompt(team, instruction, mode);
+            var basePrompt = buildPrompt(team, instruction, mode) + databaseRule(mode, connections);
             String feedback = null;
             String previousPlanJson = null;
             var maxRetries = mode == TeamExecutionMode.DEVELOPMENT ? MAX_DEVELOPMENT_PLAN_RETRIES : MAX_PLAN_RETRIES;
@@ -156,7 +167,7 @@ public class TeamWorkPlanner {
                     plan = resolution.plan();
                 }
 
-                var errors = new ArrayList<String>(validator.validate(plan, team, mode));
+                var errors = new ArrayList<String>(validator.validate(plan, team, mode, connections));
                 resolverErrors.stream().filter(error -> !errors.contains(error)).forEach(errors::add);
 
                 if (errors.isEmpty()) {
@@ -193,6 +204,21 @@ public class TeamWorkPlanner {
         log.warn("MISSION {} - team plan rejected attempt={} errors={}", missionId, attempt + 1, feedback);
         events.publish("EMPRESA_TEAM_PLAN_REJECTED", missionId, taskId, leaderId,
                 Map.of("attempt", attempt + 1, "errors", feedback));
+    }
+
+    /** Spec 2026-10-02 §2: cuándo declarar base de datos; solo nombres y contrato, nunca host, usuario ni clave. */
+    static String databaseRule(TeamExecutionMode mode, java.util.List<com.aicompany.core.database.DatabaseConnection> connections) {
+        if (mode != TeamExecutionMode.DEVELOPMENT) {
+            return "";
+        }
+        var list = connections.isEmpty() ? "ninguna todavía (usa \"\" y el fundador la cargará)"
+                : connections.stream().map(com.aicompany.core.database.ConnectionContract::describe)
+                .collect(Collectors.joining("; "));
+        return """
+                - database: si el producto guarda datos, declara {"engine": "POSTGRESQL", "connectionName": "<nombre>"}
+                  con una de las conexiones de la misión: %s. Con base de datos el stack es DOTNET_APP e incluye al
+                  DATA_ARCHITECT (devops). Si el producto no guarda datos, omite database.
+                """.formatted(list);
     }
 
     private String buildPrompt(TeamSnapshot team, String instruction, TeamExecutionMode mode) {
@@ -286,7 +312,7 @@ public class TeamWorkPlanner {
                 : plan.summary();
 
         return new TeamPlan(summary, plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts(),
-                plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage());
+                plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(), plan.database());
     }
 
     private static String normalizeAction(String action) {

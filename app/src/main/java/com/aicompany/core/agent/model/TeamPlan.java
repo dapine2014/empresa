@@ -16,17 +16,37 @@ public record TeamPlan(
         List<ParticipationConflict> participationConflicts,
         String stackProfile,
         List<BoundedContext> boundedContexts,
-        List<GlossaryTerm> ubiquitousLanguage
+        List<GlossaryTerm> ubiquitousLanguage,
+        DatabaseNeed database
 ) {
+
+    /** Planes sin base de datos (todos los anteriores a la spec 2026-10-02). */
+    public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks,
+                    List<ParticipationConflict> participationConflicts, String stackProfile,
+                    List<BoundedContext> boundedContexts, List<GlossaryTerm> ubiquitousLanguage) {
+        this(summary, techStack, entryPoint, tasks, participationConflicts, stackProfile, boundedContexts,
+                ubiquitousLanguage, null);
+    }
+
+    /**
+     * Spec 2026-10-02 §2: el producto guarda datos en {@code engine} usando la conexión {@code connectionName} de la
+     * misión ("" si todavía no hay ninguna). Neo solo conoce nombres y motores, nunca host, usuario ni clave.
+     */
+    public record DatabaseNeed(String engine, String connectionName) {
+    }
+
+    public DatabaseNeed databaseOrNull() {
+        return database == null || database.engine() == null || database.engine().isBlank() ? null : database;
+    }
 
     /** Planes sin conflictos ni campos DDD (equipos de análisis y planes previos). */
     public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks) {
-        this(summary, techStack, entryPoint, tasks, List.of(), null, List.of(), List.of());
+        this(summary, techStack, entryPoint, tasks, List.of(), null, List.of(), List.of(), null);
     }
 
     public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks,
                     List<ParticipationConflict> participationConflicts) {
-        this(summary, techStack, entryPoint, tasks, participationConflicts, null, List.of(), List.of());
+        this(summary, techStack, entryPoint, tasks, participationConflicts, null, List.of(), List.of(), null);
     }
 
     /** Bounded context DDD del producto (spec 2026-09-26 §1). El nombre define las rutas. */

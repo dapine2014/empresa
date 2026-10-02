@@ -350,4 +350,22 @@ class TeamWorkPlannerTest {
         assertFalse(prompt.getAllValues().get(0).contains("agentId=backend"), prompt.getAllValues().get(0));
         assertTrue(prompt.getAllValues().get(1).contains("\"backend\" no es miembro"), prompt.getAllValues().get(1));
     }
+
+    // Spec 2026-10-02 §1: Neo ve las conexiones de la misión, nunca host ni usuario.
+    @Test
+    void theLeaderSeesTheMissionConnectionsWithoutSecrets() {
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
+        var databases = mock(com.aicompany.core.database.DatabaseConnectionService.class);
+        when(databases.connectionsOf("M-1")).thenReturn(List.of(new com.aicompany.core.database.DatabaseConnection(
+                "C1", "citas-dev-aws", "POSTGRESQL", "db.secreto.rds.amazonaws.com", 5432, "citas", "admin",
+                "REQUIRE", null, "TEST", "****9876", null, null)));
+        planner.setDatabaseConnections(databases);
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString())).thenReturn(dddPlan());
+
+        planner.plan("M-1", "TEAM-DEVELOPMENT", "API de citas", TeamExecutionMode.DEVELOPMENT);
+
+        assertTrue(prompt.getValue().contains("citas-dev-aws"), prompt.getValue());
+        assertFalse(prompt.getValue().contains("rds.amazonaws.com"), prompt.getValue());
+    }
 }
