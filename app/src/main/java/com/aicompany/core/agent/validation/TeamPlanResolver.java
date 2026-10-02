@@ -102,7 +102,8 @@ public class TeamPlanResolver {
         addMigrations(plan, membersById, resolved);
 
         return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
-                List.of(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(), plan.database()), errors);
+                List.of(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(), plan.database(),
+                plan.components()), errors);
     }
 
     private static List<String> roots(StackProfile profile, List<String> contexts, Layer layer) {

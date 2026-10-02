@@ -17,8 +17,17 @@ public record TeamPlan(
         String stackProfile,
         List<BoundedContext> boundedContexts,
         List<GlossaryTerm> ubiquitousLanguage,
-        DatabaseNeed database
+        DatabaseNeed database,
+        List<String> components
 ) {
+
+    /** Planes de un solo perfil (todos los anteriores a la spec 2026-10-02 B1). */
+    public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks,
+                    List<ParticipationConflict> participationConflicts, String stackProfile,
+                    List<BoundedContext> boundedContexts, List<GlossaryTerm> ubiquitousLanguage, DatabaseNeed database) {
+        this(summary, techStack, entryPoint, tasks, participationConflicts, stackProfile, boundedContexts,
+                ubiquitousLanguage, database, null);
+    }
 
     /** Planes sin base de datos (todos los anteriores a la spec 2026-10-02). */
     public TeamPlan(String summary, String techStack, String entryPoint, List<PlannedTask> tasks,
@@ -80,8 +89,32 @@ public record TeamPlan(
                 .toList();
     }
 
+    /** Spec 2026-10-02 B1 §1: los perfiles de la misión, sin repetidos y en el orden fijo de Component. */
+    public List<com.aicompany.core.model.StackProfile> componentProfiles() {
+        var ids = new java.util.ArrayList<String>();
+        if (components != null) {
+            components.stream().filter(Objects::nonNull).forEach(ids::add);
+        }
+        if (stackProfile != null && !stackProfile.isBlank()) {
+            ids.add(stackProfile);
+        }
+        var profiles = ids.stream().map(com.aicompany.core.model.StackProfile::parse)
+                .flatMap(Optional::stream).toList();
+        return com.aicompany.core.model.Component.of(profiles).stream()
+                .map(com.aicompany.core.model.Component::profile).toList();
+    }
+
+    public List<com.aicompany.core.model.Component> resolvedComponents() {
+        return com.aicompany.core.model.Component.of(componentProfiles());
+    }
+
+    public boolean hasComponent(com.aicompany.core.model.StackProfile profile) {
+        return componentProfiles().contains(profile);
+    }
+
+    /** El componente principal (primero en el orden fijo de Component): define el formato de los contextos. */
     public Optional<com.aicompany.core.model.StackProfile> profile() {
-        return com.aicompany.core.model.StackProfile.parse(stackProfile);
+        return componentProfiles().stream().findFirst();
     }
 
     /**

@@ -53,6 +53,8 @@ public final class TeamPlanSchema {
             "properties", Map.of(
                     "summary", Map.of("type", "string", "minLength", 1),
                     "stackProfile", Map.of("type", "string"),
+                    // Spec 2026-10-02 B1: partes de la aplicación (opcional; sin él, solo stackProfile).
+                    "components", Map.of("type", "array", "items", Map.of("type", "string")),
                     "boundedContexts", Map.of("type", "array", "items", CONTEXT_SCHEMA),
                     "ubiquitousLanguage", Map.of("type", "array", "items", TERM_SCHEMA),
                     "tasks", Map.of("type", "array", "items", TASK_SCHEMA, "minItems", 1),
