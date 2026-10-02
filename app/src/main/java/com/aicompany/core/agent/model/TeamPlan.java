@@ -89,7 +89,7 @@ public record TeamPlan(
                 .toList();
     }
 
-    /** Spec 2026-10-02 B1 §1: los perfiles de la misión, sin repetidos y en el orden fijo de Component. */
+    /** Spec 2026-10-02 B1 §1: los perfiles de la misión, sin repetidos y en el orden fijo de AppComponent. */
     public List<com.aicompany.core.model.StackProfile> componentProfiles() {
         var ids = new java.util.ArrayList<String>();
         if (components != null) {
@@ -100,19 +100,19 @@ public record TeamPlan(
         }
         var profiles = ids.stream().map(com.aicompany.core.model.StackProfile::parse)
                 .flatMap(Optional::stream).toList();
-        return com.aicompany.core.model.Component.of(profiles).stream()
-                .map(com.aicompany.core.model.Component::profile).toList();
+        return com.aicompany.core.model.AppComponent.of(profiles).stream()
+                .map(com.aicompany.core.model.AppComponent::profile).toList();
     }
 
-    public List<com.aicompany.core.model.Component> resolvedComponents() {
-        return com.aicompany.core.model.Component.of(componentProfiles());
+    public List<com.aicompany.core.model.AppComponent> resolvedComponents() {
+        return com.aicompany.core.model.AppComponent.of(componentProfiles());
     }
 
     public boolean hasComponent(com.aicompany.core.model.StackProfile profile) {
         return componentProfiles().contains(profile);
     }
 
-    /** El componente principal (primero en el orden fijo de Component): define el formato de los contextos. */
+    /** El componente principal (primero en el orden fijo de AppComponent): define el formato de los contextos. */
     public Optional<com.aicompany.core.model.StackProfile> profile() {
         return componentProfiles().stream().findFirst();
     }

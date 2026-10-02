@@ -13,7 +13,7 @@ public final class ComponentScaffold {
     private ComponentScaffold() {
     }
 
-    public static List<GeneratedFile> generate(List<Component> components, List<String> contexts,
+    public static List<GeneratedFile> generate(List<AppComponent> components, List<String> contexts,
                                                Map<String, List<DependencyRef>> packagesByPrefixedProject) {
         var files = new ArrayList<GeneratedFile>();
         for (var component : components) {
@@ -30,7 +30,7 @@ public final class ComponentScaffold {
         return files;
     }
 
-    public static List<String> projectFiles(List<Component> components, List<String> contexts) {
+    public static List<String> projectFiles(List<AppComponent> components, List<String> contexts) {
         return components.stream()
                 .flatMap(c -> c.profile().projectFiles(c.contexts(contexts)).stream().map(c::prefix))
                 .toList();

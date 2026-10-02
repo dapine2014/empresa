@@ -11,7 +11,7 @@ import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
-import com.aicompany.core.model.Component;
+import com.aicompany.core.model.AppComponent;
 import com.aicompany.core.model.ComponentScaffold;
 import com.aicompany.core.model.DependencyRef;
 import com.aicompany.core.model.MissionStatus;
@@ -138,6 +138,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var committed = new ArrayList<CommittedWork>();
         var generationHead = scaffold == null ? null : scaffold.commitSha();
         var packagesByTask = new LinkedHashMap<PlannedTask, List<DevelopmentResult.PackageRequest>>();
+        // Spec 2026-10-02 B1: archivos que escribe Java fuera del scaffold (api_routes.dart).
+        var forjaiFiles = new ArrayList<String>();
 
         for (int i = 0; i < ordered.size(); i++) {
 
@@ -231,8 +233,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var allowedPaths = java.util.stream.Stream.concat(
                 work.stream().flatMap(t -> t.ownedPathsOrEmpty().stream()),
                 scaffold == null ? java.util.stream.Stream.<String>empty() : scaffold.files().stream()).toList();
-        var profile = plan.profile().orElse(null);
-        var checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
+        var components = plan.resolvedComponents();
+        var checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                forjaiFiles);
 
         var headSha = committed.get(committed.size() - 1).commitSha();
         SandboxResult sandboxResult = null;
@@ -245,7 +248,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         for (int round = 0; ; round++) {
 
             // Review Focus: si los chequeos deterministas fallaron, no se gastan minutos compilando.
-            if (!checks.stream().allMatch(StaticCheck::passed) || profile == null) {
+            if (!checks.stream().allMatch(StaticCheck::passed) || components.isEmpty()) {
                 sandboxResult = null;
                 sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
                 break;
@@ -262,7 +265,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             progress.advance(MissionStatus.EVALUATING, 80, "Sandbox", round == 0
                     ? "Compilando, corriendo tests y arrancando el código en el sandbox."
                     : "Ronda de corrección " + round + ": verificando de nuevo en el sandbox.");
-            var verified = sandbox.verify(missionId, headSha, profile.name());
+            var verified = sandbox.verify(missionId, headSha, components.get(0).profile().name());
             sandboxResult = verified.orElse(null);
             sandboxError = verified.isEmpty() ? sandbox.lastError() : null;
 
@@ -272,12 +275,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): los "using" faltantes los corrige Forjai sin modelo.
             if (autofixRounds < MAX_AUTOFIX_ROUNDS) {
-                var autofix = commitMissingUsings(missionId, headSha, profile, plan.contextNames(), sandboxResult);
+                var autofix = commitMissingUsings(missionId, headSha, components.get(0).profile(), plan.contextNames(), sandboxResult);
                 if (autofix != null) {
                     committed.add(autofix);
                     headSha = autofix.commitSha();
                     autofixRounds++;
-                    checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
+                    checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                            forjaiFiles);
                     continue;
                 }
             }
@@ -347,7 +351,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
 
             repairRounds++;
-            checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
+            checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                            forjaiFiles);
         }
 
         if (sandboxResult != null) {
@@ -445,7 +450,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     /** Parte 3 + B1: NuGet pedidos si hay un componente .NET; pub de cada pubspec.yaml de un componente Flutter. */
-    static List<DependencyRef> dependencyRefs(List<Component> components,
+    static List<DependencyRef> dependencyRefs(List<AppComponent> components,
                                               List<DevelopmentResult.PackageRequest> requested,
                                               java.util.function.Function<String, String> readFile) {
         var refs = new ArrayList<DependencyRef>();
@@ -474,7 +479,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * habría encontrado el namespace. Un paquete preaprobado no depende del modelo: Java lo agrega al .csproj del
      * proyecto de cada .cs que lo usa (sources: ruta → contenido en el último commit).
      */
-    static Map<String, List<DependencyRef>> impliedPackages(List<Component> components, List<String> contexts,
+    static Map<String, List<DependencyRef>> impliedPackages(List<AppComponent> components, List<String> contexts,
                                                             Map<String, String> sources) {
         var implied = new LinkedHashMap<String, List<DependencyRef>>();
         for (var component : components) {
@@ -559,7 +564,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
     }
 
-    static List<String> projectsOf(List<Component> components, List<String> contexts, List<String> ownedPaths) {
+    static List<String> projectsOf(List<AppComponent> components, List<String> contexts, List<String> ownedPaths) {
         return ComponentScaffold.projectFiles(components, contexts).stream()
                 .filter(project -> OwnedPaths.coveredByAny(ownedPaths, project))
                 .toList();

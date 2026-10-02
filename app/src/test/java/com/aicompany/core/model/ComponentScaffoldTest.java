@@ -11,7 +11,7 @@ class ComponentScaffoldTest {
 
     @Test
     void oneComponentIsTheSameScaffoldAsToday() {
-        var root = List.of(new Component(StackProfile.DOTNET_APP, ""));
+        var root = List.of(new AppComponent(StackProfile.DOTNET_APP, ""));
         assertEquals(ProjectScaffold.generate(StackProfile.DOTNET_APP, List.of("Clientes")),
                 ComponentScaffold.generate(root, List.of("Clientes"), Map.of()));
     }
@@ -19,7 +19,7 @@ class ComponentScaffoldTest {
     // Spec 2026-10-02 B1 §3: los .csproj y la .sln van dentro de backend/ con referencias relativas intactas.
     @Test
     void dotnetProjectsArePrefixedAndFlutterHasNone() {
-        var components = Component.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
+        var components = AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
         var files = ComponentScaffold.generate(components, List.of("Clientes"),
                 Map.of("backend/src/Clientes.Infrastructure/Clientes.Infrastructure.csproj",
                         List.of(new DependencyRef("NUGET", "Npgsql", "8.0.5"))));

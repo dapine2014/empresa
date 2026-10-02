@@ -137,7 +137,7 @@ public class TeamPlanResolver {
      * Verificado en vivo (MISSION-SANDBOX-VERIFY-22): los archivos de entrada (composition root) van al dueño de
      * la capa más externa, que se genera después de las demás. Sin dueño de esas capas es un error del plan.
      */
-    private static void addEntryFiles(com.aicompany.core.model.Component component, List<String> contexts,
+    private static void addEntryFiles(com.aicompany.core.model.AppComponent component, List<String> contexts,
                                       Map<String, String> ownerByLayerRoot, Map<String, List<String>> pathsByAgent,
                                       List<String> errors) {
 

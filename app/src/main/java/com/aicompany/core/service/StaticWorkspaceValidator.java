@@ -3,6 +3,8 @@ package com.aicompany.core.service;
 import com.aicompany.core.agent.validation.DddLayerChecker;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.agent.validation.ProfileStructureChecker;
+import com.aicompany.core.agent.validation.ComponentStructureChecker;
+import com.aicompany.core.model.AppComponent;
 import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StaticCheck;
 import org.springframework.stereotype.Component;
@@ -36,6 +38,14 @@ public class StaticWorkspaceValidator {
     public List<StaticCheck> validate(
             String missionId, List<CommittedWork> work, StackProfile profile, List<String> contexts,
             List<String> allowedPaths) {
+        return validate(missionId, work, profile == null ? List.of() : List.of(new AppComponent(profile, "")),
+                contexts, allowedPaths, List.of());
+    }
+
+    /** Spec 2026-10-02 B1 §3: chequeos por componente. forjaiFiles = archivos que escribe Java (api_routes.dart). */
+    public List<StaticCheck> validate(
+            String missionId, List<CommittedWork> work, List<AppComponent> components, List<String> contexts,
+            List<String> allowedPaths, List<String> forjaiFiles) {
 
         var checks = new ArrayList<StaticCheck>();
         var dir = workspace.missionWorkspace(missionId);
@@ -51,7 +61,7 @@ public class StaticWorkspaceValidator {
             validateCommit(dir, item, checks);
         }
 
-        validateHead(dir, profile, contexts, allowedPaths, checks);
+        validateHead(dir, components, contexts, allowedPaths, forjaiFiles, checks);
 
         return checks;
     }
@@ -112,7 +122,8 @@ public class StaticWorkspaceValidator {
     }
 
     private void validateHead(
-            Path dir, StackProfile profile, List<String> contexts, List<String> allowedPaths, List<StaticCheck> checks) {
+            Path dir, List<AppComponent> components, List<String> contexts, List<String> allowedPaths,
+            List<String> forjaiFiles, List<StaticCheck> checks) {
 
         List<String> entries;
 
@@ -159,18 +170,18 @@ public class StaticWorkspaceValidator {
                 : StaticCheck.fail("PATHS_WITHIN_OWNED",
                         "Archivos fuera de los ownedPaths del plan: " + outside, null, outside));
 
-        if (profile == null) {
+        if (components.isEmpty()) {
             checks.add(StaticCheck.fail("STACK_PROFILE", "El plan no declaró un stackProfile del catálogo.",
                     null, List.of()));
             return;
         }
 
-        checks.addAll(ProfileStructureChecker.check(profile, contexts, paths));
-
         var contents = new LinkedHashMap<String, String>();
         try {
             for (var path : paths) {
-                if (path.endsWith(profile.sourceExtension()) || path.equals("pubspec.yaml")) {
+                var source = forjaiFiles.contains(path) || components.stream().anyMatch(c -> c.owns(path)
+                        && (path.endsWith(c.profile().sourceExtension()) || path.equals(c.prefix("pubspec.yaml"))));
+                if (source) {
                     contents.put(path, git.run(dir, "show", "HEAD:" + path));
                 }
             }
@@ -180,7 +191,6 @@ public class StaticWorkspaceValidator {
             return;
         }
 
-        var analyzed = (int) contents.keySet().stream().filter(p -> p.endsWith(profile.sourceExtension())).count();
-        checks.add(DddLayerChecker.toCheck(DddLayerChecker.check(profile, contexts, contents), analyzed));
+        checks.addAll(ComponentStructureChecker.check(components, contexts, paths, contents, forjaiFiles));
     }
 }

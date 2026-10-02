@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
  * rutas relativas a su perfil: Java quita {@code dir/} antes de llamarlas y lo vuelve a poner en los resultados.
  * Con un solo componente {@code dir} es "" y todo queda como antes. La carpeta la fija Java, nunca el modelo.
  */
-public record Component(StackProfile profile, String dir) {
+public record AppComponent(StackProfile profile, String dir) {
 
     /** Orden fijo: el backend se genera antes que la app que lo consume. */
     private static final List<StackProfile> ORDER =
@@ -33,13 +33,13 @@ public record Component(StackProfile profile, String dir) {
         return DIRS.get(profile);
     }
 
-    public static List<Component> of(List<StackProfile> profiles) {
+    public static List<AppComponent> of(List<StackProfile> profiles) {
         var distinct = new LinkedHashSet<>(profiles);
         var ordered = ORDER.stream().filter(distinct::contains).toList();
         if (ordered.size() <= 1) {
-            return ordered.stream().map(p -> new Component(p, "")).toList();
+            return ordered.stream().map(p -> new AppComponent(p, "")).toList();
         }
-        return ordered.stream().map(p -> new Component(p, DIRS.get(p))).toList();
+        return ordered.stream().map(p -> new AppComponent(p, DIRS.get(p))).toList();
     }
 
     public boolean isRoot() {

@@ -297,9 +297,9 @@ public class TeamPlanValidator {
         }
     }
 
-    static boolean withinStructure(List<com.aicompany.core.model.Component> components, List<String> contexts,
+    static boolean withinStructure(List<com.aicompany.core.model.AppComponent> components, List<String> contexts,
                                    String path) {
-        if (components.size() > 1 && com.aicompany.core.model.Component.COMMON_ROOT_PATHS.stream()
+        if (components.size() > 1 && com.aicompany.core.model.AppComponent.COMMON_ROOT_PATHS.stream()
                 .anyMatch(root -> OwnedPaths.covers(root, OwnedPaths.normalize(path)))) {
             return true;
         }
@@ -307,13 +307,13 @@ public class TeamPlanValidator {
                 .map(relative -> c.profile().isWithinStructure(relative, c.contexts(contexts))).orElse(false));
     }
 
-    private static List<String> allowedRoots(List<com.aicompany.core.model.Component> components, List<String> contexts) {
+    private static List<String> allowedRoots(List<com.aicompany.core.model.AppComponent> components, List<String> contexts) {
         var roots = new ArrayList<String>();
         for (var c : components) {
             c.profile().allowedRoots(c.contexts(contexts)).stream().map(c::prefix).forEach(roots::add);
         }
         if (components.size() > 1) {
-            roots.addAll(com.aicompany.core.model.Component.COMMON_ROOT_PATHS);
+            roots.addAll(com.aicompany.core.model.AppComponent.COMMON_ROOT_PATHS);
         }
         return roots;
     }

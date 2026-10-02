@@ -8,7 +8,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.event.CompanyEventPublisher;
-import com.aicompany.core.model.Component;
+import com.aicompany.core.model.AppComponent;
 import com.aicompany.core.model.*;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -87,7 +87,7 @@ class DevelopmentTeamStrategyTest {
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
         when(workspace.filesAtCommit("M-1", "5".repeat(40))).thenReturn(List.of("game/Game.csproj", "Solution.sln"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
-        when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
+        when(validator.validate(eq("M-1"), anyList(), eq(List.of(new AppComponent(StackProfile.GODOT_DOTNET_GAME, ""))), eq(List.of("Combate")), anyList(), anyList()))
                 .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(
                 new SandboxResult("PASS", List.of(
@@ -306,7 +306,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void failedDeterministicChecksSkipTheSandbox() throws Exception {
         stubHappyPath();
-        when(validator.validate(eq("M-1"), anyList(), any(), anyList(), anyList()))
+        when(validator.validate(eq("M-1"), anyList(), anyList(), anyList(), anyList(), anyList()))
                 .thenReturn(List.of(StaticCheck.fail("DDD_LAYERS", "violación", null, List.of())));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -336,7 +336,7 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(new DependencyService.Outcome(List.of(), List.of(), null));
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
-        when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
+        when(validator.validate(eq("M-1"), anyList(), eq(List.of(new AppComponent(StackProfile.GODOT_DOTNET_GAME, ""))), eq(List.of("Combate")), anyList(), anyList()))
                 .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -429,8 +429,8 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context(), progress);
 
-        verify(validator).validate(eq("M-1"), anyList(), any(), anyList(),
-                argThat(allowed -> allowed.contains("game/Game.csproj")));
+        verify(validator).validate(eq("M-1"), anyList(), anyList(), anyList(),
+                argThat(allowed -> allowed.contains("game/Game.csproj")), anyList());
     }
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Vera marcó MAJOR un .csproj que genera Forjai; eso no es
@@ -705,19 +705,19 @@ class DevelopmentTeamStrategyTest {
 
     @Test
     void flutterDependenciesComeFromThePubspec() {
-        var flutter = List.of(new Component(StackProfile.FLUTTER_WEB_APP, ""));
+        var flutter = List.of(new AppComponent(StackProfile.FLUTTER_WEB_APP, ""));
         var refs = DevelopmentTeamStrategy.dependencyRefs(flutter, List.of(),
                 path -> "pubspec.yaml".equals(path) ? "dependencies:\n  flutter:\n    sdk: flutter\n  equatable: 2.0.5\n" : null);
         assertEquals(List.of(new DependencyRef("PUB", "equatable", "2.0.5")), refs);
         assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0")), DevelopmentTeamStrategy.dependencyRefs(
-                List.of(new Component(StackProfile.DOTNET_APP, "")),
+                List.of(new AppComponent(StackProfile.DOTNET_APP, "")),
                 List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")), path -> null));
     }
 
     // Spec 2026-10-02 B1 §3: en una app completa, NuGet del backend y pub de app/pubspec.yaml en la misma misión.
     @Test
     void fullstackDependenciesComeFromBothEcosystems() {
-        var components = Component.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
+        var components = AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
         var refs = DevelopmentTeamStrategy.dependencyRefs(components,
                 List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")),
                 path -> "app/pubspec.yaml".equals(path) ? "dependencies:\n  http: 1.2.2\n" : null);
@@ -728,7 +728,7 @@ class DevelopmentTeamStrategyTest {
     // agregó solo al primer .csproj; lo usaba en Infrastructure. Va a todos los proyectos de las capas del agente.
     @Test
     void requestedPackagesGoToEveryProjectOfTheAgentsLayers() {
-        var projects = DevelopmentTeamStrategy.projectsOf(List.of(new Component(StackProfile.DOTNET_APP, "")), List.of("Tareas"),
+        var projects = DevelopmentTeamStrategy.projectsOf(List.of(new AppComponent(StackProfile.DOTNET_APP, "")), List.of("Tareas"),
                 List.of("src/Tareas.Application", "src/Tareas.Infrastructure"));
         assertEquals(List.of("src/Tareas.Application/Tareas.Application.csproj",
                 "src/Tareas.Infrastructure/Tareas.Infrastructure.csproj"), projects);
@@ -738,7 +738,7 @@ class DevelopmentTeamStrategyTest {
     // .csproj lo traía. Java lo agrega al proyecto de cada archivo que lo usa, no a todas las capas del agente.
     @Test
     void npgsqlIsAddedToTheProjectsWhoseCodeUsesIt() {
-        var implied = DevelopmentTeamStrategy.impliedPackages(List.of(new Component(StackProfile.DOTNET_APP, "")), List.of("Citas"), Map.of(
+        var implied = DevelopmentTeamStrategy.impliedPackages(List.of(new AppComponent(StackProfile.DOTNET_APP, "")), List.of("Citas"), Map.of(
                 "src/Citas.Infrastructure/CitaRepositorio.cs", "using System;\nusing Npgsql;\n\npublic class A {}",
                 "src/Citas.Api/Program.cs", "var ds = new Npgsql.NpgsqlDataSourceBuilder(\"\").Build();",
                 "src/Citas.Application/Repositorios.cs", "/// La implementación vive en Infrastructure (Npgsql/PostgreSQL).",
@@ -746,14 +746,14 @@ class DevelopmentTeamStrategyTest {
         assertEquals(Map.of(
                 "src/Citas.Infrastructure/Citas.Infrastructure.csproj", List.of(DevelopmentTeamStrategy.NPGSQL),
                 "src/Citas.Api/Citas.Api.csproj", List.of(DevelopmentTeamStrategy.NPGSQL)), implied);
-        assertTrue(DevelopmentTeamStrategy.impliedPackages(List.of(new Component(StackProfile.FLUTTER_WEB_APP, "")), List.of("Citas"),
+        assertTrue(DevelopmentTeamStrategy.impliedPackages(List.of(new AppComponent(StackProfile.FLUTTER_WEB_APP, "")), List.of("Citas"),
                 Map.of("lib/main.dart", "using Npgsql;")).isEmpty());
     }
 
     @Test
     void npgsqlGoesToTheBackendProjectOfAFullstackApp() {
         var implied = DevelopmentTeamStrategy.impliedPackages(
-                Component.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP)), List.of("Clientes"),
+                AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP)), List.of("Clientes"),
                 Map.of("backend/src/Clientes.Infrastructure/Repo.cs", "using Npgsql;"));
         assertEquals(Map.of("backend/src/Clientes.Infrastructure/Clientes.Infrastructure.csproj",
                 List.of(DevelopmentTeamStrategy.NPGSQL)), implied);

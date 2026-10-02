@@ -8,12 +8,12 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ComponentTest {
+class AppComponentTest {
 
     @Test
     void oneComponentLivesAtTheRootLikeToday() {
-        var components = Component.of(List.of(StackProfile.FLUTTER_WEB_APP));
-        assertEquals(List.of(new Component(StackProfile.FLUTTER_WEB_APP, "")), components);
+        var components = AppComponent.of(List.of(StackProfile.FLUTTER_WEB_APP));
+        assertEquals(List.of(new AppComponent(StackProfile.FLUTTER_WEB_APP, "")), components);
         assertEquals("lib/main.dart", components.get(0).prefix("lib/main.dart"));
         assertEquals(Optional.of("lib/main.dart"), components.get(0).strip("lib/main.dart"));
     }
@@ -21,10 +21,10 @@ class ComponentTest {
     // Spec 2026-10-02 B1 §1: carpetas fijas por perfil y orden fijo (backend antes que app), sin importar el de Neo.
     @Test
     void severalComponentsGetFixedDirsInFixedOrder() {
-        var components = Component.of(List.of(StackProfile.FLUTTER_WEB_APP, StackProfile.DOTNET_APP,
+        var components = AppComponent.of(List.of(StackProfile.FLUTTER_WEB_APP, StackProfile.DOTNET_APP,
                 StackProfile.FLUTTER_WEB_APP));
-        assertEquals(List.of(new Component(StackProfile.DOTNET_APP, "backend"),
-                new Component(StackProfile.FLUTTER_WEB_APP, "app")), components);
+        assertEquals(List.of(new AppComponent(StackProfile.DOTNET_APP, "backend"),
+                new AppComponent(StackProfile.FLUTTER_WEB_APP, "app")), components);
         var app = components.get(1);
         assertEquals("app/lib/main.dart", app.prefix("lib/main.dart"));
         assertEquals(Optional.of("lib/main.dart"), app.strip("app/lib/main.dart"));
@@ -35,8 +35,8 @@ class ComponentTest {
 
     @Test
     void contextNamesFollowEachProfileConvention() {
-        var backend = new Component(StackProfile.DOTNET_APP, "backend");
-        var app = new Component(StackProfile.FLUTTER_WEB_APP, "app");
+        var backend = new AppComponent(StackProfile.DOTNET_APP, "backend");
+        var app = new AppComponent(StackProfile.FLUTTER_WEB_APP, "app");
         assertEquals(List.of("GestionClientes"), backend.contexts(List.of("GestionClientes")));
         assertEquals(List.of("gestion_clientes"), app.contexts(List.of("GestionClientes")));
         assertEquals(List.of("GestionClientes"), backend.contexts(List.of("gestion_clientes")));
@@ -51,7 +51,7 @@ class ComponentTest {
         assertTrue(multi.hasComponent(StackProfile.FLUTTER_WEB_APP));
 
         var legacy = plan("DOTNET_APP", null);
-        assertEquals(List.of(new Component(StackProfile.DOTNET_APP, "")), legacy.resolvedComponents());
+        assertEquals(List.of(new AppComponent(StackProfile.DOTNET_APP, "")), legacy.resolvedComponents());
         assertEquals(StackProfile.DOTNET_APP, legacy.profile().orElseThrow());
     }
 
