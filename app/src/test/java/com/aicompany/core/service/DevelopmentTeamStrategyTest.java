@@ -997,4 +997,18 @@ class DevelopmentTeamStrategyTest {
                 result.verifiableState());
         assertTrue(result.verifiableState().contains("backend Tests PASS 3/3"), result.verifiableState());
     }
+
+    // Revisión final C1 + I3: el dueño de la API reintenta si no hay rutas del producto o si un prefijo no se resuelve.
+    @Test
+    void apiOwnerIsAskedForResolvableProductRoutes() {
+        assertEquals(1, DevelopmentTeamStrategy.apiOwnerErrors(Map.of("backend/src/X.Api/Program.cs",
+                "app.MapGet(\"/health\", () => Results.Ok());")).size());
+        var unresolved = DevelopmentTeamStrategy.apiOwnerErrors(Map.of("backend/src/X.Api/E.cs",
+                "public static void M(this RouteGroupBuilder grupo) { grupo.MapGet(\"/{id}\", () => 1); }\n"
+                        + "app.MapGet(\"/clientes\", () => 1);"));
+        assertEquals(1, unresolved.size());
+        assertTrue(unresolved.get(0).contains("grupo"), unresolved.get(0));
+        assertEquals(List.of(), DevelopmentTeamStrategy.apiOwnerErrors(Map.of("backend/src/X.Api/Program.cs",
+                "var g = app.MapGroup(\"/clientes\").WithTags(\"C\");\ng.MapGet(\"/{id}\", () => 1);")));
+    }
 }

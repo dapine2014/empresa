@@ -1123,13 +1123,29 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 (result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files()).stream()
                         .filter(f -> f != null && f.path() != null && f.path().endsWith(".cs") && f.path().contains(".Api/"))
                         .forEach(f -> sources.put(f.path(), f.content()));
-                return HttpRouteExtractor.extract(sources).isEmpty()
-                        ? List.of("No encontré endpoints minimal API con ruta literal (app.MapGet(\"/…\"), MapPost, …) "
-                                + "en backend/src/<Ctx>.Api: la app Flutter los necesita y Forjai los lee del código.")
-                        : List.of();
+                return apiOwnerErrors(sources);
             };
         }
         return null;
+    }
+
+    /**
+     * Revisión final (C1, I3): la API de una app completa necesita al menos una ruta del producto (además de /health) y
+     * todos sus prefijos legibles por Java; si no, el contrato de la app saldría mal sin que nada lo detecte.
+     */
+    static List<String> apiOwnerErrors(Map<String, String> apiSources) {
+        var extraction = HttpRouteExtractor.extractDetailed(apiSources);
+        var errors = new ArrayList<String>();
+        if (!extraction.unresolved().isEmpty()) {
+            errors.add("No puedo saber el prefijo de las rutas de " + extraction.unresolved() + ": declara cada grupo "
+                    + "como variable con ruta literal en el mismo archivo (var clientes = app.MapGroup(\"/clientes\");) "
+                    + "y mapea sobre esa variable o sobre app, sin pasar grupos como parámetros.");
+        }
+        if (extraction.routes().isEmpty()) {
+            errors.add("No encontré endpoints minimal API del producto con ruta literal (app.MapGet(\"/…\"), MapPost, …) "
+                    + "en backend/src/<Ctx>.Api, además de /health: la app Flutter los necesita y Forjai los lee del código.");
+        }
+        return errors;
     }
 
     private Map<String, String> backendApiSources(String missionId, String headSha) {
