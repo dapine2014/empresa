@@ -1557,7 +1557,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         case "build" -> "Build";
                         case "test" -> "Tests";
                         case "smoke" -> "Arranque";
-                        default -> s.name();
+                        default -> ComponentSandbox.stepName(s.name());
                     };
                     var tests = "test".equals(ComponentSandbox.stepName(s.name()))
                             ? " " + s.testsPassed() + "/" + (s.testsPassed() + s.testsFailed()) : "";

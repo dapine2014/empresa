@@ -1037,4 +1037,13 @@ class DevelopmentTeamStrategyTest {
                 Map.of(tests, List.of(new DependencyRef("NUGET", "A", "1.0.0"))), Map.of(tests, testsHead), components,
                 List.of("Clientes")).get(tests));
     }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790971185): el resumen decía "backend backend/checkout".
+    @Test
+    void sandboxSummaryNamesEachStepOnce() {
+        var summary = DevelopmentTeamStrategy.sandboxSummary(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("backend/checkout", "PASS", 0, 0, "", 0, 0),
+                new SandboxResult.StepResult("app/build", "PASS", 0, 2000, "", 0, 0))), null);
+        assertEquals("backend checkout PASS (0 s) · app Build PASS (2 s)", summary);
+    }
 }
