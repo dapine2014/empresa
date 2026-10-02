@@ -197,7 +197,7 @@ export default function MissionDetailPage() {
                     {sandbox.steps.map((step) => (
                       <li key={step.name}>
                         {sandboxDot(step)} {step.name}: {step.status} ({Math.round(step.durationMs / 1000)} s)
-                        {step.name === 'test' && ` — ${step.testsPassed}/${step.testsPassed + step.testsFailed} tests`}
+                        {(step.name === 'test' || step.name.endsWith('/test')) && ` — ${step.testsPassed}/${step.testsPassed + step.testsFailed} tests`}
                         {(step.status === 'FAIL' || step.status === 'TIMEOUT') && step.outputTail && (
                           <pre className="mission-message">{step.outputTail.slice(-1500)}</pre>
                         )}

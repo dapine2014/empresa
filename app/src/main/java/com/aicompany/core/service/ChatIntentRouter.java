@@ -959,7 +959,7 @@ public class ChatIntentRouter {
     }
 
     /** Equipo, commits reales y estado de validación — 100% desde Neo4j, nunca redactado por el LLM. */
-    private String formatTeamExecution(MissionResponse mission, List<AgentTask> tasks) {
+    static String formatTeamExecution(MissionResponse mission, List<AgentTask> tasks) {
 
         if (mission.teamId() == null) {
             return "";
@@ -976,13 +976,28 @@ public class ChatIntentRouter {
             out.append(" Commits: ").append(commits).append(".");
         }
 
+        // Spec 2026-10-02 B1 §4: el resultado real del sandbox (por componente en una app completa).
         tasks.stream()
                 .filter(t -> t.validationStatus() != null)
                 .findFirst()
-                .ifPresent(t -> out.append(" Validación estática: ").append(t.validationStatus())
-                        .append(" (esta fase no ejecuta código)."));
+                .ifPresent(t -> {
+                    out.append(" Validación: ").append(t.validationStatus()).append(".");
+                    sandboxOf(t).ifPresent(sandbox -> out.append(" Sandbox: ")
+                            .append(DevelopmentTeamStrategy.sandboxSummary(sandbox, null)).append("."));
+                });
 
         return out.toString();
+    }
+
+    private static java.util.Optional<com.aicompany.core.model.SandboxResult> sandboxOf(AgentTask task) {
+        if (task.sandboxResult() == null || task.sandboxResult().isBlank()) {
+            return java.util.Optional.empty();
+        }
+        try {
+            return java.util.Optional.of(JSON.readValue(task.sandboxResult(), com.aicompany.core.model.SandboxResult.class));
+        } catch (Exception ex) {
+            return java.util.Optional.empty();
+        }
     }
 
     /**

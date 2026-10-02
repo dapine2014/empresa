@@ -1044,6 +1044,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     static final String API_ROUTES_TASK_SUFFIX = "-API-ROUTES";
 
+    static final String FULLSTACK_JSON_WARNING = "Los nombres de los campos JSON entre la app y la API no se verifican "
+            + "hasta la entrega de ambientes (B2).";
+
+    /** Spec 2026-10-02 B1 §4: "Perfil: X" con un componente; con varios, cada carpeta con su perfil. */
+    private static String componentsLine(TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        if (components.size() < 2) {
+            return "Perfil: " + plan.stackProfile();
+        }
+        return "Componentes: " + components.stream().map(c -> c.dir() + "/ (" + c.profile().name() + ")")
+                .collect(Collectors.joining(", "));
+    }
+
     /** El componente Flutter de una app completa (app + API .NET), o vacío. */
     private static java.util.Optional<AppComponent> fullstackApp(TeamPlan plan) {
         var components = plan.resolvedComponents();
@@ -1357,7 +1370,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("MISIÓN DE EQUIPO: ").append(context.team().teamName())
                 .append(" (").append(context.team().teamId()).append(")\n");
         out.append("PLAN DEL LÍDER: ").append(context.plan().summary())
-                .append(" | Perfil: ").append(context.plan().stackProfile())
+                .append(" | ").append(componentsLine(context.plan()))
                 .append(" | Bounded contexts: ").append(context.plan().contextNames()).append("\n\n");
 
         out.append("COMMITS POR AGENTE:\n");
@@ -1411,7 +1424,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var out = new StringBuilder();
         out.append("ESTADO VERIFICABLE (generado por Forjai, no por un modelo)\n");
         out.append("Workspace: ").append(workspace.missionWorkspace(context.missionId())).append("\n");
-        out.append("Perfil: ").append(context.plan().stackProfile())
+        out.append(componentsLine(context.plan()))
                 .append(" | Bounded contexts: ").append(context.plan().contextNames()).append("\n");
 
         if (scaffold != null) {
@@ -1432,6 +1445,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("Validación estática: ").append(status.name())
                 .append(" (").append(passed).append("/").append(checks.size()).append(" chequeos deterministas en PASS)\n");
         out.append("Sandbox: ").append(sandboxSummary(sandboxResult, sandboxError)).append("\n");
+        var app = fullstackApp(context.plan());
+        if (app.isPresent() && !committed.isEmpty()) {
+            var routes = HttpRouteExtractor.extract(backendApiSources(context.missionId(),
+                    committed.get(committed.size() - 1).commitSha()));
+            out.append("Contrato de rutas: ").append(routes.size()).append(" ruta(s) en ")
+                    .append(app.get().prefix(ApiRoutesGenerator.PATH)).append("\n")
+                    .append(FULLSTACK_JSON_WARNING).append("\n");
+        }
         if (!dependencyOutcome.approvedNow().isEmpty() || !dependencyOutcome.pending().isEmpty()) {
             out.append("Dependencias: ").append(dependencyOutcome.approvedNow().size())
                     .append(" aprobada(s) por política ").append(dependencyOutcome.approvedNow().stream().map(DependencyRef::id).toList())

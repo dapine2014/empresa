@@ -981,4 +981,20 @@ class DevelopmentTeamStrategyTest {
                         && r.files().get(0).content().contains("obtenerClientes(String id)")));
         inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), anyString(), any());
     }
+
+    @Test
+    void fullstackVerifiableStateListsComponentsRoutesAndTheJsonWarning() throws Exception {
+        stubFullstack();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
+
+        assertTrue(result.verifiableState().contains("Componentes: backend/ (DOTNET_APP), app/ (FLUTTER_WEB_APP)"),
+                result.verifiableState());
+        assertTrue(result.verifiableState().contains("Contrato de rutas: 1 ruta(s)"), result.verifiableState());
+        assertTrue(result.verifiableState().contains(DevelopmentTeamStrategy.FULLSTACK_JSON_WARNING),
+                result.verifiableState());
+        assertTrue(result.verifiableState().contains("backend Tests PASS 3/3"), result.verifiableState());
+    }
 }
