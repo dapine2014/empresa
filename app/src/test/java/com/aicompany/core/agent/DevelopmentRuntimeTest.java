@@ -310,4 +310,19 @@ class DevelopmentRuntimeTest {
         verify(ceoService).generateDevelopmentArtifact(anyString(),
                 argThat(p -> p.contains("CORRECCIÓN") && p.contains("versión exacta")), anyString(), anyString());
     }
+
+    // Spec 2026-10-01 §5: el código omitido se reintenta con la línea exacta.
+    @Test
+    void elidedCodeIsRetriedWithTheExactLine() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(new DevelopmentResult("r", List.of(new GeneratedFile("web/game/main.js", "function a() {\n  // ...\n}"))))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(2)).generateDevelopmentArtifact(eq("backend"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(1).contains("Código omitido en web/game/main.js (línea 2"),
+                prompts.getAllValues().get(1));
+    }
 }

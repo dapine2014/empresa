@@ -327,6 +327,9 @@ public class DevelopmentRuntime {
         // Los .csproj esperados los genera Forjai (ProjectScaffold): el agente no puede pisarlos.
         retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects, expectedProjects));
 
+        // Spec 2026-10-01 §5: código omitido ("...", "resto del código") → reintento con la línea exacta.
+        retryable.addAll(com.aicompany.core.agent.validation.ElidedCodeGate.check(result.files()));
+
         // Verificado en vivo: dueños de dos capas entregaban solo una (o solo el .csproj).
         var paths = result.files().stream().filter(Objects::nonNull).map(f -> f.path()).toList();
         for (var owned : requiredPaths) {
