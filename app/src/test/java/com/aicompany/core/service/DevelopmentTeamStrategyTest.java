@@ -751,4 +751,88 @@ class DevelopmentTeamStrategyTest {
         assertTrue(rendered.contains("TRUNCADO"), rendered);
         assertTrue(rendered.indexOf("API PÚBLICA") < rendered.indexOf("TRUNCADO"), rendered);
     }
+
+    // Spec 2026-10-02 §2: con base de datos, cada agente recibe el contrato y los chequeos de base se aplican.
+    @Test
+    void withADatabaseTheAgentsGetTheContractAndTheDatabaseChecks() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenAnswer(inv -> CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var databases = mock(com.aicompany.core.database.DatabaseConnectionService.class);
+        when(databases.connectionsOf("M-1")).thenReturn(List.of(new com.aicompany.core.database.DatabaseConnection(
+                "C1", "citas-dev-aws", "POSTGRESQL", "db.secreto.rds.amazonaws.com", 5432, "citas", "admin",
+                "REQUIRE", null, "TEST", "****9876", null, null)));
+        strategy.setDatabaseConnections(databases);
+        var base = context();
+        var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),
+                base.plan().stackProfile(), base.plan().boundedContexts(), base.plan().ubiquitousLanguage(),
+                new TeamPlan.DatabaseNeed("POSTGRESQL", "citas-dev-aws"));
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", base.team(), plan), progress);
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        var checks = (org.mockito.ArgumentCaptor<java.util.function.Function<DevelopmentResult, List<String>>>)
+                (org.mockito.ArgumentCaptor<?>) org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime, atLeastOnce()).generate(anyString(), anyString(), anyString(), prompts.capture(), anyList(),
+                anyList(), anyList(), checks.capture());
+        assertTrue(prompts.getValue().contains("DB_CITAS_DEV_AWS_HOST"), prompts.getValue());
+        assertFalse(prompts.getValue().contains("rds.amazonaws.com"), prompts.getValue());
+        var leaked = new DevelopmentResult("r", List.of(new GeneratedFile("src/A.cs",
+                "var cs = \"Host=db;Username=admin;Password=postgres\";")));
+        assertFalse(checks.getValue().apply(leaked).isEmpty());
+    }
+
+    // Spec 2026-10-02 §3: una misión VERIFIED con base aplica el esquema y lo informa.
+    @Test
+    void aVerifiedMissionWithADatabaseAppliesTheSchemaAndReportsIt() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn("Base de datos citas-dev-aws: aplicadas V1.");
+        strategy.setDatabaseApply(apply);
+        var base = context();
+        var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),
+                base.plan().stackProfile(), base.plan().boundedContexts(), base.plan().ubiquitousLanguage(),
+                new TeamPlan.DatabaseNeed("POSTGRESQL", "citas-dev-aws"));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(
+                new TeamMissionContext("M-1", "crear un juego", base.team(), plan), progress);
+
+        verify(apply).apply(eq("M-1"), anyString(), eq(plan));
+        assertTrue(result.verifiableState().contains("aplicadas V1"), result.verifiableState());
+    }
+
+    // Revisión final (I-6): un usuario corto como "app" no puede marcar todo el código.
+    @Test
+    void ordinaryCodeIsNotTakenForTheConnectionsHostOrUser() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenAnswer(inv -> CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var databases = mock(com.aicompany.core.database.DatabaseConnectionService.class);
+        when(databases.connectionsOf("M-1")).thenReturn(List.of(new com.aicompany.core.database.DatabaseConnection(
+                "C1", "citas-dev-aws", "POSTGRESQL", "localhost", 5432, "citas", "app",
+                "REQUIRE", null, "TEST", "****9876", null, null)));
+        strategy.setDatabaseConnections(databases);
+        var base = context();
+        var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),
+                base.plan().stackProfile(), base.plan().boundedContexts(), base.plan().ubiquitousLanguage(),
+                new TeamPlan.DatabaseNeed("POSTGRESQL", "citas-dev-aws"));
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", base.team(), plan), progress);
+
+        @SuppressWarnings("unchecked")
+        var checks = (org.mockito.ArgumentCaptor<java.util.function.Function<DevelopmentResult, List<String>>>)
+                (org.mockito.ArgumentCaptor<?>) org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime, atLeastOnce()).generate(anyString(), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), checks.capture());
+        var ordinary = new DevelopmentResult("r", List.of(new GeneratedFile("src/Citas.Api/Program.cs",
+                "app.MapGet(\"/health\", () => \"ok\"); // http://localhost:5000")));
+        assertEquals(List.of(), checks.getValue().apply(ordinary));
+    }
 }

@@ -10,6 +10,8 @@ function StartMissionForm() {
   const [instruction, setInstruction] = useState('')
   const [environment, setEnvironment] = useState<'PRODUCTION' | 'TEST'>('PRODUCTION')
   const [teamId, setTeamId] = useState('')
+  const [databases, setDatabases] = useState<string[]>([])
+  const databasesQuery = useQuery({ queryKey: ['databases'], queryFn: api.databases })
   const [hasFinancialCriteria, setHasFinancialCriteria] = useState(false)
   const [targetAmount, setTargetAmount] = useState('')
   const [currency, setCurrency] = useState('USD')
@@ -23,6 +25,7 @@ function StartMissionForm() {
         instruction,
         environment,
         teamId: teamId || null,
+        databases,
         financialCriteria: hasFinancialCriteria
           ? { metric: 'NET_PROFIT', targetAmount: Number(targetAmount), currency, deadline: deadline || null }
           : null,
@@ -32,6 +35,7 @@ function StartMissionForm() {
       setInstruction('')
       setHasFinancialCriteria(false)
       setTeamId('')
+      setDatabases([])
       setTargetAmount('')
       setDeadline('')
       queryClient.invalidateQueries({ queryKey: ['missions'] })
@@ -69,6 +73,22 @@ function StartMissionForm() {
           <option value="TEAM-MARKETING-GROWTH">Marketing &amp; Growth</option>
         </select>
       </label>
+      {teamId === 'TEAM-DEVELOPMENT' && (databasesQuery.data ?? []).length > 0 && (
+        <label>
+          Bases de datos (Diego las crea con tus credenciales)
+          <select
+            multiple
+            value={databases}
+            onChange={(e) => setDatabases(Array.from(e.target.selectedOptions).map((o) => o.value))}
+          >
+            {(databasesQuery.data ?? []).map((d) => (
+              <option key={d.id} value={d.name}>
+                {d.name} ({d.engine}, {d.environment})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
         <input type="checkbox" checked={hasFinancialCriteria} onChange={(e) => setHasFinancialCriteria(e.target.checked)} />
         Definir objetivo financiero

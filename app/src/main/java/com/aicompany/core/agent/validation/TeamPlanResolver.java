@@ -99,9 +99,10 @@ public class TeamPlanResolver {
         }
 
         addEntryFiles(profile.get(), contexts, ownerByLayerRoot, resolved, errors);
+        addMigrations(plan, membersById, resolved);
 
         return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
-                List.of(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage()), errors);
+                List.of(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(), plan.database()), errors);
     }
 
     private static List<String> roots(StackProfile profile, List<String> contexts, Layer layer) {
@@ -153,6 +154,43 @@ public class TeamPlanResolver {
             }
         }
     }
+
+    /**
+     * Spec 2026-10-02 §2: con base de datos, el DATA_ARCHITECT (Diego) es dueño de db/postgres/migrations y el dueño
+     * de la API (Iris) de .env.example (revisión final I-9: sin dueño se descartaba siempre).
+     */
+    private static void addMigrations(TeamPlan plan, Map<String, TeamMemberInfo> membersById, List<PlannedTask> tasks) {
+        if (plan.databaseOrNull() == null) {
+            return;
+        }
+        for (int i = 0; i < tasks.size(); i++) {
+            var task = tasks.get(i);
+            var member = membersById.get(task.agentId());
+            if (member != null && "BACKEND".equals(member.roleCode()) && TeamPlan.KIND_WORK.equals(task.kind())) {
+                var paths = new ArrayList<>(task.ownedPathsOrEmpty());
+                if (!paths.contains(ENV_EXAMPLE)) {
+                    paths.add(ENV_EXAMPLE);
+                }
+                tasks.set(i, withKindAndPaths(task, task.kind(), task.action(), paths));
+                break;
+            }
+        }
+        for (int i = 0; i < tasks.size(); i++) {
+            var task = tasks.get(i);
+            var member = membersById.get(task.agentId());
+            if (member != null && "DATA_ARCHITECT".equals(member.roleCode()) && TeamPlan.KIND_WORK.equals(task.kind())) {
+                var paths = new ArrayList<>(task.ownedPathsOrEmpty());
+                if (!paths.contains(MIGRATIONS_ROOT)) {
+                    paths.add(MIGRATIONS_ROOT);
+                }
+                tasks.set(i, withKindAndPaths(task, task.kind(), task.action(), paths));
+                return;
+            }
+        }
+    }
+
+    static final String MIGRATIONS_ROOT = "db/postgres/migrations";
+    static final String ENV_EXAMPLE = ".env.example";
 
     /** Tareas repetidas de un mismo agente se unen (Java calcula rutas y tipos igual). */
     private static List<PlannedTask> mergeRepeatedTasks(List<PlannedTask> tasks) {

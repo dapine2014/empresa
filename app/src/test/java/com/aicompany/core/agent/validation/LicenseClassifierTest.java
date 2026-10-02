@@ -24,4 +24,10 @@ class LicenseClassifierTest {
         assertEquals(Optional.of("BSD-2-Clause"), LicenseClassifier.text("Redistribution and use in source and binary forms, with or without modification"));
         assertEquals(Optional.empty(), LicenseClassifier.text("GNU GENERAL PUBLIC LICENSE Version 3"));
     }
+
+    // Spec 2026-10-02 §2.5: la licencia de Npgsql (PostgreSQL License) es permisiva.
+    @Test
+    void thePostgresqlLicenseIsPermissive() {
+        org.junit.jupiter.api.Assertions.assertTrue(LicenseClassifier.ALLOWED.contains("PostgreSQL"));
+    }
 }

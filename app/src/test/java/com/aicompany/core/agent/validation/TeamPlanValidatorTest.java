@@ -307,4 +307,59 @@ class TeamPlanValidatorTest {
                 new PlannedTask("growth-content", "WORK", "SEO_PLAN", "Plan SEO", List.of("SEO"), List.of())));
         assertEquals(List.of(), validator.validate(onlyKira, marketing(), TeamExecutionMode.ANALYSIS));
     }
+
+    // Spec 2026-10-02 §2: un plan con base de datos.
+    private static final List<com.aicompany.core.database.DatabaseConnection> CITAS = List.of(
+            new com.aicompany.core.database.DatabaseConnection("C1", "citas-dev-aws", "POSTGRESQL", "h", 5432, "citas",
+                    "u", "REQUIRE", null, "TEST", "****1", null, null));
+
+    private static TeamPlan dotnetWithDatabase(String connectionName, boolean withDiego) {
+        var tasks = new ArrayList<>(List.of(
+                new PlannedTask("backend", "WORK", "API", "API de citas", List.of("backend"),
+                        List.of("src/Citas.Domain", "src/Citas.Application", "src/Citas.Api")),
+                new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests", List.of("tests"), List.of("tests/Citas.Tests")),
+                new PlannedTask("qa", "VALIDATION", "CODE_REVIEW", "Revisar", List.of("qa"), List.of())));
+        if (withDiego) {
+            tasks.add(new PlannedTask("devops", "WORK", "DATABASE", "Modelo y persistencia", List.of("persistence"),
+                    List.of("src/Citas.Infrastructure", "db/postgres/migrations")));
+        }
+        return new TeamPlan("Citas", null, null, tasks, List.of(), "DOTNET_APP",
+                List.of(new TeamPlan.BoundedContext("Citas", "Citas")), GLOSSARY,
+                new TeamPlan.DatabaseNeed("POSTGRESQL", connectionName));
+    }
+
+    @Test
+    void aValidPlanWithADatabasePasses() {
+        assertEquals(List.of(), validator.validate(dotnetWithDatabase("citas-dev-aws", true), engineeringTeam(),
+                TeamExecutionMode.DEVELOPMENT, CITAS));
+    }
+
+    @Test
+    void aPlanWithADatabaseNeedsDiego() {
+        var errors = validator.validate(dotnetWithDatabase("citas-dev-aws", false), engineeringTeam(),
+                TeamExecutionMode.DEVELOPMENT, CITAS);
+        assertTrue(errors.stream().anyMatch(e -> e.contains("devops") && e.contains("base de datos")), errors.toString());
+    }
+
+    @Test
+    void theConnectionMustBeOneOfTheMission() {
+        var errors = validator.validate(dotnetWithDatabase("otra", true), engineeringTeam(),
+                TeamExecutionMode.DEVELOPMENT, CITAS);
+        assertTrue(errors.stream().anyMatch(e -> e.contains("otra") && e.contains("citas-dev-aws")), errors.toString());
+    }
+
+    @Test
+    void anEmptyConnectionNameIsAllowedWhenTheMissionHasNone() {
+        var errors = validator.validate(dotnetWithDatabase("", true), engineeringTeam(), TeamExecutionMode.DEVELOPMENT,
+                List.of());
+        assertEquals(List.of(), errors);
+    }
+
+    @Test
+    void aDatabaseNeedsTheDotnetProfile() {
+        var flutter = new TeamPlan("Hola", null, null, validTasks(), List.of(), "FLUTTER_WEB_APP", CONTEXTS, GLOSSARY,
+                new TeamPlan.DatabaseNeed("POSTGRESQL", ""));
+        var errors = validateDev(flutter);
+        assertTrue(errors.stream().anyMatch(e -> e.contains("DOTNET_APP")), errors.toString());
+    }
 }

@@ -298,6 +298,17 @@ public class ChatIntentRouter {
      */
     public List<ChatReply> routeReplies(String message) {
 
+        // Spec 2026-10-02 §1 y revisión final (C-1): un mensaje con una clave no llega a ningún modelo ni a una misión;
+        // se graba redactado y solo se responde el aviso.
+        if (ConversationMemoryService.containsSecret(message)) {
+            var notice = ceoReply("Detecté una clave en tu mensaje y no la guardé ni la usé: no hice nada con este "
+                    + "mensaje. Las conexiones de base de datos se cargan en Settings → Bases de datos; vuelve a escribir "
+                    + "el pedido sin la clave.");
+            conversationMemory.recordMessage("user", ConversationMemoryService.redactSecrets(message));
+            conversationMemory.recordMessage(notice.agentId(), notice.text());
+            return List.of(notice);
+        }
+
         var replies = resolveReplies(message);
 
         conversationMemory.recordMessage("user", message);
@@ -309,6 +320,11 @@ public class ChatIntentRouter {
     }
 
     private List<ChatReply> resolveReplies(String message) {
+
+        var database = databaseReply(message);
+        if (database != null) {
+            return List.of(ceoReply(database));
+        }
 
         if (isGovernance(message)) {
             return List.of(ceoReply(resolve(message)));
@@ -677,9 +693,82 @@ public class ChatIntentRouter {
 
     /** Sin equipo se llama la sobrecarga de siempre (mismo contrato que antes de esta feature). */
     private MissionResponse startMission(String missionId, String message, String teamId) {
+        var databases = databaseNames(message);
+        if (!databases.isEmpty()) {
+            return missionService.start(missionId, message, "PRODUCTION", null, teamId, databases);
+        }
         return teamId == null
                 ? missionService.start(missionId, message, "PRODUCTION", null)
                 : missionService.start(missionId, message, "PRODUCTION", null, teamId);
+    }
+
+    // Spec 2026-10-02 §4: chat del DBA, armado en Java.
+    // Revisión final (m-4): "usa la base de datos X" toma X; el nombre lleva un guion o un dígito, o es la última palabra.
+    private static final Pattern DATABASE_USE = Pattern.compile(
+            "\\busa(?:r)?\\s+(?:la\\s+)?base\\s+(?:de\\s+datos\\s+)?([a-z0-9]+(?:-[a-z0-9]+)+|[a-z0-9]*[0-9][a-z0-9]*)\\b");
+    private static final Pattern DATABASE_APPLY =
+            Pattern.compile("(?i)\\baplica(?:r)?\\s+el\\s+esquema\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern DATABASE_STATUS =
+            Pattern.compile("(?i)c[oó]mo\\s+va\\s+la\\s+base\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+
+    private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
+    private com.aicompany.core.database.DatabaseApplyService databaseApply;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDatabaseConnections(com.aicompany.core.database.DatabaseConnectionService databaseConnections) {
+        this.databaseConnections = databaseConnections;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDatabaseApply(com.aicompany.core.database.DatabaseApplyService databaseApply) {
+        this.databaseApply = databaseApply;
+    }
+
+    private static List<String> databaseNames(String message) {
+        var matcher = DATABASE_USE.matcher(message == null ? "" : message.toLowerCase(java.util.Locale.ROOT));
+        var names = new java.util.ArrayList<String>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        return names;
+    }
+
+    /** Comandos y consultas de bases de datos; null si el mensaje no es de este tema. */
+    private String databaseReply(String message) {
+        var apply = DATABASE_APPLY.matcher(message);
+        if (apply.find() && databaseApply != null) {
+            try {
+                return databaseApply.applyLatest(apply.group(1).toUpperCase(java.util.Locale.ROOT));
+            } catch (RuntimeException ex) {
+                return ex.getMessage();
+            }
+        }
+        var status = DATABASE_STATUS.matcher(message);
+        if (status.find() && databaseApply != null) {
+            var id = status.group(1).toUpperCase(java.util.Locale.ROOT);
+            return databaseApply.status(id).map(s -> "Base de " + id + " (" + s.connectionName() + "): "
+                    + (s.migrations().isEmpty() ? "sin migraciones" : s.migrations().stream()
+                    .map(m -> "V" + m.version() + " " + m.description() + " — " + m.state())
+                    .collect(java.util.stream.Collectors.joining("; ")))
+                    + (s.lastResult() == null ? "" : ". Último resultado: " + s.lastResult()))
+                    .orElse(id + " no declara base de datos.");
+        }
+        var normalized = normalize(message);
+        var listQuery = normalized.contains("bases de datos") && !normalized.contains("mision")
+                && (normalized.contains("hay") || normalized.contains("cargad") || normalized.contains("lista")
+                || normalized.contains("cuales") || normalized.contains("tenemos"));
+        if (listQuery && databaseConnections != null) {
+            var all = databaseConnections.list();
+            if (all.isEmpty()) {
+                return "No hay bases de datos cargadas. Se cargan en Settings → Bases de datos.";
+            }
+            // Revisión final (I-7): esta respuesta se graba y llega al modelo: sin host, usuario ni pista de la clave.
+            return "Bases de datos cargadas: " + all.stream().map(c -> c.name() + " (" + c.engine() + ", "
+                    + c.environment() + ", TLS " + c.tls() + "), última prueba: "
+                    + (c.lastCheckResult() == null ? "sin probar" : c.lastCheckResult().startsWith("OK") ? "OK" : "falló"))
+                    .collect(java.util.stream.Collectors.joining("; ")) + ". Los datos de conexión se ven en Settings → Bases de datos.";
+        }
+        return null;
     }
 
     private static String teamSuffix(String teamId) {

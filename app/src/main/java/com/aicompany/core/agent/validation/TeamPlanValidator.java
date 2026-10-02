@@ -27,6 +27,12 @@ import java.util.Objects;
 public class TeamPlanValidator {
 
     public List<String> validate(TeamPlan plan, TeamSnapshot team, TeamExecutionMode mode) {
+        return validate(plan, team, mode, List.of());
+    }
+
+    /** Spec 2026-10-02 §2: {@code connections} son las conexiones de base de datos de la misión. */
+    public List<String> validate(TeamPlan plan, TeamSnapshot team, TeamExecutionMode mode,
+                                 List<com.aicompany.core.database.DatabaseConnection> connections) {
 
         var errors = new ArrayList<String>();
 
@@ -65,6 +71,7 @@ public class TeamPlanValidator {
             }
         } else {
             validateDevelopmentRules(plan, membersById, errors);
+            validateDatabase(plan, membersById, connections == null ? List.of() : connections, errors);
         }
 
         return errors;
@@ -129,6 +136,33 @@ public class TeamPlanValidator {
                     errors.add(capabilityError(task.agentId(), capability, member.capabilities()));
                 }
             }
+        }
+    }
+
+    private static void validateDatabase(TeamPlan plan, Map<String, TeamMemberInfo> membersById,
+                                         List<com.aicompany.core.database.DatabaseConnection> connections,
+                                         List<String> errors) {
+        var db = plan.databaseOrNull();
+        if (db == null) {
+            return;
+        }
+        if (!"POSTGRESQL".equals(db.engine())) {
+            errors.add("database.engine \"" + db.engine() + "\" no está soportado (hoy: POSTGRESQL).");
+        }
+        if (!"DOTNET_APP".equals(plan.stackProfile())) {
+            errors.add("Una base de datos necesita un backend: usa stackProfile DOTNET_APP.");
+        }
+        var hasDiego = plan.workTasks().stream().anyMatch(t -> membersById.containsKey(t.agentId())
+                && "DATA_ARCHITECT".equals(membersById.get(t.agentId()).roleCode()));
+        if (!hasDiego) {
+            errors.add("El plan declara base de datos: incluye al DATA_ARCHITECT (devops) para diseñarla.");
+        }
+        var names = connections.stream().filter(c -> c.engine().equals(db.engine()))
+                .map(com.aicompany.core.database.DatabaseConnection::name).toList();
+        var name = db.connectionName() == null ? "" : db.connectionName();
+        if (!name.isEmpty() && !names.contains(name)) {
+            errors.add("database.connectionName \"" + name + "\" no es una conexión de esta misión. Conexiones: "
+                    + names + " (o \"\" si no hay).");
         }
     }
 

@@ -29,7 +29,8 @@ public enum StackProfile {
                     new LayerRoot(Layer.TESTS, "tests/{ctx}.Tests")),
             List.of(),
             List.of(new EntryFile("[A-Za-z0-9]+\\.sln", "<Producto>.sln")),
-            List.of("README.md", ".gitignore", "docs", "Directory.Build.props"),
+            // Spec 2026-10-02 §2: migraciones de Diego (solo se admiten si el plan declara base; DatabaseContractGate).
+            List.of("README.md", ".gitignore", "docs", "Directory.Build.props", "db/postgres/migrations", ".env.example"),
             List.of("Microsoft.AspNetCore", "Godot")),
 
     GODOT_DOTNET_GAME(
@@ -284,7 +285,9 @@ public enum StackProfile {
 
     public String executionContract() {
         return switch (this) {
-            case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable. Los .csproj de cada capa "
+            case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable; sin base de datos (los tests usan "
+                    + "fakes en memoria). Npgsql 8.0.5 está disponible para la persistencia PostgreSQL (pídelo en "
+                    + "packages; la conexión se lee SOLO de las variables del contrato). Los .csproj de cada capa "
                     + "(src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, tests/<Ctx>.Tests/<Ctx>.Tests.csproj) los genera Forjai "
                     + "con las referencias DDD y los paquetes xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0 y "
                     + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "

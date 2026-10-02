@@ -10,7 +10,9 @@ import java.util.Set;
  */
 public final class LicenseClassifier {
 
-    static final Set<String> ALLOWED = Set.of("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib");
+    static final Set<String> ALLOWED = Set.of("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",
+            // Spec 2026-10-02 §2.5: licencia de Npgsql, permisiva (estilo MIT/BSD).
+            "PostgreSQL");
 
     private LicenseClassifier() {
     }

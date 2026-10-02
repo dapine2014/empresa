@@ -2158,4 +2158,81 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("nvidia-creative: sin key"), response);
         verifyNoInteractions(ceoService);
     }
+
+    // Spec 2026-10-02 §4: chat del DBA.
+    private final com.aicompany.core.database.DatabaseConnectionService databaseConnections =
+            mock(com.aicompany.core.database.DatabaseConnectionService.class);
+    private final com.aicompany.core.database.DatabaseApplyService databaseApply =
+            mock(com.aicompany.core.database.DatabaseApplyService.class);
+
+    @Test
+    void listsTheDatabasesWithoutSecrets() {
+        router.setDatabaseConnections(databaseConnections);
+        when(databaseConnections.list()).thenReturn(List.of(new com.aicompany.core.database.DatabaseConnection("C1",
+                "citas-dev-aws", "POSTGRESQL", "db.secreto.rds.amazonaws.com", 5432, "citas", "admin", "REQUIRE", null,
+                "TEST", "****9876", "2026-10-02T00:00:00Z", "OK")));
+
+        var response = router.route("¿qué bases de datos hay?");
+
+        assertTrue(response.contains("citas-dev-aws"), response);
+        // Revisión final (I-7): lo que se responde se graba y llega al modelo: ni usuario, ni host, ni pista de clave.
+        assertFalse(response.contains("admin") || response.contains("rds.amazonaws.com") || response.contains("9876"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void applyTheSchemaIsAFounderCommand() {
+        router.setDatabaseApply(databaseApply);
+        when(databaseApply.applyLatest("MISSION-12")).thenReturn("Base de datos citas-dev-aws (TEST): aplicadas V1, V2");
+
+        var response = router.route("aplica el esquema de MISSION-12");
+
+        assertTrue(response.contains("aplicadas V1, V2"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void aMissionStartCanNameItsDatabase() {
+        router.setDatabaseConnections(databaseConnections);
+        var message = "CEO, inicia una misión para TEAM-DEVELOPMENT para crear una API de citas, usa la base citas-dev-aws";
+        when(missionService.start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"),
+                eq(List.of("citas-dev-aws")))).thenReturn(created("MISSION-1", "TEAM-DEVELOPMENT"));
+
+        router.route(message);
+
+        verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"),
+                eq(List.of("citas-dev-aws")));
+    }
+
+    @Test
+    void aPastedPasswordGetsANoticeAndIsNotStored() {
+        router.route("conéctate con Host=db.x.com;Username=admin;Password=S3cret-9876");
+
+        verify(conversationMemory, never()).recordMessage(eq("user"), contains("S3cret-9876"));
+    }
+
+    // Revisión final (C-1): una clave pegada no llega a ningún modelo ni a una misión en ese turno.
+    @Test
+    void aPastedSecretStopsTheTurnWithoutCallingAnyModel() {
+        var response = router.route("CEO, inicia una misión para TEAM-DEVELOPMENT, conéctate con "
+                + "Host=db.x.rds.amazonaws.com;Username=admin;Password=S3cret-9876");
+
+        assertTrue(response.contains("no la guardé"), response);
+        verifyNoInteractions(ceoService, missionService);
+        verify(conversationMemory, never()).recordMessage(anyString(), contains("S3cret-9876"));
+    }
+
+    // Revisión final (m-4): "usa la base de datos X" toma X, no "de".
+    @Test
+    void theDatabaseNameSkipsTheWordsDeDatos() {
+        router.setDatabaseConnections(databaseConnections);
+        var message = "CEO, inicia una misión para TEAM-DEVELOPMENT para crear una API de citas, usa la base de datos citas-dev-aws";
+        when(missionService.start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"),
+                eq(List.of("citas-dev-aws")))).thenReturn(created("MISSION-1", "TEAM-DEVELOPMENT"));
+
+        router.route(message);
+
+        verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"),
+                eq(List.of("citas-dev-aws")));
+    }
 }

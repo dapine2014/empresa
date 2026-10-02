@@ -236,6 +236,8 @@ export interface MissionCommand {
   environment: string
   financialCriteria: FinancialCriteriaCommand | null
   teamId: string | null
+  /** Spec 2026-10-02: nombres de conexiones de base de datos que usará la misión. */
+  databases?: string[]
 }
 
 // Company Financial Policy versionada -- ver GET/PUT /api/company/policies
@@ -540,4 +542,39 @@ export interface ContactDraft {
   error: string | null
   createdAt: string
   sentAt: string | null
+}
+
+// Spec 2026-10-02: Diego como DBA
+export interface DatabaseConnectionInfo {
+  id: string
+  name: string
+  engine: string
+  host: string
+  port: number
+  database: string
+  username: string
+  tls: 'DISABLE' | 'REQUIRE' | 'VERIFY_FULL'
+  environment: 'TEST' | 'PRODUCTION'
+  passwordHint: string
+  lastCheckedAt: string | null
+  lastCheckResult: string | null
+}
+
+export interface DatabaseConnectionForm {
+  name: string
+  engine: 'POSTGRESQL'
+  host: string
+  port: number
+  database: string
+  username: string
+  password: string
+  tls: 'DISABLE' | 'REQUIRE' | 'VERIFY_FULL'
+  caCertPem: string
+  environment: 'TEST' | 'PRODUCTION'
+}
+
+export interface MissionDatabaseStatus {
+  connectionName: string | null
+  migrations: { version: number; description: string; state: 'APPLIED' | 'PENDING' | 'FAILED' }[]
+  lastResult: string | null
 }

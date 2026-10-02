@@ -286,7 +286,8 @@ public class MissionExecutor {
                         t.requiredCapabilities(), t.ownedPaths(), t.assignments()))
                 .toList();
         var withRequest = new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks,
-                plan.participationConflicts(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage());
+                plan.participationConflicts(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(),
+                plan.database());
 
         advanceMission(missionId, MissionStatus.DELEGATING, 10, "Ronda de evidencia " + round,
                 "Re-ejecutando el plan de " + team.teamName() + " con el pedido del inversionista.");

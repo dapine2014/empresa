@@ -16,8 +16,19 @@ public record MissionCommand(
         @NotBlank String instruction,
         String environment,
         FinancialCriteriaCommand financialCriteria,
-        String teamId
+        String teamId,
+        java.util.List<String> databases
 ) {
+    public MissionCommand(String missionId, String instruction, String environment,
+                          FinancialCriteriaCommand financialCriteria, String teamId) {
+        this(missionId, instruction, environment, financialCriteria, teamId, null);
+    }
+
+    /** Spec 2026-10-02 §1: nombres de conexiones de base de datos que usará la misión. */
+    public java.util.List<String> databasesOrEmpty() {
+        return databases == null ? java.util.List.of() : databases;
+    }
+
     public String environmentOrDefault() {
         return environment == null || environment.isBlank()
                 ? "PRODUCTION"

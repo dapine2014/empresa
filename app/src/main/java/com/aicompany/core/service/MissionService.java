@@ -83,18 +83,45 @@ public class MissionService {
         return start(missionId, instruction, environment, financialCriteria, null);
     }
 
+    private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
+
+    /** Spec 2026-10-02 §1: conexiones de base de datos de la misión (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDatabaseConnections(com.aicompany.core.database.DatabaseConnectionService databaseConnections) {
+        this.databaseConnections = databaseConnections;
+    }
+
     public MissionResponse start(
             String missionId,
             String instruction,
             String environment,
             FinancialCriteriaCommand financialCriteria,
             String teamId) {
+        return start(missionId, instruction, environment, financialCriteria, teamId, java.util.List.of());
+    }
+
+    public MissionResponse start(
+            String missionId,
+            String instruction,
+            String environment,
+            FinancialCriteriaCommand financialCriteria,
+            String teamId,
+            java.util.List<String> databaseNames) {
+
+        var databases = databaseNames == null ? java.util.List.<String>of() : databaseNames;
+        if (databaseConnections != null && !databases.isEmpty()) {
+            databaseConnections.requireExisting(databases);
+        }
 
         validateFinancialCriteria(financialCriteria);
         validateTeam(teamId);
         requireAgentsOn(teamId, teamId == null ? "iniciar una discovery" : "iniciar una misión de " + teamId);
 
         memory.ensureMission(missionId, instruction, environment, financialCriteria, teamId);
+
+        if (databaseConnections != null && !databases.isEmpty()) {
+            databaseConnections.linkToMission(missionId, databases);
+        }
 
         events.publishMission(
                 "EMPRESA_MISSION_CREATED",

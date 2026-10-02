@@ -62,6 +62,8 @@ public class CompanyMemoryService {
             session.run("CREATE CONSTRAINT product_id IF NOT EXISTS FOR (p:Product) REQUIRE p.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT orchestrator_run_id IF NOT EXISTS FOR (r:OrchestratorRun) REQUIRE r.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT api_key_provider IF NOT EXISTS FOR (k:ApiKey) REQUIRE k.provider IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT database_connection_id IF NOT EXISTS FOR (d:DatabaseConnection) REQUIRE d.id IS UNIQUE").consume();
+            session.run("CREATE CONSTRAINT database_connection_name IF NOT EXISTS FOR (d:DatabaseConnection) REQUIRE d.name IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:AgentTask) REQUIRE t.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT opportunity_id IF NOT EXISTS FOR (o:Opportunity) REQUIRE o.id IS UNIQUE").consume();
             session.run("CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (e:Evidence) REQUIRE e.id IS UNIQUE").consume();

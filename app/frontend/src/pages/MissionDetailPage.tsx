@@ -32,6 +32,42 @@ function sandboxDot(step: SandboxStep): string {
 
 const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED'])
 
+/** Spec 2026-10-02 §4: migraciones de Diego y "Aplicar esquema" (404 = la misión no declara base). */
+function MissionDatabase({ missionId }: { missionId: string }) {
+  const queryClient = useQueryClient()
+  const query = useQuery({
+    queryKey: ['missionDatabase', missionId],
+    queryFn: () => api.missionDatabase(missionId),
+    retry: false,
+  })
+  const apply = useMutation({
+    mutationFn: () => api.applyMissionDatabase(missionId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['missionDatabase', missionId] }),
+  })
+  if (!query.data) {
+    return null
+  }
+  return (
+    <div className="decision-form">
+      <h2>Base de datos</h2>
+      <p>Conexión: {query.data.connectionName || 'sin cargar (cárgala en Settings → Bases de datos)'}</p>
+      <ul>
+        {query.data.migrations.map((m) => (
+          <li key={m.version}>
+            V{m.version} {m.description} — {m.state}
+          </li>
+        ))}
+      </ul>
+      {query.data.lastResult && <p className="hint">{query.data.lastResult}</p>}
+      <button disabled={apply.isPending} onClick={() => apply.mutate()}>
+        Aplicar esquema
+      </button>
+      {apply.isSuccess && <p className="hint">{apply.data.result}</p>}
+      {apply.isError && <p className="error">{apply.error.message}</p>}
+    </div>
+  )
+}
+
 export default function MissionDetailPage() {
   const { missionId } = useParams<{ missionId: string }>()
   const queryClient = useQueryClient()
@@ -85,6 +121,8 @@ export default function MissionDetailPage() {
         status={mission.status}
         onDeleted={() => navigate('/missions')}
       />
+
+      {mission.teamId && <MissionDatabase missionId={mission.missionId} />}
 
       {mission.financialCriteria && (
         <div className="financial-criteria">

@@ -152,14 +152,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 // Ronda de evidencia (verificado en vivo, MISSION-E2E-ENG): lo no devuelto queda como está en el
                 // repositorio, así que no se exige un archivo por ruta (reenviar todo alargaba la respuesta hasta fallar).
                 result = context.round() > 0
-                        ? runtime.generate(id, missionId, task.agentId(),
+                        ? generate(id, missionId, task.agentId(),
                                 buildWorkPrompt(context, task) + ROUND_RULE
                                         + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
-                                task.ownedPathsOrEmpty(), expectedProjects, List.of()).join()
-                        : runtime.generate(id, missionId, task.agentId(),
+                                task.ownedPathsOrEmpty(), expectedProjects, List.of(), context, generationHead)
+                        : generate(id, missionId, task.agentId(),
                                 buildWorkPrompt(context, task)
                                         + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
-                                task.ownedPathsOrEmpty(), expectedProjects).join();
+                                task.ownedPathsOrEmpty(), expectedProjects, null, context, generationHead);
             } catch (Exception ex) {
                 failures.add(task.agentId() + ": " + safeMessage(ex, "no generó código"));
                 continue;
@@ -302,8 +302,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     var insist = "";
                     // Verificado en vivo (MISSION-SANDBOX-VERIFY-14): la corrección devolvía el archivo idéntico.
                     for (int attempt = 0; attempt < REPAIR_ATTEMPTS && result == null; attempt++) {
-                        var candidate = runtime.generate(id, missionId, task.agentId(), basePrompt + insist,
-                                task.ownedPathsOrEmpty(), expectedProjects, required).join();
+                        var candidate = generate(id, missionId, task.agentId(), basePrompt + insist,
+                                task.ownedPathsOrEmpty(), expectedProjects, required, context, headSha);
                         // Verificado en vivo (MISSION-SANDBOX-VERIFY-16): se compara TODO lo devuelto contra HEAD.
                         var returned = candidate == null || candidate.files() == null ? List.<String>of()
                                 : candidate.files().stream().filter(Objects::nonNull)
@@ -396,6 +396,18 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         review = withoutFindingsOn(review, scaffold == null ? List.of() : scaffold.files());
 
         var status = StaticValidationStatus.compute(checks, review, sandboxResult);
+        if (status == StaticValidationStatus.VERIFIED) {
+            // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
+            memory.recordVerifiedCommit(missionId, headSha);
+        }
+
+        // Spec 2026-10-02 §3: con el código VERIFIED, Java crea la base en el servidor del fundador.
+        var databaseText = "";
+        if (plan.databaseOrNull() != null) {
+            databaseText = status == StaticValidationStatus.VERIFIED && databaseApply != null
+                    ? databaseApply.apply(missionId, headSha, plan)
+                    : "no se aplicó (el código no está VERIFIED).";
+        }
 
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
 
@@ -412,7 +424,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
-                        repairRounds, autofixRounds, dependencyOutcome));
+                        repairRounds, autofixRounds, dependencyOutcome)
+                        + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText));
     }
 
     private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
@@ -804,7 +817,118 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 """.formatted(profile, contexts, glossary);
     }
 
+    private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
+    private com.aicompany.core.database.DatabaseApplyService databaseApply;
+
+    /** Spec 2026-10-02 §3: aplica el esquema tras VERIFIED (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDatabaseApply(com.aicompany.core.database.DatabaseApplyService databaseApply) {
+        this.databaseApply = databaseApply;
+    }
+
+    /** Spec 2026-10-02 §2: conexiones de la misión para el contrato y los chequeos (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDatabaseConnections(com.aicompany.core.database.DatabaseConnectionService databaseConnections) {
+        this.databaseConnections = databaseConnections;
+    }
+
+    private List<com.aicompany.core.database.DatabaseConnection> missionConnections(String missionId) {
+        return databaseConnections == null ? List.of() : databaseConnections.connectionsOf(missionId);
+    }
+
+    /** La conexión elegida por Neo o null; sin conexión el contrato usa el nombre "app" (la cargará el fundador). */
+    private com.aicompany.core.database.DatabaseConnection chosenConnection(TeamMissionContext context) {
+        var db = context.plan().databaseOrNull();
+        if (db == null || db.connectionName() == null || db.connectionName().isBlank()) {
+            return null;
+        }
+        return missionConnections(context.missionId()).stream()
+                .filter(c -> c.name().equals(db.connectionName())).findFirst().orElse(null);
+    }
+
+    private List<String> contractVariables(TeamMissionContext context) {
+        if (context.plan().databaseOrNull() == null) {
+            return List.of();
+        }
+        var connection = chosenConnection(context);
+        return com.aicompany.core.database.ConnectionContract.variables(connection == null ? "app" : connection.name());
+    }
+
+    /**
+     * Los chequeos de base de datos (spec 2026-10-02 §2.4) solo aplican si el plan declara base: en ese caso se usa
+     * la variante de generate con chequeos extra; si no, las mismas llamadas de siempre. requiredPaths null = las
+     * ownedPaths (primera generación).
+     */
+    private DevelopmentResult generate(String id, String missionId, String agentId, String prompt, List<String> owned,
+                                       List<String> expectedProjects, List<String> requiredPaths,
+                                       TeamMissionContext context, String headSha) {
+        if (context.plan().databaseOrNull() == null) {
+            return requiredPaths == null
+                    ? runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects).join()
+                    : runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects, requiredPaths).join();
+        }
+        return runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects,
+                requiredPaths == null ? owned : requiredPaths, databaseChecks(context, headSha)).join();
+    }
+
+    /** Spec 2026-10-02 §2.4: migraciones, secretos y contrato, con reintento al dueño del archivo. */
+    private java.util.function.Function<DevelopmentResult, List<String>> databaseChecks(
+            TeamMissionContext context, String headSha) {
+        var hasDatabase = context.plan().databaseOrNull() != null;
+        var contract = contractVariables(context);
+        // Revisión final (I-6): el modelo nunca ve host ni usuario; compararlos como texto tumbaba código normal
+        // (un usuario "app" marcaba app.MapGet). Quedan los patrones de cadena de conexión con clave.
+        List<String> forbidden = List.of();
+        var existing = new java.util.LinkedHashMap<String, String>();
+        try {
+            if (headSha != null) {
+                for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                    if (path.startsWith(com.aicompany.core.agent.validation.MigrationFilesGate.ROOT)) {
+                        existing.put(path, workspace.readFileAtCommit(context.missionId(), headSha, path));
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            existing.clear();
+        }
+        return result -> {
+            var errors = new ArrayList<String>();
+            errors.addAll(com.aicompany.core.agent.validation.MigrationFilesGate.check(result.files(), existing));
+            errors.addAll(com.aicompany.core.agent.validation.SecretLiteralGate.check(result.files(), forbidden));
+            errors.addAll(com.aicompany.core.agent.validation.DatabaseContractGate.check(result.files(), hasDatabase, contract));
+            return errors;
+        };
+    }
+
+    /** Spec 2026-10-02 §2.3: qué hace cada uno con la base; solo el contrato, nunca host, usuario ni clave. */
+    private String databaseBlock(TeamMissionContext context) {
+        if (context.plan().databaseOrNull() == null) {
+            return "";
+        }
+        var connection = chosenConnection(context);
+        var description = connection == null
+                ? "PostgreSQL (la conexión la cargará el fundador). Variables de entorno (las ÚNICAS que puede leer el "
+                        + "código): " + String.join(", ", contractVariables(context))
+                : com.aicompany.core.database.ConnectionContract.describe(connection);
+        return """
+
+                BASE DE DATOS: %s
+                - Diego (DATA_ARCHITECT): migraciones en db/postgres/migrations/V<n>__<descripcion>.sql (consecutivas desde
+                  V1; en una ronda nueva, una migración nueva, nunca editar una existente) y repositorios con Npgsql
+                  (NpgsqlDataSource) en infraestructura, leyendo SOLO esas variables.
+                - Iris (BACKEND): interfaces de repositorios en domain/application; el arranque de la API arma la conexión
+                  con esas variables, conecta al primer uso y /health NO depende de la base. Incluye .env.example con
+                  los nombres de las variables y sin valores.
+                - Vera (QA): tests con fakes en memoria escritos a mano de las interfaces; nunca una base real.
+                - Nunca escribas claves, hosts ni cadenas de conexión: Forjai rechaza el archivo.
+                """.formatted(description);
+    }
+
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
+        return buildWorkPromptBase(context, task) + databaseBlock(context);
+    }
+
+    private String buildWorkPromptBase(TeamMissionContext context, PlannedTask task) {
 
         var plan = context.plan();
 

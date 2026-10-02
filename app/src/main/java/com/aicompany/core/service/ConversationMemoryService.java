@@ -35,7 +35,44 @@ public class ConversationMemoryService {
         this.driver = driver;
     }
 
+    // Revisión final (I-2): "clave: X", "password X", JSON, contraseña=, PGPASSWORD=, valores entre comillas.
+    private static final java.util.regex.Pattern PASSWORD_IN_TEXT = java.util.regex.Pattern.compile(
+            "(?iu)(\"?(?:[A-Za-z0-9]+_)?(?:password|passwd|pwd|clave|contraseña|secret)\"?)(\\s*[:=]\\s*|\\s+)"
+                    + "(\"[^\"]*\"|'[^']*'|[^\\s;,}]+)");
+    private static final java.util.regex.Pattern URI_WITH_PASSWORD =
+            java.util.regex.Pattern.compile("(?i)\\b(postgres(?:ql)?|mongodb(?:\\+srv)?)://([^:/@\\s]+):[^@\\s]+@");
+
+    /** Palabras que siguen a "clave"/"password" en frases normales y no son una clave. */
+    private static final java.util.Set<String> NOT_A_SECRET = java.util.Set.of("del", "de", "la", "el", "es", "y", "o",
+            "para", "que", "en", "nueva", "mi", "tu", "su");
+
+    /**
+     * Spec 2026-10-02 §1: el historial se envía al modelo, así que una clave pegada en el chat nunca se guarda tal cual.
+     */
+    public static String redactSecrets(String text) {
+        if (text == null) {
+            return null;
+        }
+        var matcher = PASSWORD_IN_TEXT.matcher(text);
+        var out = new StringBuilder();
+        while (matcher.find()) {
+            var value = matcher.group(3);
+            var plain = value.replaceAll("^[\"']|[\"']$", "");
+            var keep = NOT_A_SECRET.contains(plain.toLowerCase(java.util.Locale.ROOT)) || plain.length() < 4;
+            matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(keep ? matcher.group()
+                    : matcher.group(1) + matcher.group(2) + "[clave omitida]"));
+        }
+        matcher.appendTail(out);
+        return URI_WITH_PASSWORD.matcher(out.toString()).replaceAll("$1://$2:[clave omitida]@");
+    }
+
+    /** Revisión final (C-1): si el mensaje trae una clave, el turno se corta sin llamar a ningún modelo. */
+    public static boolean containsSecret(String text) {
+        return text != null && !redactSecrets(text).equals(text);
+    }
+
     public void recordMessage(String role, String content) {
+        var safeContent = redactSecrets(content);
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
                 tx.run("MERGE (c:Conversation {id:'MAIN'}) "
@@ -44,7 +81,7 @@ public class ConversationMemoryService {
                         Map.of(
                                 "id", UUID.randomUUID().toString(),
                                 "role", role,
-                                "content", content,
+                                "content", safeContent,
                                 "createdAt", Instant.now().toString()
                         ));
                 return null;
