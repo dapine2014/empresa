@@ -92,4 +92,13 @@ class ProjectScaffoldTest {
                 .contains("<PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />"));
         assertFalse(files.get("src/Tareas.Domain/Tareas.Domain.csproj").contains("Newtonsoft"));
     }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790971185): Vera omitió "using Xunit;" y [Fact] no compiló; la plantilla de
+    // dotnet new xunit lo trae como using global del proyecto de tests.
+    @Test
+    void testProjectsImportXunitGlobally() {
+        var tests = ProjectScaffold.generate(StackProfile.DOTNET_APP, java.util.List.of("Crm")).stream()
+                .filter(f -> f.path().equals("tests/Crm.Tests/Crm.Tests.csproj")).findFirst().orElseThrow();
+        assertTrue(tests.content().contains("<Using Include=\"Xunit\" />"), tests.content());
+    }
 }
