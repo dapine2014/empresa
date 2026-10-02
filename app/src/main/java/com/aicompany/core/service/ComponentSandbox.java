@@ -47,18 +47,23 @@ public final class ComponentSandbox {
         return name == null || !name.contains("/") ? "" : name.substring(0, name.lastIndexOf('/'));
     }
 
-    /** Errores del compilador del primer paso fallido (restore/build), con la ruta real en el repositorio. */
+    /**
+     * Errores del compilador de cada paso restore/build fallido, con la ruta real en el repositorio. Revisión final
+     * (I1): de todos los componentes, para que un fallo en uno no tape los errores de compilación del otro.
+     */
     public static List<CompilerErrorParser.CompilerError> compileErrors(SandboxResult result) {
-        var failed = result.stepsOrEmpty().stream()
-                .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
-                .findFirst();
-        if (failed.isEmpty() || !List.of("restore", "build").contains(stepName(failed.get().name()))) {
-            return List.of();
+        var errors = new ArrayList<CompilerErrorParser.CompilerError>();
+        for (var step : result.stepsOrEmpty()) {
+            if (!("FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
+                    || !List.of("restore", "build").contains(stepName(step.name()))) {
+                continue;
+            }
+            var dir = dirOf(step.name());
+            CompilerErrorParser.parse(step.outputTail()).stream()
+                    .map(e -> dir.isEmpty() ? e : new CompilerErrorParser.CompilerError(dir + "/" + e.path(), e.line(),
+                            e.column(), e.code(), e.message()))
+                    .forEach(errors::add);
         }
-        var dir = dirOf(failed.get().name());
-        return CompilerErrorParser.parse(failed.get().outputTail()).stream()
-                .map(e -> dir.isEmpty() ? e : new CompilerErrorParser.CompilerError(dir + "/" + e.path(), e.line(),
-                        e.column(), e.code(), e.message()))
-                .toList();
+        return errors;
     }
 }

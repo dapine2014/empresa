@@ -711,16 +711,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
     }
 
-    /** Errores del compilador del primer paso fallido (restore/build), agrupados por dueño en orden de capas. */
+    /** Errores del compilador de los pasos restore/build fallidos, agrupados por dueño en orden de capas. */
     private static LinkedHashMap<PlannedTask, List<CompilerErrorParser.CompilerError>> compileErrorsByOwner(
             SandboxResult result, List<PlannedTask> ordered) {
         var byOwner = new LinkedHashMap<PlannedTask, List<CompilerErrorParser.CompilerError>>();
-        var failed = result.stepsOrEmpty().stream()
-                .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
-                .findFirst();
-        if (failed.isEmpty() || !List.of("restore", "build").contains(ComponentSandbox.stepName(failed.get().name()))) {
-            return byOwner;
-        }
         var errors = compileErrors(result);
         for (var task : ordered) {
             var own = errors.stream().filter(e -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), e.path())).toList();

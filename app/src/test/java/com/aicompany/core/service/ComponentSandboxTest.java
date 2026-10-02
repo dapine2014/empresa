@@ -60,4 +60,22 @@ class ComponentSandboxTest {
         assertEquals("app", ComponentSandbox.dirOf("app/build"));
         assertEquals("", ComponentSandbox.dirOf("build"));
     }
+
+    // Revisión final I1: un test rojo del backend no tapa los errores de compilación de la app (ni al revés).
+    @Test
+    void compileErrorsComeFromEveryFailedBuildStep() {
+        var result = new SandboxResult("FAIL", List.of(
+                new StepResult("backend/build", "FAIL", 1, 1,
+                        "src/Clientes.Api/Program.cs(3,5): error CS0246: The type 'X' could not be found", 0, 0),
+                new StepResult("backend/test", "SKIPPED", 0, 0, "", 0, 0),
+                new StepResult("app/build", "FAIL", 1, 1, "lib/main.dart:3:5: Error: Undefined name 'Y'.", 0, 0)));
+        assertEquals(List.of("backend/src/Clientes.Api/Program.cs", "app/lib/main.dart"),
+                ComponentSandbox.compileErrors(result).stream().map(e -> e.path()).toList());
+
+        var testThenBuild = new SandboxResult("FAIL", List.of(
+                new StepResult("backend/test", "FAIL", 1, 1, "1 test falló", 2, 1),
+                new StepResult("app/build", "FAIL", 1, 1, "lib/main.dart:3:5: Error: Undefined name 'Y'.", 0, 0)));
+        assertEquals(List.of("app/lib/main.dart"),
+                ComponentSandbox.compileErrors(testThenBuild).stream().map(e -> e.path()).toList());
+    }
 }
