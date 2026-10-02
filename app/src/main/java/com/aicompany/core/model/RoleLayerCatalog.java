@@ -41,6 +41,21 @@ public final class RoleLayerCatalog {
         return Optional.ofNullable(roleCode == null ? null : BY_ROLE.get(roleCode));
     }
 
+    /**
+     * Spec 2026-10-02 B1 §1: en qué ecosistemas escribe cada rol cuando la misión tiene varios componentes (con uno
+     * solo se mantiene el reparto de siempre, incluido el respaldo de Mila en las capas internas).
+     */
+    private static final Map<String, List<StackProfile.Ecosystem>> ECOSYSTEMS = Map.of(
+            "BACKEND", List.of(StackProfile.Ecosystem.NUGET),
+            "DATA_ARCHITECT", List.of(StackProfile.Ecosystem.NUGET),
+            "GAME_DEV", List.of(StackProfile.Ecosystem.NUGET),
+            "UI_UX", List.of(StackProfile.Ecosystem.PUB),
+            "QA", List.of(StackProfile.Ecosystem.NUGET, StackProfile.Ecosystem.PUB));
+
+    public static boolean writesIn(String roleCode, StackProfile.Ecosystem ecosystem) {
+        return ECOSYSTEMS.getOrDefault(roleCode, List.of()).contains(ecosystem);
+    }
+
     public static boolean enabledNow(String roleCode) {
         return of(roleCode).map(r -> r.phase() <= DevelopmentPhase.CURRENT).orElse(false);
     }

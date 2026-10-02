@@ -160,4 +160,38 @@ class TeamPlanResolverTest {
 
         assertTrue(of(result.plan(), "backend").get(0).ownedPaths().contains(".env.example"));
     }
+
+    private static TeamPlan fullstack(List<PlannedTask> tasks) {
+        return new TeamPlan("App", null, null, tasks, List.of(), "DOTNET_APP",
+                List.of(new TeamPlan.BoundedContext("Clientes", "desc")),
+                List.of(new TeamPlan.GlossaryTerm("a", "b"), new TeamPlan.GlossaryTerm("c", "d"),
+                        new TeamPlan.GlossaryTerm("e", "f")), null, List.of("DOTNET_APP", "FLUTTER_WEB_APP"));
+    }
+
+    // Spec 2026-10-02 B1 §1: reparto por componente y capa; Iris nunca en app/, Mila nunca en backend/.
+    @Test
+    void fullstackSplitsLayersByComponent() {
+        var result = resolver.resolve(fullstack(List.of(t("backend", "WORK", "api"), t("devops", "WORK", "persistence"),
+                t("frontend-ui", "WORK", "flutter"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+
+        assertEquals(List.of(), result.errors());
+        assertEquals(List.of("backend/src/Clientes.Domain", "backend/src/Clientes.Application", "backend/src/Clientes.Api"),
+                of(result.plan(), "backend").get(0).ownedPaths());
+        assertEquals(List.of("backend/src/Clientes.Infrastructure"), of(result.plan(), "devops").get(0).ownedPaths());
+        assertEquals(List.of("app/lib/clientes/domain", "app/lib/clientes/application", "app/lib/clientes/infrastructure",
+                        "app/lib/clientes/presentation", "app/pubspec.yaml", "app/lib/main.dart", "app/web"),
+                of(result.plan(), "frontend-ui").get(0).ownedPaths());
+        assertEquals(List.of("backend/tests/Clientes.Tests", "app/test/clientes"),
+                of(result.plan(), "qa").stream().filter(x -> "WORK".equals(x.kind())).findFirst().orElseThrow().ownedPaths());
+        assertEquals(1, of(result.plan(), "qa").stream().filter(x -> "VALIDATION".equals(x.kind())).count());
+        assertEquals(List.of("DOTNET_APP", "FLUTTER_WEB_APP"), result.plan().components());
+    }
+
+    @Test
+    void fullstackWithoutBackendOwnerIsAnError() {
+        var result = resolver.resolve(fullstack(List.of(t("frontend-ui", "WORK", "flutter"), t("qa", "WORK", "tests"))),
+                DEVELOPMENT);
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("DOMAIN") && e.contains("backend")),
+                result.errors().toString());
+    }
 }

@@ -52,38 +52,62 @@ public class TeamPlanResolver {
                 roleCodeByAgent.put(task.agentId(), member.roleCode());
             }
         }
-        var layersByAgent = RoleLayerCatalog.assign(roleCodeByAgent, profile.get().layers());
+        var components = plan.resolvedComponents();
+        var multi = components.size() > 1;
+        var pathsByAgent = new LinkedHashMap<String, List<String>>();
+        merged.forEach(task -> pathsByAgent.put(task.agentId(), new ArrayList<>()));
 
-        var ownerByLayerRoot = new LinkedHashMap<String, String>();
+        for (var component : components) {
+            var componentRoles = new LinkedHashMap<String, String>();
+            roleCodeByAgent.forEach((agent, role) -> {
+                if (!multi || RoleLayerCatalog.writesIn(role, component.profile().ecosystem())) {
+                    componentRoles.put(agent, role);
+                }
+            });
+            var layersByAgent = RoleLayerCatalog.assign(componentRoles, component.profile().layers());
+            var componentContexts = component.contexts(contexts);
+            var ownerByLayerRoot = new LinkedHashMap<String, String>();
+
+            for (var entry : layersByAgent.entrySet()) {
+                for (var layer : entry.getValue()) {
+                    for (var root : roots(component.profile(), componentContexts, layer)) {
+                        var prefixed = component.prefix(root);
+                        pathsByAgent.get(entry.getKey()).add(prefixed);
+                        ownerByLayerRoot.put(prefixed, entry.getKey());
+                    }
+                }
+            }
+
+            for (var context : componentContexts) {
+                component.profile().resolveRoot(context, Layer.DOMAIN).map(component::prefix)
+                        .filter(root -> !ownerByLayerRoot.containsKey(root))
+                        .ifPresent(root -> errors.add("La capa DOMAIN del contexto " + context + " no tiene dueño"
+                                + (component.isRoot() ? "" : " en " + component.dir() + "/ ("
+                                        + component.profile().name() + ")")
+                                + ": incluye a un miembro que escriba domain (BACKEND o UI_UX)."));
+            }
+
+            addEntryFiles(component, componentContexts, ownerByLayerRoot, pathsByAgent, errors);
+        }
+
         var resolved = new ArrayList<PlannedTask>();
-
         for (var task : merged) {
-
             var member = membersById.get(task.agentId());
             var role = member == null ? Optional.<RoleLayerCatalog.RoleLayers>empty()
                     : RoleLayerCatalog.of(member.roleCode());
             var writesCode = role.isPresent() && role.get().writesCode() && RoleLayerCatalog.enabledNow(member.roleCode());
-
             if (!writesCode) {
                 resolved.add(task);
                 continue;
             }
-
-            var paths = new ArrayList<String>();
-            for (var layer : layersByAgent.getOrDefault(task.agentId(), List.of())) {
-                for (var root : roots(profile.get(), contexts, layer)) {
-                    paths.add(root);
-                    ownerByLayerRoot.put(root, task.agentId());
-                }
-            }
-
+            var paths = pathsByAgent.get(task.agentId());
             if (paths.isEmpty()) {
-                errors.add(task.agentId() + " (" + member.roleCode() + ") no tiene capas en " + profile.get().name()
+                errors.add(task.agentId() + " (" + member.roleCode() + ") no tiene capas en "
+                        + (multi ? components.stream().map(c -> c.profile().name()).toList().toString()
+                                : components.get(0).profile().name())
                         + ": otro miembro elegido ya las cubre o el perfil no las tiene. Quítalo del plan.");
             }
-
             resolved.add(withKindAndPaths(task, TeamPlan.KIND_WORK, task.action(), paths));
-
             if ("QA".equals(member.roleCode())) {
                 resolved.add(new PlannedTask(task.agentId(), TeamPlan.KIND_VALIDATION, REVIEW_ACTION,
                         "Revisar el código commiteado y los resultados reales del sandbox.",
@@ -91,14 +115,6 @@ public class TeamPlanResolver {
             }
         }
 
-        for (var context : contexts) {
-            profile.get().resolveRoot(context, Layer.DOMAIN)
-                    .filter(root -> !ownerByLayerRoot.containsKey(root))
-                    .ifPresent(root -> errors.add("La capa DOMAIN del contexto " + context + " no tiene dueño: "
-                            + "incluye a un miembro que escriba domain (BACKEND o UI_UX)."));
-        }
-
-        addEntryFiles(profile.get(), contexts, ownerByLayerRoot, resolved, errors);
         addMigrations(plan, membersById, resolved);
 
         return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
@@ -121,39 +137,33 @@ public class TeamPlanResolver {
      * Verificado en vivo (MISSION-SANDBOX-VERIFY-22): los archivos de entrada (composition root) van al dueño de
      * la capa más externa, que se genera después de las demás. Sin dueño de esas capas es un error del plan.
      */
-    private static void addEntryFiles(StackProfile profile, List<String> contexts,
-                                      Map<String, String> ownerByLayerRoot, List<PlannedTask> tasks,
+    private static void addEntryFiles(com.aicompany.core.model.Component component, List<String> contexts,
+                                      Map<String, String> ownerByLayerRoot, Map<String, List<String>> pathsByAgent,
                                       List<String> errors) {
 
-        var entryFiles = profile.leaderOwnedPaths();
+        var entryFiles = component.profile().leaderOwnedPaths().stream().map(component::prefix).toList();
         if (entryFiles.isEmpty()) {
             return;
         }
 
         String owner = null;
         for (var layer : List.of(Layer.PRESENTATION, Layer.API, Layer.GAME)) {
-            for (var root : roots(profile, contexts, layer)) {
-                if (owner == null && ownerByLayerRoot.containsKey(root)) {
-                    owner = ownerByLayerRoot.get(root);
+            for (var root : roots(component.profile(), contexts, layer)) {
+                var prefixed = component.prefix(root);
+                if (owner == null && ownerByLayerRoot.containsKey(prefixed)) {
+                    owner = ownerByLayerRoot.get(prefixed);
                 }
             }
         }
 
         if (owner == null) {
-            errors.add("Los archivos de entrada " + entryFiles + " de " + profile.name() + " necesitan un dueño de "
-                    + "la capa PRESENTATION, API o GAME: incluye a ese miembro en el plan.");
+            errors.add("Los archivos de entrada " + entryFiles + " de " + component.profile().name() + " necesitan un "
+                    + "dueño de la capa PRESENTATION, API o GAME: incluye a ese miembro en el plan.");
             return;
         }
 
-        for (int i = 0; i < tasks.size(); i++) {
-            var task = tasks.get(i);
-            if (task.agentId().equals(owner) && TeamPlan.KIND_WORK.equals(task.kind())) {
-                var paths = new ArrayList<>(task.ownedPathsOrEmpty());
-                entryFiles.stream().filter(file -> !paths.contains(file)).forEach(paths::add);
-                tasks.set(i, withKindAndPaths(task, task.kind(), task.action(), paths));
-                return;
-            }
-        }
+        var paths = pathsByAgent.get(owner);
+        entryFiles.stream().filter(file -> !paths.contains(file)).forEach(paths::add);
     }
 
     /**
