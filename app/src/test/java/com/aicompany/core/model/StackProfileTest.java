@@ -94,6 +94,9 @@ class StackProfileTest {
     @Test
     void theDotnetContractExplainsHowToRequestAPackage() {
         assertTrue(StackProfile.DOTNET_APP.executionContract().contains("\"packages\""));
+        // Verificado en vivo (MISSION-DBA-1790955204): Mvc.Testing trajo 35 paquetes pendientes y System.Text.Json
+        // vulnerable; el sandbox no corrió.
+        assertTrue(StackProfile.DOTNET_APP.executionContract().contains("NO usan Microsoft.AspNetCore.Mvc.Testing"));
         assertTrue(StackProfile.FLUTTER_WEB_APP.executionContract().contains("versión exacta"));
     }
 }

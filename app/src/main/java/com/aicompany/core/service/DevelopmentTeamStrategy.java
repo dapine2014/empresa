@@ -206,7 +206,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Parte 3: dependencias gobernadas. .NET: los paquetes pedidos entran al .csproj de la capa del agente
         // (commit de Forjai); Flutter: salen del pubspec.yaml. Lo que no está aprobado se descarga aislado y pasa
         // la política; si queda algo pendiente, VERIFY no corre.
-        var dependencyCommit = commitRequestedPackages(context, packagesByTask);
+        var nugetProfile = plan.profile().filter(p -> p.ecosystem() == StackProfile.Ecosystem.NUGET).orElse(null);
+        var implied = nugetProfile == null ? Map.<String, List<DependencyRef>>of()
+                : impliedPackages(nugetProfile, plan.contextNames(), csharpSources(missionId, generationHead));
+        var dependencyCommit = commitRequestedPackages(context, packagesByTask, implied);
         if (dependencyCommit != null) {
             committed.add(dependencyCommit);
         }
@@ -448,12 +451,66 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return requested.stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).distinct().toList();
     }
 
-    /** Regenera y commitea (autor Forjai) solo los .csproj de las capas que pidieron paquetes. */
+    /** Spec 2026-10-02 §2.5: la persistencia de Diego, en la imagen del sandbox y en BaselineDependencies. */
+    static final DependencyRef NPGSQL = new DependencyRef("NUGET", "Npgsql", "8.0.5");
+
+    private static final java.util.regex.Pattern USES_NPGSQL = java.util.regex.Pattern.compile(
+            "(?m)^\\s*(?:global\\s+)?using\\s+(?:static\\s+)?Npgsql\\b|\\bNpgsql\\.Npgsql[A-Z]");
+
+    /**
+     * Verificado en vivo (MISSION-DBA-1790955204): Diego e Iris usaron Npgsql sin pedirlo en "packages" y el build no
+     * habría encontrado el namespace. Un paquete preaprobado no depende del modelo: Java lo agrega al .csproj del
+     * proyecto de cada .cs que lo usa (sources: ruta → contenido en el último commit).
+     */
+    static Map<String, List<DependencyRef>> impliedPackages(StackProfile profile, List<String> contexts,
+                                                            Map<String, String> sources) {
+        var implied = new LinkedHashMap<String, List<DependencyRef>>();
+        if (profile == null || profile.ecosystem() != StackProfile.Ecosystem.NUGET) {
+            return implied;
+        }
+        for (var project : profile.projectFiles(contexts)) {
+            var dir = project.substring(0, project.lastIndexOf('/') + 1);
+            var uses = sources.entrySet().stream().anyMatch(e -> e.getKey().startsWith(dir)
+                    && e.getKey().endsWith(".cs") && e.getValue() != null && USES_NPGSQL.matcher(e.getValue()).find());
+            if (uses) {
+                implied.put(project, List.of(NPGSQL));
+            }
+        }
+        return implied;
+    }
+
+    /** Código C# del último commit, para {@link #impliedPackages}. */
+    private Map<String, String> csharpSources(String missionId, String sha) {
+        var sources = new LinkedHashMap<String, String>();
+        if (sha == null) {
+            return sources;
+        }
+        try {
+            for (var path : workspace.filesAtCommit(missionId, sha)) {
+                if (path.endsWith(".cs")) {
+                    var content = readOrNull(missionId, sha, path);
+                    if (content != null) {
+                        sources.put(path, content);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not list files for implied packages: {}", missionId, ex.getMessage());
+        }
+        return sources;
+    }
+
+    /**
+     * Regenera y commitea (autor Forjai) solo los .csproj de las capas que pidieron paquetes, más los implícitos
+     * ({@link #impliedPackages}) que el proyecto no tenga ya.
+     */
     private CommittedWork commitRequestedPackages(TeamMissionContext context,
-                                                  Map<PlannedTask, List<DevelopmentResult.PackageRequest>> packagesByTask) {
+                                                  Map<PlannedTask, List<DevelopmentResult.PackageRequest>> packagesByTask,
+                                                  Map<String, List<DependencyRef>> implied) {
         var plan = context.plan();
         var profile = plan.profile().orElse(null);
-        if (profile == null || profile.ecosystem() != StackProfile.Ecosystem.NUGET || packagesByTask.isEmpty()) {
+        if (profile == null || profile.ecosystem() != StackProfile.Ecosystem.NUGET
+                || (packagesByTask.isEmpty() && implied.isEmpty())) {
             return null;
         }
         var byProject = new LinkedHashMap<String, List<DependencyRef>>();
@@ -464,6 +521,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         entry.getValue().stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).toList());
             }
         }
+        implied.forEach((project, refs) -> {
+            var packages = byProject.computeIfAbsent(project, k -> new ArrayList<>());
+            for (var ref : refs) {
+                if (packages.stream().noneMatch(p -> p.name().equalsIgnoreCase(ref.name()))) {
+                    packages.add(ref);
+                }
+            }
+        });
         if (byProject.isEmpty()) {
             return null;
         }

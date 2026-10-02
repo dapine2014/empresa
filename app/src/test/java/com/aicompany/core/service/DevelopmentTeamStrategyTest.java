@@ -17,6 +17,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -718,6 +719,22 @@ class DevelopmentTeamStrategyTest {
                 List.of("src/Tareas.Application", "src/Tareas.Infrastructure"));
         assertEquals(List.of("src/Tareas.Application/Tareas.Application.csproj",
                 "src/Tareas.Infrastructure/Tareas.Infrastructure.csproj"), projects);
+    }
+
+    // Verificado en vivo (MISSION-DBA-1790955204): Diego e Iris usaron Npgsql sin pedirlo en "packages" y ningún
+    // .csproj lo traía. Java lo agrega al proyecto de cada archivo que lo usa, no a todas las capas del agente.
+    @Test
+    void npgsqlIsAddedToTheProjectsWhoseCodeUsesIt() {
+        var implied = DevelopmentTeamStrategy.impliedPackages(StackProfile.DOTNET_APP, List.of("Citas"), Map.of(
+                "src/Citas.Infrastructure/CitaRepositorio.cs", "using System;\nusing Npgsql;\n\npublic class A {}",
+                "src/Citas.Api/Program.cs", "var ds = new Npgsql.NpgsqlDataSourceBuilder(\"\").Build();",
+                "src/Citas.Application/Repositorios.cs", "/// La implementación vive en Infrastructure (Npgsql/PostgreSQL).",
+                "src/Citas.Domain/Cita.cs", "public class Cita {}"));
+        assertEquals(Map.of(
+                "src/Citas.Infrastructure/Citas.Infrastructure.csproj", List.of(DevelopmentTeamStrategy.NPGSQL),
+                "src/Citas.Api/Citas.Api.csproj", List.of(DevelopmentTeamStrategy.NPGSQL)), implied);
+        assertTrue(DevelopmentTeamStrategy.impliedPackages(StackProfile.FLUTTER_WEB_APP, List.of("Citas"),
+                Map.of("lib/main.dart", "using Npgsql;")).isEmpty());
     }
 
     // Verificado en vivo (MISSION-DEPS-VERIFY-4): con kimi-k3, 24.000 caracteres dejaban archivos fuera y Vera marcaba

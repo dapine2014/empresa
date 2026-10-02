@@ -293,6 +293,9 @@ public enum StackProfile {
                     + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "
                     + "Microsoft.NET.Sdk.Web: necesita Program.cs (top-level, WebApplication) que responda GET /health "
                     + "con 200. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. La solución la genera el sandbox. "
+                    + "Los tests NO usan Microsoft.AspNetCore.Mvc.Testing ni WebApplicationFactory (arrastra decenas "
+                    + "de paquetes, algunos con vulnerabilidades): GET /health lo prueba el sandbox arrancando la API; "
+                    + "los tests prueban dominio y casos de uso con fakes en memoria. "
                     + PACKAGE_RULE;
             case GODOT_DOTNET_GAME -> "SANDBOX (sin red): Godot 4.3 .NET, net8.0. Los .csproj (capas en src/, "
                     + "tests/<Ctx>.Tests con xunit 2.5.3, y game/Game.csproj con Godot.NET.Sdk/4.3.0 que referencia "
