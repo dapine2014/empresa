@@ -46,8 +46,8 @@ Todas las rutas del perfil (capas, archivos de entrada, extras, `.csproj`) se re
 raíz: `db/postgres/migrations`, `.env.example`, `README.md`, `.gitignore`, `docs`.
 
 **Bounded contexts**: los mismos para todos los componentes. Java convierte el nombre a la convención de cada perfil
-(`Clientes` en C#, `clientes` en Dart); el validador sigue exigiendo el formato del perfil principal (el primero de la
-lista) y Java deriva los demás.
+(`Clientes` en C#, `clientes` en Dart); el validador exige el formato del perfil principal (el primero en el orden fijo de Java: .NET
+antes que Flutter) y Java deriva los demás.
 
 **Reparto por componente y capa** (`RoleLayerCatalog.assign` recibe el componente):
 
