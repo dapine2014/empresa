@@ -503,4 +503,14 @@ class DevelopmentRuntimeTest {
 
         verify(ceoService).generateDevelopmentArtifact(eq("devops"), contains("motivo del chequeo extra"), anyString(), anyString());
     }
+
+    // Revisión final I2: en una app completa el pubspec vive en app/pubspec.yaml y también exige versiones exactas.
+    @Test
+    void pubspecOfAComponentIsCheckedToo() {
+        var errors = DevelopmentRuntime.pubspecErrors(List.of(new com.aicompany.core.agent.model.DevelopmentResult
+                .GeneratedFile("app/pubspec.yaml", "name: app\ndependencies:\n  provider: ^6.1.2\n")));
+        assertFalse(errors.isEmpty());
+        assertEquals(List.of(), DevelopmentRuntime.pubspecErrors(List.of(new com.aicompany.core.agent.model
+                .DevelopmentResult.GeneratedFile("app/pubspec.yaml", "name: app\ndependencies:\n  http: 1.2.2\n"))));
+    }
 }

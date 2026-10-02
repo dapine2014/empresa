@@ -413,6 +413,16 @@ public class DevelopmentRuntime {
         return new Verdict(verdict.fatal(), retryable);
     }
 
+    /** Revisión final B1 (I2): el pubspec.yaml de la raíz o el de un componente (app/pubspec.yaml). */
+    static List<String> pubspecErrors(List<DevelopmentResult.GeneratedFile> files) {
+        var errors = new ArrayList<String>();
+        files.stream()
+                .filter(f -> f != null && f.path() != null
+                        && ("pubspec.yaml".equals(f.path()) || f.path().endsWith("/pubspec.yaml")))
+                .forEach(f -> errors.addAll(DependencyManifest.pubspec(f.content()).errors()));
+        return errors;
+    }
+
     private Verdict verifyGenerated(DevelopmentResult result, List<String> ownedPaths, List<String> expectedProjects,
                                     List<String> requiredPaths) {
 
@@ -446,10 +456,7 @@ public class DevelopmentRuntime {
 
         // Parte 3: paquetes pedidos solo con versión exacta; pubspec.yaml con dependencias exactas de pub.dev.
         retryable.addAll(DependencyManifest.validateRequests(result.packagesOrEmpty()));
-        result.files().stream()
-                .filter(f -> f != null && "pubspec.yaml".equals(f.path()))
-                .findFirst()
-                .ifPresent(f -> retryable.addAll(DependencyManifest.pubspec(f.content()).errors()));
+        retryable.addAll(pubspecErrors(result.files()));
 
         // Los .csproj esperados los genera Forjai (ProjectScaffold): el agente no puede pisarlos.
         retryable.addAll(ProjectFileGate.check(result.files(), expectedProjects, expectedProjects));
