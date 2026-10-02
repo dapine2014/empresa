@@ -283,6 +283,20 @@ public enum StackProfile {
             + "\"packages\": [{\"name\": \"...\", \"version\": \"x.y.z\"}] con versión exacta; Forjai lo agrega a tu "
             + ".csproj si pasa los chequeos (vulnerabilidades, licencia, código en el build).";
 
+    /** Spec 2026-10-02 B1 §2: el backend de una app completa (Iris), para que Java lea sus rutas. */
+    public static final String FULLSTACK_API_RULE = "APP COMPLETA: una app Flutter consume esta API. Los endpoints "
+            + "van como minimal APIs con la ruta LITERAL en el código (app.MapGet(\"/clientes/{id}\", …), MapPost, MapPut, "
+            + "MapPatch, MapDelete; grupos con MapGroup(\"/…\")), nunca controllers ni rutas en variables: Forjai lee "
+            + "esas rutas y genera el contrato de la app. Habilita CORS para los orígenes de la variable de entorno "
+            + "CORS_ORIGINS (lista separada por comas); /health responde sin CORS ni base.";
+
+    /** Spec 2026-10-02 B1 §2: la app de una app completa (Mila). */
+    public static final String FULLSTACK_APP_RULE = "APP COMPLETA: la app consume la API del backend. Usa el paquete "
+            + "http y SOLO las rutas de ApiRoutes (lib/api/api_routes.dart, generado por Forjai desde el backend; "
+            + "impórtalo con package:<nombre de pubspec>/api/api_routes.dart y no lo escribas). La URL base sale de "
+            + "const String.fromEnvironment('API_BASE_URL'); nunca escribas rutas de la API ni localhost a mano. Los "
+            + "campos JSON siguen los nombres en camelCase de los tipos públicos del backend (contrato de abajo).";
+
     public String executionContract() {
         return switch (this) {
             case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable; sin base de datos (los tests usan "
@@ -304,10 +318,14 @@ public enum StackProfile {
                     + "partial con el mismo nombre que su archivo. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. "
                     + "El juego corre 300 frames headless sin errores. " + PACKAGE_RULE;
             case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.24 (Dart ^3.5), solo web; dependencias SOLO del "
-                    + "SDK (flutter, flutter_test) más cupertino_icons 1.0.8 y flutter_lints 4.0.0 (dev). Otras dependencias de pub.dev: en pubspec.yaml "
+                    + "SDK (flutter, flutter_test) más cupertino_icons 1.0.8 y flutter_lints 4.0.0 (dev). "
+                    + "http 1.2.2 está disponible para llamar a una API (pídelo en pubspec.yaml como http: 1.2.2). "
+                    + "Otras dependencias de pub.dev: en pubspec.yaml "
                     + "con versión exacta (p. ej. equatable: 2.0.5, sin ^); se aprueban si pasan los chequeos. "
                     + "Tests reales con flutter_test en test/<ctx>/; web/index.html estándar de flutter create; "
-                    + "la app debe renderizar sin errores en Chrome headless.";
+                    + "la app debe renderizar sin errores en Chrome headless. El código sirve igual para web, Android e "
+                    + "iOS: nunca importes dart:html, dart:js, dart:js_util, dart:js_interop ni package:web (Forjai "
+                    + "rechaza el repositorio).";
         };
     }
 

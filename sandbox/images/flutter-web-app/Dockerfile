@@ -14,7 +14,7 @@ RUN touch /tmp/antes-del-precache && sleep 1 \
     && mkdir -p /opt/pub-cache && flutter config --no-analytics \
     && cd /sdks/flutter/packages/flutter_tools && flutter pub get && cd / \
     && flutter precache --web \
-    && flutter create --platforms=web /opt/seed && cd /opt/seed && flutter pub get \
+    && flutter create --platforms=web /opt/seed && cd /opt/seed && flutter pub add http:1.2.2 && flutter pub get \
     && rm -rf /opt/seed && chown -R 1000:1000 /opt/pub-cache \
     && find /sdks/flutter \( -type d -o -newer /tmp/antes-del-precache \) -exec chown -h 1000:1000 {} + \
     && rm -f /tmp/antes-del-precache

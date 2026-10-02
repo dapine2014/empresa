@@ -14,7 +14,9 @@ public final class BaselineDependencies {
             "NUGET:microsoft.aspnetcore.openapi@8.0.31", "NUGET:godot.net.sdk@4.3.0",
             "PUB:cupertino_icons@1.0.8", "PUB:flutter_lints@4.0.0",
             // Spec 2026-10-02 §2.5: persistencia de Diego (DBA), precargada en sandbox/images/dotnet-app.
-            "NUGET:npgsql@8.0.5");
+            "NUGET:npgsql@8.0.5",
+            // Spec 2026-10-02 B1 §2: la app llama a la API (precargado en sandbox/images/flutter-web-app).
+            "PUB:http@1.2.2");
 
     public static boolean contains(DependencyRef ref) {
         return IDS.contains(ref.id());

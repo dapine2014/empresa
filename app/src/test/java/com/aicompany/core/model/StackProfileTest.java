@@ -99,4 +99,14 @@ class StackProfileTest {
         assertTrue(StackProfile.DOTNET_APP.executionContract().contains("NO usan Microsoft.AspNetCore.Mvc.Testing"));
         assertTrue(StackProfile.FLUTTER_WEB_APP.executionContract().contains("versión exacta"));
     }
+
+    @Test
+    void flutterContractOffersHttpAndForbidsWebOnlyLibraries() {
+        var contract = StackProfile.FLUTTER_WEB_APP.executionContract();
+        assertTrue(contract.contains("http 1.2.2"), contract);
+        assertTrue(contract.contains("dart:html"), contract);
+        assertTrue(StackProfile.FULLSTACK_API_RULE.contains("MapGet"), StackProfile.FULLSTACK_API_RULE);
+        assertTrue(StackProfile.FULLSTACK_API_RULE.contains("CORS_ORIGINS"), StackProfile.FULLSTACK_API_RULE);
+        assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("API_BASE_URL"), StackProfile.FULLSTACK_APP_RULE);
+    }
 }
