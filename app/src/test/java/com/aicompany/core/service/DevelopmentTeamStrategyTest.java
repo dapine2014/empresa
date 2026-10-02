@@ -8,6 +8,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.Component;
 import com.aicompany.core.model.*;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -704,18 +705,30 @@ class DevelopmentTeamStrategyTest {
 
     @Test
     void flutterDependenciesComeFromThePubspec() {
-        var refs = DevelopmentTeamStrategy.dependencyRefs(StackProfile.FLUTTER_WEB_APP, List.of(),
-                "dependencies:\n  flutter:\n    sdk: flutter\n  equatable: 2.0.5\n");
+        var flutter = List.of(new Component(StackProfile.FLUTTER_WEB_APP, ""));
+        var refs = DevelopmentTeamStrategy.dependencyRefs(flutter, List.of(),
+                path -> "pubspec.yaml".equals(path) ? "dependencies:\n  flutter:\n    sdk: flutter\n  equatable: 2.0.5\n" : null);
         assertEquals(List.of(new DependencyRef("PUB", "equatable", "2.0.5")), refs);
         assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0")), DevelopmentTeamStrategy.dependencyRefs(
-                StackProfile.DOTNET_APP, List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")), null));
+                List.of(new Component(StackProfile.DOTNET_APP, "")),
+                List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")), path -> null));
+    }
+
+    // Spec 2026-10-02 B1 §3: en una app completa, NuGet del backend y pub de app/pubspec.yaml en la misma misión.
+    @Test
+    void fullstackDependenciesComeFromBothEcosystems() {
+        var components = Component.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
+        var refs = DevelopmentTeamStrategy.dependencyRefs(components,
+                List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")),
+                path -> "app/pubspec.yaml".equals(path) ? "dependencies:\n  http: 1.2.2\n" : null);
+        assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0"), new DependencyRef("PUB", "http", "1.2.2")), refs);
     }
 
     // Verificado en vivo (MISSION-DEPS-VERIFY-4): Iris (Application + Infrastructure) pidió Newtonsoft y Forjai lo
     // agregó solo al primer .csproj; lo usaba en Infrastructure. Va a todos los proyectos de las capas del agente.
     @Test
     void requestedPackagesGoToEveryProjectOfTheAgentsLayers() {
-        var projects = DevelopmentTeamStrategy.projectsOf(StackProfile.DOTNET_APP, List.of("Tareas"),
+        var projects = DevelopmentTeamStrategy.projectsOf(List.of(new Component(StackProfile.DOTNET_APP, "")), List.of("Tareas"),
                 List.of("src/Tareas.Application", "src/Tareas.Infrastructure"));
         assertEquals(List.of("src/Tareas.Application/Tareas.Application.csproj",
                 "src/Tareas.Infrastructure/Tareas.Infrastructure.csproj"), projects);
@@ -725,7 +738,7 @@ class DevelopmentTeamStrategyTest {
     // .csproj lo traía. Java lo agrega al proyecto de cada archivo que lo usa, no a todas las capas del agente.
     @Test
     void npgsqlIsAddedToTheProjectsWhoseCodeUsesIt() {
-        var implied = DevelopmentTeamStrategy.impliedPackages(StackProfile.DOTNET_APP, List.of("Citas"), Map.of(
+        var implied = DevelopmentTeamStrategy.impliedPackages(List.of(new Component(StackProfile.DOTNET_APP, "")), List.of("Citas"), Map.of(
                 "src/Citas.Infrastructure/CitaRepositorio.cs", "using System;\nusing Npgsql;\n\npublic class A {}",
                 "src/Citas.Api/Program.cs", "var ds = new Npgsql.NpgsqlDataSourceBuilder(\"\").Build();",
                 "src/Citas.Application/Repositorios.cs", "/// La implementación vive en Infrastructure (Npgsql/PostgreSQL).",
@@ -733,8 +746,17 @@ class DevelopmentTeamStrategyTest {
         assertEquals(Map.of(
                 "src/Citas.Infrastructure/Citas.Infrastructure.csproj", List.of(DevelopmentTeamStrategy.NPGSQL),
                 "src/Citas.Api/Citas.Api.csproj", List.of(DevelopmentTeamStrategy.NPGSQL)), implied);
-        assertTrue(DevelopmentTeamStrategy.impliedPackages(StackProfile.FLUTTER_WEB_APP, List.of("Citas"),
+        assertTrue(DevelopmentTeamStrategy.impliedPackages(List.of(new Component(StackProfile.FLUTTER_WEB_APP, "")), List.of("Citas"),
                 Map.of("lib/main.dart", "using Npgsql;")).isEmpty());
+    }
+
+    @Test
+    void npgsqlGoesToTheBackendProjectOfAFullstackApp() {
+        var implied = DevelopmentTeamStrategy.impliedPackages(
+                Component.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP)), List.of("Clientes"),
+                Map.of("backend/src/Clientes.Infrastructure/Repo.cs", "using Npgsql;"));
+        assertEquals(Map.of("backend/src/Clientes.Infrastructure/Clientes.Infrastructure.csproj",
+                List.of(DevelopmentTeamStrategy.NPGSQL)), implied);
     }
 
     // Verificado en vivo (MISSION-DEPS-VERIFY-4): con kimi-k3, 24.000 caracteres dejaban archivos fuera y Vera marcaba

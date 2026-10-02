@@ -11,9 +11,10 @@ import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.Component;
+import com.aicompany.core.model.ComponentScaffold;
 import com.aicompany.core.model.DependencyRef;
 import com.aicompany.core.model.MissionStatus;
-import com.aicompany.core.model.ProjectScaffold;
 import com.aicompany.core.model.SandboxResult;
 import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StaticCheck;
@@ -114,7 +115,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         createTask(context, validation, TeamPlan.KIND_VALIDATION, validationTaskId);
 
-        var expectedProjects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
+        var expectedProjects = ComponentScaffold.projectFiles(plan.resolvedComponents(), plan.contextNames());
         CommittedWork scaffold;
         try {
             scaffold = context.round() > 0 ? existingScaffold(context) : commitProjectScaffold(context);
@@ -206,18 +207,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Parte 3: dependencias gobernadas. .NET: los paquetes pedidos entran al .csproj de la capa del agente
         // (commit de Forjai); Flutter: salen del pubspec.yaml. Lo que no está aprobado se descarga aislado y pasa
         // la política; si queda algo pendiente, VERIFY no corre.
-        var nugetProfile = plan.profile().filter(p -> p.ecosystem() == StackProfile.Ecosystem.NUGET).orElse(null);
-        var implied = nugetProfile == null ? Map.<String, List<DependencyRef>>of()
-                : impliedPackages(nugetProfile, plan.contextNames(), csharpSources(missionId, generationHead));
+        var hasNuget = plan.resolvedComponents().stream()
+                .anyMatch(c -> c.profile().ecosystem() == StackProfile.Ecosystem.NUGET);
+        var implied = hasNuget
+                ? impliedPackages(plan.resolvedComponents(), plan.contextNames(), csharpSources(missionId, generationHead))
+                : Map.<String, List<DependencyRef>>of();
         var dependencyCommit = commitRequestedPackages(context, packagesByTask, implied);
         if (dependencyCommit != null) {
             committed.add(dependencyCommit);
         }
-        var profileForDeps = plan.profile().orElse(null);
-        var pubspec = profileForDeps == StackProfile.FLUTTER_WEB_APP
-                ? readOrNull(missionId, committed.get(committed.size() - 1).commitSha(), "pubspec.yaml") : null;
-        var requestedRefs = profileForDeps == null ? List.<DependencyRef>of() : dependencyRefs(profileForDeps,
-                packagesByTask.values().stream().flatMap(List::stream).toList(), pubspec);
+        var lastSha = committed.get(committed.size() - 1).commitSha();
+        var requestedRefs = dependencyRefs(plan.resolvedComponents(),
+                packagesByTask.values().stream().flatMap(List::stream).toList(),
+                path -> readOrNull(missionId, lastSha, path));
         var dependencyOutcome = requestedRefs.isEmpty()
                 ? new DependencyService.Outcome(List.of(), List.of(), null)
                 : dependencies.resolve(missionId, "engineering", requestedRefs);
@@ -442,13 +444,23 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 review.notValidatableWithoutExecution(), review.evidence());
     }
 
-    /** Parte 3: paquetes pedidos (.NET, del resultado de cada agente) o del pubspec.yaml (Flutter). */
-    static List<DependencyRef> dependencyRefs(StackProfile profile, List<DevelopmentResult.PackageRequest> requested,
-                                              String pubspec) {
-        if (profile.ecosystem() == StackProfile.Ecosystem.PUB) {
-            return pubspec == null ? List.of() : DependencyManifest.pubspec(pubspec).deps();
+    /** Parte 3 + B1: NuGet pedidos si hay un componente .NET; pub de cada pubspec.yaml de un componente Flutter. */
+    static List<DependencyRef> dependencyRefs(List<Component> components,
+                                              List<DevelopmentResult.PackageRequest> requested,
+                                              java.util.function.Function<String, String> readFile) {
+        var refs = new ArrayList<DependencyRef>();
+        for (var component : components) {
+            if (component.profile().ecosystem() == StackProfile.Ecosystem.NUGET) {
+                requested.stream().map(p -> new DependencyRef("NUGET", p.name(), p.version()))
+                        .filter(r -> !refs.contains(r)).forEach(refs::add);
+            } else {
+                var pubspec = readFile.apply(component.prefix("pubspec.yaml"));
+                if (pubspec != null) {
+                    DependencyManifest.pubspec(pubspec).deps().stream().filter(r -> !refs.contains(r)).forEach(refs::add);
+                }
+            }
         }
-        return requested.stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).distinct().toList();
+        return refs;
     }
 
     /** Spec 2026-10-02 §2.5: la persistencia de Diego, en la imagen del sandbox y en BaselineDependencies. */
@@ -462,18 +474,20 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * habría encontrado el namespace. Un paquete preaprobado no depende del modelo: Java lo agrega al .csproj del
      * proyecto de cada .cs que lo usa (sources: ruta → contenido en el último commit).
      */
-    static Map<String, List<DependencyRef>> impliedPackages(StackProfile profile, List<String> contexts,
+    static Map<String, List<DependencyRef>> impliedPackages(List<Component> components, List<String> contexts,
                                                             Map<String, String> sources) {
         var implied = new LinkedHashMap<String, List<DependencyRef>>();
-        if (profile == null || profile.ecosystem() != StackProfile.Ecosystem.NUGET) {
-            return implied;
-        }
-        for (var project : profile.projectFiles(contexts)) {
-            var dir = project.substring(0, project.lastIndexOf('/') + 1);
-            var uses = sources.entrySet().stream().anyMatch(e -> e.getKey().startsWith(dir)
-                    && e.getKey().endsWith(".cs") && e.getValue() != null && USES_NPGSQL.matcher(e.getValue()).find());
-            if (uses) {
-                implied.put(project, List.of(NPGSQL));
+        for (var component : components) {
+            if (component.profile().ecosystem() != StackProfile.Ecosystem.NUGET) {
+                continue;
+            }
+            for (var project : component.profile().projectFiles(component.contexts(contexts))) {
+                var dir = component.prefix(project.substring(0, project.lastIndexOf('/') + 1));
+                var uses = sources.entrySet().stream().anyMatch(e -> e.getKey().startsWith(dir)
+                        && e.getKey().endsWith(".cs") && e.getValue() != null && USES_NPGSQL.matcher(e.getValue()).find());
+                if (uses) {
+                    implied.put(component.prefix(project), List.of(NPGSQL));
+                }
             }
         }
         return implied;
@@ -508,15 +522,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                                                   Map<PlannedTask, List<DevelopmentResult.PackageRequest>> packagesByTask,
                                                   Map<String, List<DependencyRef>> implied) {
         var plan = context.plan();
-        var profile = plan.profile().orElse(null);
-        if (profile == null || profile.ecosystem() != StackProfile.Ecosystem.NUGET
+        if (plan.resolvedComponents().stream().noneMatch(c -> c.profile().ecosystem() == StackProfile.Ecosystem.NUGET)
                 || (packagesByTask.isEmpty() && implied.isEmpty())) {
             return null;
         }
         var byProject = new LinkedHashMap<String, List<DependencyRef>>();
         for (var entry : packagesByTask.entrySet()) {
             // Verificado en vivo (MISSION-DEPS-VERIFY-4): va a todos los proyectos de las capas del agente.
-            for (var project : projectsOf(profile, plan.contextNames(), entry.getKey().ownedPathsOrEmpty())) {
+            for (var project : projectsOf(plan.resolvedComponents(), plan.contextNames(), entry.getKey().ownedPathsOrEmpty())) {
                 byProject.computeIfAbsent(project, k -> new ArrayList<>()).addAll(
                         entry.getValue().stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).toList());
             }
@@ -532,7 +545,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (byProject.isEmpty()) {
             return null;
         }
-        var files = ProjectScaffold.generate(profile, plan.contextNames(), byProject).stream()
+        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), byProject).stream()
                 .filter(f -> byProject.containsKey(f.path()))
                 .toList();
         try {
@@ -546,8 +559,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
     }
 
-    static List<String> projectsOf(StackProfile profile, List<String> contexts, List<String> ownedPaths) {
-        return profile.projectFiles(contexts).stream()
+    static List<String> projectsOf(List<Component> components, List<String> contexts, List<String> ownedPaths) {
+        return ComponentScaffold.projectFiles(components, contexts).stream()
                 .filter(project -> OwnedPaths.coveredByAny(ownedPaths, project))
                 .toList();
     }
@@ -801,7 +814,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      */
     private CommittedWork existingScaffold(TeamMissionContext context) {
         var plan = context.plan();
-        var files = plan.profile().map(p -> ProjectScaffold.generate(p, plan.contextNames())).orElse(List.of()).stream()
+        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of()).stream()
                 .map(DevelopmentResult.GeneratedFile::path).toList();
         try {
             return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai",
@@ -814,14 +827,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private CommittedWork commitProjectScaffold(TeamMissionContext context) {
         var plan = context.plan();
-        var files = plan.profile().map(p -> ProjectScaffold.generate(p, plan.contextNames())).orElse(List.of());
+        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of());
         if (files.isEmpty()) {
             return null;
         }
         try {
             var record = workspace.commitAgentWork(context.missionId(), context.missionId() + "-SCAFFOLD", "forjai",
-                    "Forjai", new DevelopmentResult("Proyectos .csproj generados por Forjai (reglas DDD del perfil "
-                            + plan.stackProfile() + ")", files));
+                    "Forjai", new DevelopmentResult("Proyectos .csproj generados por Forjai (reglas DDD de "
+                            + plan.componentProfiles() + ")", files));
             return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai", record.sha(), record.files());
         } catch (Exception ex) {
             throw new IllegalStateException("No se pudo generar la estructura de proyectos: "
@@ -863,7 +876,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private static String dddContext(TeamPlan plan) {
-        var profile = plan.profile().map(StackProfile::describe).orElse("- (sin perfil)");
+        // Spec 2026-10-02 B1: cada componente con su carpeta (las rutas del perfil van debajo de ella).
+        var profile = plan.resolvedComponents().isEmpty() ? "- (sin perfil)" : plan.resolvedComponents().stream()
+                .map(c -> (c.isRoot() ? "" : "[carpeta " + c.dir() + "/: todas las rutas de este perfil van debajo] ")
+                        + c.profile().describe())
+                .collect(Collectors.joining("\n"));
         var contexts = plan.boundedContextsOrEmpty().stream()
                 .map(c -> "- " + c.name() + ": " + c.description())
                 .collect(Collectors.joining("\n"));
@@ -1003,12 +1020,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .collect(Collectors.joining("\n"));
 
         // Verificado en vivo: la dueña de "game" no creó game/project.godot porque nadie le dijo que era obligatorio.
-        var requiredFiles = plan.profile().map(StackProfile::leaderOwnedPaths).orElse(List.of()).stream()
+        var requiredFiles = plan.resolvedComponents().stream()
+                .flatMap(c -> c.profile().leaderOwnedPaths().stream().map(c::prefix))
                 .filter(file -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), file))
                 .toList();
         var required = requiredFiles.isEmpty() ? "" : "ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no "
                 + "compila ni arranca sin ellos): " + requiredFiles + "\n";
-        var projects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
+        var projects = ComponentScaffold.projectFiles(plan.resolvedComponents(), plan.contextNames());
         if (!projects.isEmpty()) {
             required += "PROYECTOS .csproj: ya existen y los genera Forjai con las referencias DDD correctas; no los "
                     + "escribas: " + projects + "\n";
