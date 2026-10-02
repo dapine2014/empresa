@@ -115,4 +115,29 @@ class DatabaseConnectionServiceTest {
         verify(memory).save(any(), cipherText.capture());
         assertEquals("S3cret-9876", cipher.decrypt(cipherText.getValue()));
     }
+
+    // Review Focus 4: una conexión en uso por una misión en curso no se borra.
+    @Test
+    void aConnectionUsedByARunningMissionCannotBeDeleted() {
+        when(memory.usedByActiveMission("C1")).thenReturn(true);
+        assertThrows(IllegalStateException.class, () -> service.delete("C1"));
+        verify(memory, never()).delete(any());
+    }
+
+    @Test
+    void linkingAnUnknownConnectionNameFailsWithTheAvailableNames() {
+        when(memory.byName("nadie")).thenReturn(Optional.empty());
+        when(memory.all()).thenReturn(List.of(new DatabaseConnection("C1", "citas-dev-aws", "POSTGRESQL", "h", 5432,
+                "d", "u", "REQUIRE", null, "TEST", "****1", null, null)));
+        var ex = assertThrows(IllegalArgumentException.class, () -> service.requireExisting(List.of("nadie")));
+        assertTrue(ex.getMessage().contains("citas-dev-aws"), ex.getMessage());
+    }
+
+    @Test
+    void linkingStoresTheIdsOfTheNamedConnections() {
+        when(memory.byName("citas-dev-aws")).thenReturn(Optional.of(new DatabaseConnection("C1", "citas-dev-aws",
+                "POSTGRESQL", "h", 5432, "d", "u", "REQUIRE", null, "TEST", "****1", null, null)));
+        service.linkToMission("M-1", List.of("citas-dev-aws"));
+        verify(memory).linkMission("M-1", List.of("C1"));
+    }
 }

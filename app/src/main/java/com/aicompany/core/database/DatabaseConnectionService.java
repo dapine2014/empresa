@@ -64,7 +64,37 @@ public class DatabaseConnectionService {
         return result;
     }
 
+    /** Valida nombres sin escribir nada (antes de crear la misión). */
+    public void requireExisting(List<String> names) {
+        resolveIds(names);
+    }
+
+    /** Asocia por nombre exacto (spec §1); falla con la lista de nombres válidos. */
+    public void linkToMission(String missionId, List<String> names) {
+        if (names == null || names.isEmpty()) {
+            return;
+        }
+        memory.linkMission(missionId, resolveIds(names));
+    }
+
+    public List<DatabaseConnection> connectionsOf(String missionId) {
+        return memory.connectionsOf(missionId);
+    }
+
+    private List<String> resolveIds(List<String> names) {
+        var ids = new java.util.ArrayList<String>();
+        for (var name : names == null ? List.<String>of() : names) {
+            var c = memory.byName(name).orElseThrow(() -> new IllegalArgumentException("No existe la base \"" + name
+                    + "\". Bases cargadas: " + memory.all().stream().map(DatabaseConnection::name).toList()));
+            ids.add(c.id());
+        }
+        return ids;
+    }
+
     public void delete(String id) {
+        if (memory.usedByActiveMission(id)) {
+            throw new IllegalStateException("La conexión está en uso por una misión en curso: espera a que termine.");
+        }
         memory.delete(id);
         events.publish("EMPRESA_DATABASE_CONNECTION_DELETED", null, null, "human", Map.of("connectionId", id));
     }

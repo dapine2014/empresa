@@ -474,4 +474,26 @@ class MissionServiceTest {
 
         verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
     }
+
+    // Spec 2026-10-02 §1: las conexiones se asocian antes de que la misión empiece a correr.
+    @Test
+    void theDatabasesAreLinkedBeforeTheMissionStartsRunning() {
+        var memory = mock(MissionMemoryService.class);
+        var executor = mock(MissionExecutor.class);
+        when(executor.executeAsync(anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(activeEngineering());
+        when(memory.find("MISSION-9")).thenReturn(Optional.of(new MissionResponse("MISSION-9", MissionStatus.CREATED,
+                "PRODUCTION", 0, "Creada", "Misión recibida", Instant.now(), null, "TEAM-DEVELOPMENT")));
+        var databases = mock(com.aicompany.core.database.DatabaseConnectionService.class);
+        var service = new MissionService(memory, executor, mock(CompanyEventPublisher.class), teamMemory, workspace);
+        service.setDatabaseConnections(databases);
+
+        service.start("MISSION-9", "API de citas", "PRODUCTION", null, "TEAM-DEVELOPMENT", List.of("citas-dev-aws"));
+
+        var order = inOrder(databases, memory, executor);
+        order.verify(databases).requireExisting(List.of("citas-dev-aws"));
+        order.verify(memory).ensureMission("MISSION-9", "API de citas", "PRODUCTION", null, "TEAM-DEVELOPMENT");
+        order.verify(databases).linkToMission("MISSION-9", List.of("citas-dev-aws"));
+        order.verify(executor).executeAsync("MISSION-9", "API de citas");
+    }
 }

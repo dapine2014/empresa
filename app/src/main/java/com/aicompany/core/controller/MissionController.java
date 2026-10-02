@@ -25,7 +25,7 @@ public class MissionController {
     public ResponseEntity<MissionResponse> start(@Valid @RequestBody MissionCommand command) {
         return ResponseEntity.accepted().body(
                 missionService.start(command.missionId(), command.instruction(), command.environmentOrDefault(),
-                        command.financialCriteria(), command.teamIdOrNull())
+                        command.financialCriteria(), command.teamIdOrNull(), command.databasesOrEmpty())
         );
     }
 

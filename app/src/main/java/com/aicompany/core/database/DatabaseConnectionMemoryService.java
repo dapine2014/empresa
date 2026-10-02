@@ -93,6 +93,30 @@ public class DatabaseConnectionMemoryService {
         }
     }
 
+    public void linkMission(String missionId, List<String> connectionIds) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$missionId}) UNWIND $ids AS cid "
+                            + "MATCH (c:DatabaseConnection {id:cid}) MERGE (m)-[:USES_DATABASE]->(c)",
+                    Map.of("missionId", missionId, "ids", connectionIds)).consume());
+        }
+    }
+
+    public List<DatabaseConnection> connectionsOf(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$missionId})-[:USES_DATABASE]->(c:DatabaseConnection) " + RETURN
+                    + " ORDER BY c.name", Map.of("missionId", missionId)).list(DatabaseConnectionMemoryService::toConnection);
+        }
+    }
+
+    /** En uso = la usa una misión que no terminó (ni COMPLETED, CANCELLED, FAILED ni AWAITING_INVESTOR). */
+    public boolean usedByActiveMission(String connectionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission)-[:USES_DATABASE]->(:DatabaseConnection {id:$id}) "
+                            + "WHERE NOT m.status IN ['COMPLETED','CANCELLED','FAILED','AWAITING_INVESTOR'] RETURN count(m) AS n",
+                    Map.of("id", connectionId)).single().get("n").asLong() > 0;
+        }
+    }
+
     private static DatabaseConnection toConnection(Record r) {
         return new DatabaseConnection(r.get("id").asString(), r.get("name").asString(), r.get("engine").asString(),
                 r.get("host").asString(), r.get("port").asInt(), r.get("database").asString(),
