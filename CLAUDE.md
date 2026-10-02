@@ -13,6 +13,7 @@ Hay una implementación real y en evolución activa en `app/` (servicio `company
 - `docs/STATE.md` (estado del sprint), `docs/MISSION-001.md` (primera misión), `docs/EVENTS.md` (contrato de eventos Kafka).
 - `docs/HISTORY.md` — el *por qué* y el *cómo se verificó* de cada pieza: decisiones acordadas con el usuario, bugs reales encontrados y verificaciones en vivo (Docker + Neo4j + Kafka + Ollama). Consultarlo antes de re-verificar algo ya probado o de cambiar una decisión no obvia. Este `CLAUDE.md` describe solo el estado vigente.
 - `docs/superpowers/specs/` + `plans/` — pares diseño/plan fechados, uno por feature. **Mezclan trabajo implementado, reemplazado y pendiente**: el ledger financiero (`2026-09-15`) quedó reemplazado por Finanzas (`2026-09-27`) y el puente LEAD→cliente real (`2026-09-17`) **todavía no** existe en el código; las rondas de evidencia (`2026-09-16`, revisión `2026-09-27`) y development generation (`2026-09-21`, revisado el 2026-09-24 como "misiones por equipo") sí. Verificar en el código antes de asumir que algo de un plan existe.
+- `docs/FALTANTES.md` — lo que falta para que el Development Group entregue pedidos grandes y los pendientes de los bloques ya hechos; marcar `[x]` al cerrarlos.
 - `EMPRESA_AI_NUEVO_TODO_EVIDENCE.md` — roadmap vigente. `EMPRESA_AI_TODO.md` es un roadmap anterior ya completo; `status.md` y `docs/KAFKA-BUILD-FIX.md` están obsoletos, no usarlos como estado actual. `README.md` es una nota de un parche viejo (MVP 0.7), no documentación del proyecto.
 
 ## Comandos
