@@ -90,7 +90,11 @@ public class OpenAiCompatibleClient {
     }
 
     /** Respuesta remota: content y tool_calls ya en formato Ollama ({"function": {"name", "arguments": Map}}). */
-    public record RemoteReply(String content, List<Map<String, Object>> toolCalls) {
+    /** finishReason: "stop", "length" (cortada por el límite de salida), "tool_calls"… o null si no vino. */
+    public record RemoteReply(String content, List<Map<String, Object>> toolCalls, String finishReason) {
+        public RemoteReply(String content, List<Map<String, Object>> toolCalls) {
+            this(content, toolCalls, null);
+        }
     }
 
     private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
@@ -148,7 +152,9 @@ public class OpenAiCompatibleClient {
                 var message = (Map<String, Object>) choices.get(0).get("message");
                 var content = message == null ? null : message.get("content");
                 var rawCalls = message == null ? null : message.get("tool_calls");
-                return new RemoteReply(content == null ? "" : String.valueOf(content), toOllamaToolCalls(rawCalls));
+                var finishReason = choices.get(0).get("finish_reason");
+                return new RemoteReply(content == null ? "" : String.valueOf(content), toOllamaToolCalls(rawCalls),
+                        finishReason == null ? null : String.valueOf(finishReason));
             } catch (RestClientResponseException ex) {
                 var status = ex.getStatusCode().value();
                 var detail = "Modelo remoto " + model + " respondió HTTP " + status + ": "

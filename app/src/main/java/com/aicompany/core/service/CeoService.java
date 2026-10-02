@@ -1484,7 +1484,12 @@ public class CeoService {
                     Map.of("role", "user", "content", prompt)
             );
 
-            response = callModel(operation, agentId, model, messages, schema, null, false).content();
+            var message = callModel(operation, agentId, model, messages, schema, null, false);
+            response = message.content();
+            if (message.truncated()) {
+                throw new TruncatedResponseException("La respuesta de " + agentId + " para " + operation
+                        + " se cortó por el límite de salida (" + response.length() + " caracteres).");
+            }
 
             var result = jsonMapper.readValue(normalizeJsonResponse(response), type);
 
@@ -1496,6 +1501,15 @@ public class CeoService {
 
             log.error("{}_ERROR agent={} model={} reason={} response={}",
                     operation, agentId, model, ex.getMessage(), response);
+
+            // Spec 2026-10-01 §5: un corte no es un JSON inválido; quien llama lo pide en lotes más chicos.
+            if (ex instanceof TruncatedResponseException truncated) {
+                throw truncated;
+            }
+            if (String.valueOf(ex.getMessage()).contains("end-of-input")) {
+                throw new TruncatedResponseException("La respuesta de " + agentId + " para " + operation
+                        + " terminó a mitad del JSON (" + (response == null ? 0 : response.length()) + " caracteres).");
+            }
 
             throw new IllegalStateException(
                     "El agente " + agentId + " no devolvió un JSON válido para " + operation + ": "
@@ -1796,7 +1810,7 @@ public class CeoService {
             log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={}",
                     operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
                     reply.content().length(), reply.toolCalls().size());
-            return new ModelMessage(reply.content(), reply.toolCalls());
+            return new ModelMessage(reply.content(), reply.toolCalls(), "length".equals(reply.finishReason()));
         }
 
         var body = new java.util.LinkedHashMap<String, Object>();
@@ -1893,13 +1907,18 @@ public class CeoService {
             }
         }
 
-        return new ModelMessage(content, toolCalls);
+        return new ModelMessage(content, toolCalls, "length".equals(String.valueOf(response.get("done_reason"))));
     }
 
+    /** truncated: el proveedor cortó la respuesta por el límite de salida (spec 2026-10-01 §5). */
     private record ModelMessage(
             String content,
-            List<Map<String, Object>> toolCalls
+            List<Map<String, Object>> toolCalls,
+            boolean truncated
     ) {
+        ModelMessage(String content, List<Map<String, Object>> toolCalls) {
+            this(content, toolCalls, false);
+        }
     }
 
     private void logMetrics(
