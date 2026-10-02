@@ -57,6 +57,28 @@ public class MissionService {
         this.policies = policies;
     }
 
+    private AgentAvailability agentAvailability;
+
+    /** Decisión del fundador (2026-10-01): solo trabajan los agentes encendidos (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAgentAvailability(AgentAvailability agentAvailability) {
+        this.agentAvailability = agentAvailability;
+    }
+
+    /** Agentes sin los cuales la misión no puede correr: discovery, los 6; un equipo, Alex y su líder. */
+    private void requireAgentsOn(String teamId, String what) {
+        if (agentAvailability == null) {
+            return;
+        }
+        if (teamId == null) {
+            agentAvailability.requireEnabled(AgentAvailability.DISCOVERY_AGENTS, what);
+            return;
+        }
+        var team = teamMemory.snapshot(teamId);
+        agentAvailability.requireEnabled(
+                java.util.List.of(AgentAvailability.CEO, team.leaderAgentId()), what);
+    }
+
     public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
         return start(missionId, instruction, environment, financialCriteria, null);
     }
@@ -70,6 +92,7 @@ public class MissionService {
 
         validateFinancialCriteria(financialCriteria);
         validateTeam(teamId);
+        requireAgentsOn(teamId, teamId == null ? "iniciar una discovery" : "iniciar una misión de " + teamId);
 
         memory.ensureMission(missionId, instruction, environment, financialCriteria, teamId);
 
@@ -155,6 +178,7 @@ public class MissionService {
                         + " vueltas de evidencia: decide con APPROVE o REJECT (o sube MAX_EVIDENCE_ROUNDS en Settings).");
             }
             nextRound = current + 1;
+            requireAgentsOn(memory.teamId(missionId).orElse(null), "pedir más evidencia sobre " + missionId);
         }
 
         var decisionId = missionId + "-DECISION-" + Instant.now().toEpochMilli();

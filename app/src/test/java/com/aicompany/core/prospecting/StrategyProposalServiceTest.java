@@ -117,4 +117,15 @@ class StrategyProposalServiceTest {
         assertEquals(List.of("S2"), service.findByName("del nicho").stream().map(StoredStrategy::id).toList());
         assertTrue(service.findByName("eventos").isEmpty());
     }
+
+    // Decisión del fundador (2026-10-01): con Kira apagada no hay propuesta semanal ni llamada al modelo.
+    @Test
+    void noWeeklyProposalWhileKiraIsTurnedOff() {
+        var availability = mock(com.aicompany.core.service.AgentAvailability.class);
+        when(availability.isEnabled("growth-content")).thenReturn(false);
+        service.setAgentAvailability(availability);
+
+        assertTrue(service.proposeWeekly().isEmpty());
+        verifyNoInteractions(ceo);
+    }
 }

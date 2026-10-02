@@ -76,6 +76,22 @@ public class TeamWorkPlanner {
         this.defaultAgentModel = defaultAgentModel;
     }
 
+    private AgentAvailability agentAvailability;
+
+    /** Decisión del fundador (2026-10-01): el líder solo ve a los miembros encendidos (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAgentAvailability(AgentAvailability agentAvailability) {
+        this.agentAvailability = agentAvailability;
+    }
+
+    private TeamSnapshot onlyEnabledMembers(TeamSnapshot team) {
+        if (agentAvailability == null || team == null) {
+            return team;
+        }
+        return new TeamSnapshot(team.teamId(), team.teamName(), team.status(), team.leaderAgentId(),
+                team.members().stream().filter(m -> agentAvailability.isEnabled(m.agentId())).toList());
+    }
+
     public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode) {
         return plan(missionId, teamId, instruction, mode, 0);
     }
@@ -87,7 +103,7 @@ public class TeamWorkPlanner {
 
     public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode, int round) {
 
-        var team = teamMemory.snapshot(teamId);
+        var team = onlyEnabledMembers(teamMemory.snapshot(teamId));
 
         if (team == null || !"ACTIVE".equals(team.status())) {
             throw new IllegalStateException("El equipo " + teamId + " no existe o no está ACTIVE en Company Memory.");

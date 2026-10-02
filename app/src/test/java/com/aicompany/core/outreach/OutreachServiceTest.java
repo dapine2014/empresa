@@ -328,4 +328,15 @@ class OutreachServiceTest {
 
         verify(finance, times(1)).registerCustomer(any());
     }
+
+    // Decisión del fundador (2026-10-01): con Sofía apagada no se redactan borradores.
+    @Test
+    void noDraftsWhileSofiaIsTurnedOff() {
+        var availability = mock(com.aicompany.core.service.AgentAvailability.class);
+        when(availability.isEnabled("sales")).thenReturn(false);
+        service.setAgentAvailability(availability);
+
+        assertEquals(0, service.draftFor("RUN-1", "P1"));
+        verifyNoInteractions(ceo);
+    }
 }

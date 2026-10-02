@@ -157,10 +157,14 @@ public class CompanyMemoryService {
                                     + "ON CREATE SET a.status='IDLE' "
                                     + "SET a.name=$name, a.role=$role, a.personality=$personality, "
                                     + "a.status = CASE WHEN a.status IN ['WORKING','IDLE'] THEN a.status ELSE 'IDLE' END, "
-                                    + "a.model = coalesce(a.model, $defaultModel) "
+                                    + "a.model = coalesce(a.model, $defaultModel), "
+                                    // Decisión del fundador (2026-10-01): solo Alex y el Development Group
+                                    // arrancan encendidos; después manda lo que se edite en Agents.
+                                    + "a.enabled = coalesce(a.enabled, $defaultEnabled) "
                                     + "REMOVE a.title",
                             Map.of("id", agent[0], "name", agent[1], "role", agent[2],
-                                    "personality", agent[3], "defaultModel", agent[4]));
+                                    "personality", agent[3], "defaultModel", agent[4],
+                                    "defaultEnabled", AgentAvailability.defaultEnabled(agent[0])));
                 }
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}), (a:Agent) MERGE (a)-[:WORKS_FOR]->(c)");
                 tx.run("MATCH (c:Company {id:'AI-COMPANY'}), (ceo:Agent {id:'ceo'}) MERGE (c)-[:HAS_CEO]->(ceo)");
@@ -351,11 +355,28 @@ public class CompanyMemoryService {
         }
     }
 
+    /** Agentes encendidos ({@code Agent.enabled}); ver {@link AgentAvailability}. */
+    public java.util.Set<String> enabledAgentIds() {
+        try (var session = driver.session()) {
+            return java.util.Set.copyOf(session.run("MATCH (a:Agent) WHERE coalesce(a.enabled, true) RETURN a.id AS id")
+                    .list(record -> record.get("id").asString()));
+        }
+    }
+
+    public void setAgentEnabled(String agentId, boolean enabled) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (a:Agent {id:$id}) SET a.enabled=$enabled", Map.of("id", agentId, "enabled", enabled));
+                return null;
+            });
+        }
+    }
+
     public List<Map<String, Object>> agents() {
         try (var session = driver.session()) {
             return session.run("MATCH (a:Agent) RETURN a.id AS id, a.name AS name, a.role AS role, a.personality AS personality, "
                             + "coalesce(a.model, '') AS model, coalesce(a.fallbackModel, '" + DEFAULT_FALLBACK_MODEL
-                            + "') AS fallbackModel ORDER BY a.id")
+                            + "') AS fallbackModel, coalesce(a.enabled, true) AS enabled ORDER BY a.id")
                     .list(record -> Map.of(
                             "id", record.get("id").asString(),
                             "name", record.get("name").asString(),
@@ -364,7 +385,8 @@ public class CompanyMemoryService {
                             // Subproyecto 2 (2026-09-28): la pantalla Agents muestra y edita el modelo.
                             "model", record.get("model").asString(),
                             // Spec salud de modelos (2026-09-28): suplente local editable en Agents.
-                            "fallbackModel", record.get("fallbackModel").asString()));
+                            "fallbackModel", record.get("fallbackModel").asString(),
+                            "enabled", record.get("enabled").asBoolean()));
         }
     }
 }

@@ -423,4 +423,55 @@ class MissionServiceTest {
         verify(memory).ensureMission("MISSION-7", "Crear un juego", "PRODUCTION", null, "TEAM-DEVELOPMENT");
         assertEquals("TEAM-DEVELOPMENT", response.teamId());
     }
+
+    // Decisión del fundador (2026-10-01): un agente apagado nunca trabaja; la misión se rechaza antes de crearse.
+    @Test
+    void aDiscoveryWithAgentsTurnedOffIsRejectedWithoutPersisting() {
+        var memory = mock(MissionMemoryService.class);
+        var availability = mock(AgentAvailability.class);
+        doThrow(new IllegalStateException("No se puede iniciar una discovery: están apagados Sofia (sales)"))
+                .when(availability).requireEnabled(AgentAvailability.DISCOVERY_AGENTS, "iniciar una discovery");
+        var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
+        service.setAgentAvailability(availability);
+
+        var ex = assertThrows(IllegalStateException.class,
+                () -> service.start("MISSION-8", "Buscar oportunidades", "PRODUCTION", null));
+
+        assertTrue(ex.getMessage().contains("Sofia (sales)"), ex.getMessage());
+        verify(memory, never()).ensureMission(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aTeamMissionNeedsTheCeoAndTheLeaderTurnedOn() {
+        var memory = mock(MissionMemoryService.class);
+        var executor = mock(MissionExecutor.class);
+        when(executor.executeAsync(anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(activeEngineering());
+        when(memory.find("MISSION-7")).thenReturn(Optional.of(new MissionResponse("MISSION-7", MissionStatus.CREATED,
+                "PRODUCTION", 0, "Creada", "Misión recibida", Instant.now(), null, "TEAM-DEVELOPMENT")));
+        var availability = mock(AgentAvailability.class);
+        var service = new MissionService(memory, executor, mock(CompanyEventPublisher.class), teamMemory, workspace);
+        service.setAgentAvailability(availability);
+
+        service.start("MISSION-7", "Hola mundo", "PRODUCTION", null, "TEAM-DEVELOPMENT");
+
+        verify(availability).requireEnabled(List.of("ceo", "engineering"), "iniciar una misión de TEAM-DEVELOPMENT");
+    }
+
+    @Test
+    void moreEvidenceOnADiscoveryWithAgentsTurnedOffIsRejectedBeforeRecordingAnything() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(0);
+        when(roundMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        var availability = mock(AgentAvailability.class);
+        doThrow(new IllegalStateException("apagados")).when(availability)
+                .requireEnabled(AgentAvailability.DISCOVERY_AGENTS, "pedir más evidencia sobre MISSION-1");
+        roundService.setAgentAvailability(availability);
+
+        assertThrows(IllegalStateException.class, () -> roundService.recordDecision("MISSION-1",
+                new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más datos")));
+
+        verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
+    }
 }

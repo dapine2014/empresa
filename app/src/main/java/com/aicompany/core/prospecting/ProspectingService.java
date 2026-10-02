@@ -82,10 +82,22 @@ public class ProspectingService {
                 .toList();
     }
 
+    private com.aicompany.core.service.AgentAvailability agentAvailability;
+
+    /** Decisión del fundador (2026-10-01): un agente apagado nunca recibe una llamada al modelo (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAgentAvailability(com.aicompany.core.service.AgentAvailability agentAvailability) {
+        this.agentAvailability = agentAvailability;
+    }
+
+    private boolean agentOn(String agentId) {
+        return agentAvailability == null || agentAvailability.isEnabled(agentId);
+    }
+
     @Scheduled(fixedDelay = 3_600_000, initialDelay = 180_000)
     public synchronized Optional<ProspectingRun> runIfDue() {
         var now = Instant.now().atZone(ZoneOffset.UTC);
-        if (!enabled() || now.getHour() < RUN_HOUR_UTC || memory.ranOn(now.toLocalDate()) || ready().isEmpty()) {
+        if (!enabled() || !agentOn("sales") || now.getHour() < RUN_HOUR_UTC || memory.ranOn(now.toLocalDate()) || ready().isEmpty()) {
             return Optional.empty();
         }
         return Optional.of(runNow());
@@ -93,6 +105,9 @@ public class ProspectingService {
 
     /** Acción del fundador ("correr ahora"): ignora el interruptor y la regla de una por día. */
     public synchronized ProspectingRun runNow() {
+        if (agentAvailability != null) {
+            agentAvailability.requireEnabled(List.of("sales"), "buscar clientes");
+        }
         var ready = ready();
         if (ready.isEmpty()) {
             throw new IllegalArgumentException("No hay productos listos para vender: no hay a quién buscarle clientes.");

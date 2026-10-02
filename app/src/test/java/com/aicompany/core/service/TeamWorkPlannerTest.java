@@ -327,4 +327,27 @@ class TeamWorkPlannerTest {
         assertTrue(second.contains("GODOT_DOTNET_GAME todavía no está habilitado"), second);
         assertTrue(second.contains("interaction-design (GAME_DEV) todavía no está habilitado"), second);
     }
+
+    // Decisión del fundador (2026-10-01): Neo no ve ni puede asignar a un miembro apagado.
+    @Test
+    void membersTurnedOffAreNotOfferedToTheLeader() {
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
+        var availability = mock(AgentAvailability.class);
+        when(availability.isEnabled(anyString())).thenAnswer(inv -> !"backend".equals(inv.getArgument(0)));
+        planner.setAgentAvailability(availability);
+        var withIris = new TeamPlan("Hola mundo", null, null, List.of(
+                new PlannedTask("backend", "WORK", "DOMAIN_MODEL", "Dominio", List.of("backend"), List.of()),
+                new PlannedTask("frontend-ui", "WORK", "HELLO_UI", "Pantalla", List.of("flutter"), List.of()),
+                new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests", List.of("tests"), List.of())),
+                List.of(), "FLUTTER_WEB_APP", dddPlan().boundedContexts(), dddPlan().ubiquitousLanguage());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
+                .thenReturn(withIris)
+                .thenReturn(dddPlan());
+
+        planner.plan("M-1", "TEAM-DEVELOPMENT", "Hola mundo", TeamExecutionMode.DEVELOPMENT);
+
+        assertFalse(prompt.getAllValues().get(0).contains("agentId=backend"), prompt.getAllValues().get(0));
+        assertTrue(prompt.getAllValues().get(1).contains("\"backend\" no es miembro"), prompt.getAllValues().get(1));
+    }
 }
