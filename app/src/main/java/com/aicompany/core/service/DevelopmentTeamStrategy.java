@@ -6,7 +6,10 @@ import com.aicompany.core.agent.model.DevelopmentResult;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.agent.validation.ApiContractGate;
+import com.aicompany.core.agent.validation.ApiRoutesGenerator;
 import com.aicompany.core.agent.validation.CompilerErrorParser;
+import com.aicompany.core.agent.validation.HttpRouteExtractor;
 import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
@@ -133,7 +136,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
         // contra clases que nunca vio y el código no compilaba. Se genera por capas (domain → application →
         // infrastructure → api/game/presentation → tests) y cada agente ve el código ya commiteado.
-        var ordered = orderByLayer(work, plan);
+        var ordered = orderTasks(work, plan);
         var failures = new ArrayList<String>();
         var committed = new ArrayList<CommittedWork>();
         var generationHead = scaffold == null ? null : scaffold.commitSha();
@@ -141,10 +144,24 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Spec 2026-10-02 B1: archivos que escribe Java fuera del scaffold (api_routes.dart).
         var forjaiFiles = new ArrayList<String>();
 
+        var routesCommitted = false;
+        var appComponent = fullstackApp(plan);
+        appComponent.ifPresent(app -> forjaiFiles.add(app.prefix(ApiRoutesGenerator.PATH)));
+
         for (int i = 0; i < ordered.size(); i++) {
 
             var task = ordered.get(i);
             var id = taskId(context, task.agentId());
+
+            // Spec 2026-10-02 B1 §2: el contrato de rutas se escribe antes de la primera tarea de la app.
+            if (!routesCommitted && touchesFlutter(task, plan)) {
+                var routes = commitApiRoutes(context, generationHead);
+                if (routes != null) {
+                    committed.add(routes);
+                    generationHead = routes.commitSha();
+                }
+                routesCommitted = true;
+            }
 
             progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30 + (40 * i / ordered.size()), "Desarrollo por capas",
                     agentName(context, task.agentId()) + " (" + (i + 1) + "/" + ordered.size() + ") está generando "
@@ -232,7 +249,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): los archivos del scaffold (Forjai) también son permitidos.
         var allowedPaths = java.util.stream.Stream.concat(
                 work.stream().flatMap(t -> t.ownedPathsOrEmpty().stream()),
-                scaffold == null ? java.util.stream.Stream.<String>empty() : scaffold.files().stream()).toList();
+                java.util.stream.Stream.concat(
+                        scaffold == null ? java.util.stream.Stream.<String>empty() : scaffold.files().stream(),
+                        forjaiFiles.stream())).toList();
         var components = plan.resolvedComponents();
         var checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
                 forjaiFiles);
@@ -351,6 +370,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
 
             repairRounds++;
+            // Spec 2026-10-02 B1 §2: si la corrección cambió rutas del backend, el contrato de la app se regenera.
+            var routes = commitApiRoutes(context, headSha);
+            if (routes != null) {
+                committed.add(routes);
+                headSha = routes.commitSha();
+            }
             checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
                             forjaiFiles);
         }
@@ -403,7 +428,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
 
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): los archivos del scaffold no son trabajo de un agente.
-        review = withoutFindingsOn(review, scaffold == null ? List.of() : scaffold.files());
+        var generatedByForjai = new ArrayList<String>(scaffold == null ? List.of() : scaffold.files());
+        generatedByForjai.addAll(forjaiFiles);
+        review = withoutFindingsOn(review, generatedByForjai);
 
         var status = StaticValidationStatus.compute(checks, review, sandboxResult);
         if (status == StaticValidationStatus.VERIFIED) {
@@ -797,18 +824,34 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         };
     }
 
-    /** Orden estable por la capa más baja de cada tarea; rutas que no son de una capa (entrada) cuentan como 3. */
-    private static List<PlannedTask> orderByLayer(List<PlannedTask> work, TeamPlan plan) {
-        var profile = plan.profile();
-        if (profile.isEmpty()) {
+    /**
+     * Spec 2026-10-02 B1 §2: por componente (backend antes que app, en el orden fijo de AppComponent) y dentro de cada
+     * uno por capa; los tests siempre al final. Con un componente es el orden por capas de siempre.
+     */
+    static List<PlannedTask> orderTasks(List<PlannedTask> work, TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        if (components.isEmpty()) {
             return work;
         }
         return work.stream()
                 .sorted(java.util.Comparator.comparingInt(task -> task.ownedPathsOrEmpty().stream()
-                        .map(path -> profile.get().locate(path, plan.contextNames())
-                                .map(location -> layerRank(location.layer())).orElse(3))
-                        .min(Integer::compare).orElse(3)))
+                        .map(path -> rank(components, plan.contextNames(), path))
+                        .min(Integer::compare).orElse(Integer.MAX_VALUE)))
                 .toList();
+    }
+
+    private static int rank(List<AppComponent> components, List<String> contexts, String path) {
+        for (int i = 0; i < components.size(); i++) {
+            var component = components.get(i);
+            if (!component.owns(path)) {
+                continue;
+            }
+            var layer = component.strip(path)
+                    .flatMap(p -> component.profile().locate(p, component.contexts(contexts)))
+                    .map(location -> layerRank(location.layer())).orElse(3);
+            return layer == 4 ? 1_000 : i * 10 + layer;
+        }
+        return 500; // raíz común (migraciones, .env.example): no define el orden
     }
 
     /** Código real ya commiteado (sin .csproj/.sln, que son de Forjai), con tope explícito. */
@@ -981,13 +1024,128 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private DevelopmentResult generate(String id, String missionId, String agentId, String prompt, List<String> owned,
                                        List<String> expectedProjects, List<String> requiredPaths,
                                        TeamMissionContext context, String headSha) {
-        if (context.plan().databaseOrNull() == null) {
+        var checks = new ArrayList<java.util.function.Function<DevelopmentResult, List<String>>>();
+        if (context.plan().databaseOrNull() != null) {
+            checks.add(databaseChecks(context, headSha));
+        }
+        var api = apiChecks(context, owned, headSha);
+        if (api != null) {
+            checks.add(api);
+        }
+        if (checks.isEmpty()) {
             return requiredPaths == null
                     ? runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects).join()
                     : runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects, requiredPaths).join();
         }
         return runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects,
-                requiredPaths == null ? owned : requiredPaths, databaseChecks(context, headSha)).join();
+                requiredPaths == null ? owned : requiredPaths,
+                result -> checks.stream().flatMap(c -> c.apply(result).stream()).toList()).join();
+    }
+
+    static final String API_ROUTES_TASK_SUFFIX = "-API-ROUTES";
+
+    /** El componente Flutter de una app completa (app + API .NET), o vacío. */
+    private static java.util.Optional<AppComponent> fullstackApp(TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        if (components.size() < 2 || !plan.hasComponent(StackProfile.DOTNET_APP)) {
+            return java.util.Optional.empty();
+        }
+        return components.stream().filter(c -> c.profile() == StackProfile.FLUTTER_WEB_APP).findFirst();
+    }
+
+    private static boolean touchesFlutter(PlannedTask task, TeamPlan plan) {
+        return fullstackApp(plan).map(app -> task.ownedPathsOrEmpty().stream().anyMatch(app::owns)).orElse(false);
+    }
+
+    private static boolean ownsBackendApi(List<String> owned) {
+        return owned.stream().anyMatch(p -> p.startsWith("backend/") && p.contains(".Api"));
+    }
+
+    /**
+     * Spec 2026-10-02 B1 §2: Forjai commitea app/lib/api/api_routes.dart desde las rutas reales del backend en HEAD.
+     * null si la misión no es app + API o si el archivo ya está igual.
+     */
+    private CommittedWork commitApiRoutes(TeamMissionContext context, String headSha) {
+        var app = fullstackApp(context.plan());
+        if (app.isEmpty() || headSha == null) {
+            return null;
+        }
+        var missionId = context.missionId();
+        try {
+            var routes = HttpRouteExtractor.extract(backendApiSources(missionId, headSha));
+            var path = app.get().prefix(ApiRoutesGenerator.PATH);
+            var content = ApiRoutesGenerator.generate(routes);
+            if (content.equals(readOrNull(missionId, headSha, path))) {
+                return null;
+            }
+            var id = missionId + API_ROUTES_TASK_SUFFIX;
+            var record = workspace.commitAgentWork(missionId, id, "forjai", "Forjai", new DevelopmentResult(
+                    "Forjai generó el contrato de rutas de la app desde " + routes.size() + " ruta(s) del backend",
+                    List.of(new DevelopmentResult.GeneratedFile(path, content))));
+            return new CommittedWork(id, "forjai", record.sha(), record.files());
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not commit API routes: {}", missionId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Spec 2026-10-02 B1 §2: la dueña de la app no escribe rutas de la API a mano (ApiContractGate); el dueño de la API
+     * deja al menos una ruta literal que Java pueda leer. null si no aplica.
+     */
+    private java.util.function.Function<DevelopmentResult, List<String>> apiChecks(
+            TeamMissionContext context, List<String> owned, String headSha) {
+        var plan = context.plan();
+        if (fullstackApp(plan).isEmpty()) {
+            return null;
+        }
+        var probe = new PlannedTask("", TeamPlan.KIND_WORK, "X", "x", List.of(), owned);
+        if (touchesFlutter(probe, plan)) {
+            var routes = HttpRouteExtractor.extract(backendApiSources(context.missionId(), headSha));
+            return result -> ApiContractGate.check(result.files(), routes);
+        }
+        if (ownsBackendApi(owned)) {
+            return result -> {
+                var sources = backendApiSources(context.missionId(), headSha);
+                (result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files()).stream()
+                        .filter(f -> f != null && f.path() != null && f.path().endsWith(".cs") && f.path().contains(".Api/"))
+                        .forEach(f -> sources.put(f.path(), f.content()));
+                return HttpRouteExtractor.extract(sources).isEmpty()
+                        ? List.of("No encontré endpoints minimal API con ruta literal (app.MapGet(\"/…\"), MapPost, …) "
+                                + "en backend/src/<Ctx>.Api: la app Flutter los necesita y Forjai los lee del código.")
+                        : List.of();
+            };
+        }
+        return null;
+    }
+
+    private Map<String, String> backendApiSources(String missionId, String headSha) {
+        var sources = new LinkedHashMap<String, String>();
+        if (headSha == null) {
+            return sources;
+        }
+        try {
+            for (var path : workspace.filesAtCommit(missionId, headSha)) {
+                if (path.startsWith("backend/") && path.endsWith(".cs") && path.contains(".Api/")) {
+                    sources.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read backend API sources: {}", missionId, ex.getMessage());
+        }
+        return sources;
+    }
+
+    /** Spec 2026-10-02 B1 §2: reglas de app completa para el dueño de la API y para la dueña de la app. */
+    private static String fullstackBlock(TeamMissionContext context, PlannedTask task) {
+        var plan = context.plan();
+        if (fullstackApp(plan).isEmpty()) {
+            return "";
+        }
+        if (touchesFlutter(task, plan)) {
+            return "\n\n" + StackProfile.FULLSTACK_APP_RULE + "\n";
+        }
+        return ownsBackendApi(task.ownedPathsOrEmpty()) ? "\n\n" + StackProfile.FULLSTACK_API_RULE + "\n" : "";
     }
 
     /** Spec 2026-10-02 §2.4: migraciones, secretos y contrato, con reintento al dueño del archivo. */
@@ -1044,7 +1202,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
-        return buildWorkPromptBase(context, task) + databaseBlock(context);
+        return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task);
     }
 
     private String buildWorkPromptBase(TeamMissionContext context, PlannedTask task) {

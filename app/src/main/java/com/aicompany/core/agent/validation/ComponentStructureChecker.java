@@ -83,7 +83,29 @@ public final class ComponentStructureChecker {
         if (!portability.isEmpty()) {
             result.add(merge("PORTABILITY", portability));
         }
+        var backend = components.stream().filter(c -> c.profile() == StackProfile.DOTNET_APP).findFirst();
+        var app = components.stream().filter(c -> c.profile() == StackProfile.FLUTTER_WEB_APP).findFirst();
+        if (multi && backend.isPresent() && app.isPresent()) {
+            result.add(apiRoutesCheck(backend.get(), app.get(), contents));
+        }
         return result;
+    }
+
+    /** Spec 2026-10-02 B1 §3: api_routes.dart del commit = lo que sale del backend de ese mismo commit. */
+    static StaticCheck apiRoutesCheck(AppComponent backend, AppComponent app, Map<String, String> contents) {
+        var apiSources = new LinkedHashMap<String, String>();
+        contents.forEach((path, content) -> {
+            if (backend.owns(path) && path.endsWith(".cs") && path.contains(".Api/")) {
+                apiSources.put(path, content);
+            }
+        });
+        var routesPath = app.prefix(ApiRoutesGenerator.PATH);
+        var expected = ApiRoutesGenerator.generate(HttpRouteExtractor.extract(apiSources));
+        var actual = contents.get(routesPath);
+        return expected.equals(actual)
+                ? StaticCheck.pass("API_ROUTES_CONSISTENT", routesPath + " coincide con las rutas del backend", null, List.of())
+                : StaticCheck.fail("API_ROUTES_CONSISTENT", routesPath + (actual == null ? " no existe" : " no coincide")
+                        + " con las rutas del backend del mismo commit", null, List.of(routesPath));
     }
 
     /** Las rutas del resultado, con el prefijo del componente (sin cambios en la raíz). */

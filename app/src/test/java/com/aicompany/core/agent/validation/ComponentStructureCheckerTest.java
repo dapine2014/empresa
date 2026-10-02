@@ -73,4 +73,20 @@ class ComponentStructureCheckerTest {
         assertEquals(ProfileStructureChecker.check(StackProfile.FLUTTER_WEB_APP, List.of("saludo"), files),
                 checks.subList(0, 2));
     }
+
+    @Test
+    void apiRoutesMustMatchTheBackendOfTheSameCommit() {
+        var program = "app.MapGet(\"/clientes/{id}\", (Guid id) => Results.Ok());";
+        var stale = ApiRoutesGenerator.generate(List.of(new com.aicompany.core.model.HttpRoute("GET", "/clientes")));
+        var checks = ComponentStructureChecker.check(FULLSTACK, List.of("Clientes"), FILES, Map.of(
+                "backend/src/Clientes.Api/Program.cs", program, "app/lib/api/api_routes.dart", stale),
+                List.of("app/lib/api/api_routes.dart"));
+        assertFalse(named(checks, "API_ROUTES_CONSISTENT").passed());
+
+        var fresh = ApiRoutesGenerator.generate(HttpRouteExtractor.extract(Map.of("Program.cs", program)));
+        var ok = ComponentStructureChecker.check(FULLSTACK, List.of("Clientes"), FILES, Map.of(
+                "backend/src/Clientes.Api/Program.cs", program, "app/lib/api/api_routes.dart", fresh),
+                List.of("app/lib/api/api_routes.dart"));
+        assertTrue(named(ok, "API_ROUTES_CONSISTENT").passed(), named(ok, "API_ROUTES_CONSISTENT").detail());
+    }
 }

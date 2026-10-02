@@ -951,4 +951,34 @@ class DevelopmentTeamStrategyTest {
         verify(memory).recordStaticValidation(anyString(), eq("UNVALIDATED"), anyString());
         assertTrue(result.verifiableState().contains("app/: sandbox-runner no disponible"), result.verifiableState());
     }
+
+    // Spec 2026-10-02 B1 §2 + Review Focus 2: backend antes que app, tests al final, aunque Neo los liste al revés.
+    @Test
+    void fullstackTasksRunBackendThenAppThenTests() {
+        var plan = fullstackPlan();
+        var devops = new PlannedTask("devops", "WORK", "DATA", "Datos", List.of("persistence"),
+                List.of("backend/src/Clientes.Infrastructure", "db/postgres/migrations"));
+        var qa = new PlannedTask("qa", "WORK", "TESTS", "Tests", List.of("tests"),
+                List.of("backend/tests/Clientes.Tests", "app/test/clientes"));
+        var ordered = DevelopmentTeamStrategy.orderTasks(List.of(qa, task(plan, "frontend-ui"), devops,
+                task(plan, "backend")), plan);
+        assertEquals(List.of("backend", "devops", "frontend-ui", "qa"),
+                ordered.stream().map(PlannedTask::agentId).toList());
+    }
+
+    @Test
+    void apiRoutesAreCommittedByForjaiBeforeTheApp() throws Exception {
+        stubFullstack();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        strategy.execute(fullstackContext(), progress);
+
+        InOrder inOrder = inOrder(workspace);
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-BACKEND"), eq("backend"), anyString(), any());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-API-ROUTES"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().get(0).path().equals("app/lib/api/api_routes.dart")
+                        && r.files().get(0).content().contains("obtenerClientes(String id)")));
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), anyString(), any());
+    }
 }
