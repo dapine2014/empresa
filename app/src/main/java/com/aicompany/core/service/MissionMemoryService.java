@@ -258,6 +258,21 @@ public class MissionMemoryService {
         }
     }
 
+    /** Revisión final (I-4): el commit que quedó VERIFIED (el que se puede aplicar a pedido). */
+    public void recordVerifiedCommit(String missionId, String sha) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.verifiedCommit=$sha",
+                    Map.of("id", missionId, "sha", sha)).consume());
+        }
+    }
+
+    public Optional<String> verifiedCommit(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.verifiedCommit IS NOT NULL RETURN m.verifiedCommit AS s",
+                    Map.of("id", missionId)).list(r -> r.get("s").asString()).stream().findFirst();
+        }
+    }
+
     /** Último plan aceptado del líder (resultado de la tarea PLANNING COMPLETED más reciente). */
     public Optional<String> lastTeamPlanJson(String missionId) {
         try (var session = driver.session()) {

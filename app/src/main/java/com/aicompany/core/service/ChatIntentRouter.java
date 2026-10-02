@@ -298,16 +298,20 @@ public class ChatIntentRouter {
      */
     public List<ChatReply> routeReplies(String message) {
 
-        var replies = new java.util.ArrayList<>(resolveReplies(message));
-
-        // Spec 2026-10-02 §1: una clave pegada en el chat no se graba (el historial va al modelo).
-        var safeMessage = ConversationMemoryService.redactSecrets(message);
-        if (!safeMessage.equals(message)) {
-            replies.add(ceoReply("Detecté una clave en tu mensaje y no la guardé: las conexiones de base de datos se "
-                    + "cargan en Settings → Bases de datos."));
+        // Spec 2026-10-02 §1 y revisión final (C-1): un mensaje con una clave no llega a ningún modelo ni a una misión;
+        // se graba redactado y solo se responde el aviso.
+        if (ConversationMemoryService.containsSecret(message)) {
+            var notice = ceoReply("Detecté una clave en tu mensaje y no la guardé ni la usé: no hice nada con este "
+                    + "mensaje. Las conexiones de base de datos se cargan en Settings → Bases de datos; vuelve a escribir "
+                    + "el pedido sin la clave.");
+            conversationMemory.recordMessage("user", ConversationMemoryService.redactSecrets(message));
+            conversationMemory.recordMessage(notice.agentId(), notice.text());
+            return List.of(notice);
         }
 
-        conversationMemory.recordMessage("user", safeMessage);
+        var replies = resolveReplies(message);
+
+        conversationMemory.recordMessage("user", message);
         for (var reply : replies) {
             conversationMemory.recordMessage(reply.agentId(), reply.text());
         }
@@ -699,7 +703,9 @@ public class ChatIntentRouter {
     }
 
     // Spec 2026-10-02 §4: chat del DBA, armado en Java.
-    private static final Pattern DATABASE_USE = Pattern.compile("\\busa(?:r)?\\s+(?:la\\s+)?base\\s+([a-z0-9][a-z0-9-]{1,40})\\b");
+    // Revisión final (m-4): "usa la base de datos X" toma X; el nombre lleva un guion o un dígito, o es la última palabra.
+    private static final Pattern DATABASE_USE = Pattern.compile(
+            "\\busa(?:r)?\\s+(?:la\\s+)?base\\s+(?:de\\s+datos\\s+)?([a-z0-9]+(?:-[a-z0-9]+)+|[a-z0-9]*[0-9][a-z0-9]*)\\b");
     private static final Pattern DATABASE_APPLY =
             Pattern.compile("(?i)\\baplica(?:r)?\\s+el\\s+esquema\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
     private static final Pattern DATABASE_STATUS =
@@ -756,11 +762,11 @@ public class ChatIntentRouter {
             if (all.isEmpty()) {
                 return "No hay bases de datos cargadas. Se cargan en Settings → Bases de datos.";
             }
+            // Revisión final (I-7): esta respuesta se graba y llega al modelo: sin host, usuario ni pista de la clave.
             return "Bases de datos cargadas: " + all.stream().map(c -> c.name() + " (" + c.engine() + ", "
-                    + c.environment() + ", TLS " + c.tls() + ") — base " + c.database() + ", usuario " + c.username()
-                    + ", clave " + c.passwordHint() + ", última prueba: "
-                    + (c.lastCheckResult() == null ? "sin probar" : c.lastCheckResult()))
-                    .collect(java.util.stream.Collectors.joining("; ")) + ".";
+                    + c.environment() + ", TLS " + c.tls() + "), última prueba: "
+                    + (c.lastCheckResult() == null ? "sin probar" : c.lastCheckResult().startsWith("OK") ? "OK" : "falló"))
+                    .collect(java.util.stream.Collectors.joining("; ")) + ". Los datos de conexión se ven en Settings → Bases de datos.";
         }
         return null;
     }

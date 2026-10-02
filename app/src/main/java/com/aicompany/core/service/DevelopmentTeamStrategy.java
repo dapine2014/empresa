@@ -396,6 +396,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         review = withoutFindingsOn(review, scaffold == null ? List.of() : scaffold.files());
 
         var status = StaticValidationStatus.compute(checks, review, sandboxResult);
+        if (status == StaticValidationStatus.VERIFIED) {
+            // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
+            memory.recordVerifiedCommit(missionId, headSha);
+        }
 
         // Spec 2026-10-02 §3: con el código VERIFIED, Java crea la base en el servidor del fundador.
         var databaseText = "";
@@ -872,16 +876,21 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             TeamMissionContext context, String headSha) {
         var hasDatabase = context.plan().databaseOrNull() != null;
         var contract = contractVariables(context);
-        var forbidden = missionConnections(context.missionId()).stream()
-                .flatMap(c -> java.util.stream.Stream.of(c.host(), c.username())).toList();
-        List<String> inRepo;
+        // Revisión final (I-6): el modelo nunca ve host ni usuario; compararlos como texto tumbaba código normal
+        // (un usuario "app" marcaba app.MapGet). Quedan los patrones de cadena de conexión con clave.
+        List<String> forbidden = List.of();
+        var existing = new java.util.LinkedHashMap<String, String>();
         try {
-            inRepo = headSha == null ? List.of() : workspace.filesAtCommit(context.missionId(), headSha).stream()
-                    .filter(p -> p.startsWith(com.aicompany.core.agent.validation.MigrationFilesGate.ROOT)).toList();
+            if (headSha != null) {
+                for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                    if (path.startsWith(com.aicompany.core.agent.validation.MigrationFilesGate.ROOT)) {
+                        existing.put(path, workspace.readFileAtCommit(context.missionId(), headSha, path));
+                    }
+                }
+            }
         } catch (Exception ex) {
-            inRepo = List.of();
+            existing.clear();
         }
-        var existing = inRepo;
         return result -> {
             var errors = new ArrayList<String>();
             errors.addAll(com.aicompany.core.agent.validation.MigrationFilesGate.check(result.files(), existing));

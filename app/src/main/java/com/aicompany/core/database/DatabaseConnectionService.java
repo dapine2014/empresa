@@ -17,6 +17,8 @@ import java.util.regex.Pattern;
 public class DatabaseConnectionService {
 
     private static final Pattern NAME = Pattern.compile("[a-z0-9][a-z0-9-]{1,40}");
+    // Revisión final (m-3): hostname o IPv4/IPv6; sin "/", "?" ni "&" que inyecten parámetros en la URL JDBC.
+    private static final Pattern HOST = Pattern.compile("[A-Za-z0-9.-]{1,253}|\\[[0-9A-Fa-f:]+\\]");
     private static final Set<String> ENGINES = Set.of("POSTGRESQL");
     private static final Set<String> TLS = Set.of("DISABLE", "REQUIRE", "VERIFY_FULL");
     private static final Set<String> ENVIRONMENTS = Set.of("TEST", "PRODUCTION");
@@ -128,18 +130,24 @@ public class DatabaseConnectionService {
     /** SELECT 1 contra la base; si todavía no existe (3D000), contra la base de mantenimiento "postgres". */
     private String check(DatabaseConnection c, String password) {
         try (var connection = connector.open(c, password, null)) {
-            connection.createStatement().execute("SELECT 1");
+            try (var st = connection.createStatement()) {
+                st.setQueryTimeout(15);
+                st.execute("SELECT 1");
+            }
             return "OK";
         } catch (SQLException ex) {
             if ("3D000".equals(ex.getSQLState())) {
                 try (var connection = connector.open(c, password, "postgres")) {
-                    connection.createStatement().execute("SELECT 1");
+                    try (var st = connection.createStatement()) {
+                st.setQueryTimeout(15);
+                st.execute("SELECT 1");
+            }
                     return "OK (la base " + c.database() + " todavía no existe; Diego la creará)";
                 } catch (SQLException inner) {
-                    return redact(inner.getMessage(), password);
+                    return redact(inner.getMessage(), c, password);
                 }
             }
-            return redact(ex.getMessage(), password);
+            return redact(ex.getMessage(), c, password);
         }
     }
 
@@ -147,7 +155,8 @@ public class DatabaseConnectionService {
         require(c.name() != null && NAME.matcher(c.name()).matches(),
                 "El nombre usa minúsculas, números y guiones (p. ej. citas-dev-aws).");
         require(ENGINES.contains(c.engine()), "Motor no soportado todavía: " + c.engine() + " (hoy: POSTGRESQL).");
-        require(c.host() != null && !c.host().isBlank(), "Falta el host.");
+        require(c.host() != null && HOST.matcher(c.host().strip()).matches(),
+                "El host debe ser un nombre de host o una IP (sin barras, espacios ni parámetros).");
         require(c.port() == null || (c.port() > 0 && c.port() < 65536), "Puerto inválido.");
         require(c.database() != null && c.database().matches("[A-Za-z_][A-Za-z0-9_]{0,62}"), "Nombre de base inválido.");
         require(c.username() != null && !c.username().isBlank(), "Falta el usuario.");
@@ -167,6 +176,18 @@ public class DatabaseConnectionService {
     static String redact(String message, String password) {
         var text = message == null ? "Error desconocido" : message;
         return password == null || password.isEmpty() ? text : text.replace(password, "****");
+    }
+
+    /** Revisión final (I-7): los errores van a eventos, a la misión y al chat: sin clave, host ni usuario. */
+    static String redact(String message, DatabaseConnection c, String password) {
+        var text = redact(message, password);
+        if (c.host() != null && !c.host().isBlank()) {
+            text = text.replace(c.host(), "<host>");
+        }
+        if (c.username() != null && !c.username().isBlank()) {
+            text = text.replace("\"" + c.username() + "\"", "\"<usuario>\"").replace(" " + c.username() + " ", " <usuario> ");
+        }
+        return text;
     }
 
     private static String hint(String password) {

@@ -17,7 +17,34 @@ public final class MigrationFilesGate {
     private MigrationFilesGate() {
     }
 
-    public static List<String> check(List<DevelopmentResult.GeneratedFile> files, List<String> alreadyInRepo) {
+    private static final Pattern TRANSACTION = Pattern.compile("(?i)^\\s*(BEGIN|COMMIT|ROLLBACK|START\\s+TRANSACTION)\\b.*");
+
+    /**
+     * {@code existing}: migraciones ya commiteadas (ruta → contenido). Revisión final (I-5): una que ya existe no se
+     * edita, el cambio va en una nueva; (m-7) Forjai abre la transacción, la migración no la maneja.
+     */
+    public static List<String> check(List<DevelopmentResult.GeneratedFile> files, java.util.Map<String, String> existing) {
+        var errors = new ArrayList<String>(checkNames(files, new ArrayList<>(existing.keySet())));
+        var next = existing.keySet().stream().map(MigrationFilesGate::version).flatMap(java.util.Optional::stream)
+                .max(Integer::compare).orElse(0) + 1;
+        for (var file : files.stream().filter(Objects::nonNull).toList()) {
+            if (file.path() == null || !file.path().startsWith(ROOT)) {
+                continue;
+            }
+            var previous = existing.get(file.path());
+            if (previous != null && !previous.equals(file.content())) {
+                errors.add("La migración " + file.path() + " ya existe y no se edita (puede estar aplicada en la base del "
+                        + "fundador): devuélvela sin cambios y pon el cambio en una nueva, V" + next + "__<descripcion>.sql.");
+            }
+            if (file.content() != null && file.content().lines().anyMatch(l -> TRANSACTION.matcher(l).matches())) {
+                errors.add("Migración \"" + file.path() + "\": sin BEGIN/COMMIT/ROLLBACK; Forjai aplica cada migración en "
+                        + "su propia transacción.");
+            }
+        }
+        return errors;
+    }
+
+    private static List<String> checkNames(List<DevelopmentResult.GeneratedFile> files, List<String> alreadyInRepo) {
         var errors = new ArrayList<String>();
         var versions = new TreeSet<Integer>();
         for (var path : alreadyInRepo) {

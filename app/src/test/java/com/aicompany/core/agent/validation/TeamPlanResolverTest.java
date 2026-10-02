@@ -145,4 +145,19 @@ class TeamPlanResolverTest {
         assertEquals(List.of("src/Citas.Infrastructure", "db/postgres/migrations"), of(result.plan(), "devops").get(0).ownedPaths());
         assertEquals("citas-dev-aws", result.plan().databaseOrNull().connectionName());
     }
+
+    // Revisión final (I-9): con base, .env.example es del dueño de la API (Iris).
+    @Test
+    void theApiOwnerGetsTheEnvExampleWhenThePlanHasADatabase() {
+        var plan = new TeamPlan("Citas", null, null, List.of(
+                t("backend", "WORK", "backend"), t("devops", "WORK", "persistence"), t("qa", "WORK", "tests")),
+                List.of(), "DOTNET_APP", List.of(new TeamPlan.BoundedContext("Citas", "desc")),
+                List.of(new TeamPlan.GlossaryTerm("a", "b"), new TeamPlan.GlossaryTerm("c", "d"),
+                        new TeamPlan.GlossaryTerm("e", "f")),
+                new TeamPlan.DatabaseNeed("POSTGRESQL", "citas-dev-aws"));
+
+        var result = resolver.resolve(plan, DEVELOPMENT);
+
+        assertTrue(of(result.plan(), "backend").get(0).ownedPaths().contains(".env.example"));
+    }
 }

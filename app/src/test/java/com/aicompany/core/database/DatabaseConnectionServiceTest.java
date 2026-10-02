@@ -140,4 +140,26 @@ class DatabaseConnectionServiceTest {
         service.linkToMission("M-1", List.of("citas-dev-aws"));
         verify(memory).linkMission("M-1", List.of("C1"));
     }
+
+    // Revisión final (I-7): el error del servidor no lleva host ni usuario (va a eventos, misión y chat).
+    @Test
+    void aServerErrorLosesHostAndUser() throws Exception {
+        when(memory.byName(anyString())).thenReturn(Optional.empty());
+        doThrow(new SQLException("Connection to db.rds.amazonaws.com:5432 refused; "
+                + "password authentication failed for user \"admin_citas\""))
+                .when(connector).open(any(), anyString(), isNull());
+
+        var ex = assertThrows(IllegalArgumentException.class, () -> service.create(command("S3cret-9876")));
+
+        assertFalse(ex.getMessage().contains("db.rds.amazonaws.com"), ex.getMessage());
+        assertFalse(ex.getMessage().contains("admin_citas"), ex.getMessage());
+    }
+
+    // Revisión final (m-3): un host con caracteres de URL podría inyectar parámetros (p. ej. bajar el TLS).
+    @Test
+    void aHostThatIsNotAHostnameIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> service.create(new DatabaseConnectionCommand("citas",
+                "POSTGRESQL", "h/x?sslmode=disable&", 5432, "d", "u", "p", "REQUIRE", null, "TEST")));
+        verifyNoInteractions(connector);
+    }
 }

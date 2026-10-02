@@ -42,9 +42,9 @@ class DatabaseApplyServiceTest {
 
         assertTrue(text.contains("V1") && text.contains("citas-dev-aws"), text);
         assertFalse(text.contains("S3cret-9876") || text.contains("rds.amazonaws.com"), text);
-        verify(memory).createTask("M-1-DATABASE", "M-1", "forjai", "DATABASE_APPLY");
+        verify(memory).createTask("M-1-DATABASE", "M-1", "devops", "DATABASE_APPLY");
         verify(memory).updateTask(eq("M-1-DATABASE"), eq("COMPLETED"), anyString());
-        verify(memory).recordEvidence(eq("M-1-DATABASE"), eq("M-1"), eq("forjai"), anyList());
+        verify(memory).recordEvidence(eq("M-1-DATABASE"), eq("M-1"), eq("devops"), anyList());
         verify(events).publish(eq("EMPRESA_DATABASE_SCHEMA_APPLIED"), eq("M-1"), eq("M-1-DATABASE"), eq("forjai"), anyMap());
     }
 
@@ -75,5 +75,39 @@ class DatabaseApplyServiceTest {
     void onDemandItRefusesWhenTheCodeIsNotVerified() {
         when(memory.lastValidationStatus("M-1")).thenReturn(java.util.Optional.of("FAILED"));
         assertThrows(IllegalStateException.class, () -> service.applyLatest("M-1"));
+    }
+
+    private static com.aicompany.core.model.MissionResponse mission(com.aicompany.core.model.MissionStatus status) {
+        return new com.aicompany.core.model.MissionResponse("M-1", status, "TEST", 100, "x", "x",
+                java.time.Instant.now(), null, "TEAM-DEVELOPMENT");
+    }
+
+    // Revisión final (I-4): a pedido se aplica el commit VERIFICADO, nunca el HEAD de una ronda en curso.
+    @Test
+    void onDemandItRefusesWhileTheMissionIsRunning() {
+        when(memory.lastValidationStatus("M-1")).thenReturn(java.util.Optional.of("VERIFIED"));
+        when(memory.find("M-1")).thenReturn(java.util.Optional.of(mission(com.aicompany.core.model.MissionStatus.DELEGATING)));
+        assertThrows(IllegalStateException.class, () -> service.applyLatest("M-1"));
+        verifyNoInteractions(applier);
+    }
+
+    @Test
+    void onDemandItUsesTheVerifiedCommit() throws Exception {
+        when(memory.lastValidationStatus("M-1")).thenReturn(java.util.Optional.of("VERIFIED"));
+        when(memory.find("M-1")).thenReturn(java.util.Optional.of(mission(com.aicompany.core.model.MissionStatus.AWAITING_INVESTOR)));
+        when(memory.verifiedCommit("M-1")).thenReturn(java.util.Optional.of("verificado"));
+        when(memory.lastTeamPlanJson("M-1")).thenReturn(java.util.Optional.of(
+                "{\"summary\":\"Citas\",\"stackProfile\":\"DOTNET_APP\",\"tasks\":[],"
+                        + "\"database\":{\"engine\":\"POSTGRESQL\",\"connectionName\":\"citas-dev-aws\"}}"));
+        when(connections.connectionsOf("M-1")).thenReturn(List.of(CITAS));
+        when(connections.password(CITAS)).thenReturn("S3cret-9876");
+        when(workspace.filesAtCommit("M-1", "verificado")).thenReturn(List.of());
+        when(applier.apply(any(), any(), anyList(), any(), any()))
+                .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(), null, null, false));
+
+        service.applyLatest("M-1");
+
+        verify(applier).apply(eq(CITAS), eq("S3cret-9876"), anyList(), eq("M-1"), eq("verificado"));
+        verify(workspace, never()).headSha(any());
     }
 }

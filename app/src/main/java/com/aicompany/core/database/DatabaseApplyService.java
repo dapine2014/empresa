@@ -29,6 +29,10 @@ public class DatabaseApplyService {
     }
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    static final String DBA = "devops";
+    private static final java.util.Set<com.aicompany.core.model.MissionStatus> STOPPED = java.util.Set.of(
+            com.aicompany.core.model.MissionStatus.AWAITING_INVESTOR, com.aicompany.core.model.MissionStatus.COMPLETED,
+            com.aicompany.core.model.MissionStatus.FAILED);
 
     private final DatabaseConnectionService connections;
     private final DatabaseSchemaApplier applier;
@@ -58,7 +62,8 @@ public class DatabaseApplyService {
         }
         var c = connection.get();
         var taskId = missionId + "-DATABASE";
-        memory.createTask(taskId, missionId, "forjai", "DATABASE_APPLY");
+        // Revisión final (I-3): createTask exige un Agent existente; la base es trabajo de Diego (devops), el DBA.
+        memory.createTask(taskId, missionId, DBA, "DATABASE_APPLY");
         memory.updateTask(taskId, "RUNNING", "Aplicando migraciones en " + c.name() + ".");
 
         DatabaseSchemaApplier.ApplyResult result;
@@ -80,7 +85,7 @@ public class DatabaseApplyService {
         memory.updateTask(taskId, ok ? "COMPLETED" : "FAILED", text);
         memory.recordDatabaseApply(missionId, c.name(), result.applied(), result.failedVersion(), text);
         if (!result.applied().isEmpty()) {
-            memory.recordEvidence(taskId, missionId, "forjai", result.applied().stream()
+            memory.recordEvidence(taskId, missionId, DBA, result.applied().stream()
                     .map(v -> new AgentResult.Evidence("Migración V" + v + " aplicada en " + c.name(),
                             "database:" + c.name() + "@" + commitSha + "/V" + v, "INTERNAL", true))
                     .toList());
@@ -106,15 +111,19 @@ public class DatabaseApplyService {
             throw new IllegalStateException("El código de " + missionId + " no está VERIFIED (" + status
                     + "): no se aplica el esquema.");
         }
+        // Revisión final (I-4): durante una ronda el HEAD tiene código sin verificar; solo con la misión detenida.
+        var mission = memory.find(missionId).orElseThrow(() -> new IllegalStateException("No existe " + missionId + "."));
+        if (!STOPPED.contains(mission.status())) {
+            throw new IllegalStateException(missionId + " está en curso (" + mission.status() + "): espera a que termine "
+                    + "para aplicar el esquema.");
+        }
         var plan = plan(missionId).orElseThrow(() -> new IllegalStateException(missionId + " no tiene plan del equipo."));
         if (plan.databaseOrNull() == null) {
             throw new IllegalStateException("El plan de " + missionId + " no declara base de datos.");
         }
-        try {
-            return apply(missionId, workspace.headSha(missionId), plan);
-        } catch (java.io.IOException ex) {
-            throw new IllegalStateException("No se pudo leer el repositorio de " + missionId + ".", ex);
-        }
+        var commit = memory.verifiedCommit(missionId).orElseThrow(() -> new IllegalStateException(
+                missionId + " no tiene un commit verificado registrado."));
+        return apply(missionId, commit, plan);
     }
 
     public Optional<MissionDatabaseStatus> status(String missionId) {

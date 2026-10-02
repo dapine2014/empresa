@@ -34,20 +34,25 @@ public class DatabaseSchemaApplier {
             created = ensureDatabase(c, password);
         } catch (SQLException ex) {
             return new ApplyResult(applied, null, "No se pudo crear o abrir la base " + c.database() + ": "
-                    + DatabaseConnectionService.redact(ex.getMessage(), password), false);
+                    + DatabaseConnectionService.redact(ex.getMessage(), c, password), false);
         }
         try (var connection = connector.open(c, password, null)) {
             connection.setAutoCommit(true);
             try (var st = connection.createStatement()) {
+                // Revisión final (I-8): ninguna sentencia espera sin límite (locks de otra sesión incluidos).
+                st.setQueryTimeout(STATEMENT_TIMEOUT_SECONDS);
+                st.execute("SET lock_timeout = '60s'");
                 st.execute("CREATE TABLE IF NOT EXISTS forjai_schema_history (version int primary key, "
                         + "description text not null, checksum char(64) not null, applied_at timestamptz not null default now(), "
                         + "mission_id text, commit_sha text)");
             }
             var history = new ArrayList<MigrationSet.AppliedMigration>();
-            try (var st = connection.createStatement();
-                 var rs = st.executeQuery("SELECT version, checksum FROM forjai_schema_history ORDER BY version")) {
-                while (rs.next()) {
-                    history.add(new MigrationSet.AppliedMigration(rs.getInt(1), rs.getString(2)));
+            try (var st = connection.createStatement()) {
+                st.setQueryTimeout(STATEMENT_TIMEOUT_SECONDS);
+                try (var rs = st.executeQuery("SELECT version, checksum FROM forjai_schema_history ORDER BY version")) {
+                    while (rs.next()) {
+                        history.add(new MigrationSet.AppliedMigration(rs.getInt(1), rs.getString(2)));
+                    }
                 }
             }
             var plan = MigrationSet.pending(migrations, history);
@@ -60,12 +65,12 @@ public class DatabaseSchemaApplier {
                     applied.add(migration.version());
                 } catch (SQLException ex) {
                     return new ApplyResult(applied, migration.version(), "V" + migration.version() + " falló: "
-                            + DatabaseConnectionService.redact(ex.getMessage(), password), created);
+                            + DatabaseConnectionService.redact(ex.getMessage(), c, password), created);
                 }
             }
             return new ApplyResult(applied, null, null, created);
         } catch (SQLException ex) {
-            return new ApplyResult(applied, null, DatabaseConnectionService.redact(ex.getMessage(), password), created);
+            return new ApplyResult(applied, null, DatabaseConnectionService.redact(ex.getMessage(), c, password), created);
         }
     }
 
@@ -78,6 +83,7 @@ public class DatabaseSchemaApplier {
             }
         }
         try (var admin = connector.open(c, password, "postgres"); var st = admin.createStatement()) {
+            st.setQueryTimeout(STATEMENT_TIMEOUT_SECONDS);
             st.execute("CREATE DATABASE \"" + c.database() + "\"");
             return true;
         }
