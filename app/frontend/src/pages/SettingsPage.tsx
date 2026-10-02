@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { ApiKeyStatus, PolicySnapshot } from '../api/types'
+import { DatabasesSettings } from '../components/DatabasesSettings'
 
 const POLICY_LABELS: Record<string, string> = {
   SEED_CAPITAL_USD: 'Capital semilla (US$)',
@@ -268,6 +269,8 @@ export default function SettingsPage() {
       {feedback && <p className="feedback">{feedback}</p>}
 
       <OutreachSignature />
+
+      <DatabasesSettings />
 
       <h2>Financial Policies</h2>
       <p className="hint">

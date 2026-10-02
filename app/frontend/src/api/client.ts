@@ -1,4 +1,7 @@
 import type {
+  DatabaseConnectionForm,
+  DatabaseConnectionInfo,
+  MissionDatabaseStatus,
   ActivityItem,
   AgentInfo,
   AgentStatusResponse,
@@ -212,6 +215,16 @@ export const api = {
   netProfit: (missionId: string) =>
     request<MissionProfitResponse>(`/api/company/missions/${missionId}/net-profit`),
 
+databases: () => request<DatabaseConnectionInfo[]>('/api/company/databases'),
+  createDatabase: (form: DatabaseConnectionForm) =>
+    request<DatabaseConnectionInfo>('/api/company/databases', { method: 'POST', body: JSON.stringify(form) }),
+  updateDatabase: (id: string, form: DatabaseConnectionForm) =>
+    request<DatabaseConnectionInfo>(`/api/company/databases/${id}`, { method: 'PUT', body: JSON.stringify(form) }),
+  testDatabase: (id: string) => request<{ result: string }>(`/api/company/databases/${id}/test`, { method: 'POST' }),
+  deleteDatabase: (id: string) => request<unknown>(`/api/company/databases/${id}`, { method: 'DELETE' }),
+  missionDatabase: (missionId: string) => request<MissionDatabaseStatus>(`/api/company/missions/${missionId}/database`),
+  applyMissionDatabase: (missionId: string) =>
+    request<{ result: string }>(`/api/company/missions/${missionId}/database/apply`, { method: 'POST' }),
   startMission: (command: MissionCommand) =>
     request<MissionResponse>('/api/company/missions', {
       method: 'POST',
