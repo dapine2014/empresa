@@ -783,4 +783,25 @@ class DevelopmentTeamStrategyTest {
         var leaked = new DevelopmentResult("r", List.of(new GeneratedFile("src/A.cs", "// db.secreto.rds.amazonaws.com")));
         assertFalse(checks.getValue().apply(leaked).isEmpty());
     }
+
+    // Spec 2026-10-02 §3: una misión VERIFIED con base aplica el esquema y lo informa.
+    @Test
+    void aVerifiedMissionWithADatabaseAppliesTheSchemaAndReportsIt() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn("Base de datos citas-dev-aws: aplicadas V1.");
+        strategy.setDatabaseApply(apply);
+        var base = context();
+        var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),
+                base.plan().stackProfile(), base.plan().boundedContexts(), base.plan().ubiquitousLanguage(),
+                new TeamPlan.DatabaseNeed("POSTGRESQL", "citas-dev-aws"));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(
+                new TeamMissionContext("M-1", "crear un juego", base.team(), plan), progress);
+
+        verify(apply).apply(eq("M-1"), anyString(), eq(plan));
+        assertTrue(result.verifiableState().contains("aplicadas V1"), result.verifiableState());
+    }
 }

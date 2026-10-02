@@ -203,6 +203,61 @@ public class MissionMemoryService {
         }
     }
 
+    /** Spec 2026-10-02 §3: estado de la última VALIDATION (VERIFIED, FAILED…) de la misión. */
+    public Optional<String> lastValidationStatus(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_TASK]->(t:AgentTask {kind:'VALIDATION'}) "
+                            + "WHERE t.validationStatus IS NOT NULL RETURN t.validationStatus AS s "
+                            + "ORDER BY t.updatedAt DESC LIMIT 1", Map.of("id", missionId))
+                    .list(r -> r.get("s").asString()).stream().findFirst();
+        }
+    }
+
+    /** Spec 2026-10-02 §3: resultado del último intento de crear la base (para el estado en chat y Missions). */
+    public void recordDatabaseApply(String missionId, String connectionName, List<Integer> applied,
+                                    Integer failedVersion, String text) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.databaseConnection=$name, "
+                            + "m.databaseApplied = [v IN coalesce(m.databaseApplied, []) WHERE NOT v IN $applied] + $applied, "
+                            + "m.databaseFailedVersion=$failed, m.databaseLastResult=$text",
+                    databaseApplyParams(missionId, connectionName, applied, failedVersion, text)).consume());
+        }
+    }
+
+    private static Map<String, Object> databaseApplyParams(String missionId, String connectionName,
+                                                           List<Integer> applied, Integer failedVersion, String text) {
+        var params = new java.util.HashMap<String, Object>();
+        params.put("id", missionId);
+        params.put("name", connectionName);
+        params.put("applied", applied);
+        params.put("failed", failedVersion);
+        params.put("text", text);
+        return params;
+    }
+
+    public List<Integer> databaseApplied(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN coalesce(m.databaseApplied, []) AS a", Map.of("id", missionId))
+                    .list(r -> r.get("a").asList(v -> v.asInt())).stream().findFirst().orElse(List.of());
+        }
+    }
+
+    public Optional<Integer> databaseFailedVersion(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.databaseFailedVersion IS NOT NULL "
+                    + "RETURN m.databaseFailedVersion AS v", Map.of("id", missionId))
+                    .list(r -> r.get("v").asInt()).stream().findFirst();
+        }
+    }
+
+    public Optional<String> databaseLastResult(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.databaseLastResult IS NOT NULL "
+                    + "RETURN m.databaseLastResult AS r", Map.of("id", missionId))
+                    .list(r -> r.get("r").asString()).stream().findFirst();
+        }
+    }
+
     /** Último plan aceptado del líder (resultado de la tarea PLANNING COMPLETED más reciente). */
     public Optional<String> lastTeamPlanJson(String missionId) {
         try (var session = driver.session()) {

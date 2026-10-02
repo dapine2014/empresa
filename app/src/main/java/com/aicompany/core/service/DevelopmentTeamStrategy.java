@@ -397,6 +397,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         var status = StaticValidationStatus.compute(checks, review, sandboxResult);
 
+        // Spec 2026-10-02 §3: con el código VERIFIED, Java crea la base en el servidor del fundador.
+        var databaseText = "";
+        if (plan.databaseOrNull() != null) {
+            databaseText = status == StaticValidationStatus.VERIFIED && databaseApply != null
+                    ? databaseApply.apply(missionId, headSha, plan)
+                    : "no se aplicó (el código no está VERIFIED).";
+        }
+
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
 
         if (review != null && review.evidence() != null && !review.evidence().isEmpty()) {
@@ -412,7 +420,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
-                        repairRounds, autofixRounds, dependencyOutcome));
+                        repairRounds, autofixRounds, dependencyOutcome)
+                        + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText));
     }
 
     private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
@@ -805,6 +814,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
+    private com.aicompany.core.database.DatabaseApplyService databaseApply;
+
+    /** Spec 2026-10-02 §3: aplica el esquema tras VERIFIED (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDatabaseApply(com.aicompany.core.database.DatabaseApplyService databaseApply) {
+        this.databaseApply = databaseApply;
+    }
 
     /** Spec 2026-10-02 §2: conexiones de la misión para el contrato y los chequeos (opcional en tests). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
