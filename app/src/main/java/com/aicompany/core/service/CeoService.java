@@ -1471,6 +1471,10 @@ public class CeoService {
                 .delivery();
     }
 
+    /** Va en la corrección del intento siguiente (planificación de Neo, revisión de Vera, cualquier operación). */
+    static final String SHORTER = " Responde de forma más breve para que el JSON entre completo: textos cortos y sin "
+            + "repetir lo que ya está en el pedido.";
+
     private <T> T callStructured(
             String operation, String agentId, String prompt, String agentPrompt, String model,
             Object schema, Class<T> type) {
@@ -1488,7 +1492,7 @@ public class CeoService {
             response = message.content();
             if (message.truncated()) {
                 throw new TruncatedResponseException("La respuesta de " + agentId + " para " + operation
-                        + " se cortó por el límite de salida (" + response.length() + " caracteres).");
+                        + " se cortó por el límite de salida (" + response.length() + " caracteres)." + SHORTER);
             }
 
             var result = jsonMapper.readValue(normalizeJsonResponse(response), type);
@@ -1510,7 +1514,8 @@ public class CeoService {
             if (response != null && !response.isBlank()
                     && String.valueOf(ex.getMessage()).contains("Unexpected end-of-input")) {
                 throw new TruncatedResponseException("La respuesta de " + agentId + " para " + operation
-                        + " terminó a mitad del JSON (" + (response == null ? 0 : response.length()) + " caracteres).");
+                        + " terminó a mitad del JSON (" + (response == null ? 0 : response.length()) + " caracteres)."
+                        + SHORTER);
             }
 
             throw new IllegalStateException(

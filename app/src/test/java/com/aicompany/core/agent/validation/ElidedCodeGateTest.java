@@ -72,4 +72,18 @@ class ElidedCodeGateTest {
         assertTrue(check("web/app.css", "#existing-code-banner {\n  color: red;\n}").isEmpty());
         assertTrue(check("src/A.cs", "#region Existing code\nclass A {}\n#endregion").isEmpty());
     }
+
+    // Pendiente de la revisión (m-8): en HTML una línea "..." es texto visible; un comentario <!-- ... --> sí es elisión.
+    @Test
+    void anEllipsisLineInHtmlIsVisibleTextButAnElidedCommentIsNot() {
+        assertTrue(check("web/index.html", "<p>\n  Cargando\n  ...\n</p>").isEmpty());
+        assertFalse(check("web/index.html", "<body>\n  <!-- ... resto de la página -->\n</body>").isEmpty());
+    }
+
+    // Pendiente de la revisión (m-8): integration_test/ de Flutter son tests.
+    @Test
+    void flutterIntegrationTestsMayUseUnimplementedError() {
+        assertTrue(check("integration_test/helpers.dart", "Never pendiente() => throw UnimplementedError();")
+                .isEmpty());
+    }
 }

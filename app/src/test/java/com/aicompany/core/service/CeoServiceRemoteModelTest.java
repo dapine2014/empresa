@@ -151,4 +151,15 @@ class CeoServiceRemoteModelTest {
                 () -> ceoService.generateDevelopmentArtifact("frontend-ui", "p", "", "nvidia:moonshotai/kimi-k3"));
         assertFalse(ex instanceof TruncatedResponseException, ex.getMessage());
     }
+
+    // Pendiente de la revisión (m-10): el aviso de corte le dice al modelo qué hacer (Neo, Vera, cualquier operación).
+    @Test
+    void aTruncationTellsTheModelToAnswerShorter() {
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("{\"summary\":\"s\",\"ta", List.of(), "length"));
+
+        var ex = assertThrows(TruncatedResponseException.class,
+                () -> ceoService.generateDevelopmentArtifact("engineering", "p", "", "nvidia:moonshotai/kimi-k3"));
+        assertTrue(ex.getMessage().contains("más breve"), ex.getMessage());
+    }
 }

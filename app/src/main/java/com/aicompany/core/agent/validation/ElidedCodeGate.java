@@ -55,10 +55,11 @@ public final class ElidedCodeGate {
     }
 
     private static boolean isElided(String line, String path) {
-        if (ONLY_ELLIPSIS.matcher(line).matches()) {
+        var lower = path.toLowerCase(Locale.ROOT);
+        // En HTML una línea "..." es texto visible; la elisión ahí es un comentario <!-- ... -->.
+        if (!lower.endsWith(".html") && ONLY_ELLIPSIS.matcher(line).matches()) {
             return true;
         }
-        var lower = path.toLowerCase(Locale.ROOT);
         var comment = COMMENT_PREFIX.matcher(line);
         var hash = HASH_COMMENT_PREFIX.matcher(line);
         String text;
@@ -82,7 +83,8 @@ public final class ElidedCodeGate {
     }
 
     private static boolean isTest(String path) {
-        return path.startsWith("test/") || path.startsWith("tests/") || path.contains(".Tests/")
+        return path.startsWith("test/") || path.startsWith("tests/") || path.startsWith("integration_test/")
+                || path.contains(".Tests/")
                 || path.endsWith("_test.dart") || path.endsWith("Tests.cs");
     }
 
