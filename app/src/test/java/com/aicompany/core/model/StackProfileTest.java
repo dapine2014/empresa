@@ -109,4 +109,11 @@ class StackProfileTest {
         assertTrue(StackProfile.FULLSTACK_API_RULE.contains("CORS_ORIGINS"), StackProfile.FULLSTACK_API_RULE);
         assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("API_BASE_URL"), StackProfile.FULLSTACK_APP_RULE);
     }
+
+    // Revisión final I5: en el sandbox no hay red ni API_BASE_URL; la app tiene que arrancar y renderizar igual.
+    @Test
+    void fullstackAppMustStartWithoutTheApi() {
+        assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("sin red"), StackProfile.FULLSTACK_APP_RULE);
+        assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("captura"), StackProfile.FULLSTACK_APP_RULE);
+    }
 }

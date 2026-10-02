@@ -295,7 +295,9 @@ public enum StackProfile {
             + "http y SOLO las rutas de ApiRoutes (lib/api/api_routes.dart, generado por Forjai desde el backend; "
             + "impórtalo con package:<nombre de pubspec>/api/api_routes.dart y no lo escribas). La URL base sale de "
             + "const String.fromEnvironment('API_BASE_URL'); nunca escribas rutas de la API ni localhost a mano. Los "
-            + "campos JSON siguen los nombres en camelCase de los tipos públicos del backend (contrato de abajo).";
+            + "campos JSON siguen los nombres en camelCase de los tipos públicos del backend (contrato de abajo). La app "
+            + "arranca y renderiza sin red y sin API_BASE_URL (así corre en el sandbox): captura los errores de red de "
+            + "cada llamada y muéstralos en pantalla; un error sin capturar en la consola hace fallar el arranque.";
 
     public String executionContract() {
         return switch (this) {
