@@ -231,7 +231,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var implied = hasNuget
                 ? impliedPackages(plan.resolvedComponents(), plan.contextNames(), csharpSources(missionId, generationHead))
                 : Map.<String, List<DependencyRef>>of();
-        var dependencyCommit = commitRequestedPackages(context, packagesByTask, implied);
+        var dependencyCommit = commitRequestedPackages(context, packagesByTask, implied, generationHead);
         if (dependencyCommit != null) {
             committed.add(dependencyCommit);
         }
@@ -552,7 +552,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      */
     private CommittedWork commitRequestedPackages(TeamMissionContext context,
                                                   Map<PlannedTask, List<DevelopmentResult.PackageRequest>> packagesByTask,
-                                                  Map<String, List<DependencyRef>> implied) {
+                                                  Map<String, List<DependencyRef>> implied, String headSha) {
         var plan = context.plan();
         if (plan.resolvedComponents().stream().noneMatch(c -> c.profile().ecosystem() == StackProfile.Ecosystem.NUGET)
                 || (packagesByTask.isEmpty() && implied.isEmpty())) {
@@ -577,6 +577,16 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (byProject.isEmpty()) {
             return null;
         }
+        var headProjects = new LinkedHashMap<String, String>();
+        byProject.keySet().forEach(project -> {
+            var content = headSha == null ? null : readOrNull(context.missionId(), headSha, project);
+            if (content != null) {
+                headProjects.put(project, content);
+            }
+        });
+        var withHead = withPackagesInHead(byProject, headProjects, plan.resolvedComponents(), plan.contextNames());
+        byProject.clear();
+        byProject.putAll(withHead);
         var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), byProject).stream()
                 .filter(f -> byProject.containsKey(f.path()))
                 .toList();
@@ -589,6 +599,38 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             log.warn("MISSION {} - could not commit requested packages: {}", context.missionId(), ex.getMessage());
             return null;
         }
+    }
+
+    private static final java.util.regex.Pattern PACKAGE_REFERENCE = java.util.regex.Pattern.compile(
+            "<PackageReference\\s+Include=\"([^\"]+)\"\\s+Version=\"([^\"]+)\"");
+
+    /**
+     * Revisión final B1 (I6): regenerar un .csproj (p. ej. por el Npgsql implícito en una ronda nueva) conserva los
+     * paquetes que ya tenía en HEAD y que no son los del perfil; si no, el build pierde paquetes aprobados antes.
+     */
+    static Map<String, List<DependencyRef>> withPackagesInHead(Map<String, List<DependencyRef>> byProject,
+                                                               Map<String, String> headProjects,
+                                                               List<AppComponent> components, List<String> contexts) {
+        var base = new LinkedHashMap<String, String>();
+        ComponentScaffold.generate(components, contexts, Map.of()).forEach(f -> base.put(f.path(), f.content()));
+        var merged = new LinkedHashMap<String, List<DependencyRef>>();
+        byProject.forEach((project, refs) -> {
+            var packages = new ArrayList<>(refs);
+            var head = headProjects.get(project);
+            if (head != null) {
+                var matcher = PACKAGE_REFERENCE.matcher(head);
+                while (matcher.find()) {
+                    var name = matcher.group(1);
+                    var inProfile = base.getOrDefault(project, "").toLowerCase(java.util.Locale.ROOT)
+                            .contains("include=\"" + name.toLowerCase(java.util.Locale.ROOT) + "\"");
+                    if (!inProfile && packages.stream().noneMatch(p -> p.name().equalsIgnoreCase(name))) {
+                        packages.add(new DependencyRef("NUGET", name, matcher.group(2)));
+                    }
+                }
+            }
+            merged.put(project, packages);
+        });
+        return merged;
     }
 
     static List<String> projectsOf(List<AppComponent> components, List<String> contexts, List<String> ownedPaths) {

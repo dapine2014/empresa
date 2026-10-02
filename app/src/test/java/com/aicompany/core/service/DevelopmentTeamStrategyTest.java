@@ -1011,4 +1011,30 @@ class DevelopmentTeamStrategyTest {
         assertEquals(List.of(), DevelopmentTeamStrategy.apiOwnerErrors(Map.of("backend/src/X.Api/Program.cs",
                 "var g = app.MapGroup(\"/clientes\").WithTags(\"C\");\ng.MapGet(\"/{id}\", () => 1);")));
     }
+
+    // Revisión final I6: en una ronda nueva, regenerar el .csproj por Npgsql no borra Dapper, aprobado en la ronda 0.
+    @Test
+    void regeneratedProjectsKeepThePackagesAlreadyInHead() {
+        var components = List.of(new AppComponent(StackProfile.DOTNET_APP, ""));
+        var project = "src/Clientes.Infrastructure/Clientes.Infrastructure.csproj";
+        var head = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <PackageReference Include="Npgsql" Version="8.0.5" />
+                    <PackageReference Include="Dapper" Version="2.1.35" />
+                  </ItemGroup>
+                </Project>
+                """;
+        var merged = DevelopmentTeamStrategy.withPackagesInHead(
+                Map.of(project, List.of(DevelopmentTeamStrategy.NPGSQL)), Map.of(project, head), components,
+                List.of("Clientes"));
+        assertEquals(List.of(DevelopmentTeamStrategy.NPGSQL, new DependencyRef("NUGET", "Dapper", "2.1.35")),
+                merged.get(project));
+
+        var tests = "tests/Clientes.Tests/Clientes.Tests.csproj";
+        var testsHead = "<PackageReference Include=\"xunit\" Version=\"2.5.3\" />";
+        assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0")), DevelopmentTeamStrategy.withPackagesInHead(
+                Map.of(tests, List.of(new DependencyRef("NUGET", "A", "1.0.0"))), Map.of(tests, testsHead), components,
+                List.of("Clientes")).get(tests));
+    }
 }
