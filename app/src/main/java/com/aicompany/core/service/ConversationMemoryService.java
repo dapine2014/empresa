@@ -35,7 +35,24 @@ public class ConversationMemoryService {
         this.driver = driver;
     }
 
+    private static final java.util.regex.Pattern PASSWORD_IN_TEXT =
+            java.util.regex.Pattern.compile("(?i)\\b(password|pwd)\\s*=\\s*[^;\\s]+");
+    private static final java.util.regex.Pattern URI_WITH_PASSWORD =
+            java.util.regex.Pattern.compile("(?i)\\b(postgres(?:ql)?|mongodb(?:\\+srv)?)://([^:/@\\s]+):[^@\\s]+@");
+
+    /**
+     * Spec 2026-10-02 §1: el historial se envía al modelo, así que una clave pegada en el chat nunca se guarda tal cual.
+     */
+    public static String redactSecrets(String text) {
+        if (text == null) {
+            return null;
+        }
+        var redacted = PASSWORD_IN_TEXT.matcher(text).replaceAll("$1=[clave omitida]");
+        return URI_WITH_PASSWORD.matcher(redacted).replaceAll("$1://$2:[clave omitida]@");
+    }
+
     public void recordMessage(String role, String content) {
+        var safeContent = redactSecrets(content);
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
                 tx.run("MERGE (c:Conversation {id:'MAIN'}) "
@@ -44,7 +61,7 @@ public class ConversationMemoryService {
                         Map.of(
                                 "id", UUID.randomUUID().toString(),
                                 "role", role,
-                                "content", content,
+                                "content", safeContent,
                                 "createdAt", Instant.now().toString()
                         ));
                 return null;
