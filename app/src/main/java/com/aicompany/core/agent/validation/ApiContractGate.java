@@ -19,7 +19,13 @@ public final class ApiContractGate {
     private static final Pattern STRING = Pattern.compile("(['\"])(.*?)\\1");
     private static final Pattern LOCALHOST = Pattern.compile("https?://(localhost|127\\.0\\.0\\.1)");
 
+    private static final Pattern HTTP_CLIENT = Pattern.compile("package:http/|Uri\\.(?:parse|http|https)\\(|\\bhttp\\.(?:get|post|put|patch|delete|Client)\\b");
+
     private ApiContractGate() {
+    }
+
+    private static boolean isTest(String path) {
+        return path.startsWith("test/") || path.contains("/test/");
     }
 
     public static List<String> check(List<GeneratedFile> files, List<HttpRoute> routes) {
@@ -35,13 +41,18 @@ public final class ApiContractGate {
         var errors = new ArrayList<String>();
         for (var file : files == null ? List.<GeneratedFile>of() : files) {
             if (file == null || file.path() == null || !file.path().endsWith(".dart")
-                    || file.path().endsWith(ApiRoutesGenerator.PATH)) {
+                    || file.path().endsWith(ApiRoutesGenerator.PATH) || isTest(file.path())) {
                 continue;
             }
             var content = Objects.requireNonNullElse(file.content(), "");
             if (LOCALHOST.matcher(content).find()) {
                 errors.add(file.path() + ": no escribas la URL de la API (localhost); usa "
                         + "const String.fromEnvironment('API_BASE_URL') como base y ApiRoutes para las rutas.");
+                continue;
+            }
+            // Revisión final (I4): solo un archivo que llama por HTTP puede escribir rutas de la API; las rutas de
+            // navegación (MaterialApp, Navigator) de cualquier otro archivo no son llamadas a la API.
+            if (!HTTP_CLIENT.matcher(content).find()) {
                 continue;
             }
             var found = new LinkedHashSet<String>();

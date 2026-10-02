@@ -39,4 +39,15 @@ class ApiContractGateTest {
                 new GeneratedFile("app/lib/api/api_routes.dart", "ApiRoute('GET', '/clientes/$id')"),
                 new GeneratedFile("app/pubspec.yaml", "name: app")), ROUTES));
     }
+
+    // Revisión final I4: rutas de navegación de la app y tests con MockClient no son llamadas a la API.
+    @Test
+    void navigationRoutesAndTestsAreNotApiCalls() {
+        assertEquals(List.of(), ApiContractGate.check(List.of(
+                new GeneratedFile("app/lib/main.dart",
+                        "MaterialApp(routes: {'/oportunidades': (c) => const Lista()});\n"
+                                + "Navigator.pushNamed(context, '/clientes/nuevo');"),
+                new GeneratedFile("app/test/clientes/repo_test.dart",
+                        "import 'package:http/testing.dart';\nexpect(request.url.path, '/clientes/1');")), ROUTES));
+    }
 }
