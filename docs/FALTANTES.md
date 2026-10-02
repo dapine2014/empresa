@@ -1,6 +1,6 @@
 # Faltantes del Development Group
 
-**Actualizado**: 2026-10-02 (después de los bloques 1 y 3 y de "agentes encendidos y apagados").
+**Actualizado**: 2026-10-02 (después de los bloques 1 y 3, "agentes encendidos y apagados" y el diseño de Diego como DBA). El equipo es híbrido: los roles bloqueados por "fases" se corrigen uno por uno, empezando por Diego.
 **Objetivo de la etapa**: que el Development Group entregue software real y verificado (ver `docs/superpowers/specs/2026-10-01-development-group-fase1-design.md` y la hoja de ruta `docs/superpowers/plans/2026-10-01-development-group-fase1-roadmap.md`).
 
 Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología online con Flutter, .NET y PostgreSQL) llegue a `VERIFIED`, y lo que quedó pendiente en los bloques ya hechos. Cuando se cierre un faltante, se marca `[x]` con el PR que lo resolvió.
@@ -17,6 +17,10 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | **Varios stacks en una misión** | Una misión usa un solo perfil: Flutter + .NET + PostgreSQL juntos no existe (Neo eligió solo Flutter en el intento de psicología) | Fase 2 |
 | [ ] | **PostgreSQL en el sandbox** | Un producto con base de datos no tiene dónde probarse | Fase 2 |
 | [ ] | **Entrega y DevOps (Andrea)** | No hay Dockerfile ni CI del producto generado | Fase 2 |
+| [ ] | **Diego como DBA: conexiones y PostgreSQL** (incluido AWS RDS) | Diego no puede crear bases reales ni hay dónde cargar credenciales | Spec `2026-10-02-diego-dba-postgresql-design.md` |
+| [ ] | **Diego con MongoDB** (incluido AWS DocumentDB) | Colecciones, validación e índices aplicados con las credenciales del fundador | Spec propio, después de PostgreSQL |
+| [ ] | **Diego con Firebase/Firestore** | Colecciones, índices y reglas con la cuenta de servicio del fundador | Spec propio |
+| [ ] | **Habilitar a Kael (juegos 2D con Godot)** | El equipo es híbrido (decisión del fundador 2026-10-02): Kael está encendido pero su rol está bloqueado por "fase 3" | Siguiente rol a corregir |
 | [ ] | **Juegos (Kael, Orion, Luna)** | Godot, Blender y proveedores de arte y audio no están habilitados | Fase 3 |
 | [ ] | **Entrega, chat y pantalla del Development Group** | `DeliveryResult`, consultas de rondas y backlog en el chat, detalle en Missions | Bloque 8 |
 | [ ] | **Prueba de aceptación en vivo** | Hello World Flutter en `VERIFIED` por chat, incluido un reinicio a mitad de misión | Bloque 9 |
