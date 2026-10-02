@@ -16,7 +16,7 @@ import java.util.Map;
 public class JobController {
 
     public record JobRequest(String jobType, String missionId, String commitSha, String stackProfile,
-                             DependencyRequest dependencies) {
+                             String componentDir, DependencyRequest dependencies) {
     }
 
     private final VerifyJobRunner runner;
@@ -65,6 +65,12 @@ public class JobController {
             return ResponseEntity.badRequest().body(Map.of("error", "stackProfile desconocido: " + request.stackProfile()));
         }
 
-        return ResponseEntity.ok(runner.verify(request.missionId(), request.commitSha(), profile.get()));
+        // Spec 2026-10-02 B1 §3: carpeta del componente, de una lista fija (nunca una ruta libre).
+        var componentDir = request.componentDir() == null ? "" : request.componentDir();
+        if (!VerifyJobRunner.COMPONENT_DIRS.contains(componentDir)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "componentDir desconocido: " + componentDir));
+        }
+
+        return ResponseEntity.ok(runner.verify(request.missionId(), request.commitSha(), profile.get(), componentDir));
     }
 }

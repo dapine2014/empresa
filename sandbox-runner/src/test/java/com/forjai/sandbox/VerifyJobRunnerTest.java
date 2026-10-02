@@ -120,4 +120,21 @@ class VerifyJobRunnerTest {
             assertEquals(0, entries.count());
         }
     }
+
+    // Spec 2026-10-02 B1 §3: solo se extrae la carpeta del componente pedido.
+    @Test
+    void componentDirArchivesOnlyThatTree() {
+        runner(fake(step -> new ProcessExecutor.Execution(0, "", false)))
+                .verify("M-1", "a".repeat(40), ExecutionProfile.DOTNET_APP, "backend");
+        assertTrue(calls.stream().anyMatch(c -> c.get(0).equals("git") && c.contains("a".repeat(40) + ":backend")),
+                calls.toString());
+    }
+
+    @Test
+    void unknownComponentDirFailsTheCheckout() {
+        var result = runner(fake(step -> new ProcessExecutor.Execution(0, "", false)))
+                .verify("M-1", "a".repeat(40), ExecutionProfile.DOTNET_APP, "../etc");
+        assertEquals("FAIL", result.overall());
+        assertTrue(result.steps().get(0).outputTail().contains("componentDir"), result.steps().get(0).outputTail());
+    }
 }
