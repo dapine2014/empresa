@@ -145,7 +145,7 @@ public class DevelopmentRuntime {
         return submit(taskId, missionId, agentId, () -> executeWithRetries(
                 taskId, missionId, agentId, prompt,
                 (attemptPrompt, model, agentPrompt) -> discardForeignFiles(
-                        ceoService.generateDevelopmentArtifact(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
+                        collectBatches(agentId, attemptPrompt, agentPrompt, model), ownedPaths,
                         !expectedProjects.isEmpty()),
                 result -> verifyGenerated(result, ownedPaths, expectedProjects, requiredPaths),
                 "GENERATED"));
@@ -247,6 +247,77 @@ public class DevelopmentRuntime {
         } finally {
             memory.setAgentStatus(agentId, "IDLE");
         }
+    }
+
+    static final int MAX_BATCHES = 8;
+
+    static final String BATCH_RULE = """
+
+            ENTREGA POR LOTES (obligatorio): tu respuesta tiene un límite de salida. Entrega como máximo 4 archivos o
+            unos 30.000 caracteres por respuesta, cada archivo COMPLETO. Si te faltan archivos, responde con
+            "complete": false y "remainingPaths" con las rutas que todavía vas a entregar; Forjai te pedirá el resto.
+            Cuando ya entregaste todo, "complete": true y "remainingPaths": [].
+            """;
+
+    /**
+     * Spec 2026-10-01 §5 (verificado en vivo: MISSION-1790905978528, el JSON de Mila se cortó en los 3 intentos).
+     * Junta lotes hasta complete=true. Un lote cortado se pide de nuevo con menos archivos; dos cortes seguidos, un
+     * lote sin rutas nuevas o más de MAX_BATCHES lotes terminan el intento (executeWithRetries reintenta).
+     */
+    DevelopmentResult collectBatches(String agentId, String prompt, String agentPrompt, String model) {
+        var byPath = new java.util.LinkedHashMap<String, DevelopmentResult.GeneratedFile>();
+        var packages = new ArrayList<DevelopmentResult.PackageRequest>();
+        String summary = null;
+        var continuation = "";
+        var cutInARow = 0;
+
+        for (int batch = 1; batch <= MAX_BATCHES; batch++) {
+            DevelopmentResult part;
+            try {
+                part = ceoService.generateDevelopmentArtifact(agentId, prompt + BATCH_RULE + continuation, agentPrompt, model);
+                cutInARow = 0;
+            } catch (com.aicompany.core.service.TruncatedResponseException ex) {
+                cutInARow++;
+                if (cutInARow >= 2) {
+                    throw new IllegalStateException("La respuesta se cortó dos veces seguidas aun pidiendo menos "
+                            + "archivos: entrega de a 1 o 2 archivos por lote.");
+                }
+                continuation = "\n\nTU RESPUESTA ANTERIOR SE CORTÓ por el límite de salida y se descartó: entrega como "
+                        + "máximo 2 archivos en este lote." + received(byPath.keySet());
+                continue;
+            }
+
+            if (summary == null) {
+                summary = part.summary();
+            }
+            var newPaths = 0;
+            for (var file : part.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : part.files()) {
+                if (file == null || file.path() == null) {
+                    continue;
+                }
+                if (!byPath.containsKey(file.path())) {
+                    newPaths++;
+                }
+                byPath.put(file.path(), file);
+            }
+            packages.addAll(part.packagesOrEmpty());
+
+            if (part.isComplete()) {
+                return new DevelopmentResult(summary, new ArrayList<>(byPath.values()), packages, true, List.of());
+            }
+            if (newPaths == 0) {
+                throw new IllegalStateException("El lote " + batch + " no trajo archivos nuevos y dijo complete=false: "
+                        + "entrega las rutas que faltan o responde complete=true.");
+            }
+            continuation = "\n\nCONTINUACIÓN (lote " + (batch + 1) + "): no repitas lo ya entregado."
+                    + received(byPath.keySet()) + "\nTe faltan, según tu lote anterior: " + part.remainingPathsOrEmpty();
+        }
+
+        throw new IllegalStateException("Superaste " + MAX_BATCHES + " lotes sin marcar complete=true.");
+    }
+
+    private static String received(java.util.Set<String> paths) {
+        return paths.isEmpty() ? "" : "\nARCHIVOS YA RECIBIDOS: " + new ArrayList<>(paths);
     }
 
     static final String DISCARDED_NOTE = "[Forjai descartó archivos que no te corresponden (de otro agente, o "

@@ -35,9 +35,12 @@ public final class DevelopmentResultSchema {
             "properties", Map.of(
                     "summary", Map.of("type", "string", "minLength", 1),
                     "files", Map.of("type", "array", "items", FILE_ITEM_SCHEMA, "minItems", 1),
-                    "packages", Map.of("type", "array", "items", PACKAGE_ITEM_SCHEMA)
+                    "packages", Map.of("type", "array", "items", PACKAGE_ITEM_SCHEMA),
+                    // Spec 2026-10-01 §5: entrega por lotes.
+                    "complete", Map.of("type", "boolean"),
+                    "remainingPaths", Map.of("type", "array", "items", Map.of("type", "string"))
             ),
-            "required", List.of("summary", "files"),
+            "required", List.of("summary", "files", "complete"),
             "additionalProperties", false
     );
 }

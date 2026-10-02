@@ -325,4 +325,83 @@ class DevelopmentRuntimeTest {
         assertTrue(prompts.getAllValues().get(1).contains("Código omitido en web/game/main.js (línea 2"),
                 prompts.getAllValues().get(1));
     }
+
+    // Spec 2026-10-01 §5: entrega por lotes (MISSION-1790905978528: el JSON de Mila se cortó en los 3 intentos).
+    private static DevelopmentResult part(boolean complete, List<String> remaining, String... paths) {
+        return new DevelopmentResult("lote", java.util.Arrays.stream(paths)
+                .map(p -> new GeneratedFile(p, "contenido de " + p)).toList(), List.of(), complete, remaining);
+    }
+
+    @Test
+    void batchesAreJoinedUntilComplete() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenReturn(part(false, List.of("web/game/b.js"), "web/game/a.js"))
+                .thenReturn(part(true, List.of(), "web/game/b.js"));
+
+        var result = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game")).get();
+
+        assertEquals(List.of("web/game/a.js", "web/game/b.js"), result.files().stream().map(GeneratedFile::path).toList());
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(2)).generateDevelopmentArtifact(eq("frontend-ui"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(1).contains("YA RECIBIDOS: [web/game/a.js]"), prompts.getAllValues().get(1));
+        assertTrue(prompts.getAllValues().get(1).contains("web/game/b.js"), prompts.getAllValues().get(1));
+    }
+
+    @Test
+    void aCutBatchIsRequestedAgainWithFewerFiles() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenThrow(new com.aicompany.core.service.TruncatedResponseException("se cortó"))
+                .thenReturn(part(true, List.of(), "web/game/a.js"));
+
+        runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game")).get();
+
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceoService, times(2)).generateDevelopmentArtifact(eq("frontend-ui"), prompts.capture(), anyString(), anyString());
+        assertTrue(prompts.getAllValues().get(1).contains("SE CORTÓ"), prompts.getAllValues().get(1));
+    }
+
+    @Test
+    void twoCutsInARowEndTheAttempt() {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenThrow(new com.aicompany.core.service.TruncatedResponseException("se cortó"));
+
+        var future = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game"));
+
+        var ex = assertThrows(java.util.concurrent.ExecutionException.class, future::get);
+        assertTrue(ex.getCause().getMessage().contains("se cortó dos veces"), ex.getCause().getMessage());
+    }
+
+    @Test
+    void aBatchWithoutNewPathsEndsTheAttempt() {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenReturn(part(false, List.of("web/game/b.js"), "web/game/a.js"));
+
+        var future = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game"));
+
+        var ex = assertThrows(java.util.concurrent.ExecutionException.class, future::get);
+        assertTrue(ex.getCause().getMessage().contains("no trajo archivos nuevos"), ex.getCause().getMessage());
+    }
+
+    @Test
+    void aFileSentTwiceKeepsTheLastVersion() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("frontend-ui"), anyString(), anyString(), anyString()))
+                .thenReturn(part(false, List.of("web/game/b.js"), "web/game/a.js"))
+                .thenReturn(new DevelopmentResult("lote", List.of(new GeneratedFile("web/game/a.js", "versión 2"),
+                        new GeneratedFile("web/game/b.js", "b")), List.of(), true, List.of()));
+
+        var result = runtime.generate("T-1", "MISSION-1", "frontend-ui", "prompt", List.of("web/game")).get();
+
+        assertEquals(2, result.files().size());
+        assertEquals("versión 2", result.files().get(0).content());
+    }
+
+    @Test
+    void theBatchRuleIsAlwaysInThePrompt() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), anyString()))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(ceoService).generateDevelopmentArtifact(eq("backend"), contains("ENTREGA POR LOTES"), anyString(), anyString());
+    }
 }
