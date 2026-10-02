@@ -21,12 +21,13 @@ public final class ElidedCodeGate {
             Set.of(".cs", ".dart", ".js", ".ts", ".tsx", ".jsx", ".py", ".java", ".gd", ".html", ".css");
 
     private static final Pattern ONLY_ELLIPSIS = Pattern.compile("^(\\.{3}|…)$");
-    private static final Pattern COMMENTED_ELLIPSIS =
-            Pattern.compile("^(//+|#|/\\*+|\\*|<!--)\\s*(\\.{3}|…)\\s*(\\*/|-->)?$");
-    private static final Pattern COMMENT = Pattern.compile("^(//+|#|/\\*+|\\*|<!--).*");
+    // Revisión final (m-6, m-7): un comentario que EMPIEZA con la elisión ("// ... otros métodos") es código
+    // omitido; "#" solo es comentario en Python y GDScript (en C# es #region, en CSS un selector).
+    private static final Pattern COMMENT_PREFIX = Pattern.compile("^(//+|/\\*+|\\*|<!--)\\s*(.*)$");
+    private static final Pattern HASH_COMMENT_PREFIX = Pattern.compile("^(#)\\s*(.*)$");
     private static final List<String> SKIP_PHRASES = List.of(
-            "resto del código", "resto del codigo", "el resto igual", "código existente", "codigo existente",
-            "rest of the code", "rest of code", "existing code", "todo: implement");
+            "resto del código", "resto del codigo", "el resto igual", "rest of the code", "rest of code",
+            "todo: implement");
     private static final Pattern NOT_IMPLEMENTED = Pattern.compile("NotImplementedException\\s*\\(|UnimplementedError\\s*\\(");
 
     private ElidedCodeGate() {
@@ -42,7 +43,7 @@ public final class ElidedCodeGate {
             var lines = file.content().split("\n", -1);
             for (int i = 0; i < lines.length; i++) {
                 var line = lines[i].strip();
-                if (isElided(line) || (!isTest(path) && NOT_IMPLEMENTED.matcher(line).find())) {
+                if (isElided(line, path) || (!isTest(path) && NOT_IMPLEMENTED.matcher(line).find())) {
                     errors.add("Código omitido en " + path + " (línea " + (i + 1) + ": \"" + abbreviate(line) + "\"). "
                             + "Escribe el archivo COMPLETO, sin \"...\", sin \"resto del código\" y sin métodos sin "
                             + "implementar: el sandbox compila exactamente lo que entregas.");
@@ -53,15 +54,26 @@ public final class ElidedCodeGate {
         return errors;
     }
 
-    private static boolean isElided(String line) {
-        if (ONLY_ELLIPSIS.matcher(line).matches() || COMMENTED_ELLIPSIS.matcher(line).matches()) {
+    private static boolean isElided(String line, String path) {
+        if (ONLY_ELLIPSIS.matcher(line).matches()) {
             return true;
         }
-        if (!COMMENT.matcher(line).matches()) {
+        var lower = path.toLowerCase(Locale.ROOT);
+        var comment = COMMENT_PREFIX.matcher(line);
+        var hash = HASH_COMMENT_PREFIX.matcher(line);
+        String text;
+        if (comment.matches()) {
+            text = comment.group(2);
+        } else if ((lower.endsWith(".py") || lower.endsWith(".gd")) && hash.matches()) {
+            text = hash.group(2);
+        } else {
             return false;
         }
-        var lower = line.toLowerCase(Locale.ROOT);
-        return SKIP_PHRASES.stream().anyMatch(lower::contains);
+        if (text.startsWith("...") || text.startsWith("…")) {
+            return true;
+        }
+        var lowerText = text.toLowerCase(Locale.ROOT);
+        return SKIP_PHRASES.stream().anyMatch(lowerText::contains);
     }
 
     private static boolean isCode(String path) {

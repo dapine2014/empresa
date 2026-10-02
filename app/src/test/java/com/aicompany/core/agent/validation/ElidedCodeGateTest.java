@@ -55,4 +55,21 @@ class ElidedCodeGateTest {
         assertTrue(check("README.md", "Instalar...\n...\n").isEmpty());
         assertTrue(check("pubspec.yaml", "# ...\nname: app").isEmpty());
     }
+
+    // Revisión final (m-7): la forma más común es un comentario que empieza con la elisión y sigue con texto.
+    @Test
+    void aCommentThatStartsWithAnEllipsisIsElidedCode() {
+        assertFalse(check("src/A.cs", "class A {\n  // ... otros métodos\n}").isEmpty());
+        assertFalse(check("lib/a.dart", "class A {\n  // ...existing methods\n}").isEmpty());
+        assertFalse(check("src/A.cs", "class A {\n  /* ... igual que antes */\n}").isEmpty());
+    }
+
+    // Revisión final (m-6): comentarios legítimos y selectores CSS no son código omitido.
+    @Test
+    void legitimateCommentsAndCssSelectorsAreNotElidedCode() {
+        assertTrue(check("src/A.cs", "// Mantiene compatibilidad con el código existente\nclass A {}").isEmpty());
+        assertTrue(check("src/A.cs", "// Adapter over existing code\nclass A {}").isEmpty());
+        assertTrue(check("web/app.css", "#existing-code-banner {\n  color: red;\n}").isEmpty());
+        assertTrue(check("src/A.cs", "#region Existing code\nclass A {}\n#endregion").isEmpty());
+    }
 }

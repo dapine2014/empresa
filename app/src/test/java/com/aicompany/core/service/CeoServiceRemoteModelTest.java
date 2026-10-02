@@ -140,4 +140,15 @@ class CeoServiceRemoteModelTest {
                 () -> ceoService.generateDevelopmentArtifact("frontend-ui", "p", "", "nvidia:moonshotai/kimi-k3"));
         assertFalse(ex instanceof TruncatedResponseException);
     }
+
+    // Revisión final (I-2): una respuesta vacía no es un corte (Jackson dice "No content ... end-of-input").
+    @Test
+    void anEmptyResponseIsNotATruncation() {
+        when(remote.complete(eq("moonshotai/kimi-k3"), anyList(), isNull(), eq(true), anyInt()))
+                .thenReturn(new OpenAiCompatibleClient.RemoteReply("  ", List.of(), "stop"));
+
+        var ex = assertThrows(IllegalStateException.class,
+                () -> ceoService.generateDevelopmentArtifact("frontend-ui", "p", "", "nvidia:moonshotai/kimi-k3"));
+        assertFalse(ex instanceof TruncatedResponseException, ex.getMessage());
+    }
 }

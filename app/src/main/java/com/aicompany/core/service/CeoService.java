@@ -1506,7 +1506,9 @@ public class CeoService {
             if (ex instanceof TruncatedResponseException truncated) {
                 throw truncated;
             }
-            if (String.valueOf(ex.getMessage()).contains("end-of-input")) {
+            // Revisión final (I-2): "No content ... end-of-input" es una respuesta vacía, no un corte.
+            if (response != null && !response.isBlank()
+                    && String.valueOf(ex.getMessage()).contains("Unexpected end-of-input")) {
                 throw new TruncatedResponseException("La respuesta de " + agentId + " para " + operation
                         + " terminó a mitad del JSON (" + (response == null ? 0 : response.length()) + " caracteres).");
             }
