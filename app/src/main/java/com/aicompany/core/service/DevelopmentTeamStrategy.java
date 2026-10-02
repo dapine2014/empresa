@@ -265,9 +265,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             progress.advance(MissionStatus.EVALUATING, 80, "Sandbox", round == 0
                     ? "Compilando, corriendo tests y arrancando el código en el sandbox."
                     : "Ronda de corrección " + round + ": verificando de nuevo en el sandbox.");
-            var verified = sandbox.verify(missionId, headSha, components.get(0).profile().name());
+            var verified = verifyComponents(missionId, headSha, components);
             sandboxResult = verified.orElse(null);
-            sandboxError = verified.isEmpty() ? sandbox.lastError() : null;
+            sandboxError = verified.isEmpty() ? (components.size() == 1 ? sandbox.lastError() : lastSandboxError) : null;
 
             if (sandboxResult == null || sandboxResult.passed()) {
                 break;
@@ -275,7 +275,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): los "using" faltantes los corrige Forjai sin modelo.
             if (autofixRounds < MAX_AUTOFIX_ROUNDS) {
-                var autofix = commitMissingUsings(missionId, headSha, components.get(0).profile(), plan.contextNames(), sandboxResult);
+                var autofix = commitMissingUsings(missionId, headSha, components, plan.contextNames(), sandboxResult);
                 if (autofix != null) {
                     committed.add(autofix);
                     headSha = autofix.commitSha();
@@ -614,17 +614,32 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     static final int MAX_AUTOFIX_ROUNDS = 3;
 
     private static List<CompilerErrorParser.CompilerError> compileErrors(SandboxResult result) {
-        var failed = result.stepsOrEmpty().stream()
-                .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
-                .findFirst();
-        if (failed.isEmpty() || !List.of("restore", "build").contains(failed.get().name())) {
-            return List.of();
+        return ComponentSandbox.compileErrors(result);
+    }
+
+    private String lastSandboxError;
+
+    /** Spec 2026-10-02 B1 §3: un VERIFY por componente, siempre todos (una ronda de corrección recibe todos los errores). */
+    private java.util.Optional<SandboxResult> verifyComponents(String missionId, String headSha,
+                                                               List<AppComponent> components) {
+        if (components.size() == 1) {
+            return sandbox.verify(missionId, headSha, components.get(0).profile().name());
         }
-        return CompilerErrorParser.parse(failed.get().outputTail());
+        var results = new ArrayList<java.util.Optional<SandboxResult>>();
+        String error = null;
+        for (var component : components) {
+            var result = sandbox.verify(missionId, headSha, component.profile().name(), component.dir());
+            if (result.isEmpty() && error == null) {
+                error = component.dir() + "/: " + sandbox.lastError();
+            }
+            results.add(result);
+        }
+        lastSandboxError = error;
+        return ComponentSandbox.combine(components, results);
     }
 
     /** Commit "Forjai (auto-fix)" con los using faltantes, o null si no hay nada seguro que corregir. */
-    private CommittedWork commitMissingUsings(String missionId, String headSha, StackProfile profile,
+    private CommittedWork commitMissingUsings(String missionId, String headSha, List<AppComponent> components,
                                               List<String> contexts, SandboxResult result) {
         var errors = compileErrors(result);
         if (errors.isEmpty()) {
@@ -637,7 +652,24 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     files.put(path, workspace.readFileAtCommit(missionId, headSha, path));
                 }
             }
-            var fixes = MissingUsingFixer.fix(profile, contexts, files, errors);
+            // Spec 2026-10-02 B1 §3: por componente .NET, con rutas relativas a su carpeta.
+            var fixes = new LinkedHashMap<String, String>();
+            for (var component : components) {
+                if (component.profile().ecosystem() != StackProfile.Ecosystem.NUGET) {
+                    continue;
+                }
+                var own = new LinkedHashMap<String, String>();
+                files.forEach((path, content) -> {
+                    if (component.owns(path)) {
+                        component.strip(path).ifPresent(p -> own.put(p, content));
+                    }
+                });
+                var ownErrors = errors.stream().filter(e -> component.owns(e.path()))
+                        .map(e -> new CompilerErrorParser.CompilerError(component.strip(e.path()).orElseThrow(),
+                                e.line(), e.column(), e.code(), e.message())).toList();
+                MissingUsingFixer.fix(component.profile(), component.contexts(contexts), own, ownErrors)
+                        .forEach((path, content) -> fixes.put(component.prefix(path), content));
+            }
             if (fixes.isEmpty()) {
                 return null;
             }
@@ -659,7 +691,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var failed = result.stepsOrEmpty().stream()
                 .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
                 .findFirst();
-        if (failed.isEmpty() || !List.of("restore", "build").contains(failed.get().name())) {
+        if (failed.isEmpty() || !List.of("restore", "build").contains(ComponentSandbox.stepName(failed.get().name()))) {
             return byOwner;
         }
         var errors = compileErrors(result);
@@ -1289,13 +1321,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         return result.stepsOrEmpty().stream()
                 .map(s -> {
-                    var label = switch (s.name()) {
+                    var dir = ComponentSandbox.dirOf(s.name());
+                    var label = (dir.isEmpty() ? "" : dir + " ") + switch (ComponentSandbox.stepName(s.name())) {
                         case "build" -> "Build";
                         case "test" -> "Tests";
                         case "smoke" -> "Arranque";
                         default -> s.name();
                     };
-                    var tests = "test".equals(s.name())
+                    var tests = "test".equals(ComponentSandbox.stepName(s.name()))
                             ? " " + s.testsPassed() + "/" + (s.testsPassed() + s.testsFailed()) : "";
                     return label + " " + s.status() + tests + " (" + (s.durationMs() / 1000) + " s)";
                 })

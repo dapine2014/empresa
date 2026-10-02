@@ -874,4 +874,81 @@ class DevelopmentTeamStrategyTest {
                 "app.MapGet(\"/health\", () => \"ok\"); // http://localhost:5000")));
         assertEquals(List.of(), checks.getValue().apply(ordinary));
     }
+
+    // ---- Apps completas (spec 2026-10-02 B1) ----
+
+    private static final String SHA_BACKEND = "8".repeat(40);
+    private static final String SHA_APP = "9".repeat(40);
+    private static final String PROGRAM = "var app = builder.Build();\napp.MapGet(\"/clientes/{id}\", (Guid id) => Results.Ok());";
+
+    private static TeamPlan fullstackPlan() {
+        return new TeamPlan("CRM", null, null, List.of(
+                new PlannedTask("backend", "WORK", "API", "API", List.of("api"), List.of("backend/src/Clientes.Domain",
+                        "backend/src/Clientes.Application", "backend/src/Clientes.Api")),
+                new PlannedTask("frontend-ui", "WORK", "APP", "App", List.of("flutter"), List.of("app/lib/clientes/domain",
+                        "app/lib/clientes/presentation", "app/pubspec.yaml", "app/lib/main.dart", "app/web")),
+                new PlannedTask("qa", "VALIDATION", "CODE_REVIEW", "Revisar", List.of("qa"), List.of())),
+                List.of(), "DOTNET_APP", List.of(new TeamPlan.BoundedContext("Clientes", "Clientes del CRM")),
+                List.of(new TeamPlan.GlossaryTerm("Cliente", "Quien compra"),
+                        new TeamPlan.GlossaryTerm("Oportunidad", "Venta posible"),
+                        new TeamPlan.GlossaryTerm("Etapa", "Paso de la venta")),
+                null, List.of("DOTNET_APP", "FLUTTER_WEB_APP"));
+    }
+
+    private static PlannedTask task(TeamPlan plan, String agentId) {
+        return plan.workTasks().stream().filter(t -> t.agentId().equals(agentId)).findFirst().orElseThrow();
+    }
+
+    private static TeamMissionContext fullstackContext() {
+        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Development Group", "ACTIVE", "engineering", List.of(
+                new TeamMemberInfo("engineering", "Neo", "Líder", "TECH_LEAD", List.of("architecture"), "m"),
+                new TeamMemberInfo("backend", "Iris", "Backend", "BACKEND", List.of("api"), "m"),
+                new TeamMemberInfo("frontend-ui", "Mila", "UI", "UI_UX", List.of("flutter"), "m"),
+                new TeamMemberInfo("qa", "Vera", "QA", "QA", List.of("qa"), "m")));
+        return new TeamMissionContext("M-1", "un CRM simple", team, fullstackPlan());
+    }
+
+    private void stubFullstack() throws Exception {
+        for (var id : List.of("M-1-BACKEND", "M-1-FRONTEND-UI")) {
+            var result = CompletableFuture.completedFuture(id.endsWith("BACKEND")
+                    ? dev("backend/src/Clientes.Api/Program.cs") : dev("app/lib/main.dart"));
+            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList())).thenReturn(result);
+            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                    .thenReturn(result);
+        }
+        when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("5".repeat(40), List.of("backend/Solution.sln")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-BACKEND"), eq("backend"), eq("Iris"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_BACKEND, List.of("backend/src/Clientes.Api/Program.cs")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-API-ROUTES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("6".repeat(40), List.of("app/lib/api/api_routes.dart")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_APP, List.of("app/lib/main.dart")));
+        when(workspace.filesAtCommit(eq("M-1"), anyString()))
+                .thenReturn(List.of("backend/src/Clientes.Api/Program.cs", "app/lib/main.dart"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("backend/src/Clientes.Api/Program.cs"))).thenReturn(PROGRAM);
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("app/lib/main.dart"))).thenReturn("void main() {}");
+        when(dependencies.resolve(anyString(), anyString(), anyList()))
+                .thenReturn(new DependencyService.Outcome(List.of(), List.of(), null));
+        when(validator.validate(eq("M-1"), anyList(), anyList(), anyList(), anyList(), anyList()))
+                .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+        when(runtime.review(anyString(), eq("M-1"), eq("qa"), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+    }
+
+    // Review Focus 5: con dos componentes, si el runner cae en app/ la misión no queda VERIFIED.
+    @Test
+    void fullstackWithoutTheSecondSandboxResultIsUnvalidated() throws Exception {
+        stubFullstack();
+        when(sandbox.verify(eq("M-1"), anyString(), eq("DOTNET_APP"), eq("backend"))).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("FLUTTER_WEB_APP"), eq("app"))).thenReturn(Optional.empty());
+        when(sandbox.lastError()).thenReturn("sandbox-runner no disponible: timeout");
+
+        var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
+
+        verify(memory).recordStaticValidation(anyString(), eq("UNVALIDATED"), anyString());
+        assertTrue(result.verifiableState().contains("app/: sandbox-runner no disponible"), result.verifiableState());
+    }
 }
