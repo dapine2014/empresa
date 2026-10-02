@@ -362,4 +362,40 @@ class TeamPlanValidatorTest {
         var errors = validateDev(flutter);
         assertTrue(errors.stream().anyMatch(e -> e.contains("DOTNET_APP")), errors.toString());
     }
+
+    /** Plan fullstack ya resuelto (como lo deja TeamPlanResolver). */
+    private TeamPlan resolvedFullstack(String stackProfile, List<String> components, TeamPlan.DatabaseNeed database) {
+        var plan = new TeamPlan("App", null, null, List.of(
+                new PlannedTask("backend", "WORK", "API", "API", List.of("api"), List.of()),
+                new PlannedTask("devops", "WORK", "DATA", "Datos", List.of("persistence"), List.of()),
+                new PlannedTask("frontend-ui", "WORK", "APP", "App", List.of("flutter"), List.of()),
+                new PlannedTask("qa", "WORK", "TESTS", "Tests", List.of("tests"), List.of())),
+                List.of(), stackProfile, List.of(new TeamPlan.BoundedContext("Clientes", "Clientes del CRM")),
+                GLOSSARY, database, components);
+        return new TeamPlanResolver().resolve(plan, engineeringTeam()).plan();
+    }
+
+    // Spec 2026-10-02 B1 §1.
+    @Test
+    void rejectsUnknownOrRepeatedComponents() {
+        var errors = validateDev(resolvedFullstack("DOTNET_APP", List.of("DOTNET_APP", "REACT_APP", "DOTNET_APP"), null));
+        assertTrue(errors.contains("components: \"REACT_APP\" no es un perfil del catálogo "
+                + java.util.Arrays.toString(com.aicompany.core.model.StackProfile.values()) + "."), errors.toString());
+        assertTrue(errors.contains("components: \"DOTNET_APP\" está repetido."), errors.toString());
+    }
+
+    @Test
+    void ownedPathsMayLiveInAnyComponentOrTheCommonRoot() {
+        var errors = validateDev(resolvedFullstack("DOTNET_APP", List.of("DOTNET_APP", "FLUTTER_WEB_APP"),
+                new TeamPlan.DatabaseNeed("POSTGRESQL", "")));
+        assertEquals(List.of(), errors);
+    }
+
+    /** stackProfile FLUTTER_WEB_APP a propósito: la base exige un componente .NET, no que sea el principal de Neo. */
+    @Test
+    void aDatabaseNeedsADotnetComponentNotTheMainProfile() {
+        var errors = validateDev(resolvedFullstack("FLUTTER_WEB_APP", List.of("FLUTTER_WEB_APP", "DOTNET_APP"),
+                new TeamPlan.DatabaseNeed("POSTGRESQL", "")));
+        assertTrue(errors.stream().noneMatch(e -> e.contains("necesita un backend")), errors.toString());
+    }
 }

@@ -149,8 +149,8 @@ public class TeamPlanValidator {
         if (!"POSTGRESQL".equals(db.engine())) {
             errors.add("database.engine \"" + db.engine() + "\" no está soportado (hoy: POSTGRESQL).");
         }
-        if (!"DOTNET_APP".equals(plan.stackProfile())) {
-            errors.add("Una base de datos necesita un backend: usa stackProfile DOTNET_APP.");
+        if (!plan.hasComponent(StackProfile.DOTNET_APP)) {
+            errors.add("Una base de datos necesita un backend: incluye DOTNET_APP en components.");
         }
         var hasDiego = plan.workTasks().stream().anyMatch(t -> membersById.containsKey(t.agentId())
                 && "DATA_ARCHITECT".equals(membersById.get(t.agentId()).roleCode()));
@@ -247,17 +247,22 @@ public class TeamPlanValidator {
             }
         }
 
-        var profile = plan.profile();
+        validateComponents(plan, errors);
 
+        var profile = plan.profile();
         if (profile.isEmpty()) {
             errors.add("stackProfile debe ser uno de los perfiles del catálogo: "
                     + java.util.Arrays.toString(StackProfile.values()) + " (recibido: \"" + plan.stackProfile() + "\").");
             return;
         }
 
-        if (!profile.get().enabledNow()) {
-            errors.add("El stack " + profile.get().name() + " todavía no está habilitado (fase "
-                    + profile.get().phase() + "). Stacks disponibles: FLUTTER_WEB_APP, DOTNET_APP.");
+        var components = plan.resolvedComponents();
+        for (var component : components) {
+            if (!component.profile().enabledNow()) {
+                errors.add("El stack " + component.profile().name() + " todavía no está habilitado (fase "
+                        + component.profile().phase() + "). Stacks disponibles: " + java.util.Arrays.stream(StackProfile.values())
+                        .filter(StackProfile::enabledNow).map(StackProfile::name).toList() + ".");
+            }
         }
 
         validateContextsAndGlossary(plan, profile.get(), errors);
@@ -265,13 +270,52 @@ public class TeamPlanValidator {
         var contexts = plan.contextNames();
         for (var task : work) {
             for (var path : task.ownedPathsOrEmpty()) {
-                if (path != null && OwnedPaths.isSafe(path) && !profile.get().isWithinStructure(path, contexts)) {
+                if (path != null && OwnedPaths.isSafe(path) && !withinStructure(components, contexts, path)) {
                     errors.add("El ownedPath \"" + path + "\" de " + task.agentId() + " está fuera de la estructura "
-                            + "de " + profile.get().name() + ". Rutas permitidas: " + profile.get().allowedRoots(contexts)
+                            + "de " + (components.size() == 1 ? components.get(0).profile().name()
+                                    : components.stream().map(c -> c.profile().name()).toList().toString())
+                            + ". Rutas permitidas: " + allowedRoots(components, contexts)
                             + " y los archivos de entrada del perfil.");
                 }
             }
         }
+    }
+
+    /** Spec 2026-10-02 B1 §1: ids del catálogo y sin repetidos (el orden lo fija Java). */
+    private static void validateComponents(TeamPlan plan, List<String> errors) {
+        if (plan.components() == null) {
+            return;
+        }
+        var seen = new HashSet<String>();
+        for (var id : plan.components()) {
+            if (StackProfile.parse(id).isEmpty()) {
+                errors.add("components: \"" + id + "\" no es un perfil del catálogo "
+                        + java.util.Arrays.toString(StackProfile.values()) + ".");
+            } else if (!seen.add(id.strip())) {
+                errors.add("components: \"" + id + "\" está repetido.");
+            }
+        }
+    }
+
+    static boolean withinStructure(List<com.aicompany.core.model.Component> components, List<String> contexts,
+                                   String path) {
+        if (components.size() > 1 && com.aicompany.core.model.Component.COMMON_ROOT_PATHS.stream()
+                .anyMatch(root -> OwnedPaths.covers(root, OwnedPaths.normalize(path)))) {
+            return true;
+        }
+        return components.stream().anyMatch(c -> c.owns(path) && c.strip(path)
+                .map(relative -> c.profile().isWithinStructure(relative, c.contexts(contexts))).orElse(false));
+    }
+
+    private static List<String> allowedRoots(List<com.aicompany.core.model.Component> components, List<String> contexts) {
+        var roots = new ArrayList<String>();
+        for (var c : components) {
+            c.profile().allowedRoots(c.contexts(contexts)).stream().map(c::prefix).forEach(roots::add);
+        }
+        if (components.size() > 1) {
+            roots.addAll(com.aicompany.core.model.Component.COMMON_ROOT_PATHS);
+        }
+        return roots;
     }
 
 
