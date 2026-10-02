@@ -47,4 +47,24 @@ class CompilerErrorParserTest {
         assertEquals(List.of(), CompilerErrorParser.parse("Build succeeded.\n    0 Error(s)"));
         assertEquals(List.of(), CompilerErrorParser.parse(null));
     }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790971185): flutter build web imprime la ruta en una línea y "Error:" en la
+    // siguiente; sin entenderlo, los errores de la app nunca volvían a Mila.
+    @Test
+    void flutterWebBuildErrorsOnTwoLines() {
+        var errors = CompilerErrorParser.parse("""
+                Compiling lib/main.dart for the Web...
+                lib/crm/application/casos_de_uso.dart:60:26:
+                Error: String starting with ' must end with '.
+                    final x = 'abc;
+                lib/main.dart:61:9:
+                Error: The method 'withValues' isn't defined for the class 'Color'.
+                Error: Compilation failed.
+                """);
+        assertEquals(2, errors.size(), errors.toString());
+        assertEquals("lib/crm/application/casos_de_uso.dart", errors.get(0).path());
+        assertEquals(60, errors.get(0).line());
+        assertEquals("String starting with ' must end with '.", errors.get(0).message());
+        assertEquals("lib/main.dart", errors.get(1).path());
+    }
 }
