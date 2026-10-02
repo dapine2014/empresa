@@ -31,7 +31,7 @@ public final class DependencyPolicy {
             reasons.add("Vulnerabilidades HIGH/CRITICAL o sin severidad: " + facts.vulnerabilities().get());
         }
         if (facts.license() == null) {
-            reasons.add("Licencia no reconocida o fuera de la lista permitida (MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib).");
+            reasons.add("Licencia no reconocida o fuera de la lista permitida (MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, PostgreSQL).");
         }
         if (facts.buildCode()) {
             reasons.add("Trae código que se ejecuta al compilar: " + facts.buildCodeFiles());

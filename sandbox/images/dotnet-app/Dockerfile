@@ -7,6 +7,8 @@ RUN mkdir -p /opt/seed && cd /opt/seed \
     && dotnet new webapi -n SeedApi -o /opt/seed/SeedApi \
     && dotnet restore /opt/seed/Seed --packages /opt/nuget-packages \
     && dotnet restore /opt/seed/SeedApi --packages /opt/nuget-packages \
+    && dotnet add /opt/seed/SeedApi package Npgsql --version 8.0.5 \
+    && dotnet restore /opt/seed/SeedApi --packages /opt/nuget-packages \
     && rm -rf /opt/seed
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 COPY NuGet.Config /forjai/NuGet.Config

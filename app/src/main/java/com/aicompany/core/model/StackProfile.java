@@ -285,7 +285,9 @@ public enum StackProfile {
 
     public String executionContract() {
         return switch (this) {
-            case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable. Los .csproj de cada capa "
+            case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable; sin base de datos (los tests usan "
+                    + "fakes en memoria). Npgsql 8.0.5 está disponible para la persistencia PostgreSQL (pídelo en "
+                    + "packages; la conexión se lee SOLO de las variables del contrato). Los .csproj de cada capa "
                     + "(src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, tests/<Ctx>.Tests/<Ctx>.Tests.csproj) los genera Forjai "
                     + "con las referencias DDD y los paquetes xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0 y "
                     + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "
