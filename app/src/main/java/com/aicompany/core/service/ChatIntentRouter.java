@@ -352,6 +352,13 @@ public class ChatIntentRouter {
 
         var agent = agents.stream().filter(a -> agentId.equals(a.get("id"))).findFirst().orElseThrow();
         var name = String.valueOf(agent.get("name"));
+
+        // Decisión del fundador (2026-10-01): un agente apagado no responde y su modelo no se llama.
+        if (Boolean.FALSE.equals(agent.get("enabled"))) {
+            return new ChatReply(agentId, name, name + " está apagada/o: mientras Forjai se entrena solo trabajan Alex "
+                    + "y el Development Group. Se activa en Agents.");
+        }
+
         var data = missionData(message, agentId);
 
         try {
@@ -1866,8 +1873,16 @@ public class ChatIntentRouter {
 
     private String formatAgentStatus(List<AgentStatusResponse> statuses) {
 
+        // Decisión del fundador (2026-10-01): un agente apagado se muestra como tal, no como IDLE.
+        var off = companyMemory.agents().stream()
+                .filter(agent -> Boolean.FALSE.equals(agent.get("enabled")))
+                .map(agent -> String.valueOf(agent.get("id")))
+                .collect(Collectors.toSet());
+
         var lines = statuses.stream()
-                .map(this::formatOneAgentStatus)
+                .map(a -> off.contains(a.agentId())
+                        ? "⚫ " + a.name() + " (" + a.role() + "): APAGADO"
+                        : formatOneAgentStatus(a))
                 .collect(Collectors.joining("; "));
 
         return "Estado real de los agentes: " + lines + ".";

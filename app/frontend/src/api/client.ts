@@ -68,6 +68,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ model }),
     }),
+  setAgentEnabled: (agentId: string, enabled: boolean) =>
+    request<{ agentId: string; enabled: boolean }>(`/api/company/agents/${agentId}/enabled`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
   modelsHealth: () => request<ModelHealth[]>('/api/company/models/health'),
   updateAgentFallbackModel: (agentId: string, model: string) =>
     request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/fallback-model`, {

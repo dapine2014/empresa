@@ -351,6 +351,8 @@ export interface AgentInfo {
   model: string
   /** Suplente local si su modelo remoto cae (spec salud de modelos 2026-09-28); "" = sin suplente. */
   fallbackModel: string
+  /** Agente encendido; uno apagado nunca recibe una llamada al modelo (decisión del fundador 2026-10-01). */
+  enabled: boolean
 }
 
 export interface ModelHealth {

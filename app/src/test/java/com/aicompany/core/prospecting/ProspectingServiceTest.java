@@ -225,4 +225,19 @@ class ProspectingServiceTest {
         assertEquals(0, run.valid());
         assertTrue(run.rejections().get(0).contains("repetido"), run.rejections().toString());
     }
+
+    // Decisión del fundador (2026-10-01): con Sofía apagada no se busca, ni en el chequeo horario ni a pedido.
+    @Test
+    void noSearchWhileSofiaIsTurnedOff() {
+        var availability = mock(com.aicompany.core.service.AgentAvailability.class);
+        when(availability.isEnabled("sales")).thenReturn(false);
+        doThrow(new IllegalStateException("No se puede buscar clientes: está apagado Sofia (sales)"))
+                .when(availability).requireEnabled(java.util.List.of("sales"), "buscar clientes");
+        service.setAgentAvailability(availability);
+
+        assertTrue(service.runIfDue().isEmpty());
+        var ex = assertThrows(IllegalStateException.class, service::runNow);
+        assertTrue(ex.getMessage().contains("Sofia"), ex.getMessage());
+        verifyNoInteractions(ceo);
+    }
 }

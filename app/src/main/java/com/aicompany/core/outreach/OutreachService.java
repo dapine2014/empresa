@@ -67,7 +67,22 @@ public class OutreachService {
     }
 
     /** Un borrador por prospecto nuevo con email de esa corrida. Nunca lanza: un fallo deja el prospecto sin borrador. */
+    private com.aicompany.core.service.AgentAvailability agentAvailability;
+
+    /** Decisión del fundador (2026-10-01): un agente apagado nunca recibe una llamada al modelo (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAgentAvailability(com.aicompany.core.service.AgentAvailability agentAvailability) {
+        this.agentAvailability = agentAvailability;
+    }
+
+    private boolean agentOn(String agentId) {
+        return agentAvailability == null || agentAvailability.isEnabled(agentId);
+    }
+
     public int draftFor(String runId, String productId) {
+        if (!agentOn("sales")) {
+            return 0;
+        }
         var product = products.view(productId).map(v -> v.product()).orElse(null);
         if (product == null) {
             return 0;

@@ -46,8 +46,23 @@ public class StrategyProposalService {
         this.defaultModel = defaultModel;
     }
 
+    private com.aicompany.core.service.AgentAvailability agentAvailability;
+
+    /** Decisión del fundador (2026-10-01): un agente apagado nunca recibe una llamada al modelo (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAgentAvailability(com.aicompany.core.service.AgentAvailability agentAvailability) {
+        this.agentAvailability = agentAvailability;
+    }
+
+    private boolean agentOn(String agentId) {
+        return agentAvailability == null || agentAvailability.isEnabled(agentId);
+    }
+
     @Scheduled(cron = "0 0 9 * * MON", zone = "UTC")
     public synchronized Optional<StoredStrategy> proposeWeekly() {
+        if (!agentOn("growth-content")) {
+            return Optional.empty();
+        }
         var stored = memory.strategies();
         if (stored.stream().anyMatch(s -> "PENDING_APPROVAL".equals(s.status()))) {
             return Optional.empty();

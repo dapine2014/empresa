@@ -16,12 +16,15 @@ function AgentCard({
   isLeader?: boolean
   onClick: () => void
 }) {
+  const agentsQuery = useQuery({ queryKey: ['agents'], queryFn: api.agents })
+  const off = agentsQuery.data?.find((a) => a.id === agent.agentId)?.enabled === false
   return (
-    <div className="card orgcard" onClick={onClick} role="button" tabIndex={0}>
+    <div className="card orgcard" onClick={onClick} role="button" tabIndex={0} style={off ? { opacity: 0.55 } : undefined}>
       {teamName && <div className="team-label">{teamName}</div>}
       <div className="card-value">
-        {statusDot(agent.status)} {agent.name}
+        {off ? '⚫' : statusDot(agent.status)} {agent.name}
         {isLeader && <span className="leader-tag">líder</span>}
+        {off && <span className="leader-tag">apagado</span>}
       </div>
       <div className="card-title">{agent.role}</div>
       <p className="hint">{agent.personality}</p>
@@ -64,8 +67,32 @@ function ModelEditor({ agentId }: { agentId: string }) {
       setModel(null)
     },
   })
+  const enabled = agentsQuery.data?.find((a) => a.id === agentId)?.enabled ?? true
+  const enabledMutation = useMutation({
+    mutationFn: (value: boolean) => api.setAgentEnabled(agentId, value),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['agentsStatus'] })
+    },
+  })
   return (
     <div className="decision-form">
+      <h3>Encendido</h3>
+      <p className="hint">
+        {enabled
+          ? 'Trabaja: puede recibir tareas, misiones y menciones en el chat.'
+          : 'Apagado: nunca se llama a su modelo; las misiones que lo necesitan se rechazan.'}
+      </p>
+      <label>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={agentId === 'ceo' || enabledMutation.isPending}
+          onChange={(e) => enabledMutation.mutate(e.target.checked)}
+        />{' '}
+        {agentId === 'ceo' ? 'Alex no se apaga: es tu interlocutor y consolida las misiones' : 'Encendido'}
+      </label>
+      {enabledMutation.isError && <p className="error">{enabledMutation.error.message}</p>}
       <h3>Modelo</h3>
       <p className="hint">
         Actual: <code>{current || 'por defecto'}</code>. Formato: <code>proveedor:modelo</code> para NVIDIA (nvidia,

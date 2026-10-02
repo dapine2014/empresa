@@ -394,6 +394,22 @@ class ChatIntentRouterTest {
         verifyNoInteractions(ceoService);
     }
 
+    // Decisión del fundador (2026-10-01): el estado de los agentes dice quién está apagado.
+    @Test
+    void agentStatusMarksAgentsThatAreTurnedOff() {
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(
+                new AgentStatusResponse("sales", "Sofia", "Director of Sales AI", "p", "IDLE", null, null, null, null),
+                new AgentStatusResponse("ceo", "Alex", "Chief Executive Officer AI", "p", "IDLE", null, null, null, null)));
+        when(companyMemory.agents()).thenReturn(List.of(
+                Map.of("id", "sales", "name", "Sofia", "enabled", false),
+                Map.of("id", "ceo", "name", "Alex", "enabled", true)));
+
+        var response = router.route("¿Qué agentes están trabajando ahora?");
+
+        assertTrue(response.contains("Sofia (Director of Sales AI): APAGADO"), response);
+        assertTrue(response.contains("⚪ Alex (Chief Executive Officer AI): IDLE"), response);
+    }
+
     @Test
     void showsLastTaskInfoWhenAgentIsIdleButHasTaskHistory() {
         // Agent.status (WORKING/IDLE, propiedad real del nodo Agent) ya
@@ -1241,6 +1257,25 @@ class ChatIntentRouterTest {
         when(companyMemory.agentName("ceo")).thenReturn(java.util.Optional.of("Alex"));
         when(promptMemory.activePrompt(anyString())).thenReturn("");
         when(conversationMemory.recentMessages(anyInt())).thenReturn(List.of());
+    }
+
+    // Decisión del fundador (2026-10-01): un agente apagado no responde ni se llama a su modelo.
+    @Test
+    void aMentionedAgentThatIsTurnedOffDoesNotCallTheModel() {
+        stubAgents();
+        var agents = new java.util.ArrayList<Map<String, Object>>();
+        for (var agent : AGENTS) {
+            var copy = new java.util.HashMap<String, Object>(agent);
+            copy.put("enabled", !"growth-content".equals(agent.get("id")));
+            agents.add(copy);
+        }
+        when(companyMemory.agents()).thenReturn(agents);
+
+        var replies = router.routeReplies("@Kira ideas");
+
+        assertEquals(1, replies.size());
+        assertTrue(replies.get(0).text().contains("Kira está apagada/o"), replies.get(0).text());
+        verify(ceoService, never()).agentChat(any(), any(), anyList(), any(), any(), any(), any());
     }
 
     @Test
