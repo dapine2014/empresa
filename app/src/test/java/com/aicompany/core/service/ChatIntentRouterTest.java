@@ -2253,4 +2253,18 @@ class ChatIntentRouterTest {
         assertTrue(text.contains("app Tests PASS 2/2"), text);
         assertFalse(text.contains("esta fase no ejecuta código"), text);
     }
+
+    // Decisión del fundador (2026-10-03): el chat dice si los suplentes están disponibles.
+    @Test
+    void theModelsStatusWarnsWhenTheFallbackIsNotAvailable() {
+        kimiDown();
+        when(modelHealth.fallbackSnapshot()).thenReturn(List.of(new com.aicompany.core.model.ModelHealth("qwen3-coder:30b",
+                "DOWN", Instant.parse("2026-10-03T07:00:00Z"), "Ollama no responde", List.of("engineering", "qa"))));
+
+        var response = router.route("¿cuál es el estado de los modelos?");
+
+        assertTrue(response.contains("⚠ Suplente qwen3-coder:30b no disponible desde 2026-10-03 07:00 UTC (Ollama no responde)"),
+                response);
+        verifyNoInteractions(ceoService);
+    }
 }

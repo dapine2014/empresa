@@ -96,4 +96,59 @@ class ModelHealthServiceTest {
 
         assertEquals("", health.fallbackFor("engineering"));
     }
+
+    // ---- Suplentes (decisión del fundador 2026-10-03): un suplente que no responde no es respaldo. ----
+
+    private void agentsWithFallback() {
+        when(memory.agents()).thenReturn(List.of(
+                Map.of("id", "qa", "fallbackModel", "qwen3-coder:30b", "enabled", true),
+                Map.of("id", "ceo", "fallbackModel", "qwen3-coder:30b", "enabled", true)));
+    }
+
+    // Verificado en vivo (2026-10-02): Ollama quedó caído 10 horas tras un reinicio y nadie lo notó.
+    @Test
+    void anUnreachableOllamaMarksTheFallbackDownOnceAndTellsTheFounder() {
+        agentsWithFallback();
+        health.setLocalModelProbe(java.util.Optional::empty);
+
+        health.probeFallbacks();
+        assertFalse(health.isFallbackDown("qwen3-coder:30b"));
+        health.probeFallbacks();
+        health.probeFallbacks();
+
+        assertTrue(health.isFallbackDown("qwen3-coder:30b"));
+        verify(events, times(1)).publish(eq("EMPRESA_FALLBACK_DOWN"), isNull(), isNull(), eq("system"),
+                argThat(m -> "qwen3-coder:30b".equals(m.get("model"))));
+        verify(mail, times(1)).send(contains("suplente"), argThat(b -> b.contains("Ollama no responde")
+                && b.contains("qa")), eq(true));
+    }
+
+    @Test
+    void aFallbackThatComesBackIsAnnounced() {
+        agentsWithFallback();
+        health.setLocalModelProbe(java.util.Optional::empty);
+        health.probeFallbacks();
+        health.probeFallbacks();
+
+        health.setLocalModelProbe(() -> java.util.Optional.of(java.util.Set.of("qwen3-coder:30b")));
+        health.probeFallbacks();
+
+        assertFalse(health.isFallbackDown("qwen3-coder:30b"));
+        verify(events).publish(eq("EMPRESA_FALLBACK_UP"), isNull(), isNull(), eq("system"), anyMap());
+    }
+
+    @Test
+    void aFallbackNotInstalledInOllamaIsReportedAsSuch() {
+        agentsWithFallback();
+        health.setLocalModelProbe(() -> java.util.Optional.of(java.util.Set.of("qwen3:8b")));
+        health.probeFallbacks();
+        health.probeFallbacks();
+
+        assertTrue(health.isFallbackDown("qwen3-coder:30b"));
+        var fallbacks = health.fallbackSnapshot();
+        assertEquals(1, fallbacks.size());
+        assertEquals("DOWN", fallbacks.get(0).status());
+        assertTrue(fallbacks.get(0).lastError().contains("no está instalado"), fallbacks.get(0).lastError());
+        assertEquals(List.of("ceo", "qa"), fallbacks.get(0).affectedAgents());
+    }
 }
