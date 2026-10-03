@@ -308,7 +308,8 @@ public enum StackProfile {
         return switch (this) {
             case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable; sin base de datos (los tests usan "
                     + "fakes en memoria). Npgsql 8.0.5 está disponible para la persistencia PostgreSQL (pídelo en "
-                    + "packages; la conexión se lee SOLO de las variables del contrato). Los .csproj de cada capa "
+                    + "packages; la conexión se lee SOLO de las variables del contrato). Entity Framework Core NO está "
+                    + "disponible en el sandbox: escribe los repositorios con Npgsql (NpgsqlDataSource y SQL parametrizado). Los .csproj de cada capa "
                     + "(src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, tests/<Ctx>.Tests/<Ctx>.Tests.csproj) los genera Forjai "
                     + "con las referencias DDD y los paquetes xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0 y "
                     + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "
@@ -324,8 +325,8 @@ public enum StackProfile {
                     + ".tscn que exista) y en [dotnet] project/assembly_name=\"Game\"; cada script C# es una clase "
                     + "partial con el mismo nombre que su archivo. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. "
                     + "El juego corre 300 frames headless sin errores. " + PACKAGE_RULE;
-            case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.24 (Dart ^3.5), solo web; dependencias SOLO del "
-                    + "SDK (flutter, flutter_test) más cupertino_icons 1.0.8 y flutter_lints 4.0.0 (dev). "
+            case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.41.9 (Dart 3.11), solo web; dependencias SOLO del "
+                    + "SDK (flutter, flutter_test) más cupertino_icons 1.0.9 y flutter_lints 6.0.0 (dev). "
                     + "http 1.2.2 está disponible para llamar a una API (pídelo en pubspec.yaml como http: 1.2.2). "
                     + "Otras dependencias de pub.dev: en pubspec.yaml "
                     + "con versión exacta (p. ej. equatable: 2.0.5, sin ^); se aprueban si pasan los chequeos. "

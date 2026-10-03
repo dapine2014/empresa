@@ -1,4 +1,4 @@
-FROM ghcr.io/cirruslabs/flutter:3.24.3
+FROM ghcr.io/cirruslabs/flutter:3.41.9
 RUN apt-get update && apt-get install -y --no-install-recommends wget gnupg python3 ca-certificates \
     && wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get install -y --no-install-recommends /tmp/chrome.deb \

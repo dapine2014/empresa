@@ -126,4 +126,23 @@ class StackProfileTest {
         assertTrue(rule.contains("nunca lo importa application"), rule);
         assertTrue(rule.contains("lib/main.dart"), rule);
     }
+
+    // Diagnóstico 2026-10-02: el modelo escribía APIs de Flutter más nuevas (Color.withValues) que el SDK 3.24 del
+    // sandbox no tenía. El contrato dice la versión real de la imagen.
+    @Test
+    void flutterContractMatchesTheSandboxImage() {
+        var contract = StackProfile.FLUTTER_WEB_APP.executionContract();
+        assertTrue(contract.contains("Flutter 3.41.9 (Dart 3.11)"), contract);
+        assertTrue(contract.contains("cupertino_icons 1.0.9 y flutter_lints 6.0.0"), contract);
+        assertTrue(BaselineDependencies.contains(new DependencyRef("PUB", "cupertino_icons", "1.0.9")));
+        assertTrue(BaselineDependencies.contains(new DependencyRef("PUB", "flutter_lints", "6.0.0")));
+    }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790971185 y -1790975402): Diego empezó con EF Core, que el sandbox no trae,
+    // y gastó una ronda de corrección cada vez.
+    @Test
+    void dotnetContractSaysEfCoreIsNotAvailable() {
+        var contract = StackProfile.DOTNET_APP.executionContract();
+        assertTrue(contract.contains("Entity Framework Core NO está disponible"), contract);
+    }
 }
