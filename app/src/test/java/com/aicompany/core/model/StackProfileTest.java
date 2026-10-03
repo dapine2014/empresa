@@ -116,4 +116,14 @@ class StackProfileTest {
         assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("sin red"), StackProfile.FULLSTACK_APP_RULE);
         assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("captura"), StackProfile.FULLSTACK_APP_RULE);
     }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790978221, MISSION-B1-AGENDA-1790981861): dos veces la capa application de la
+    // app importó el cliente HTTP de infrastructure. La regla dice dónde va cada pieza.
+    @Test
+    void fullstackAppRuleSaysWhereTheHttpClientGoes() {
+        var rule = StackProfile.FULLSTACK_APP_RULE;
+        assertTrue(rule.contains("interfaz del repositorio"), rule);
+        assertTrue(rule.contains("nunca lo importa application"), rule);
+        assertTrue(rule.contains("lib/main.dart"), rule);
+    }
 }

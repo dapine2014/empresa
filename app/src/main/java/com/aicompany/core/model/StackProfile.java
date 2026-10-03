@@ -297,7 +297,12 @@ public enum StackProfile {
             + "const String.fromEnvironment('API_BASE_URL'); nunca escribas rutas de la API ni localhost a mano. Los "
             + "campos JSON siguen los nombres en camelCase de los tipos públicos del backend (contrato de abajo). La app "
             + "arranca y renderiza sin red y sin API_BASE_URL (así corre en el sandbox): captura los errores de red de "
-            + "cada llamada y muéstralos en pantalla; un error sin capturar en la consola hace fallar el arranque.";
+            + "cada llamada y muéstralos en pantalla; un error sin capturar en la consola hace fallar el arranque. "
+            + "CAPAS (Forjai rechaza el repositorio si no): la interfaz del repositorio (p. ej. abstract class "
+            + "ClientesRepository) va en lib/<ctx>/domain o lib/<ctx>/application y los casos de uso dependen solo de "
+            + "ella; el cliente HTTP que la implementa va en lib/<ctx>/infrastructure y nunca lo importa application "
+            + "ni domain; lib/main.dart crea el cliente y lo pasa a los casos de uso (presentation recibe los casos de "
+            + "uso, no el cliente).";
 
     public String executionContract() {
         return switch (this) {
