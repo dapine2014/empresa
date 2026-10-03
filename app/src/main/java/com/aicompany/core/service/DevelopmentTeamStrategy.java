@@ -1068,6 +1068,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (api != null) {
             checks.add(api);
         }
+        var layers = layerChecks(context, owned, headSha);
+        if (layers != null) {
+            checks.add(layers);
+        }
         if (checks.isEmpty()) {
             return requiredPaths == null
                     ? runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects).join()
@@ -1076,6 +1080,72 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects,
                 requiredPaths == null ? owned : requiredPaths,
                 result -> checks.stream().flatMap(c -> c.apply(result).stream()).toList()).join();
+    }
+
+    /**
+     * Verificado en vivo (MISSION-B1-CRM-1790978221, MISSION-B1-AGENDA-1790981861): la capa application de la app
+     * importó el cliente HTTP de infrastructure y DDD_LAYERS lo detectó recién en la validación final, sin volver a la
+     * dueña. Al generar en un componente Flutter, una violación de capas en sus archivos es un reintento con el import
+     * exacto. null si la tarea no toca un componente Flutter.
+     */
+    private java.util.function.Function<DevelopmentResult, List<String>> layerChecks(
+            TeamMissionContext context, List<String> owned, String headSha) {
+        var plan = context.plan();
+        var flutter = plan.resolvedComponents().stream()
+                .filter(c -> c.profile() == StackProfile.FLUTTER_WEB_APP)
+                .anyMatch(c -> owned.stream().anyMatch(c::owns));
+        if (!flutter) {
+            return null;
+        }
+        var head = new LinkedHashMap<String, String>();
+        if (headSha != null) {
+            try {
+                for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                    if (path.endsWith(".dart") || path.endsWith(".cs") || path.endsWith("pubspec.yaml")) {
+                        var content = readOrNull(context.missionId(), headSha, path);
+                        if (content != null) {
+                            head.put(path, content);
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                log.warn("MISSION {} - could not read HEAD for the layer check: {}", context.missionId(), ex.getMessage());
+            }
+        }
+        return result -> layerErrors(plan.resolvedComponents(), plan.contextNames(), head,
+                result.files() == null ? List.of() : result.files());
+    }
+
+    /** Violaciones de capas DDD en los archivos devueltos, resueltas contra el resto del repositorio en HEAD. */
+    static List<String> layerErrors(List<AppComponent> components, List<String> contexts, Map<String, String> head,
+                                    List<DevelopmentResult.GeneratedFile> files) {
+        var contents = new LinkedHashMap<>(head);
+        var returned = new java.util.HashSet<String>();
+        for (var file : files) {
+            if (file != null && file.path() != null) {
+                contents.put(file.path(), file.content());
+                returned.add(file.path());
+            }
+        }
+        var errors = new ArrayList<String>();
+        for (var component : components) {
+            var relative = new LinkedHashMap<String, String>();
+            contents.forEach((path, content) -> {
+                if (component.owns(path)) {
+                    component.strip(path).ifPresent(p -> relative.put(p, content));
+                }
+            });
+            for (var violation : com.aicompany.core.agent.validation.DddLayerChecker.check(component.profile(),
+                    component.contexts(contexts), relative)) {
+                var path = component.prefix(violation.file());
+                if (returned.contains(path)) {
+                    errors.add(path + ": importa " + violation.dependency() + " (" + violation.reason() + "). "
+                            + "Usa una interfaz en domain/application implementada en infrastructure y únelas en "
+                            + "lib/main.dart.");
+                }
+            }
+        }
+        return errors;
     }
 
     static final String API_ROUTES_TASK_SUFFIX = "-API-ROUTES";

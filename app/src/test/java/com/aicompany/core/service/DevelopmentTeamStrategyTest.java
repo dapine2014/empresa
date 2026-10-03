@@ -1046,4 +1046,24 @@ class DevelopmentTeamStrategyTest {
                 new SandboxResult.StepResult("app/build", "PASS", 0, 2000, "", 0, 0))), null);
         assertEquals("backend checkout PASS (0 s) · app Build PASS (2 s)", summary);
     }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790978221, MISSION-B1-AGENDA-1790981861): la violación de capas se detectaba
+    // recién en la validación final, sin volver a la dueña. Ahora es un reintento al generar, con el import exacto.
+    @Test
+    void layerViolationsInTheReturnedFilesAreRetryable() {
+        var components = AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
+        var head = Map.of("app/pubspec.yaml", "name: forjai_crm\n",
+                "app/lib/crm/infrastructure/crm_api_client.dart", "class CrmApiClient {}");
+        var errors = DevelopmentTeamStrategy.layerErrors(components, List.of("Crm"), head, List.of(
+                new GeneratedFile("app/lib/crm/application/crm_service.dart",
+                        "import '../infrastructure/crm_api_client.dart';\nclass CrmService {}"),
+                new GeneratedFile("app/lib/crm/domain/cliente.dart", "class Cliente {}")));
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("app/lib/crm/application/crm_service.dart"), errors.get(0));
+        assertTrue(errors.get(0).contains("../infrastructure/crm_api_client.dart"), errors.get(0));
+
+        assertEquals(List.of(), DevelopmentTeamStrategy.layerErrors(components, List.of("Crm"), head, List.of(
+                new GeneratedFile("app/lib/crm/infrastructure/crm_api_client.dart",
+                        "import 'package:forjai_crm/crm/application/clientes_repository.dart';"))));
+    }
 }
