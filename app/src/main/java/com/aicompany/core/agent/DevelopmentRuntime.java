@@ -172,6 +172,15 @@ public class DevelopmentRuntime {
                 "COMPLETED"));
     }
 
+    /** Diagnóstico 360 (2026-10-03): el veredicto de Neo con reintento y la corrección exacta de Java. */
+    public CompletableFuture<com.aicompany.core.agent.model.TestTriage> triage(
+            String taskId, String missionId, String agentId, String prompt,
+            Function<com.aicompany.core.agent.model.TestTriage, List<String>> validate) {
+        return submit(taskId, missionId, agentId, () -> executeWithRetries(taskId, missionId, agentId, prompt,
+                (attemptPrompt, model, agentPrompt) -> ceoService.triageFailingTests(agentId, attemptPrompt, agentPrompt, model),
+                triage -> new Verdict(List.of(), validate.apply(triage)), "COMPLETED"));
+    }
+
     private <T> CompletableFuture<T> submit(String taskId, String missionId, String agentId, Supplier<T> work) {
         try {
             return CompletableFuture.supplyAsync(work, agentTaskExecutor);

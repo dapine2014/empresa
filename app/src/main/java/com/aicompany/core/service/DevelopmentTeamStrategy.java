@@ -260,6 +260,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         SandboxResult sandboxResult = null;
         String sandboxError = null;
         var repairRounds = 0;
+        var triageRounds = 0;
+        var triageNotes = new ArrayList<String>();
         var autofixRounds = 0;
 
         // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10): si no compila, los errores reales del compilador
@@ -305,12 +307,32 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 }
             }
 
-            if (repairRounds >= MAX_REPAIR_ROUNDS) {
-                break;
-            }
-
             var errorsByTask = compileErrorsByOwner(sandboxResult, ordered);
             if (errorsByTask.isEmpty()) {
+                // Diagnóstico 360 (decisión del fundador 2026-10-03): compila pero un test falla. Neo arbitra si está mal
+                // el test, la lógica o ambos; Java valida y la corrección va a quien corresponde.
+                var failing = failingTests(sandboxResult);
+                if (failing.isEmpty() || triageRounds >= MAX_TEST_TRIAGE_ROUNDS) {
+                    break;
+                }
+                triageRounds++;
+                var triaged = triageAndRepair(context, ordered, failing, headSha, triageRounds, expectedProjects,
+                        committed, triageNotes);
+                if (triaged == null) {
+                    break;
+                }
+                headSha = triaged;
+                var triagedRoutes = commitApiRoutes(context, headSha);
+                if (triagedRoutes != null) {
+                    committed.add(triagedRoutes);
+                    headSha = triagedRoutes.commitSha();
+                }
+                checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                        forjaiFiles);
+                continue;
+            }
+
+            if (repairRounds >= MAX_REPAIR_ROUNDS) {
                 break;
             }
 
@@ -461,7 +483,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
-                        repairRounds, autofixRounds, dependencyOutcome)
+                        repairRounds, autofixRounds, dependencyOutcome, triageNotes)
                         + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText));
     }
 
@@ -768,6 +790,168 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     static final int REPAIR_ATTEMPTS = 2;
+    /** Diagnóstico 360: rondas de arbitraje de tests rojos (el bloque 7 lo llevará hasta cero). */
+    static final int MAX_TEST_TRIAGE_ROUNDS = 2;
+
+    private static List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failingTests(SandboxResult result) {
+        var failing = new ArrayList<com.aicompany.core.agent.validation.FailingTestParser.FailingTest>();
+        for (var step : result.stepsOrEmpty()) {
+            if ("test".equals(ComponentSandbox.stepName(step.name())) && "FAIL".equals(step.status())) {
+                failing.addAll(com.aicompany.core.agent.validation.FailingTestParser.parse(step.outputTail(),
+                        ComponentSandbox.dirOf(step.name())));
+            }
+        }
+        return failing;
+    }
+
+    /**
+     * Diagnóstico 360 (decisión del fundador 2026-10-03): Neo (líder técnico, no Vera, que escribió los tests) recibe
+     * cada test rojo con su salida real, el código del stack, el test y lo pedido, y dictamina CODE_WRONG, TEST_WRONG o
+     * BOTH con la regla de negocio correcta. Java valida el veredicto y reparte: el código a su dueño (que no toca
+     * tests) y el test a QA (que no puede borrarlo ni bajar la cantidad de tests). Devuelve el nuevo HEAD o null.
+     */
+    private String triageAndRepair(TeamMissionContext context, List<PlannedTask> ordered,
+                                   List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failing,
+                                   String headSha, int triageRound, List<String> expectedProjects,
+                                   List<CommittedWork> committed, List<String> triageNotes) {
+        var missionId = context.missionId();
+        var leader = context.team().leaderAgentId();
+        var triageId = missionId + "-TEST-TRIAGE-" + triageRound;
+        try {
+            memory.createTask(triageId, missionId, leader, "TEST_TRIAGE", "TRIAGE");
+            var repoFiles = new java.util.HashSet<>(workspace.filesAtCommit(missionId, headSha));
+            var involved = failing.stream().flatMap(t -> t.files().stream()).filter(repoFiles::contains).distinct().toList();
+            var evidence = new LinkedHashMap<String, String>();
+            for (var path : involved) {
+                evidence.put(path, readOrNull(missionId, headSha, path));
+            }
+            var triage = runtime.triage(triageId, missionId, leader,
+                    triagePrompt(context, failing, evidence, headSha),
+                    t -> com.aicompany.core.agent.validation.TestTriageValidator.validate(t, failing, repoFiles)).join();
+
+            var codeWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
+            var testWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
+            for (var verdict : triage.verdictsOrEmpty()) {
+                triageNotes.add(verdict.test() + " → " + verdict.verdict() + ": " + verdict.rule());
+                if (verdict.codeWrong()) {
+                    verdict.codeFilesOrEmpty().forEach(file -> ownerOf(ordered, file)
+                            .ifPresent(task -> codeWork.computeIfAbsent(task, k -> new ArrayList<>()).add(verdict)));
+                }
+                if (verdict.testWrong()) {
+                    verdict.testFilesOrEmpty().forEach(file -> ownerOf(ordered, file)
+                            .ifPresent(task -> testWork.computeIfAbsent(task, k -> new ArrayList<>()).add(verdict)));
+                }
+            }
+
+            String head = headSha;
+            var changed = false;
+            for (var entry : java.util.stream.Stream.concat(codeWork.entrySet().stream(), testWork.entrySet().stream()).toList()) {
+                var task = entry.getKey();
+                // El código nunca es de QA y los tests solo son de QA: una tarea corrige o código o tests.
+                var fixingTests = testWork.containsKey(task);
+                var files = entry.getValue().stream()
+                        .flatMap(v -> (fixingTests ? v.testFilesOrEmpty() : v.codeFilesOrEmpty()).stream())
+                        .filter(f -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), f)).distinct().toList();
+                var id = taskId(context, task.agentId());
+                try {
+                    var prompt = buildWorkPrompt(context, task) + triageBlock(entry.getValue(), failing, fixingTests, files)
+                            + repositoryCode(missionId, head, "CÓDIGO ACTUAL DEL REPOSITORIO (commit " + head
+                            + "); devuelve completos los archivos que corrijas:", validatorModel(context, task.agentId()));
+                    DevelopmentResult result;
+                    if (fixingTests) {
+                        var headTests = new LinkedHashMap<String, String>();
+                        for (var file : files) {
+                            headTests.put(file, readOrNull(missionId, head, file));
+                        }
+                        result = runtime.generate(id, missionId, task.agentId(), prompt, task.ownedPathsOrEmpty(),
+                                expectedProjects, files, r -> com.aicompany.core.agent.validation.TestTriageValidator
+                                        .preservesTests(r.files(), headTests, failing)).join();
+                    } else {
+                        // Mismos chequeos que cualquier generación (capas, base de datos, contrato de la API).
+                        result = generate(id, missionId, task.agentId(), prompt, task.ownedPathsOrEmpty(),
+                                expectedProjects, files, context, head);
+                    }
+                    var record = workspace.commitAgentWork(missionId, id, task.agentId(),
+                            agentName(context, task.agentId()), result);
+                    memory.recordTaskArtifact(id, workspace.missionWorkspace(missionId).toString(), record.sha(), record.files());
+                    memory.updateTask(id, "COMPLETED", toJson(result));
+                    events.publish("EMPRESA_TASK_COMMITTED", missionId, id, task.agentId(),
+                            Map.of("commitSha", record.sha(), "files", record.files(), "testTriageRound", triageRound));
+                    committed.add(new CommittedWork(id, task.agentId(), record.sha(), record.files()));
+                    head = record.sha();
+                    changed = true;
+                } catch (Exception ex) {
+                    var message = "Corrección del diagnóstico fallida (" + safeMessage(ex, "sin detalle")
+                            + "); se conserva el commit anterior.";
+                    memory.updateTask(id, "COMPLETED", message);
+                    log.warn("MISSION {} - triage repair of {} failed: {}", missionId, task.agentId(), message);
+                }
+            }
+            return changed ? head : null;
+        } catch (Exception ex) {
+            triageNotes.add("no se completó (" + safeMessage(ex, "sin detalle") + ")");
+            log.warn("MISSION {} - test triage failed: {}", missionId, ex.getMessage());
+            return null;
+        }
+    }
+
+    private static java.util.Optional<PlannedTask> ownerOf(List<PlannedTask> ordered, String file) {
+        return ordered.stream().filter(t -> OwnedPaths.coveredByAny(t.ownedPathsOrEmpty(), file)).findFirst();
+    }
+
+    private String triagePrompt(TeamMissionContext context,
+                                List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failing,
+                                Map<String, String> evidence, String headSha) {
+        var plan = context.plan();
+        var tests = failing.stream().map(t -> "- " + t.name() + "\n  Salida real: " + t.message()
+                        + "\n  Stack: " + t.locations())
+                .collect(Collectors.joining("\n"));
+        var files = evidence.entrySet().stream().map(e -> "=== " + e.getKey() + " ===\n" + e.getValue())
+                .collect(Collectors.joining("\n"));
+        return """
+                Eres el líder técnico y ARBITRAS tests que fallan en el sandbox (ejecución real, commit %s). Un test
+                puede estar mal escrito y el código puede estar mal: decide con lo que se pidió, no a favor de nadie.
+
+                LO QUE SE PIDIÓ (misión): %s
+                PLAN: %s
+                %s
+
+                TESTS QUE FALLARON (salida real del sandbox):
+                %s
+
+                ARCHIVOS DEL STACK Y DE LOS TESTS:
+                %s
+
+                Para CADA test que falló devuelve un veredicto:
+                - CODE_WRONG: el test pide lo correcto según lo pedido y el código no lo cumple. codeFiles: los archivos de
+                  código a corregir (del repositorio, nunca de tests/).
+                - TEST_WRONG: el código cumple lo pedido y el test espera otra cosa o su fake/arreglo no refleja la realidad.
+                  testFiles: los archivos de tests a corregir.
+                - BOTH: los dos están mal; indica codeFiles y testFiles.
+                rule: la regla de negocio correcta, en una oración, según lo pedido. reason: por qué falla, citando la línea.
+                test: el nombre EXACTO del test como aparece arriba.
+                """.formatted(headSha, context.instruction(), plan.summary(), dddContext(plan), tests, files);
+    }
+
+    private static String triageBlock(List<com.aicompany.core.agent.model.TestTriage.Verdict> verdicts,
+                                      List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failing,
+                                      boolean fixingTests, List<String> files) {
+        var lines = verdicts.stream().map(v -> {
+            var output = failing.stream().filter(t -> t.name().equals(v.test())).map(t -> t.message()).findFirst().orElse("");
+            return "- Test " + v.test() + " (" + v.verdict() + ")\n  Salida real: " + output
+                    + "\n  Regla correcta: " + v.rule() + "\n  Por qué falla: " + v.reason();
+        }).collect(Collectors.joining("\n"));
+        var rule = fixingTests
+                ? "Corrige SOLO tus tests " + files + ": que verifiquen la regla correcta. No puedes tocar el código, ni "
+                        + "borrar tests, ni cambiarles el nombre, ni bajar la cantidad de tests."
+                : "Corrige SOLO tu código " + files + " para que cumpla la regla correcta. No puedes tocar los tests.";
+        return """
+
+                DIAGNÓSTICO DEL LÍDER TÉCNICO (tests que fallaron en el sandbox real):
+                %s
+                %s Devuelve completos los archivos que corrijas.
+                """.formatted(lines, rule);
+    }
 
     private Map<String, String> currentContents(String missionId, String headSha,
                                                 List<CompilerErrorParser.CompilerError> errors) {
@@ -1539,7 +1723,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private String verifiableState(
             TeamMissionContext context, CommittedWork scaffold, List<CommittedWork> committed, List<StaticCheck> checks,
             StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError,
-            int repairRounds, int autofixRounds, DependencyService.Outcome dependencyOutcome) {
+            int repairRounds, int autofixRounds, DependencyService.Outcome dependencyOutcome, List<String> triageNotes) {
 
         var passed = checks.stream().filter(StaticCheck::passed).count();
 
@@ -1567,6 +1751,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("Validación estática: ").append(status.name())
                 .append(" (").append(passed).append("/").append(checks.size()).append(" chequeos deterministas en PASS)\n");
         out.append("Sandbox: ").append(sandboxSummary(sandboxResult, sandboxError)).append("\n");
+        triageNotes.forEach(note -> out.append("Diagnóstico de tests (Neo): ").append(note).append("\n"));
         var app = fullstackApp(context.plan());
         if (app.isPresent() && !committed.isEmpty()) {
             var routes = HttpRouteExtractor.extract(backendApiSources(context.missionId(),

@@ -1066,4 +1066,83 @@ class DevelopmentTeamStrategyTest {
                 new GeneratedFile("app/lib/crm/infrastructure/crm_api_client.dart",
                         "import 'package:forjai_crm/crm/application/clientes_repository.dart';"))));
     }
+
+    // Diagnóstico 360 (decisión del fundador 2026-10-03): un test rojo ya no deja la misión FAILED sin más. Neo arbitra
+    // (Vera no juzga sus propios tests), Java valida y la corrección va al dueño del código con la regla correcta.
+    @Test
+    void aFailingTestIsTriagedByNeoAndTheCodeOwnerFixesIt() throws Exception {
+        stubFullstack();
+        var failingRun = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("test", "FAIL", 1, 1, """
+                  Failed Clientes.Tests.ClienteTests.Crear [3 ms]
+                  Error Message:
+                   Assert.Equal() Failure: Expected 201, Actual 500
+                  Stack Trace:
+                     at Clientes.Api.Program.Crear() in /work/src/Clientes.Api/Program.cs:line 3
+                """, 2, 1)));
+        var passingRun = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("DOTNET_APP"), eq("backend"))).thenReturn(Optional.of(failingRun),
+                Optional.of(passingRun));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("FLUTTER_WEB_APP"), eq("app"))).thenReturn(Optional.of(passingRun));
+        when(runtime.triage(anyString(), eq("M-1"), eq("engineering"), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(new com.aicompany.core.agent.model.TestTriage(List.of(
+                        new com.aicompany.core.agent.model.TestTriage.Verdict("Clientes.Tests.ClienteTests.Crear",
+                                "CODE_WRONG", "Crear un cliente válido responde 201.", "Program.cs devuelve 500.",
+                                List.of("backend/src/Clientes.Api/Program.cs"), List.of())))));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-BACKEND"), eq("backend"), eq("Iris"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_BACKEND, List.of("backend/src/Clientes.Api/Program.cs")));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
+
+        verify(runtime).triage(anyString(), eq("M-1"), eq("engineering"), contains("Expected 201, Actual 500"), any());
+        verify(runtime, atLeastOnce()).generate(eq("M-1-BACKEND"), eq("M-1"), eq("backend"),
+                contains("Crear un cliente válido responde 201."), anyList(), anyList(), anyList(), any());
+        verify(memory).recordStaticValidation(anyString(), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Diagnóstico de tests (Neo): Clientes.Tests.ClienteTests.Crear → CODE_WRONG"),
+                result.verifiableState());
+    }
+
+    // Diagnóstico 360: si el test está mal, lo corrige QA y Java no le deja borrarlo (guarda anti-trampa).
+    @Test
+    void aWrongTestGoesBackToQaWithTheAntiCheatGuard() throws Exception {
+        stubFullstack();
+        var base = fullstackContext();
+        var tasks = new java.util.ArrayList<>(base.plan().tasksOrEmpty());
+        tasks.add(2, new PlannedTask("qa", "WORK", "TESTS", "Tests", List.of("qa"), List.of("backend/tests/Clientes.Tests")));
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, tasks, List.of(), p.stackProfile(), p.boundedContexts(),
+                p.ubiquitousLanguage(), null, p.components());
+        var context = new TeamMissionContext("M-1", base.instruction(), base.team(), plan);
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
+                        List.of("backend/tests/Clientes.Tests/ClienteTests.cs")));
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("backend/src/Clientes.Api/Program.cs",
+                "backend/tests/Clientes.Tests/ClienteTests.cs", "app/lib/main.dart"));
+        var failingRun = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("test", "FAIL", 1, 1, """
+                  Failed Clientes.Tests.ClienteTests.Crear [3 ms]
+                  Error Message:
+                   Expected 200, Actual 201
+                  Stack Trace:
+                     at Clientes.Tests.ClienteTests.Crear() in /work/tests/Clientes.Tests/ClienteTests.cs:line 9
+                """, 2, 1)));
+        var passingRun = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("DOTNET_APP"), eq("backend"))).thenReturn(Optional.of(failingRun),
+                Optional.of(passingRun));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("FLUTTER_WEB_APP"), eq("app"))).thenReturn(Optional.of(passingRun));
+        when(runtime.triage(anyString(), eq("M-1"), eq("engineering"), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(new com.aicompany.core.agent.model.TestTriage(List.of(
+                        new com.aicompany.core.agent.model.TestTriage.Verdict("Clientes.Tests.ClienteTests.Crear",
+                                "TEST_WRONG", "Crear un cliente responde 201 Created.", "El test espera 200.",
+                                List.of(), List.of("backend/tests/Clientes.Tests/ClienteTests.cs"))))));
+
+        strategy.execute(context, progress);
+
+        verify(runtime).generate(eq("M-1-QA"), eq("M-1"), eq("qa"), contains("No puedes tocar el código"), anyList(),
+                anyList(), eq(List.of("backend/tests/Clientes.Tests/ClienteTests.cs")), any());
+        verify(runtime, never()).generate(eq("M-1-BACKEND"), eq("M-1"), eq("backend"), contains("DIAGNÓSTICO"), anyList(),
+                anyList(), anyList(), any());
+    }
 }

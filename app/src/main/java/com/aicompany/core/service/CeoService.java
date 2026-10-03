@@ -1239,6 +1239,13 @@ public class CeoService {
                 DevelopmentResultSchema.SCHEMA, DevelopmentResult.class);
     }
 
+    /** Diagnóstico 360 (decisión del fundador 2026-10-03): Neo dice si falla el test, la lógica o ambos. Sin tools. */
+    public com.aicompany.core.agent.model.TestTriage triageFailingTests(String agentId, String prompt, String agentPrompt,
+                                                                       String model) {
+        return callStructured("TEST_TRIAGE", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.TestTriage.SCHEMA, com.aicompany.core.agent.model.TestTriage.class);
+    }
+
     /** Revisión estática del repo (spec §7, capa 2): format StaticReviewResultSchema, sin tools. */
     public StaticReviewResult reviewStaticWorkspace(String agentId, String prompt, String agentPrompt, String model) {
         return callStructured("STATIC_REVIEW", agentId, prompt, agentPrompt, model,
