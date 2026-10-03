@@ -27,6 +27,14 @@ public class OpenAiCompatibleClient {
     /** Keys editables desde Settings (2026-09-29): cambia en caliente, la siguiente llamada ya usa la nueva. */
     private volatile String apiKey;
     private final Duration retryDelay;
+    /**
+     * Verificado en vivo (MISSION-B1-INV-1791031663, 2026-10-03): una llamada quedó colgada 5 h 27 min; el read-timeout
+     * es por inactividad y NVIDIA mantenía la conexión. Plazo total por llamada; al vencer, el modelo "no responde".
+     */
+    private final Duration totalTimeout;
+    static final Duration DEFAULT_TOTAL_TIMEOUT = Duration.ofMinutes(12);
+    private static final java.util.concurrent.ExecutorService CALLS =
+            java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
 
     public OpenAiCompatibleClient(RestClient client, String apiKey, Duration retryDelay) {
         this(client, client, apiKey, retryDelay);
@@ -34,10 +42,42 @@ public class OpenAiCompatibleClient {
 
     /** probeClient: mismo endpoint con timeout corto, solo para ping (spec salud de modelos 2026-09-28). */
     public OpenAiCompatibleClient(RestClient client, RestClient probeClient, String apiKey, Duration retryDelay) {
+        this(client, probeClient, apiKey, retryDelay, DEFAULT_TOTAL_TIMEOUT);
+    }
+
+    public OpenAiCompatibleClient(RestClient client, RestClient probeClient, String apiKey, Duration retryDelay,
+                                  Duration totalTimeout) {
         this.client = client;
         this.probeClient = probeClient;
         this.apiKey = apiKey;
         this.retryDelay = retryDelay;
+        this.totalTimeout = totalTimeout;
+    }
+
+    /** La llamada en un hilo propio con plazo total; al vencer se cancela (el cliente HTTP del JDK aborta el envío). */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> postWithDeadline(String model, Map<String, Object> body) {
+        var call = CALLS.submit(() -> (Map<String, Object>) client.post().uri("/chat/completions")
+                .header("Authorization", "Bearer " + apiKey)
+                .body(body)
+                .retrieve()
+                .body(Map.class));
+        try {
+            return call.get(totalTimeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException ex) {
+            call.cancel(true);
+            throw new RemoteUnavailableException("Modelo remoto " + model + " no respondió en "
+                    + totalTimeout.toMinutes() + " min (plazo total por llamada).", ex);
+        } catch (InterruptedException ex) {
+            call.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new RemoteUnavailableException("Llamada a " + model + " interrumpida.", ex);
+        } catch (java.util.concurrent.ExecutionException ex) {
+            if (ex.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new RemoteUnavailableException("Modelo remoto " + model + " no responde: " + ex.getCause(), ex);
+        }
     }
 
     public void setApiKey(String apiKey) {
@@ -133,11 +173,7 @@ public class OpenAiCompatibleClient {
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                var response = client.post().uri("/chat/completions")
-                        .header("Authorization", "Bearer " + apiKey)
-                        .body(body)
-                        .retrieve()
-                        .body(Map.class);
+                var response = postWithDeadline(model, body);
                 var choices = response == null ? null : (List<Map<String, Object>>) response.get("choices");
                 if (choices == null || choices.isEmpty()) {
                     // Verificado en vivo (MISSION-SANDBOX-VERIFY-19): intermitente, el siguiente intento funcionó.
