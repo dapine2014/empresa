@@ -169,6 +169,9 @@ public class TeamWorkPlanner {
 
                 var errors = new ArrayList<String>(validator.validate(plan, team, mode, connections));
                 resolverErrors.stream().filter(error -> !errors.contains(error)).forEach(errors::add);
+                if (mode == TeamExecutionMode.DEVELOPMENT) {
+                    errors.addAll(com.aicompany.core.agent.validation.RequestedComponents.errors(instruction, plan));
+                }
 
                 if (errors.isEmpty()) {
 
@@ -276,6 +279,8 @@ public class TeamWorkPlanner {
                   y datos guardados en un servidor es ["DOTNET_APP", "FLUTTER_WEB_APP"] (API .NET + app Flutter, que
                   sirve igual para web, Android e iOS); solo una API es ["DOTNET_APP"]; solo una app sin servidor es
                   ["FLUTTER_WEB_APP"]. Forjai decide las carpetas (backend/, app/): no las pongas en ninguna ruta.
+                  Si personas usan el producto directamente (ven, consultan, cargan, reservan, compran), lleva app
+                  aunque el pedido no diga "pantallas"; solo API cuando lo usan otros sistemas o el pedido lo dice.
                 - boundedContexts: los bounded contexts del producto, cada uno con name y description. Con DOTNET_APP en
                   components, el name va en PascalCase (p. ej. Clientes); si no, en el formato del perfil. El name
                   define las rutas de sus capas. Para un producto chico, UN solo contexto.
