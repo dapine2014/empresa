@@ -10,6 +10,8 @@ case "$1" in
   # intentaba descargar y colgaba el paso hasta el timeout. --no-wasm-dry-run: solo web JS (ahorra una compilación).
   build)   flutter build web --release --no-web-resources-cdn --no-pub --no-wasm-dry-run ;;
   test)    flutter test --no-pub --machine > /work/.forjai/results.json || true
+           # Diagnóstico 360: los tests que fallan, en el formato de dotnet test (Java los lee de la salida).
+           python3 /forjai/failing_tests.py /work/.forjai/results.json || true
            grep -q '"success":true' /work/.forjai/results.json ;;
   smoke)
     python3 -m http.server --directory /work/build/web 8080 --bind 127.0.0.1 > /tmp/http.log 2>&1 &

@@ -49,4 +49,22 @@ class FailingTestParserTest {
         assertEquals(List.of("tests/A.Tests/T.cs"), tests.get(0).files());
         assertEquals(List.of(), tests.get(1).files());
     }
+
+    // Verificado en vivo (2026-10-03, imagen flutter-web-app con failing_tests.py): el resumen de Flutter se lee igual.
+    @Test
+    void flutterSummaryFromTheSandbox() {
+        var tests = FailingTestParser.parse("""
+                  Failed Counter increments smoke test
+                  Error Message:
+                   The following TestFailure was thrown running a test:
+                   Expected: exactly 5 matching candidates
+                   Actual: _TextWidgetFinder:<Found 1 widget with text "1": [
+                  Stack Trace:
+                     at test/widget_test.dart in /work/test/widget_test.dart:line 28
+                """, "app");
+        assertEquals(1, tests.size());
+        assertEquals("Counter increments smoke test", tests.get(0).method());
+        assertTrue(tests.get(0).message().contains("Expected: exactly 5"), tests.get(0).message());
+        assertEquals(List.of("app/test/widget_test.dart"), tests.get(0).files());
+    }
 }
