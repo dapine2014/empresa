@@ -162,4 +162,15 @@ class CeoServiceRemoteModelTest {
                 () -> ceoService.generateDevelopmentArtifact("engineering", "p", "", "nvidia:moonshotai/kimi-k3"));
         assertTrue(ex.getMessage().contains("más breve"), ex.getMessage());
     }
+
+    // Decisión del fundador (2026-10-03): el suplente es obligatorio y local (Ollama).
+    @Test
+    void theFallbackModelMustBeALocalModel() {
+        assertThrows(IllegalArgumentException.class, () -> ceoService.checkFallbackModel(""));
+        assertThrows(IllegalArgumentException.class, () -> ceoService.checkFallbackModel("  "));
+        var remote = assertThrows(IllegalArgumentException.class,
+                () -> ceoService.checkFallbackModel("nvidia:z-ai/glm-5.3"));
+        assertTrue(remote.getMessage().contains("local"), remote.getMessage());
+        assertDoesNotThrow(() -> ceoService.checkFallbackModel("qwen3-coder:30b"));
+    }
 }

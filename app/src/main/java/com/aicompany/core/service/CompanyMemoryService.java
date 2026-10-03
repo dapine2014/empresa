@@ -11,6 +11,8 @@ import java.util.Optional;
 
 @Service
 public class CompanyMemoryService {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CompanyMemoryService.class);
     private final Driver driver;
     private final String defaultCeoModel;
     private final String defaultAgentModel;
@@ -237,6 +239,26 @@ public class CompanyMemoryService {
             return session.run("MATCH (a:Agent {id:$id}) RETURN coalesce(a.fallbackModel, $fallback) AS model",
                             Map.of("id", agentId, "fallback", DEFAULT_FALLBACK_MODEL))
                     .list(r -> r.get("model").asString()).stream().findFirst().orElse(DEFAULT_FALLBACK_MODEL);
+        }
+    }
+
+    /**
+     * Decisión del fundador (2026-10-03): todo agente tiene un suplente local. Idempotente al arrancar: un suplente
+     * vacío, ausente o remoto (proveedor:org/modelo) pasa al default. Devuelve cuántos agentes cambió.
+     */
+    public int ensureLocalFallbacks() {
+        try (var session = driver.session()) {
+            var changed = session.executeWrite(tx -> tx.run("""
+                    MATCH (a:Agent)
+                    WHERE a.fallbackModel IS NULL OR trim(a.fallbackModel) = ''
+                       OR a.fallbackModel =~ '^[a-z][a-z0-9-]*:[^:\\s]+/.+$'
+                    SET a.fallbackModel = $fallback
+                    RETURN a.id AS id
+                    """, Map.of("fallback", DEFAULT_FALLBACK_MODEL)).list(r -> r.get("id").asString()));
+            if (!changed.isEmpty()) {
+                log.info("FALLBACK_MODELS_NORMALIZED agents={} fallback={}", changed, DEFAULT_FALLBACK_MODEL);
+            }
+            return changed.size();
         }
     }
 
