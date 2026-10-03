@@ -428,7 +428,7 @@ public class DevelopmentRuntime {
         files.stream()
                 .filter(f -> f != null && f.path() != null
                         && ("pubspec.yaml".equals(f.path()) || f.path().endsWith("/pubspec.yaml")))
-                .forEach(f -> errors.addAll(DependencyManifest.pubspec(f.content()).errors()));
+                .forEach(f -> errors.addAll(DependencyManifest.pubspecGateErrors(f.content())));
         return errors;
     }
 

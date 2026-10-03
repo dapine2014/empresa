@@ -511,6 +511,7 @@ class DevelopmentRuntimeTest {
                 .GeneratedFile("app/pubspec.yaml", "name: app\ndependencies:\n  provider: ^6.1.2\n")));
         assertFalse(errors.isEmpty());
         assertEquals(List.of(), DevelopmentRuntime.pubspecErrors(List.of(new com.aicompany.core.agent.model
-                .DevelopmentResult.GeneratedFile("app/pubspec.yaml", "name: app\ndependencies:\n  http: 1.2.2\n"))));
+                .DevelopmentResult.GeneratedFile("app/pubspec.yaml",
+                "name: app\nenvironment:\n  sdk: ^3.11.0\ndependencies:\n  http: 1.2.2\n"))));
     }
 }

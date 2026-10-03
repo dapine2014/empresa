@@ -71,4 +71,14 @@ class DependencyManifestTest {
         assertTrue(parsed.errors().get(0).contains("comillas"), parsed.errors().get(0));
         assertTrue(DependencyManifest.pubspec("name: app\ndescription: \"App del CRM: clientes\"\n").errors().isEmpty());
     }
+
+    // Verificado en vivo (MISSION-B1-AGENDA-1791057420): sin environment.sdk, pub get falla en el sandbox.
+    @Test
+    void pubspecNeedsAnSdkConstraint() {
+        var errors = DependencyManifest.pubspecGateErrors("name: app\ndependencies:\n  http: 1.2.2\n");
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("environment"), errors.get(0));
+        assertTrue(DependencyManifest.pubspecGateErrors(
+                "name: app\nenvironment:\n  sdk: ^3.11.0\ndependencies:\n  http: 1.2.2\n").isEmpty());
+    }
 }

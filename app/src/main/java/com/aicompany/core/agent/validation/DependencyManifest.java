@@ -22,6 +22,31 @@ public final class DependencyManifest {
     private DependencyManifest() {
     }
 
+    /**
+     * Lo que exige el gate al generar: versiones exactas, YAML válido y environment.sdk. Verificado en vivo
+     * (MISSION-B1-AGENDA-1791057420): sin environment.sdk, pub get falla en el sandbox y el error no vuelve a la dueña.
+     */
+    @SuppressWarnings("unchecked")
+    public static List<String> pubspecGateErrors(String yaml) {
+        var errors = new ArrayList<>(pubspec(yaml).errors());
+        if (!errors.isEmpty()) {
+            return errors;
+        }
+        Object environment = null;
+        try {
+            var loaded = new org.yaml.snakeyaml.Yaml().load(yaml == null ? "" : yaml);
+            environment = loaded instanceof java.util.Map<?, ?> map ? map.get("environment") : null;
+        } catch (RuntimeException ignored) {
+            // pubspec() ya informó el YAML inválido
+        }
+        var sdk = environment instanceof java.util.Map<?, ?> env ? env.get("sdk") : null;
+        if (sdk == null || String.valueOf(sdk).isBlank()) {
+            errors.add("pubspec.yaml necesita la versión de Dart: environment:\n  sdk: ^3.11.0 (la del sandbox); sin "
+                    + "ella pub get falla.");
+        }
+        return errors;
+    }
+
     private static String yamlError(String yaml) {
         try {
             new org.yaml.snakeyaml.Yaml().load(yaml == null ? "" : yaml);
