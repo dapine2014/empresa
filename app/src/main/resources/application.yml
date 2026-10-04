@@ -110,8 +110,10 @@ remote-models:
       api-key: ${ALIBABA_API_KEY:}
       # Verificado en vivo (2026-10-04): la familia Qwen3-Coder está en retiro (AccessDenied.Unpurchased).
       check-models: qwen3.8-max
-      thinking-off-param: enable_thinking
+      thinking-off: enable_thinking=false
     bedrock:
       base-url: ${BEDROCK_BASE_URL:https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1}
       api-key: ${BEDROCK_API_KEY:}
       check-models: global.moonshotai.kimi-k3
+      # Verificado en vivo (2026-10-04): kimi-k3 en Bedrock razona por defecto; reasoning_effort=none lo apaga.
+      thinking-off: reasoning_effort=none

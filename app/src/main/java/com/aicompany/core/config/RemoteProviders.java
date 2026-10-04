@@ -12,9 +12,12 @@ import java.util.List;
  */
 public final class RemoteProviders {
 
-    /** {@code thinkingOffParam}: parámetro propio del proveedor para apagar el razonamiento (Alibaba: enable_thinking). */
+    /**
+     * {@code thinkingOff}: "parámetro=valor" propio del proveedor que apaga el razonamiento (Alibaba
+     * {@code enable_thinking=false}; Bedrock {@code reasoning_effort=none}, verificado en vivo 2026-10-04).
+     */
     public record Provider(String name, String baseUrl, String apiKey, List<String> checkModels, boolean nvidiaOptions,
-                           String thinkingOffParam) {
+                           String thinkingOff) {
     }
 
     static final List<String> NAMES = List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo", "alibaba",
@@ -30,7 +33,7 @@ public final class RemoteProviders {
             var checks = Arrays.stream(env.getProperty(prefix + "check-models", "").split(","))
                     .map(String::strip).filter(m -> !m.isEmpty()).toList();
             return new Provider(name, baseUrl, env.getProperty(prefix + "api-key", ""), checks,
-                    baseUrl.contains("nvidia.com"), env.getProperty(prefix + "thinking-off-param", ""));
+                    baseUrl.contains("nvidia.com"), env.getProperty(prefix + "thinking-off", ""));
         }).toList();
     }
 }

@@ -58,7 +58,7 @@ class OpenAiCompatibleClientTest {
                 .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
 
         var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
-        client.configure("alibaba", false, List.of("qwen3.8-max"), "enable_thinking");
+        client.configure("alibaba", false, List.of("qwen3.8-max"), "enable_thinking=false");
 
         client.chat("qwen3.8-max", MESSAGES, true, 100);
         server.verify();
@@ -81,6 +81,24 @@ class OpenAiCompatibleClientTest {
         var reason = client.lastCheckError();
         assertTrue(reason.contains("403") && reason.contains("AccessDenied"), reason);
         assertFalse(reason.contains("sk-secreta"), reason);
+    }
+
+    // Verificado en vivo (2026-10-04, Bedrock): kimi-k3 razona por defecto (50 de 70 tokens de salida); se apaga con
+    // reasoning_effort=none, un valor de texto.
+    @Test
+    void bedrockTurnsReasoningOffWithATextValue() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.reasoning_effort").value("none"))
+                .andExpect(jsonPath("$.chat_template_kwargs").doesNotExist())
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("bedrock", false, List.of("global.moonshotai.kimi-k3"), "reasoning_effort=none");
+
+        client.chat("global.moonshotai.kimi-k3", MESSAGES, true, 100);
+        server.verify();
     }
 
     @Test

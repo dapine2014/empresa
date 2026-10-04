@@ -40,18 +40,25 @@ public class OpenAiCompatibleClient {
     private volatile boolean nvidiaOptions = true;
     private volatile List<String> checkModels = List.of();
     private volatile String thinkingOffParam = "";
+    private volatile Object thinkingOffValue = Boolean.FALSE;
 
     /** Proveedores pagos (2026-10-04): nombre, si lleva las opciones de NVIDIA y con qué modelos se prueba una key. */
     public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels) {
         configure(providerName, nvidiaOptions, checkModels, "");
     }
 
-    /** {@code thinkingOffParam}: parámetro propio del proveedor que apaga el razonamiento (Alibaba: enable_thinking). */
-    public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels, String thinkingOffParam) {
+    /** {@code thinkingOff}: "parámetro=valor" que apaga el razonamiento ("false"/"true" se mandan como booleanos). */
+    public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels, String thinkingOff) {
         this.providerName = providerName;
         this.nvidiaOptions = nvidiaOptions;
         this.checkModels = List.copyOf(checkModels);
-        this.thinkingOffParam = thinkingOffParam == null ? "" : thinkingOffParam;
+        var parts = thinkingOff == null ? new String[0] : thinkingOff.split("=", 2);
+        this.thinkingOffParam = parts.length == 2 ? parts[0].strip() : "";
+        this.thinkingOffValue = parts.length == 2 ? parseValue(parts[1].strip()) : Boolean.FALSE;
+    }
+
+    private static Object parseValue(String value) {
+        return "false".equalsIgnoreCase(value) ? Boolean.FALSE : "true".equalsIgnoreCase(value) ? Boolean.TRUE : value;
     }
 
     public List<String> checkModels() {
@@ -143,7 +150,7 @@ public class OpenAiCompatibleClient {
                 body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
             }
             if (!thinkingOffParam.isBlank()) {
-                body.put(thinkingOffParam, false);
+                body.put(thinkingOffParam, thinkingOffValue);
             }
             probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + candidate)
                     .body(body).retrieve().body(Map.class);
@@ -170,7 +177,7 @@ public class OpenAiCompatibleClient {
                 body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
             }
             if (!thinkingOffParam.isBlank()) {
-                body.put(thinkingOffParam, false);
+                body.put(thinkingOffParam, thinkingOffValue);
             }
             var response = probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + apiKey)
                     .body(body).retrieve().body(Map.class);
@@ -218,7 +225,7 @@ public class OpenAiCompatibleClient {
             body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
         }
         if (!thinkingOffParam.isBlank()) {
-            body.put(thinkingOffParam, false);
+            body.put(thinkingOffParam, thinkingOffValue);
         }
         if (json) {
             body.put("response_format", Map.of("type", "json_object"));
