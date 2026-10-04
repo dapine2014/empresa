@@ -56,6 +56,16 @@ function ModelEditor({ agentId }: { agentId: string }) {
       setFallback(null)
     },
   })
+  const currentPaid = agentsQuery.data?.find((a) => a.id === agentId)?.paidFallbackModel ?? ''
+  const [paid, setPaid] = useState<string | null>(null)
+  const displayedPaid = paid ?? currentPaid
+  const paidMutation = useMutation({
+    mutationFn: () => api.updateAgentPaidFallbackModel(agentId, displayedPaid),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['agents'] })
+      setPaid(null)
+    },
+  })
   const [model, setModel] = useState<string | null>(null)
   const displayed = model ?? current
   const known = Array.from(new Set((agentsQuery.data ?? []).map((a) => a.model).filter(Boolean)))
@@ -111,10 +121,30 @@ function ModelEditor({ agentId }: { agentId: string }) {
       {mutation.isError && <p className="error">{mutation.error.message}</p>}
       {down && (
         <p className="error">
-          ⚠ Su modelo no responde desde {down.since?.slice(0, 16).replace('T', ' ')} UTC: trabaja con su suplente{' '}
-          <code>{currentFallback || 'qwen3-coder:30b'}</code>.
+          ⚠ Su modelo no responde desde {down.since?.slice(0, 16).replace('T', ' ')} UTC: trabaja con{' '}
+          {currentPaid ? (
+            <>
+              su respaldo pago <code>{currentPaid}</code> (o, si también falla, su suplente{' '}
+              <code>{currentFallback || 'qwen3-coder:30b'}</code>)
+            </>
+          ) : (
+            <>
+              su suplente <code>{currentFallback || 'qwen3-coder:30b'}</code>
+            </>
+          )}
+          .
         </p>
       )}
+      <h3>Respaldo pago</h3>
+      <p className="hint">
+        Solo se usa si su modelo gratis (NVIDIA) cae, antes del suplente local. Modelo remoto de un proveedor con key (p. ej.
+        bedrock:global.moonshotai.kimi-k3); vacío = sin respaldo pago.
+      </p>
+      <input value={displayedPaid} onChange={(e) => setPaid(e.target.value)} placeholder="p. ej. bedrock:global.moonshotai.kimi-k3" />
+      <button disabled={displayedPaid === currentPaid || paidMutation.isPending} onClick={() => paidMutation.mutate()}>
+        Guardar respaldo pago
+      </button>
+      {paidMutation.isError && <p className="error">{paidMutation.error.message}</p>}
       <h3>Suplente local</h3>
       <p className="hint">
         Si su modelo remoto cae, Forjai usa este. Obligatorio y local de Ollama (por defecto qwen3-coder:30b): un modelo remoto o vacío se rechaza.

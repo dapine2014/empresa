@@ -91,7 +91,7 @@ public class AgentRuntime {
         }
         var model = companyMemory.agentModel(agentId, defaultAgentModel);
         if (modelHealth.isDown(model)) {
-            memory.setTaskModelUsed(taskId, modelHealth.fallbackFor(agentId));
+            memory.setTaskModelUsed(taskId, modelHealth.effectiveModel(agentId, model));
         }
     }
 

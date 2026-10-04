@@ -2089,13 +2089,22 @@ public class ChatIntentRouter {
      * confundir ninguna de las dos cosas con "lo que el agente está
      * haciendo ahora".
      */
+    /** Decisión del fundador (2026-10-04): con el gratis caído lo atiende el respaldo pago o, si no, el suplente local. */
+    private String downSuffix(String agentId, String model) {
+        var effective = modelHealth.effectiveModel(agentId, model);
+        if (effective != null && CeoService.remoteModel(effective).isPresent()) {
+            return " (caído: lo atiende su respaldo pago " + effective + ")";
+        }
+        return " (caído: usa su suplente " + modelHealth.fallbackFor(agentId) + ")";
+    }
+
     private String formatOneAgentStatus(AgentStatusResponse a) {
 
         var base = statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status();
         // Subproyecto 2 (2026-09-28): el modelo real de cada agente (editable desde el Command Center).
         var model = companyMemory.agentModel(a.agentId(), defaultCeoModel);
         var modelSuffix = model == null || model.isBlank() ? "" : " — modelo " + model
-                + (modelHealth.isDown(model) ? " (caído: usa su suplente " + modelHealth.fallbackFor(a.agentId()) + ")" : "");
+                + (modelHealth.isDown(model) ? downSuffix(a.agentId(), model) : "");
 
         if (a.missionId() == null) {
             return base + modelSuffix;

@@ -45,7 +45,7 @@ class OpenAiCompatibleClientTest {
         server.verify();
     }
 
-    // Proveedores pagos (2026-10-04): las opciones de NVIDIA (chat_template_kwargs) no van a Alibaba ni a Bedrock.
+    // Proveedores pagos (2026-10-04): las opciones de NVIDIA (chat_template_kwargs) no van a otros proveedores.
     @Test
     void otherProvidersDoNotGetTheNvidiaOptions() {
         var builder = RestClient.builder().baseUrl("https://api.test/v1");
@@ -53,19 +53,19 @@ class OpenAiCompatibleClientTest {
         server.expect(requestTo("https://api.test/v1/chat/completions"))
                 .andExpect(jsonPath("$.response_format.type").value("json_object"))
                 .andExpect(jsonPath("$.chat_template_kwargs").doesNotExist())
-                // Alibaba (Qwen): el razonamiento se apaga con su propio parámetro.
+                // Un proveedor con su propio parámetro booleano para apagar el razonamiento.
                 .andExpect(jsonPath("$.enable_thinking").value(false))
                 .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
 
         var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
-        client.configure("alibaba", false, List.of("qwen3.8-max"), "enable_thinking=false");
+        client.configure("otro", false, List.of("m"), "enable_thinking=false");
 
-        client.chat("qwen3.8-max", MESSAGES, true, 100);
+        client.chat("m", MESSAGES, true, 100);
         server.verify();
-        assertEquals(List.of("qwen3.8-max"), client.checkModels());
+        assertEquals(List.of("m"), client.checkModels());
     }
 
-    // Verificado en vivo (2026-10-04, Alibaba): 403 también es "modelo no habilitado"; el motivo del proveedor se muestra,
+    // Verificado en vivo (2026-10-04): 403 también es "modelo no habilitado"; el motivo del proveedor se muestra,
     // nunca la key.
     @Test
     void aRejectedKeyKeepsTheProviderReasonWithoutTheKey() {

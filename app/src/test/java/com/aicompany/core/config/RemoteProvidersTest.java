@@ -7,30 +7,31 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Proveedores pagos (2026-10-04): cada proveedor remoto con su URL, su key y el modelo con que se prueba la key. */
+/** Proveedores remotos (2026-10-04): cada uno con su URL, su key, el modelo con que se prueba la key y cómo apagar el razonamiento. */
 class RemoteProvidersTest {
 
     @Test
-    void nvidiaUsesTheDefaultUrlAndPaidProvidersTheirOwn() {
+    void nvidiaUsesTheDefaultUrlAndBedrockItsOwn() {
         var env = new MockEnvironment()
-                .withProperty("remote-models.providers.alibaba.base-url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
-                .withProperty("remote-models.providers.alibaba.check-models", "qwen3.8-max")
-                .withProperty("remote-models.providers.alibaba.thinking-off", "enable_thinking=false")
-                .withProperty("remote-models.providers.alibaba.api-key", "x");
+                .withProperty("remote-models.providers.bedrock.base-url", "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1")
+                .withProperty("remote-models.providers.bedrock.check-models", "global.moonshotai.kimi-k3")
+                .withProperty("remote-models.providers.bedrock.thinking-off", "reasoning_effort=none")
+                .withProperty("remote-models.providers.bedrock.api-key", "x");
 
         var providers = RemoteProviders.from(env, "https://integrate.api.nvidia.com/v1");
 
-        assertEquals(List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo", "alibaba", "bedrock"),
+        // Decisión del fundador (2026-10-04): Alibaba se quitó.
+        assertEquals(List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo", "bedrock"),
                 providers.stream().map(RemoteProviders.Provider::name).toList());
         var nvidia = providers.get(0);
         assertEquals("https://integrate.api.nvidia.com/v1", nvidia.baseUrl());
         assertTrue(nvidia.nvidiaOptions());
-        var alibaba = providers.get(4);
-        assertEquals("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", alibaba.baseUrl());
-        assertFalse(alibaba.nvidiaOptions());
-        assertEquals(List.of("qwen3.8-max"), alibaba.checkModels());
-        assertEquals("enable_thinking=false", alibaba.thinkingOff());
         assertEquals("", nvidia.thinkingOff());
-        assertEquals("x", alibaba.apiKey());
+        var bedrock = providers.get(4);
+        assertEquals("https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1", bedrock.baseUrl());
+        assertFalse(bedrock.nvidiaOptions());
+        assertEquals(List.of("global.moonshotai.kimi-k3"), bedrock.checkModels());
+        assertEquals("reasoning_effort=none", bedrock.thinkingOff());
+        assertEquals("x", bedrock.apiKey());
     }
 }

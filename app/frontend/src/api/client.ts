@@ -84,6 +84,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ model }),
     }),
+  updateAgentPaidFallbackModel: (agentId: string, model: string) =>
+    request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/paid-fallback-model`, {
+      method: 'PUT',
+      body: JSON.stringify({ model }),
+    }),
   dependencies: () => request<DependencyInfo[]>('/api/company/dependencies'),
   approveDependency: (id: string) =>
     request<unknown>(`/api/company/dependencies/${encodeURIComponent(id)}/approve`, { method: 'PUT' }),

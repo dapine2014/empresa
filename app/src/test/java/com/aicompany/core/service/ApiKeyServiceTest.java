@@ -123,20 +123,20 @@ class ApiKeyServiceTest {
         verify(engClient, never()).checkKey(any(), any());
     }
 
-    // Proveedores pagos (2026-10-04): la key de Alibaba se prueba con su propio modelo, nunca con los de NVIDIA.
+    // Proveedores pagos (2026-10-04): la key de Bedrock se prueba con su propio modelo, nunca con los de NVIDIA.
     @Test
     void aPaidProviderKeyIsCheckedWithItsOwnModel() {
-        var alibaba = mock(OpenAiCompatibleClient.class);
-        when(alibaba.checkModels()).thenReturn(List.of("qwen3-coder-plus"));
-        when(alibaba.keyHint()).thenReturn("…ueva");
-        when(alibaba.checkKey("qwen3-coder-plus", "sk-nueva")).thenReturn(KeyCheck.OK);
-        var withAlibaba = new ApiKeyService(Map.of("alibaba", alibaba), memory, cipher, events, companyMemory);
+        var bedrock = mock(OpenAiCompatibleClient.class);
+        when(bedrock.checkModels()).thenReturn(List.of("global.moonshotai.kimi-k3"));
+        when(bedrock.keyHint()).thenReturn("…ueva");
+        when(bedrock.checkKey("global.moonshotai.kimi-k3", "bedrock-nueva")).thenReturn(KeyCheck.OK);
+        var withAlibaba = new ApiKeyService(Map.of("bedrock", bedrock), memory, cipher, events, companyMemory);
 
-        withAlibaba.update("alibaba", "sk-nueva", "human");
+        withAlibaba.update("bedrock", "bedrock-nueva", "human");
 
-        verify(alibaba).checkKey("qwen3-coder-plus", "sk-nueva");
-        verify(alibaba, never()).checkKey(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyString());
-        verify(alibaba).setApiKey("sk-nueva");
+        verify(bedrock).checkKey("global.moonshotai.kimi-k3", "bedrock-nueva");
+        verify(bedrock, never()).checkKey(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyString());
+        verify(bedrock).setApiKey("bedrock-nueva");
     }
 
     @Test

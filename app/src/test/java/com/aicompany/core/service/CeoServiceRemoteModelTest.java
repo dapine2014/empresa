@@ -173,4 +173,13 @@ class CeoServiceRemoteModelTest {
         assertTrue(remote.getMessage().contains("local"), remote.getMessage());
         assertDoesNotThrow(() -> ceoService.checkFallbackModel("qwen3-coder:30b"));
     }
+
+    // Decisión del fundador (2026-10-04): el respaldo pago es remoto y de otro proveedor (o vacío = sin respaldo pago).
+    @Test
+    void thePaidFallbackMustBeARemoteModelOrEmpty() {
+        assertDoesNotThrow(() -> ceoService.checkPaidFallbackModel(""));
+        assertThrows(IllegalArgumentException.class, () -> ceoService.checkPaidFallbackModel("qwen3-coder:30b"));
+        var unknown = assertThrows(IllegalArgumentException.class, () -> ceoService.checkPaidFallbackModel("openai:gpt-x"));
+        assertTrue(unknown.getMessage().contains("remoto"), unknown.getMessage());
+    }
 }

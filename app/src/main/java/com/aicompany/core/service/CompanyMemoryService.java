@@ -262,6 +262,45 @@ public class CompanyMemoryService {
         }
     }
 
+    /**
+     * Decisión del fundador (2026-10-04): respaldo pago ({@code proveedor:modelo}, p. ej. kimi en Bedrock) que se usa solo
+     * cuando el modelo del agente cae; "" = sin respaldo pago (va directo al suplente local).
+     */
+    public String agentPaidFallbackModel(String agentId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (a:Agent {id:$id}) RETURN coalesce(a.paidFallbackModel, '') AS model",
+                            Map.of("id", agentId))
+                    .list(r -> r.get("model").asString()).stream().findFirst().orElse("");
+        }
+    }
+
+    public void setAgentPaidFallbackModel(String agentId, String model) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                var result = tx.run("MATCH (a:Agent {id:$id}) SET a.paidFallbackModel=$model",
+                        Map.of("id", agentId, "model", model == null ? "" : model.strip()));
+                if (result.consume().counters().propertiesSet() == 0) {
+                    throw new IllegalArgumentException("No existe el agente " + agentId);
+                }
+                return null;
+            });
+        }
+    }
+
+    /** Siembra (solo si falta): los agentes con kimi en NVIDIA tienen de respaldo pago kimi en Bedrock. */
+    public int ensurePaidFallbacks(String freeModel, String paidModel) {
+        try (var session = driver.session()) {
+            var changed = session.executeWrite(tx -> tx.run("""
+                    MATCH (a:Agent {model:$free}) WHERE a.paidFallbackModel IS NULL
+                    SET a.paidFallbackModel = $paid RETURN a.id AS id
+                    """, Map.of("free", freeModel, "paid", paidModel)).list(r -> r.get("id").asString()));
+            if (!changed.isEmpty()) {
+                log.info("PAID_FALLBACKS_SEEDED agents={} paid={}", changed, paidModel);
+            }
+            return changed.size();
+        }
+    }
+
     public void setAgentFallbackModel(String agentId, String model) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
@@ -400,7 +439,8 @@ public class CompanyMemoryService {
         try (var session = driver.session()) {
             return session.run("MATCH (a:Agent) RETURN a.id AS id, a.name AS name, a.role AS role, a.personality AS personality, "
                             + "coalesce(a.model, '') AS model, coalesce(a.fallbackModel, '" + DEFAULT_FALLBACK_MODEL
-                            + "') AS fallbackModel, coalesce(a.enabled, true) AS enabled ORDER BY a.id")
+                            + "') AS fallbackModel, coalesce(a.paidFallbackModel, '') AS paidFallbackModel, "
+                            + "coalesce(a.enabled, true) AS enabled ORDER BY a.id")
                     .list(record -> Map.of(
                             "id", record.get("id").asString(),
                             "name", record.get("name").asString(),
@@ -410,6 +450,8 @@ public class CompanyMemoryService {
                             "model", record.get("model").asString(),
                             // Spec salud de modelos (2026-09-28): suplente local editable en Agents.
                             "fallbackModel", record.get("fallbackModel").asString(),
+                            // Decisión del fundador (2026-10-04): respaldo pago editable en Agents.
+                            "paidFallbackModel", record.get("paidFallbackModel").asString(),
                             "enabled", record.get("enabled").asBoolean()));
         }
     }

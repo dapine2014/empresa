@@ -256,7 +256,9 @@ public class CeoService {
      * Prefijo de Agent.model para la API remota compatible con OpenAI (hoy NVIDIA). Decisión del fundador
      * (2026-09-26): Engineering con "nvidia:moonshotai/kimi-k3" tras 18 misiones con qwen3:8b sin build verde.
      */
-    static final java.util.regex.Pattern REMOTE_MODEL = java.util.regex.Pattern.compile("^(nvidia(?:-[a-z]+)?):(.+)$");
+    // Respaldo pago (2026-10-04): bedrock también es remoto. No vale cualquier prefijo: los modelos locales de Ollama
+    // también llevan ":" (qwen3-coder:30b).
+    static final java.util.regex.Pattern REMOTE_MODEL = java.util.regex.Pattern.compile("^(nvidia(?:-[a-z]+)?|bedrock):(.+)$");
 
     /** Proveedor remoto y modelo de un Agent.model con prefijo (decisión del fundador 2026-09-27: una key por grupo). */
     public record RemoteModel(String provider, String model) {
@@ -311,7 +313,23 @@ public class CeoService {
         checkModel(candidate);
     }
 
-    static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
+    /**
+     * Decisión del fundador (2026-10-04): el respaldo pago solo se usa si el modelo gratis cae; tiene que ser un modelo
+     * remoto de un proveedor configurado (p. ej. bedrock:global.moonshotai.kimi-k3). Vacío = sin respaldo pago.
+     */
+    public void checkPaidFallbackModel(String model) {
+        if (model == null || model.isBlank()) {
+            return;
+        }
+        var ref = remoteModel(model.strip());
+        if (ref.isEmpty() || !remotes.containsKey(ref.get().provider())) {
+            throw new IllegalArgumentException("El respaldo pago debe ser un modelo remoto de un proveedor configurado "
+                    + new java.util.TreeSet<>(remotes.keySet()) + " (p. ej. bedrock:global.moonshotai.kimi-k3), no \""
+                    + model.strip() + "\".");
+        }
+    }
+
+    public static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
         if (agentModel == null) {
             return java.util.Optional.empty();
         }
@@ -1743,6 +1761,19 @@ public class CeoService {
     /** La llamada del agente va a su suplente local; nunca en silencio (log, y el aviso lo da ModelHealthService). */
     private ModelMessage viaFallback(String operation, String actor, String model, List<Map<String, Object>> messages,
                                      Object format, List<Map<String, Object>> tools, Boolean think, Exception cause) {
+        // Decisión del fundador (2026-10-04): primero el respaldo pago (kimi en Bedrock), solo porque el gratis cayó;
+        // si también falla, el suplente local. El respaldo pago caído se salta (no se espera de nuevo).
+        var paid = modelHealth.paidFallbackFor(actor);
+        if (paid != null && !paid.isBlank() && !paid.equals(model) && remoteModel(paid).isPresent()
+                && !modelHealth.isDown(paid)) {
+            log.warn("MODEL_PAID_FALLBACK operation={} actor={} model={} paid={}", operation, actor, model, paid);
+            try {
+                return callModel(operation, actor, paid, messages, format, tools, think);
+            } catch (RuntimeException ex) {
+                log.warn("MODEL_PAID_FALLBACK_FAILED operation={} actor={} paid={} error={}", operation, actor, paid,
+                        ex.getMessage());
+            }
+        }
         var fallback = modelHealth.fallbackFor(actor);
         var since = modelHealth.downSince(model);
         if (fallback == null || fallback.isBlank() || remoteModel(fallback).isPresent() && modelHealth.isDown(fallback)) {

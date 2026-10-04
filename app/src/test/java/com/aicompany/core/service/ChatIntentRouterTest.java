@@ -2344,4 +2344,18 @@ class ChatIntentRouterTest {
                 RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
         verify(missionService, never()).recordDecision(anyString(), any());
     }
+
+    // Decisión del fundador (2026-10-04): con el gratis caído el estado nombra lo que de verdad atiende (respaldo pago).
+    @Test
+    void anAgentOnThePaidFallbackIsMarkedInTheAgentStatus() {
+        kimiDown();
+        when(modelHealth.effectiveModel("engineering", "nvidia:moonshotai/kimi-k3")).thenReturn("bedrock:global.moonshotai.kimi-k3");
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(new AgentStatusResponse("engineering", "Neo",
+                "Architect", "x", "WORKING", "MISSION-1", "DELIVERY_FEASIBILITY", "RUNNING", Instant.now())));
+        when(companyMemory.agentModel(eq("engineering"), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
+
+        var response = router.route("¿Qué agentes están trabajando ahora?");
+
+        assertTrue(response.contains("(caído: lo atiende su respaldo pago bedrock:global.moonshotai.kimi-k3)"), response);
+    }
 }

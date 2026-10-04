@@ -127,7 +127,7 @@ public class OpenAiCompatibleClient {
 
     private volatile String lastCheckError = "";
 
-    /** Verificado en vivo (2026-10-04, Alibaba): el motivo del proveedor en la última prueba de key, sin la key. */
+    /** Verificado en vivo (2026-10-04): el motivo del proveedor en la última prueba de key, sin la key. */
     public String lastCheckError() {
         return lastCheckError;
     }

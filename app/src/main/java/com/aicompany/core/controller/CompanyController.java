@@ -103,6 +103,15 @@ public class CompanyController {
         return new AgentModelResponse(id, model);
     }
 
+    /** Decisión del fundador (2026-10-04): respaldo pago (solo si el modelo gratis cae); vacío = sin respaldo pago. */
+    @PutMapping("/agents/{id}/paid-fallback-model")
+    public AgentModelResponse updateAgentPaidFallbackModel(@PathVariable("id") String id, @RequestBody AgentModelCommand command) {
+        var model = command.model() == null ? "" : command.model().strip();
+        ceoService.checkPaidFallbackModel(model);
+        memoryService.setAgentPaidFallbackModel(id, model);
+        return new AgentModelResponse(id, model);
+    }
+
     private com.aicompany.core.service.ModelHealthService modelHealth;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)

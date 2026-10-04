@@ -7,21 +7,21 @@ import java.util.List;
 
 /**
  * Proveedores remotos compatibles con OpenAI (2026-10-04): los 4 grupos de NVIDIA (decisión del fundador 2026-09-27)
- * más los pagos (Alibaba Model Studio, Amazon Bedrock), cada uno con su URL, su key (siembra del .env; la de Settings
+ * más el pago (Amazon Bedrock, respaldo cuando NVIDIA cae), cada uno con su URL, su key (siembra del .env; la de Settings
  * gana) y los modelos con que se prueba una key nueva. Las opciones propias de NVIDIA solo van a NVIDIA.
  */
 public final class RemoteProviders {
 
     /**
-     * {@code thinkingOff}: "parámetro=valor" propio del proveedor que apaga el razonamiento (Alibaba
-     * {@code enable_thinking=false}; Bedrock {@code reasoning_effort=none}, verificado en vivo 2026-10-04).
+     * {@code thinkingOff}: "parámetro=valor" propio del proveedor que apaga el razonamiento (Bedrock
+     * {@code reasoning_effort=none}, verificado en vivo 2026-10-04).
      */
     public record Provider(String name, String baseUrl, String apiKey, List<String> checkModels, boolean nvidiaOptions,
                            String thinkingOff) {
     }
 
-    static final List<String> NAMES = List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo", "alibaba",
-            "bedrock");
+    // Decisión del fundador (2026-10-04): Alibaba se quitó (consola sin activación posible); el pago es Bedrock.
+    static final List<String> NAMES = List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo", "bedrock");
 
     private RemoteProviders() {
     }
