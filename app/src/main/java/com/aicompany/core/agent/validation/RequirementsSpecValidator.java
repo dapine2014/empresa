@@ -83,7 +83,8 @@ public final class RequirementsSpecValidator {
         var count = new HashMap<String, Integer>();
         for (var increment : spec.incrementsOrEmpty()) {
             if (increment.userStoryIdsOrEmpty().isEmpty()) {
-                errors.add("El incremento " + increment.number() + " está sin historias.");
+                errors.add("El incremento " + increment.number() + " está sin historias: lista los ids de sus HU en "
+                        + "userStoryIds (p. ej. [\"HU-01\", \"HU-02\"]).");
             }
             for (var id : increment.userStoryIdsOrEmpty()) {
                 if (!storyIds.contains(id)) {

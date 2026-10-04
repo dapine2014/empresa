@@ -73,4 +73,30 @@ class RequirementsWriterTest {
                 && p.contains("HU-01")), anyString(), anyString());
         verify(missions).createTask("M-1-REQUIREMENTS-V2", "M-1", "product-owner", "REQUIREMENTS_SPEC", "REQUIREMENTS");
     }
+
+    // Verificado en vivo (MISSION-ARIA-CRM-1791093366): los 3 intentos llegaron con incrementos vacíos (el modelo usó otro
+    // nombre de campo, que se pierde). La corrección le muestra cómo entendió Java su respuesta.
+    @Test
+    void theCorrectionShowsWhatJavaUnderstood() {
+        var empty = new RequirementsSpec("CRM", List.of(), List.of(), List.of(new Role("vendedor", "x")),
+                VALID.userStories(), List.of(new Increment(1, "MVP", List.of())));
+        when(ceo.writeRequirements(eq("product-owner"), anyString(), anyString(), anyString())).thenReturn(empty, VALID);
+
+        writer.write("M-1", "Un CRM simple", Optional.empty(), null);
+
+        verify(ceo).writeRequirements(eq("product-owner"), argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR")
+                && p.contains("userStoryIds") && p.contains("\"userStoryIds\":[]")), anyString(), anyString());
+    }
+
+    // Con NVIDIA el esquema no se fuerza (json_object): el primer prompt lleva la forma exacta del JSON.
+    @Test
+    void theFirstPromptCarriesTheExactJsonShape() {
+        when(ceo.writeRequirements(anyString(), anyString(), anyString(), anyString())).thenReturn(VALID);
+
+        writer.write("M-1", "Un CRM", Optional.empty(), null);
+
+        verify(ceo).writeRequirements(eq("product-owner"), argThat(p -> !p.contains("CORRECCIÓN")
+                && p.contains("\"userStoryIds\"") && p.contains("\"acceptanceCriteria\"") && p.contains("\"given\"")
+                && p.contains("\"outOfScope\"")), anyString(), anyString());
+    }
 }

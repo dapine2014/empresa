@@ -59,12 +59,17 @@ public class RequirementsWriter {
             var agentPrompt = prompts.activePrompt(ARIA);
             var base = prompt(instruction, previous, adjustment);
             String feedback = null;
+            String understood = null;
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 var prompt = feedback == null ? base : base + """
 
                         CORRECCIÓN DEL INTENTO ANTERIOR (Java rechazó el spec por esto; corrígelo todo):
                         %s
-                        """.formatted(feedback);
+                        """.formatted(feedback) + (understood == null ? "" : """
+                        Así entendió Java tu respuesta anterior (un campo con otro nombre se pierde; usa exactamente
+                        los nombres del formato):
+                        %s
+                        """.formatted(understood));
                 RequirementsSpec spec;
                 try {
                     spec = ceo.writeRequirements(ARIA, prompt, agentPrompt, model);
@@ -82,7 +87,9 @@ public class RequirementsWriter {
                     return new Written(version, spec);
                 }
                 feedback = "- " + String.join("\n- ", errors);
-                log.warn("MISSION {} - requirements rejected attempt={} errors={}", missionId, attempt, feedback);
+                understood = json.writeValueAsString(spec);
+                log.warn("MISSION {} - requirements rejected attempt={} errors={} understood={}", missionId, attempt,
+                        feedback, understood.length() > 4000 ? understood.substring(0, 4000) + "…" : understood);
             }
             var message = "Aria no produjo requisitos válidos después de " + MAX_ATTEMPTS + " intentos:\n" + feedback;
             missions.updateTask(taskId, "FAILED", message);
@@ -111,6 +118,14 @@ public class RequirementsWriter {
                 - assumptions: cada ambigüedad del pedido y cómo la resolviste. outOfScope: lo que dejas afuera a
                   propósito. No inventes requisitos: lo que agregues va como supuesto.
                 - Español, frases cortas.
+
+                Responde SOLO este JSON, con exactamente estos nombres de campos (las listas siempre como listas):
+                {"summary": "...", "assumptions": ["..."], "outOfScope": ["..."],
+                 "roles": [{"name": "...", "description": "..."}],
+                 "userStories": [{"id": "HU-01", "role": "<name de un rol>", "iWant": "...", "soThat": "...",
+                   "acceptanceCriteria": ["..."], "dependsOn": ["HU-.."],
+                   "scenarios": [{"id": "ESC-01", "title": "...", "given": ["..."], "when": ["..."], "then": ["..."]}]}],
+                 "increments": [{"number": 1, "goal": "...", "userStoryIds": ["HU-01", "HU-02"]}]}
                 """.formatted(instruction);
         if (previous.isEmpty()) {
             return base;
