@@ -111,8 +111,22 @@ public class OpenAiCompatibleClient {
 
     public enum KeyCheck { OK, UNAUTHORIZED, UNAVAILABLE }
 
+    private volatile String lastCheckError = "";
+
+    /** Verificado en vivo (2026-10-04, Alibaba): el motivo del proveedor en la última prueba de key, sin la key. */
+    public String lastCheckError() {
+        return lastCheckError;
+    }
+
+    static String redactedReason(String reason, String key) {
+        var text = key == null || key.isBlank() ? reason : reason.replace(key, "****");
+        text = text.replaceAll("\\s+", " ").strip();
+        return text.length() > 300 ? text.substring(0, 300) + "…" : text;
+    }
+
     /** Prueba una key candidata con una llamada mínima, sin tocar la vigente; nunca lanza ni loguea la key. */
     public KeyCheck checkKey(String model, String candidate) {
+        lastCheckError = "";
         try {
             var body = new LinkedHashMap<String, Object>();
             body.put("model", model);
@@ -126,8 +140,10 @@ public class OpenAiCompatibleClient {
             return KeyCheck.OK;
         } catch (org.springframework.web.client.HttpClientErrorException ex) {
             var status = ex.getStatusCode().value();
+            lastCheckError = redactedReason("HTTP " + status + ": " + ex.getResponseBodyAsString(), candidate);
             return status == 401 || status == 403 ? KeyCheck.UNAUTHORIZED : KeyCheck.UNAVAILABLE;
         } catch (Exception ex) {
+            lastCheckError = redactedReason(String.valueOf(ex.getMessage()), candidate);
             return KeyCheck.UNAVAILABLE;
         }
     }

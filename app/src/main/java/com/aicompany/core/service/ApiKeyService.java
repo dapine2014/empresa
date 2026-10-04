@@ -98,7 +98,8 @@ public class ApiKeyService {
         for (var model : models) {
             var check = client.checkKey(model, key);
             if (check == OpenAiCompatibleClient.KeyCheck.UNAUTHORIZED) {
-                throw new IllegalArgumentException("El proveedor rechazó la key de " + provider + " (401/403): no se guardó y sigue la anterior.");
+                throw new IllegalArgumentException("El proveedor rechazó la key de " + provider + " (" + client.lastCheckError()
+                        + "): no se guardó y sigue la anterior.");
             }
             if (check == OpenAiCompatibleClient.KeyCheck.OK) {
                 answered = true;

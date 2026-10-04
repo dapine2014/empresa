@@ -138,4 +138,14 @@ class ApiKeyServiceTest {
         verify(alibaba, never()).checkKey(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyString());
         verify(alibaba).setApiKey("sk-nueva");
     }
+
+    @Test
+    void theRejectionShowsTheProviderReason() {
+        when(ceoClient.checkKey(anyString(), anyString())).thenReturn(KeyCheck.UNAUTHORIZED);
+        when(ceoClient.lastCheckError()).thenReturn("HTTP 403: {\"code\":\"AccessDenied\"}");
+
+        var ex = assertThrows(IllegalArgumentException.class, () -> service.update("nvidia-ceo", "k", "human"));
+
+        assertTrue(ex.getMessage().contains("AccessDenied"), ex.getMessage());
+    }
 }

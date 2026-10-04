@@ -63,6 +63,24 @@ class OpenAiCompatibleClientTest {
         assertEquals(List.of("qwen3-coder-plus"), client.checkModels());
     }
 
+    // Verificado en vivo (2026-10-04, Alibaba): 403 también es "modelo no habilitado"; el motivo del proveedor se muestra,
+    // nunca la key.
+    @Test
+    void aRejectedKeyKeepsTheProviderReasonWithoutTheKey() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":{\"code\":\"AccessDenied\",\"message\":\"Model access denied for sk-secreta\"}}"));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertEquals(OpenAiCompatibleClient.KeyCheck.UNAUTHORIZED, client.checkKey("qwen3-coder-plus", "sk-secreta"));
+        var reason = client.lastCheckError();
+        assertTrue(reason.contains("403") && reason.contains("AccessDenied"), reason);
+        assertFalse(reason.contains("sk-secreta"), reason);
+    }
+
     @Test
     void rateLimitsAndServerErrorsAreRetried() {
         var builder = RestClient.builder().baseUrl("https://api.test/v1");
