@@ -36,6 +36,25 @@ public class OpenAiCompatibleClient {
     private static final java.util.concurrent.ExecutorService CALLS =
             java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
 
+    private volatile String providerName = "nvidia";
+    private volatile boolean nvidiaOptions = true;
+    private volatile List<String> checkModels = List.of();
+
+    /** Proveedores pagos (2026-10-04): nombre, si lleva las opciones de NVIDIA y con qué modelos se prueba una key. */
+    public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels) {
+        this.providerName = providerName;
+        this.nvidiaOptions = nvidiaOptions;
+        this.checkModels = List.copyOf(checkModels);
+    }
+
+    public List<String> checkModels() {
+        return checkModels;
+    }
+
+    public String providerName() {
+        return providerName;
+    }
+
     public OpenAiCompatibleClient(RestClient client, String apiKey, Duration retryDelay) {
         this(client, client, apiKey, retryDelay);
     }
@@ -99,7 +118,9 @@ public class OpenAiCompatibleClient {
             body.put("model", model);
             body.put("messages", List.of(Map.of("role", "user", "content", "Responde solo: ok")));
             body.put("max_tokens", 10);
-            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            if (nvidiaOptions) {
+                body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            }
             probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + candidate)
                     .body(body).retrieve().body(Map.class);
             return KeyCheck.OK;
@@ -119,7 +140,9 @@ public class OpenAiCompatibleClient {
             body.put("model", model);
             body.put("messages", List.of(Map.of("role", "user", "content", "Responde solo: ok")));
             body.put("max_tokens", 10);
-            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            if (nvidiaOptions) {
+                body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            }
             var response = probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + apiKey)
                     .body(body).retrieve().body(Map.class);
             var choices = response == null ? null : (List<Object>) response.get("choices");
@@ -153,7 +176,8 @@ public class OpenAiCompatibleClient {
                                 boolean json, int maxTokens) {
 
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Falta NVIDIA_API_KEY para usar el modelo remoto " + model + ".");
+            throw new IllegalStateException("Falta la key del proveedor " + providerName + " para usar el modelo remoto "
+                    + model + " (cárgala en Settings → Keys de modelos).");
         }
 
         var body = new LinkedHashMap<String, Object>();
@@ -161,7 +185,9 @@ public class OpenAiCompatibleClient {
         body.put("messages", toOpenAi(messages));
         body.put("max_tokens", maxTokens);
         body.put("temperature", 0.2);
-        body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+        if (nvidiaOptions) {
+            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+        }
         if (json) {
             body.put("response_format", Map.of("type", "json_object"));
         }

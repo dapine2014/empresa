@@ -45,6 +45,24 @@ class OpenAiCompatibleClientTest {
         server.verify();
     }
 
+    // Proveedores pagos (2026-10-04): las opciones de NVIDIA (chat_template_kwargs) no van a Alibaba ni a Bedrock.
+    @Test
+    void otherProvidersDoNotGetTheNvidiaOptions() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.response_format.type").value("json_object"))
+                .andExpect(jsonPath("$.chat_template_kwargs").doesNotExist())
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("alibaba", false, List.of("qwen3-coder-plus"));
+
+        client.chat("qwen3-coder-plus", MESSAGES, true, 100);
+        server.verify();
+        assertEquals(List.of("qwen3-coder-plus"), client.checkModels());
+    }
+
     @Test
     void rateLimitsAndServerErrorsAreRetried() {
         var builder = RestClient.builder().baseUrl("https://api.test/v1");
@@ -63,7 +81,7 @@ class OpenAiCompatibleClientTest {
     void aMissingKeyFailsWithAClearMessage() {
         var client = new OpenAiCompatibleClient(RestClient.builder().baseUrl("https://api.test/v1").build(), "", Duration.ZERO);
         var ex = assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
-        assertTrue(ex.getMessage().contains("NVIDIA_API_KEY"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("proveedor nvidia") && ex.getMessage().contains("Settings"), ex.getMessage());
     }
 
     @Test

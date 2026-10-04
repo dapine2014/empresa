@@ -122,4 +122,20 @@ class ApiKeyServiceTest {
         assertTrue(ex.getMessage().contains("FORJAI_SECRETS_KEY"), ex.getMessage());
         verify(engClient, never()).checkKey(any(), any());
     }
+
+    // Proveedores pagos (2026-10-04): la key de Alibaba se prueba con su propio modelo, nunca con los de NVIDIA.
+    @Test
+    void aPaidProviderKeyIsCheckedWithItsOwnModel() {
+        var alibaba = mock(OpenAiCompatibleClient.class);
+        when(alibaba.checkModels()).thenReturn(List.of("qwen3-coder-plus"));
+        when(alibaba.keyHint()).thenReturn("…ueva");
+        when(alibaba.checkKey("qwen3-coder-plus", "sk-nueva")).thenReturn(KeyCheck.OK);
+        var withAlibaba = new ApiKeyService(Map.of("alibaba", alibaba), memory, cipher, events, companyMemory);
+
+        withAlibaba.update("alibaba", "sk-nueva", "human");
+
+        verify(alibaba).checkKey("qwen3-coder-plus", "sk-nueva");
+        verify(alibaba, never()).checkKey(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyString());
+        verify(alibaba).setApiKey("sk-nueva");
+    }
 }

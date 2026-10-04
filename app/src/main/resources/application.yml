@@ -104,3 +104,12 @@ remote-models:
       api-key: ${NVIDIA_API_KEY_CREATIVE:}
     nvidia-ceo:
       api-key: ${NVIDIA_API_KEY_CEO:}
+    # Proveedores pagos (2026-10-04): la key la pega el fundador en Settings → Keys de modelos.
+    alibaba:
+      base-url: ${ALIBABA_BASE_URL:https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      api-key: ${ALIBABA_API_KEY:}
+      check-models: qwen3-coder-plus
+    bedrock:
+      base-url: ${BEDROCK_BASE_URL:https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1}
+      api-key: ${BEDROCK_API_KEY:}
+      check-models: global.moonshotai.kimi-k3
