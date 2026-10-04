@@ -302,8 +302,14 @@ class MissionExecutorTeamTest {
     void buildingIncrementTwoIsPlannedByNeoWithItsStoriesAsARound() throws Exception {
         withAria();
         when(memory.evidenceRound("M-9")).thenReturn(1);
-        var previous = planned("TEAM-DEVELOPMENT").plan();
-        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build().writeValueAsString(previous)));
+        // Verificado en vivo (incremento 2, segunda corrida): el último plan guardado era el de una corrida fallida con solo
+        // el contexto nuevo; Neo debe recibir la unión de TODOS los planes anteriores.
+        var json = JsonMapper.builder().build();
+        var first = new TeamPlan("plan 1", null, null, List.of(), List.of(), "DOTNET_APP",
+                List.of(new TeamPlan.BoundedContext("Clientes", "c")), List.of());
+        var second = new TeamPlan("plan 2", null, null, List.of(), List.of(), "DOTNET_APP",
+                List.of(new TeamPlan.BoundedContext("Oportunidades", "o")), List.of());
+        when(memory.teamPlanJsons("M-9")).thenReturn(List.of(json.writeValueAsString(first), json.writeValueAsString(second)));
         when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
 
         executor.buildIncrementAsync("M-9", 2).get();
@@ -311,7 +317,7 @@ class MissionExecutorTeamTest {
         // Verificado en vivo (incremento 2): Neo recibe el plan del producto existente para conservarlo.
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("INCREMENTO 2 de 2")
                 && i.contains("HU-02 (vendedor)") && !i.contains("HU-01 (vendedor)") && i.contains("Un CRM")), any(), eq(2),
-                argThat(p -> p != null && p.summary().equals(previous.summary())));
+                argThat(p -> p != null && p.contextNames().equals(List.of("Clientes", "Oportunidades"))));
         verify(development).execute(argThat(c -> c.round() == 2 && c.instruction().contains("INCREMENTO 2 de 2")
                 && c.plan().workTasks().stream().noneMatch(t -> t.objective().contains("INCREMENTO"))), any());
         verify(requirements).addIncrementRound("M-9");

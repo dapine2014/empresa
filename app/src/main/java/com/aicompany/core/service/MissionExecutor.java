@@ -478,13 +478,26 @@ public class MissionExecutor {
         // Verificado en vivo (incremento 2): Neo planifica sobre el producto existente (contextos y componentes).
         var planned = round == 0
                 ? teamWorkPlanner.plan(missionId, teamId, withIncrement, mode)
-                : teamWorkPlanner.plan(missionId, teamId, withIncrement, mode, round, memory.lastTeamPlanJson(missionId)
-                        .map(json -> jsonMapper.readValue(json, TeamPlan.class)).orElse(null));
+                : teamWorkPlanner.plan(missionId, teamId, withIncrement, mode, round, existingProduct(missionId));
         advanceMission(missionId, MissionStatus.DELEGATING, 10, "Delegación",
                 "Plan del líder validado: " + planned.plan().tasksOrEmpty().size() + " tareas (incremento "
                         + increment + ").");
         runTeamPlan(missionId, withIncrement, mode, new TeamMissionContext(missionId, withIncrement, planned.team(),
                 planned.plan(), round));
+    }
+
+    /**
+     * Verificado en vivo (incremento 2, segunda corrida): el último plan podía ser el de una corrida fallida con solo el
+     * contexto nuevo. El producto existente es la unión de todos los planes de la misión.
+     */
+    private TeamPlan existingProduct(String missionId) {
+        TeamPlan product = null;
+        for (var json : memory.teamPlanJsons(missionId)) {
+            var plan = jsonMapper.readValue(json, TeamPlan.class);
+            product = product == null ? plan
+                    : com.aicompany.core.agent.validation.IncrementPlanMerger.merge(plan, product);
+        }
+        return product;
     }
 
     /** Revisión final Aria (6): un pool lleno no deja la misión trabada en un estado intermedio. */
