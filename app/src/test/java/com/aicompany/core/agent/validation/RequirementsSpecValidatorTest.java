@@ -87,4 +87,26 @@ class RequirementsSpecValidatorTest {
         assertTrue(errors.stream().anyMatch(e -> e.contains("HU-01") && e.contains("posterior")), errors.toString());
         assertTrue(errors.stream().anyMatch(e -> e.contains("ciclo")), errors.toString());
     }
+
+    // Revisión final (11): un incremento sin historias o con ids que no existen no se construye.
+    @Test
+    void incrementsMustListExistingStories() {
+        var errors = RequirementsSpecValidator.validate(spec(ROLES,
+                List.of(hu("HU-01", "vendedor", List.of(), esc("ESC-01"))),
+                List.of(new Increment(1, "MVP", List.of("HU-01", "HU-07")), new Increment(2, "vacío", List.of()))));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("HU-07") && e.contains("no existe")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("incremento 2") && e.contains("sin historias")), errors.toString());
+    }
+
+    // Revisión final (9): listas ausentes del modelo quedan vacías (la pantalla de Missions no se cae con null).
+    @Test
+    void missingListsBecomeEmpty() {
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        var spec = json.readValue("{\"summary\":\"x\",\"userStories\":[{\"id\":\"HU-01\",\"scenarios\":[{\"id\":\"ESC-01\"}]}],"
+                + "\"increments\":[{\"number\":1}]}", RequirementsSpec.class);
+        var out = json.writeValueAsString(spec);
+        assertTrue(out.contains("\"assumptions\":[]") && out.contains("\"outOfScope\":[]") && out.contains("\"roles\":[]")
+                && out.contains("\"given\":[]") && out.contains("\"acceptanceCriteria\":[]")
+                && out.contains("\"userStoryIds\":[]"), out);
+    }
 }

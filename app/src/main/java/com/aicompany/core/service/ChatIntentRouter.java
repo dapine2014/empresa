@@ -840,13 +840,14 @@ public class ChatIntentRouter {
 
     /** Spec 2026-10-03 Aria §2: comandos de requisitos; van antes que la decisión del inversionista. */
     private static final Pattern SHOW_STORIES = Pattern.compile(
-            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:las\\s+)?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
     private static final Pattern APPROVE_STORIES = Pattern.compile(
-            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:las\\s+)?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
     private static final Pattern REJECT_STORIES = Pattern.compile(
-            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:las\\s+)?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
     private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(MISSION-[A-Za-z0-9-]+)\\s*:\\s*(.+)$",
             Pattern.DOTALL);
+    private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos)\\b");
     private static final Pattern BUILD_INCREMENT = Pattern.compile(
             "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
 
@@ -910,6 +911,11 @@ public class ChatIntentRouter {
         }
 
         var missionId = missionIdMatcher.group(1).toUpperCase(Locale.ROOT);
+
+        // Revisión final Aria (7): un mensaje sobre las HU o los requisitos nunca cierra ni cancela la misión.
+        if (REQUIREMENTS_WORD.matcher(normalize(message)).find()) {
+            return null;
+        }
 
         if (MORE_EVIDENCE.matcher(normalize(message)).find()) {
             return new DetectedDecision(missionId, InvestorDecision.REQUEST_MORE_EVIDENCE);

@@ -194,6 +194,10 @@ public class MissionService {
             throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
                     + " ya está " + version.status() + ".");
         }
+        if (command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
+            // Revisión final Aria (8): aprobar llama a Neo y ajustar a Aria; ninguno puede estar apagado.
+            requireAgentsOn(mission.teamId(), "decidir sobre los requisitos de " + missionId);
+        }
         switch (command.decision()) {
             case APPROVE -> {
                 requirementsMemory.approve(missionId, version.version(), "founder");
@@ -296,14 +300,16 @@ public class MissionService {
             if (policies == null) {
                 throw new IllegalStateException("Falta CompanyPolicyService");
             }
-            var current = memory.evidenceRound(missionId)
+            // Revisión final Aria (1): los incrementos ocupan números de ronda (ids -R<n>) pero no consumen el límite.
+            var lastRound = memory.evidenceRound(missionId);
+            var current = lastRound
                     - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId));
             var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
             if (current >= max) {
                 throw new IllegalStateException("MISSION " + missionId + " ya usó " + current + " de " + max
                         + " vueltas de evidencia: decide con APPROVE o REJECT (o sube MAX_EVIDENCE_ROUNDS en Settings).");
             }
-            nextRound = current + 1;
+            nextRound = lastRound + 1;
             requireAgentsOn(memory.teamId(missionId).orElse(null), "pedir más evidencia sobre " + missionId);
         }
 

@@ -228,7 +228,46 @@ class MissionExecutorTeamTest {
 
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("INCREMENTO 1 de 2")
                 && i.contains("HU-01 (vendedor)") && !i.contains("HU-02 (vendedor)") && i.contains("Un CRM")), any());
-        verify(requirements).setBuiltIncrement("M-9", 1);
+        // Revisión final (3): el incremento cuenta como construido solo al llegar a AWAITING_INVESTOR.
+        var order = inOrder(requirements, memory);
+        order.verify(requirements).setBuildingIncrement("M-9", 1);
+        order.verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
+        order.verify(requirements).confirmBuildingIncrement("M-9");
+        verify(requirements, never()).setBuiltIncrement(anyString(), anyInt());
+    }
+
+    // Revisión final (3): si la construcción falla, el incremento no queda como construido.
+    @Test
+    void aFailedIncrementIsNotCountedAsBuilt() throws Exception {
+        withAria();
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+        when(development.execute(any(), any())).thenThrow(new IllegalStateException("sandbox caído"));
+
+        executor.continueAfterApprovalAsync("M-9").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+        verify(requirements, never()).confirmBuildingIncrement(anyString());
+    }
+
+    // Revisión final (6): aprobar mueve la misión en el acto (no queda en AWAITING_SPEC_APPROVAL mientras espera el pool),
+    // y un pool lleno la deja FAILED en vez de trabada.
+    @Test
+    void approvalMovesTheMissionBeforeTheThreadAndAFullPoolFailsIt() throws Exception {
+        withAria();
+        var idle = new MissionExecutor(memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory,
+                promptMemory, "qwen2.5-coder:14b", r -> { }, events, JsonMapper.builder().build(), contradictionDetector,
+                companyPolicyService, opportunityMemory, alertMailService, planner, List.of(analysis, development));
+        idle.setRequirements(writer, requirements);
+        idle.continueAfterApprovalAsync("M-9");
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.PLANNING), anyInt(), anyString(), anyString());
+
+        var full = new MissionExecutor(memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory,
+                promptMemory, "qwen2.5-coder:14b", r -> { throw new java.util.concurrent.RejectedExecutionException("lleno"); },
+                events, JsonMapper.builder().build(), contradictionDetector, companyPolicyService, opportunityMemory,
+                alertMailService, planner, List.of(analysis, development));
+        full.setRequirements(writer, requirements);
+        assertTrue(full.buildIncrementAsync("M-9", 2).isCompletedExceptionally());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
     }
 
     @Test
@@ -243,20 +282,56 @@ class MissionExecutorTeamTest {
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), contains("INCREMENTO 1"), any());
     }
 
+    // Revisión final (4, 5): Neo planifica cada incremento con sus HU (spec §3), como ronda nueva; el bloque va una vez.
     @Test
-    void buildingIncrementTwoReusesThePlanWithItsStoriesAsARound() throws Exception {
+    void buildingIncrementTwoIsPlannedByNeoWithItsStoriesAsARound() throws Exception {
         withAria();
-        var saved = planned("TEAM-DEVELOPMENT");
-        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build().writeValueAsString(saved.plan())));
-        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(saved.team());
         when(memory.evidenceRound("M-9")).thenReturn(1);
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2))).thenReturn(planned("TEAM-DEVELOPMENT"));
 
         executor.buildIncrementAsync("M-9", 2).get();
 
-        verify(development).execute(argThat(c -> c.round() == 2 && c.plan().workTasks().stream()
-                .allMatch(t -> t.objective().contains("INCREMENTO 2 de 2") && t.objective().contains("HU-02"))), any());
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("INCREMENTO 2 de 2")
+                && i.contains("HU-02 (vendedor)") && !i.contains("HU-01 (vendedor)") && i.contains("Un CRM")), any(), eq(2));
+        verify(development).execute(argThat(c -> c.round() == 2 && c.instruction().contains("INCREMENTO 2 de 2")
+                && c.plan().workTasks().stream().noneMatch(t -> t.objective().contains("INCREMENTO"))), any());
         verify(requirements).addIncrementRound("M-9");
         verify(memory).setEvidenceRound("M-9", 2);
-        verify(requirements).setBuiltIncrement("M-9", 2);
+        verify(requirements).setBuildingIncrement("M-9", 2);
+        verify(memory, never()).lastTeamPlanJson("M-9");
+    }
+
+    // Revisión final (2a/b): una ronda de evidencia de una misión con requisitos conserva el bloque del incremento en curso.
+    @Test
+    void anEvidenceRoundKeepsTheIncrementBlock() throws Exception {
+        withAria();
+        when(requirements.currentIncrement("M-9")).thenReturn(2);
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+
+        executor.reexecuteAsync("M-9", "Un CRM", 3, "falta validar el monto").get();
+
+        verify(development).execute(argThat(c -> c.instruction().contains("INCREMENTO 2 de 2")
+                && c.instruction().contains("Un CRM")), any());
+    }
+
+    // Revisión final (2c): sin requisitos aprobados, pedir más evidencia vuelve a Aria y nunca a Neo (spec §3).
+    @Test
+    void anEvidenceRoundWithoutApprovedRequirementsGoesBackToAria() throws Exception {
+        withAria();
+        when(requirements.approved("M-9")).thenReturn(Optional.empty());
+        when(requirements.latest("M-9")).thenReturn(Optional.empty());
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(writer.write(eq("M-9"), eq("Un CRM"), any(), eq("más detalle")))
+                .thenReturn(new RequirementsWriter.Written(2, SPEC));
+
+        executor.reexecuteAsync("M-9", "Un CRM", 1, "más detalle").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(), anyString());
+        verify(planner, never()).plan(any(), any(), any(), any(), anyInt());
+        verify(planner, never()).plan(any(), any(), any(), any());
     }
 }

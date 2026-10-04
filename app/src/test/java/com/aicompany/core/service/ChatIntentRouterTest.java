@@ -2327,4 +2327,21 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("0 activa"), response);
         assertTrue(response.contains("Requisitos de Aria esperando tu aprobación: MISSION-CRM, MISSION-P"), response);
     }
+
+    // Revisión final (7): "los requisitos" / "todas las HU" también son de requisitos; nunca cierran la misión.
+    @Test
+    void requirementsCommandsAcceptOtherArticles() {
+        when(missionService.decideRequirements(eq("MISSION-9"), any())).thenReturn(new RequirementsView("MISSION-9",
+                "PLANNING", 1, "APPROVED", 1, 0, 2, null, ""));
+
+        router.route("apruebo los requisitos de MISSION-9");
+        router.route("aprueba todas las HU de MISSION-9");
+        router.route("rechaza los requisitos de MISSION-9");
+
+        verify(missionService, times(2)).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+        verify(missionService, never()).recordDecision(anyString(), any());
+    }
 }

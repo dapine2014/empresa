@@ -82,7 +82,13 @@ public final class RequirementsSpecValidator {
         var incrementOf = new HashMap<String, Integer>();
         var count = new HashMap<String, Integer>();
         for (var increment : spec.incrementsOrEmpty()) {
+            if (increment.userStoryIdsOrEmpty().isEmpty()) {
+                errors.add("El incremento " + increment.number() + " está sin historias.");
+            }
             for (var id : increment.userStoryIdsOrEmpty()) {
+                if (!storyIds.contains(id)) {
+                    errors.add("El incremento " + increment.number() + " lista " + id + ", que no existe en userStories.");
+                }
                 count.merge(id, 1, Integer::sum);
                 incrementOf.put(id, increment.number());
             }

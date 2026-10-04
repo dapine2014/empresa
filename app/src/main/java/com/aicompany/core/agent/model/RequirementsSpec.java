@@ -16,10 +16,22 @@ public record RequirementsSpec(String summary, List<String> assumptions, List<St
     }
 
     public record Scenario(String id, String title, List<String> given, List<String> when, List<String> then) {
+
+        public Scenario {
+            given = orEmpty(given);
+            when = orEmpty(when);
+            then = orEmpty(then);
+        }
     }
 
     public record UserStory(String id, String role, String iWant, String soThat, List<String> acceptanceCriteria,
                             List<String> dependsOn, List<Scenario> scenarios) {
+
+        public UserStory {
+            acceptanceCriteria = orEmpty(acceptanceCriteria);
+            dependsOn = orEmpty(dependsOn);
+            scenarios = orEmpty(scenarios);
+        }
 
         public List<String> acceptanceCriteriaOrEmpty() {
             return acceptanceCriteria == null ? List.of() : acceptanceCriteria;
@@ -36,9 +48,26 @@ public record RequirementsSpec(String summary, List<String> assumptions, List<St
 
     public record Increment(int number, String goal, List<String> userStoryIds) {
 
+        public Increment {
+            userStoryIds = orEmpty(userStoryIds);
+        }
+
         public List<String> userStoryIdsOrEmpty() {
             return userStoryIds == null ? List.of() : userStoryIds;
         }
+    }
+
+    /** Revisión final (9): el modelo puede omitir listas (json_object sin esquema forzado); quedan vacías, nunca null. */
+    public RequirementsSpec {
+        assumptions = orEmpty(assumptions);
+        outOfScope = orEmpty(outOfScope);
+        roles = orEmpty(roles);
+        userStories = orEmpty(userStories);
+        increments = orEmpty(increments);
+    }
+
+    private static <T> List<T> orEmpty(List<T> list) {
+        return list == null ? List.of() : list;
     }
 
     public List<String> assumptionsOrEmpty() {

@@ -24,8 +24,9 @@ class MissionServiceRequirementsTest {
     private final MissionExecutor executor = mock(MissionExecutor.class);
     private final CompanyPolicyService policies = mock(CompanyPolicyService.class);
     private final RequirementsMemoryService requirements = mock(RequirementsMemoryService.class);
+    private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
     private final MissionService service = new MissionService(memory, executor, mock(CompanyEventPublisher.class),
-            mock(TeamMemoryService.class), mock(DevelopmentWorkspaceService.class), policies);
+            teamMemory, mock(DevelopmentWorkspaceService.class), policies);
 
     {
         service.setRequirements(requirements);
@@ -108,5 +109,38 @@ class MissionServiceRequirementsTest {
 
         assertDoesNotThrow(() -> service.recordDecision("M-9",
                 new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));
+    }
+
+    // Revisión final (1): una ronda de evidencia después de un incremento usa un número de ronda nuevo (no pisa sus tareas).
+    @Test
+    void anEvidenceRoundAfterAnIncrementGetsANewRoundNumber() {
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_INVESTOR)));
+        when(memory.evidenceRound("M-9")).thenReturn(1);
+        when(requirements.incrementRounds("M-9")).thenReturn(1);
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        service.recordDecision("M-9", new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más"));
+
+        verify(memory).setEvidenceRound("M-9", 2);
+        verify(executor).reexecuteAsync("M-9", "Un CRM", 2, "más");
+    }
+
+    // Revisión final (8): aprobar o ajustar exige a Aria, Alex y Neo encendidos (nunca se llama a un agente apagado).
+    @Test
+    void approvingOrAdjustingNeedsTheAgentsTurnedOn() {
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "DRAFT", "", null)));
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(new com.aicompany.core.model.TeamSnapshot(
+                "TEAM-DEVELOPMENT", "Development Group", "ACTIVE", "engineering", java.util.List.of()));
+        var availability = mock(AgentAvailability.class);
+        doThrow(new IllegalStateException("Aria (product-owner) está apagada")).when(availability).requireEnabled(anyList(), anyString());
+        service.setAgentAvailability(availability);
+
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9",
+                new RequirementsDecisionCommand(RequirementsDecisionCommand.RequirementsDecision.APPROVE, null)));
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9",
+                new RequirementsDecisionCommand(RequirementsDecisionCommand.RequirementsDecision.ADJUST, "x")));
+        verify(requirements, never()).approve(anyString(), anyInt(), anyString());
+        verifyNoInteractions(executor);
     }
 }

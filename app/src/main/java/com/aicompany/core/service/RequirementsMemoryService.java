@@ -48,10 +48,10 @@ public class RequirementsMemoryService {
         try (var session = driver.session()) {
             return session.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion) WHERE true" + filter
                             + " RETURN r.version AS v, r.specJson AS s, r.status AS st, r.instruction AS i, "
-                            + "toString(r.createdAt) AS c ORDER BY r.version DESC LIMIT 1", Map.of("id", missionId))
+                            + "r.createdAt AS c ORDER BY r.version DESC LIMIT 1", Map.of("id", missionId))
                     .list(r -> new Version(r.get("v").asInt(), r.get("s").asString(), r.get("st").asString(),
                             r.get("i").isNull() ? "" : r.get("i").asString(),
-                            r.get("c").isNull() ? null : java.time.OffsetDateTime.parse(r.get("c").asString()).toInstant()))
+                            r.get("c").isNull() ? null : r.get("c").asZonedDateTime().toInstant()))
                     .stream().findFirst();
         }
     }
@@ -73,6 +73,24 @@ public class RequirementsMemoryService {
 
     public void setBuiltIncrement(String missionId, int increment) {
         write("MATCH (m:Mission {id:$id}) SET m.builtIncrement=$n", Map.of("id", missionId, "n", increment));
+    }
+
+    /** Revisión final (3): el incremento en construcción; cuenta como construido solo al llegar a AWAITING_INVESTOR. */
+    public void setBuildingIncrement(String missionId, int increment) {
+        write("MATCH (m:Mission {id:$id}) SET m.buildingIncrement=$n", Map.of("id", missionId, "n", increment));
+    }
+
+    public void confirmBuildingIncrement(String missionId) {
+        write("MATCH (m:Mission {id:$id}) WHERE m.buildingIncrement IS NOT NULL "
+                + "SET m.builtIncrement = m.buildingIncrement REMOVE m.buildingIncrement", Map.of("id", missionId));
+    }
+
+    /** El incremento en construcción o, si no hay, el último construido (0 = ninguno). */
+    public int currentIncrement(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN coalesce(m.buildingIncrement, m.builtIncrement, 0) AS n",
+                    Map.of("id", missionId)).list(r -> r.get("n").asInt()).stream().findFirst().orElse(0);
+        }
     }
 
     public int incrementRounds(String missionId) {
