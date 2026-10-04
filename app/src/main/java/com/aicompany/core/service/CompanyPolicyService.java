@@ -57,6 +57,8 @@ public class CompanyPolicyService {
         map.put(PolicyKey.PROSPECTING_ENABLED, 0.0);
         map.put(PolicyKey.MAX_PROSPECTS_PER_DAY, 10.0);
         map.put(PolicyKey.MAX_OUTREACH_PER_DAY, 10.0);
+        // Spec 2026-10-03 Aria §2: las HU de Aria esperan la aprobación del fundador (1) mientras el equipo se entrena.
+        map.put(PolicyKey.SPEC_APPROVAL_REQUIRED, 1.0);
         return map;
     }
 
@@ -167,7 +169,8 @@ public class CompanyPolicyService {
      * un valor positivo hacía imposible pausar el orquestador, desde Settings y desde el chat. El resto sigue siendo > 0.
      */
     static void validateValue(PolicyKey key, double value) {
-        if (key == PolicyKey.ORCHESTRATOR_ENABLED || key == PolicyKey.PROSPECTING_ENABLED) {
+        if (key == PolicyKey.ORCHESTRATOR_ENABLED || key == PolicyKey.PROSPECTING_ENABLED
+                || key == PolicyKey.SPEC_APPROVAL_REQUIRED) {
             if (value != 0 && value != 1) {
                 throw new IllegalArgumentException(key + " solo admite 0 (apagado) o 1 (encendido)");
             }

@@ -68,4 +68,14 @@ class CompanyPolicyDefaultsTest {
         assertEquals(10.0, defaults.get(PolicyKey.MAX_OUTREACH_PER_DAY));
         assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.MAX_OUTREACH_PER_DAY, 0));
     }
+
+    // Spec 2026-10-03 Aria §2: interruptor 0/1 como ORCHESTRATOR_ENABLED, encendido por defecto.
+    @Test
+    void specApprovalRequiredIsASwitchOnByDefault() {
+        assertEquals(1.0, CompanyPolicyService.defaults(new AppProperties("Forjai", 50, 60))
+                .get(PolicyKey.SPEC_APPROVAL_REQUIRED));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.SPEC_APPROVAL_REQUIRED, 0));
+        assertThrows(IllegalArgumentException.class,
+                () -> CompanyPolicyService.validateValue(PolicyKey.SPEC_APPROVAL_REQUIRED, 2));
+    }
 }
