@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { InvestorDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
+import type { InvestorDecision, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -68,6 +68,115 @@ function MissionDatabase({ missionId }: { missionId: string }) {
   )
 }
 
+const INCREMENT_READY = new Set(['AWAITING_INVESTOR', 'COMPLETED', 'FAILED'])
+
+/** Spec 2026-10-03 Aria: requisitos de Aria, aprobación e incrementos (404 = la misión no tiene requisitos). */
+function MissionRequirements({ missionId, status }: { missionId: string; status: string }) {
+  const queryClient = useQueryClient()
+  const [adjustment, setAdjustment] = useState('')
+  const query = useQuery({
+    queryKey: ['requirements', missionId],
+    queryFn: () => api.requirements(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['requirements', missionId] })
+    void queryClient.invalidateQueries({ queryKey: ['missionDetails', missionId] })
+  }
+  const decide = useMutation({
+    mutationFn: (decision: RequirementsDecision) =>
+      api.decideRequirements(missionId, decision, decision === 'ADJUST' ? adjustment : undefined),
+    onSuccess: () => {
+      setAdjustment('')
+      refresh()
+    },
+  })
+  const build = useMutation({
+    mutationFn: (increment: number) => api.buildIncrement(missionId, increment),
+    onSuccess: refresh,
+  })
+  const view = query.data
+  if (!view || !view.spec) {
+    return null
+  }
+  const spec = view.spec
+  const nextIncrement = view.builtIncrement + 1
+  const canBuild = view.approvedVersion != null && nextIncrement <= view.incrementsTotal && INCREMENT_READY.has(status)
+  return (
+    <div className="decision-form">
+      <h2>Requisitos (Aria)</h2>
+      <p>
+        Versión {view.version} — {view.versionStatus}
+        {view.approvedVersion != null && <> — incremento construido: {view.builtIncrement} de {view.incrementsTotal}</>}
+      </p>
+      <p>{spec.summary}</p>
+      <h3>Roles</h3>
+      <ul>
+        {spec.roles.map((r) => (
+          <li key={r.name}>
+            <strong>{r.name}</strong> — {r.description}
+          </li>
+        ))}
+      </ul>
+      {spec.increments.map((inc) => (
+        <div key={inc.number}>
+          <h3>
+            Incremento {inc.number}: {inc.goal}
+          </h3>
+          {spec.userStories
+            .filter((s) => inc.userStoryIds.includes(s.id))
+            .map((s) => (
+              <div key={s.id}>
+                <p>
+                  <strong>{s.id}</strong> ({s.role}): quiero {s.iWant} para {s.soThat}
+                </p>
+                <ul>
+                  {s.acceptanceCriteria.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                  {s.scenarios.map((e) => (
+                    <li key={e.id}>
+                      {e.id} {e.title}: DADO {e.given.join(' y ')} CUANDO {e.when.join(' y ')} ENTONCES{' '}
+                      {e.then.join(' y ')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+        </div>
+      ))}
+      {spec.assumptions.length > 0 && <p>Supuestos: {spec.assumptions.join('; ')}</p>}
+      {spec.outOfScope.length > 0 && <p>Fuera de alcance: {spec.outOfScope.join('; ')}</p>}
+      {status === 'AWAITING_SPEC_APPROVAL' && (
+        <div>
+          <button disabled={decide.isPending} onClick={() => decide.mutate('APPROVE')}>
+            Aprobar
+          </button>{' '}
+          <button disabled={decide.isPending} onClick={() => decide.mutate('REJECT')}>
+            Rechazar
+          </button>
+          <textarea
+            value={adjustment}
+            onChange={(e) => setAdjustment(e.target.value)}
+            placeholder="Qué debe cambiar Aria"
+          />
+          <button disabled={decide.isPending || !adjustment.trim()} onClick={() => decide.mutate('ADJUST')}>
+            Ajustar
+          </button>
+        </div>
+      )}
+      {canBuild && (
+        <button disabled={build.isPending} onClick={() => build.mutate(nextIncrement)}>
+          Construir incremento {nextIncrement}
+        </button>
+      )}
+      {decide.isError && <p className="error">{decide.error.message}</p>}
+      {build.isError && <p className="error">{build.error.message}</p>}
+    </div>
+  )
+}
+
 export default function MissionDetailPage() {
   const { missionId } = useParams<{ missionId: string }>()
   const queryClient = useQueryClient()
@@ -121,6 +230,8 @@ export default function MissionDetailPage() {
         status={mission.status}
         onDeleted={() => navigate('/missions')}
       />
+
+      {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
 
       {mission.teamId && <MissionDatabase missionId={mission.missionId} />}
 

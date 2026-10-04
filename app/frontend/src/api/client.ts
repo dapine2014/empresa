@@ -38,6 +38,8 @@ import type {
   Prospect,
   ProspectingRun,
   StrategyView,
+  RequirementsDecision,
+  RequirementsView,
 } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -181,6 +183,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(command),
     }),
+
+  requirements: (missionId: string) =>
+    request<RequirementsView>(`/api/company/missions/${missionId}/requirements`),
+
+  decideRequirements: (missionId: string, decision: RequirementsDecision, instruction?: string) =>
+    request<RequirementsView>(`/api/company/missions/${missionId}/requirements/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, instruction: instruction ?? null }),
+    }),
+
+  buildIncrement: (missionId: string, increment: number) =>
+    request<RequirementsView>(`/api/company/missions/${missionId}/increments/${increment}`, { method: 'POST' }),
 
   deleteMission: (missionId: string) =>
     request<void>(`/api/company/missions/${missionId}`, { method: 'DELETE' }),

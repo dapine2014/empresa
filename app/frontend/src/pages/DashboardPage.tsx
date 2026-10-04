@@ -15,7 +15,7 @@ export default function DashboardPage() {
   const agents = agentsQuery.data ?? []
 
   const activeMissions = missions.filter((m) => !TERMINAL_STATUSES.has(m.status))
-  const needingAttention = missions.filter((m) => m.status === 'AWAITING_INVESTOR' || m.status === 'FAILED')
+  const needingAttention = missions.filter((m) => m.status === 'AWAITING_INVESTOR' || m.status === 'AWAITING_SPEC_APPROVAL' || m.status === 'FAILED')
 
   return (
     <div>

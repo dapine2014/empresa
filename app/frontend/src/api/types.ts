@@ -9,6 +9,7 @@ export type MissionStatus =
   | 'EVALUATING'
   | 'WAITING_AGENT_RESULTS'
   | 'CONSOLIDATING'
+  | 'AWAITING_SPEC_APPROVAL'
   | 'AWAITING_INVESTOR'
   | 'EXECUTING'
   | 'COMPLETED'
@@ -578,3 +579,45 @@ export interface MissionDatabaseStatus {
   migrations: { version: number; description: string; state: 'APPLIED' | 'PENDING' | 'FAILED' }[]
   lastResult: string | null
 }
+
+// Spec 2026-10-03 Aria: requisitos (RequirementsSpec / RequirementsView en Java).
+export interface RequirementsScenario {
+  id: string
+  title: string
+  given: string[]
+  when: string[]
+  then: string[]
+}
+
+export interface RequirementsStory {
+  id: string
+  role: string
+  iWant: string
+  soThat: string
+  acceptanceCriteria: string[]
+  dependsOn: string[]
+  scenarios: RequirementsScenario[]
+}
+
+export interface RequirementsSpec {
+  summary: string
+  assumptions: string[]
+  outOfScope: string[]
+  roles: { name: string; description: string }[]
+  userStories: RequirementsStory[]
+  increments: { number: number; goal: string; userStoryIds: string[] }[]
+}
+
+export interface RequirementsView {
+  missionId: string
+  status: string
+  version: number | null
+  versionStatus: string | null
+  approvedVersion: number | null
+  builtIncrement: number
+  incrementsTotal: number
+  spec: RequirementsSpec | null
+  summary: string
+}
+
+export type RequirementsDecision = 'APPROVE' | 'ADJUST' | 'REJECT'

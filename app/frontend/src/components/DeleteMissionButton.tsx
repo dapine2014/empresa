@@ -5,7 +5,7 @@ import type { MissionStatus } from '../api/types'
 
 // Mismo criterio que MissionService.DELETABLE_STATUSES: una misión en curso
 // no se borra porque sus threads siguen escribiendo en Neo4j.
-const DELETABLE = new Set<MissionStatus>(['AWAITING_INVESTOR', 'FAILED', 'COMPLETED', 'CANCELLED'])
+const DELETABLE = new Set<MissionStatus>(['AWAITING_INVESTOR', 'AWAITING_SPEC_APPROVAL', 'FAILED', 'COMPLETED', 'CANCELLED'])
 const FOUNDATIONAL_MISSION_ID = 'MISSION-001'
 
 interface Props {
