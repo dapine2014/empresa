@@ -475,9 +475,11 @@ public class MissionExecutor {
         requirementsMemory.setBuildingIncrement(missionId, increment);
         advanceMission(missionId, MissionStatus.PLANNING, 5, "Planificación del equipo",
                 "Neo planifica el incremento " + increment + ".");
+        // Verificado en vivo (incremento 2): Neo planifica sobre el producto existente (contextos y componentes).
         var planned = round == 0
                 ? teamWorkPlanner.plan(missionId, teamId, withIncrement, mode)
-                : teamWorkPlanner.plan(missionId, teamId, withIncrement, mode, round);
+                : teamWorkPlanner.plan(missionId, teamId, withIncrement, mode, round, memory.lastTeamPlanJson(missionId)
+                        .map(json -> jsonMapper.readValue(json, TeamPlan.class)).orElse(null));
         advanceMission(missionId, MissionStatus.DELEGATING, 10, "Delegación",
                 "Plan del líder validado: " + planned.plan().tasksOrEmpty().size() + " tareas (incremento "
                         + increment + ").");
@@ -934,7 +936,10 @@ public class MissionExecutor {
 
         if (status == MissionStatus.AWAITING_INVESTOR && requirementsMemory != null) {
             try {
-                requirementsMemory.confirmBuildingIncrement(missionId);
+                // Verificado en vivo (incremento 2): solo un incremento VERIFIED cuenta como construido.
+                if (memory.lastValidationStatus(missionId).filter("VERIFIED"::equals).isPresent()) {
+                    requirementsMemory.confirmBuildingIncrement(missionId);
+                }
             } catch (Exception ex) {
                 log.warn("MISSION {} - could not confirm the built increment: {}", missionId, ex.getMessage());
             }

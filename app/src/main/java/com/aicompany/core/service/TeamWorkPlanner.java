@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.agent.validation.IncrementPlanMerger;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.validation.TeamPlanResolver;
 import com.aicompany.core.agent.validation.TeamPlanValidator;
@@ -110,6 +111,16 @@ public class TeamWorkPlanner {
     }
 
     public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode, int round) {
+        return plan(missionId, teamId, instruction, mode, round, null);
+    }
+
+    /**
+     * Spec 2026-10-03 Aria §3 (verificado en vivo, incremento 2): {@code previous} es el plan del producto existente; Java
+     * conserva sus contextos y componentes ({@link IncrementPlanMerger}) antes de resolver rutas y validar.
+     */
+    public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode, int round,
+                               TeamPlan previous) {
+        var increment = mode == TeamExecutionMode.DEVELOPMENT ? previous : null;
 
         var team = onlyEnabledMembers(teamMemory.snapshot(teamId));
         var connections = databaseConnections == null
@@ -135,7 +146,8 @@ public class TeamWorkPlanner {
 
             var model = companyMemory.agentModel(leaderId, defaultAgentModel);
             var leaderPrompt = promptMemory.activePrompt(leaderId);
-            var basePrompt = buildPrompt(team, instruction, mode) + databaseRule(mode, connections);
+            var basePrompt = buildPrompt(team, instruction, mode) + databaseRule(mode, connections)
+                    + (increment == null ? "" : IncrementPlanMerger.existingProduct(increment));
             String feedback = null;
             String previousPlanJson = null;
             var maxRetries = mode == TeamExecutionMode.DEVELOPMENT ? MAX_DEVELOPMENT_PLAN_RETRIES : MAX_PLAN_RETRIES;
@@ -154,7 +166,7 @@ public class TeamWorkPlanner {
                     continue;
                 }
 
-                plan = normalizeActions(plan);
+                plan = IncrementPlanMerger.merge(normalizeActions(plan), increment);
 
                 // Revisión final del bloque 1 (I-1): el validador corre siempre y sus errores van primero, para
                 // que un error derivado del resolutor (p. ej. capa sin dueño) no oculte la causa real (un perfil o

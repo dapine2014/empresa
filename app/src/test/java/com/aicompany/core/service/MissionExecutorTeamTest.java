@@ -203,6 +203,7 @@ class MissionExecutorTeamTest {
         when(requirements.approved("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
                 JsonMapper.builder().build().writeValueAsString(SPEC), "APPROVED", "", null)));
         when(development.execute(any(), any())).thenReturn(new TeamExecutionResult.Development("r", "estado"));
+        when(memory.lastValidationStatus("M-9")).thenReturn(Optional.of("VERIFIED"));
     }
 
     // Spec 2026-10-03 Aria §1: tras Aria la misión espera al fundador; Neo no corre.
@@ -234,6 +235,20 @@ class MissionExecutorTeamTest {
         order.verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
         order.verify(requirements).confirmBuildingIncrement("M-9");
         verify(requirements, never()).setBuiltIncrement(anyString(), anyInt());
+    }
+
+    // Verificado en vivo (MISSION-ARIA-CRM-1791093806, incremento 2): un incremento que llega a AWAITING_INVESTOR con la
+    // validación FAILED no cuenta como construido (se puede reintentar).
+    @Test
+    void anIncrementThatIsNotVerifiedIsNotCountedAsBuilt() throws Exception {
+        withAria();
+        when(memory.lastValidationStatus("M-9")).thenReturn(Optional.of("FAILED"));
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+
+        executor.continueAfterApprovalAsync("M-9").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
+        verify(requirements, never()).confirmBuildingIncrement(anyString());
     }
 
     // Revisión final (3): si la construcción falla, el incremento no queda como construido.
@@ -287,18 +302,21 @@ class MissionExecutorTeamTest {
     void buildingIncrementTwoIsPlannedByNeoWithItsStoriesAsARound() throws Exception {
         withAria();
         when(memory.evidenceRound("M-9")).thenReturn(1);
-        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2))).thenReturn(planned("TEAM-DEVELOPMENT"));
+        var previous = planned("TEAM-DEVELOPMENT").plan();
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build().writeValueAsString(previous)));
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
 
         executor.buildIncrementAsync("M-9", 2).get();
 
+        // Verificado en vivo (incremento 2): Neo recibe el plan del producto existente para conservarlo.
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("INCREMENTO 2 de 2")
-                && i.contains("HU-02 (vendedor)") && !i.contains("HU-01 (vendedor)") && i.contains("Un CRM")), any(), eq(2));
+                && i.contains("HU-02 (vendedor)") && !i.contains("HU-01 (vendedor)") && i.contains("Un CRM")), any(), eq(2),
+                argThat(p -> p != null && p.summary().equals(previous.summary())));
         verify(development).execute(argThat(c -> c.round() == 2 && c.instruction().contains("INCREMENTO 2 de 2")
                 && c.plan().workTasks().stream().noneMatch(t -> t.objective().contains("INCREMENTO"))), any());
         verify(requirements).addIncrementRound("M-9");
         verify(memory).setEvidenceRound("M-9", 2);
         verify(requirements).setBuildingIncrement("M-9", 2);
-        verify(memory, never()).lastTeamPlanJson("M-9");
     }
 
     // Revisión final (2a/b): una ronda de evidencia de una misión con requisitos conserva el bloque del incremento en curso.

@@ -353,6 +353,41 @@ class DevelopmentTeamStrategyTest {
                 argThat(p -> p.contains("devuelve solo los archivos que cambias")), anyList(), anyList(), eq(List.of()));
     }
 
+    // Verificado en vivo (MISSION-ARIA-CRM-1791093806, incremento 2): un contexto nuevo en una ronda no tenía sus .csproj
+    // (ENTRY_FILES). Forjai commitea solo los archivos del scaffold que faltan, sin tocar los existentes.
+    @Test
+    void aRoundCommitsOnlyTheMissingScaffoldFiles() throws Exception {
+        var base = context();
+        var roundTwo = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 2);
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Game.csproj"))).thenThrow(new java.io.IOException("no existe"));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD-R2"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("b".repeat(40), List.of("game/Game.csproj")));
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(workspace.commitAgentWork(eq("M-1"), endsWith("-R2"), argThat(a -> !"forjai".equals(a)), anyString(), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
+        when(dependencies.resolve(anyString(), anyString(), anyList()))
+                .thenReturn(new DependencyService.Outcome(List.of(), List.of(), null));
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html"));
+        when(workspace.filesAtCommit("M-1", "b".repeat(40))).thenReturn(List.of("db/postgres/migrations/V1__clientes.sql"));
+        when(validator.validate(eq("M-1"), anyList(), anyList(), anyList(), anyList(), anyList()))
+                .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(roundTwo, progress);
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD-R2"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().map(DevelopmentResult.GeneratedFile::path).toList()
+                        .equals(List.of("game/Game.csproj"))));
+        // Lo que ya estaba en el repositorio al empezar la ronda sigue permitido aunque su dueño no esté en este plan.
+        verify(validator).validate(eq("M-1"), anyList(), anyList(), anyList(),
+                argThat(allowed -> allowed.contains("db/postgres/migrations/V1__clientes.sql")), anyList());
+    }
+
     @Test
     void forjaiCommitsTheProjectScaffoldBeforeTheAgentsWork() throws Exception {
         stubHappyPath();
