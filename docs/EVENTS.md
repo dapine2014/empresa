@@ -80,3 +80,11 @@ EMPRESA_DEPENDENCY_REJECTED (`DependencyController`, `agentId=human`): el fundad
 EMPRESA_PROSPECTING_RUN_COMPLETED, EMPRESA_PROSPECTING_RUN_FAILED, EMPRESA_PROSPECTING_STRATEGY_PROPOSED, EMPRESA_PROSPECTING_STRATEGY_APPROVED, EMPRESA_PROSPECTING_STRATEGY_REJECTED (`ProspectingService` / `StrategyProposalService`, `agentId` = `sales`, `growth-content` o `human`, sin `missionId`; spec `2026-09-30-busqueda-de-prospectos-design.md`): búsqueda diaria de prospectos. `data`: `{runId, productId, strategy, found, valid}`, `{runId, productId, error}` y `{strategyId, name}` para las tres de estrategias.
 
 EMPRESA_OUTREACH_DRAFTED, EMPRESA_OUTREACH_APPROVED, EMPRESA_OUTREACH_SENT, EMPRESA_OUTREACH_FAILED, EMPRESA_PROSPECT_RESPONDED, EMPRESA_PROSPECT_CONVERTED (`OutreachService`, `agentId` = `sales` para DRAFTED y `human` para el resto, sin `missionId`; spec `2026-09-30-contacto-con-prospectos-design.md`): contacto con prospectos. `data`: `{prospectId}`, `{draftId}`, `{draftId, attemptId}`, `{draftId, error}`, `{prospectId, response}`, `{prospectId, customerId}`.
+
+EMPRESA_REQUIREMENTS_READY (`MissionExecutor`, `agentId="product-owner"`; spec `2026-10-03-aria-v1-design.md`): Aria escribió requisitos válidos y la misión quedó en `AWAITING_SPEC_APPROVAL`. `data: {version, stories}`.
+
+EMPRESA_REQUIREMENTS_APPROVED, EMPRESA_REQUIREMENTS_REJECTED (`MissionService.decideRequirements`, `agentId="human"`): el fundador aprobó (la misión sigue con el plan de Neo del incremento 1) o rechazó (la misión queda `CANCELLED`) la versión vigente. `data: {version}`. Con `SPEC_APPROVAL_REQUIRED = 0` la versión queda `APPROVED` por `policy` sin este evento.
+
+EMPRESA_REQUIREMENTS_ADJUSTED (`MissionExecutor`, `agentId="human"`): Aria rehízo los requisitos con el ajuste del fundador (versión nueva, vuelve a esperar aprobación). `data: {version, instruction}`.
+
+EMPRESA_INCREMENT_STARTED (`MissionExecutor.buildIncrementAsync`, `agentId="human"`): arrancó el incremento N sobre el mismo repositorio, como ronda de la misión que no consume `MAX_EVIDENCE_ROUNDS`. `data: {increment, round}`.
