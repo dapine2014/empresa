@@ -1,5 +1,7 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.RequirementsDecisionCommand;
+import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.FinanceEntry;
 
 import com.aicompany.core.model.FinanceSummary;
@@ -2266,5 +2268,63 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("⚠ Suplente qwen3-coder:30b no disponible desde 2026-10-03 07:00 UTC (Ollama no responde)"),
                 response);
         verifyNoInteractions(ceoService);
+    }
+    // Spec 2026-10-03 Aria §2 + Review Focus 1: "apruebo las HU" es de requisitos, no la decisión del inversionista.
+    @Test
+    void approvingTheStoriesGoesToTheRequirementsNotToTheInvestorDecision() {
+        when(missionService.decideRequirements(eq("MISSION-9"), any())).thenReturn(new RequirementsView("MISSION-9",
+                "PLANNING", 1, "APPROVED", 1, 0, 2, null, ""));
+
+        var response = router.route("apruebo las HU de MISSION-9");
+
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(missionService, never()).recordDecision(anyString(), any());
+        assertTrue(response.contains("incremento 1"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void storiesCanBeShownAdjustedRejectedAndIncrementsBuilt() {
+        var view = new RequirementsView("MISSION-9", "AWAITING_SPEC_APPROVAL", 1, "DRAFT", null, 0, 2, null,
+                "Roles: vendedor. Incremento 1 (MVP): HU-01 registrar clientes.");
+        when(missionService.requirements("MISSION-9")).thenReturn(Optional.of(view));
+        when(missionService.decideRequirements(eq("MISSION-9"), any())).thenReturn(view);
+        when(missionService.buildIncrement("MISSION-9", 2)).thenReturn(view);
+
+        assertTrue(router.route("muéstrame las HU de MISSION-9").contains("HU-01 registrar clientes"));
+        router.route("para MISSION-9: el MVP solo con clientes");
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "el MVP solo con clientes"));
+        router.route("rechaza las HU de MISSION-9");
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+        router.route("construye el incremento 2 de MISSION-9");
+        verify(missionService).buildIncrement("MISSION-9", 2);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void aRefusedRequirementsCommandExplainsWhy() {
+        when(missionService.decideRequirements(eq("MISSION-9"), any()))
+                .thenThrow(new IllegalStateException("MISSION-9 no está esperando la aprobación de requisitos"));
+        assertTrue(router.route("apruebo las HU de MISSION-9").contains("no está esperando"));
+    }
+
+    // Spec 2026-10-03 Aria §2: el status anuncia los requisitos que esperan al fundador (también en TEST) y no los
+    // cuenta como misiones activas.
+    @Test
+    void theStatusAnnouncesRequirementsWaitingForApproval() {
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-CRM", MissionStatus.AWAITING_SPEC_APPROVAL, "TEST", 8, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-P", MissionStatus.AWAITING_SPEC_APPROVAL, "PRODUCTION", 8, "x", "x", Instant.now(), null)));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("0 activa"), response);
+        assertTrue(response.contains("Requisitos de Aria esperando tu aprobación: MISSION-CRM, MISSION-P"), response);
     }
 }

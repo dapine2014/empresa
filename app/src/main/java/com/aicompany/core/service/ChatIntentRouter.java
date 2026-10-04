@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.ProductView;
 
 import com.aicompany.core.model.CatalogStatus;
@@ -357,7 +358,16 @@ public class ChatIntentRouter {
                 || PRODUCT_COMMAND.matcher(normalize(message)).matches()
                 || MISSION_START.matcher(message).find()
                 || detectFreeMissionStart(normalize(message))
-                || detectDecision(message) != null;
+                || detectDecision(message) != null
+                || isRequirementsCommand(message);
+    }
+
+    /** Spec 2026-10-03 Aria §2: los comandos de requisitos son gobernanza (antes de las menciones). */
+    private static boolean isRequirementsCommand(String message) {
+        var normalized = normalize(message);
+        return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
+                || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
+                || ADJUST_STORIES.matcher(message).find();
     }
 
     private ChatReply ceoReply(String text) {
@@ -627,6 +637,11 @@ public class ChatIntentRouter {
                     + "/details para ver el progreso y las tareas.";
         }
 
+        var requirementsReply = handleRequirements(message);
+        if (requirementsReply != null) {
+            return requirementsReply;
+        }
+
         if (detectFreeMissionStart(normalize(message))) {
             return handleFreeMissionStart(message);
         }
@@ -821,6 +836,64 @@ public class ChatIntentRouter {
                 + teamSuffix(teamId)
                 + " Consulta /api/company/missions/" + missionId
                 + "/details para ver el progreso y las tareas.";
+    }
+
+    /** Spec 2026-10-03 Aria §2: comandos de requisitos; van antes que la decisión del inversionista. */
+    private static final Pattern SHOW_STORIES = Pattern.compile(
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:las\\s+)?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern APPROVE_STORIES = Pattern.compile(
+            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:las\\s+)?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern REJECT_STORIES = Pattern.compile(
+            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:las\\s+)?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(MISSION-[A-Za-z0-9-]+)\\s*:\\s*(.+)$",
+            Pattern.DOTALL);
+    private static final Pattern BUILD_INCREMENT = Pattern.compile(
+            "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+
+    private String handleRequirements(String message) {
+        var normalized = normalize(message);
+        try {
+            var build = BUILD_INCREMENT.matcher(normalized);
+            if (build.find()) {
+                var missionId = build.group(2).toUpperCase(Locale.ROOT);
+                missionService.buildIncrement(missionId, Integer.parseInt(build.group(1)));
+                return "Arrancó el incremento " + build.group(1) + " de " + missionId
+                        + " sobre el mismo repositorio. Te aviso cuando termine.";
+            }
+            var show = SHOW_STORIES.matcher(normalized);
+            if (show.find()) {
+                var missionId = show.group(1).toUpperCase(Locale.ROOT);
+                return missionService.requirements(missionId)
+                        .filter(v -> v.version() != null)
+                        .map(v -> "Requisitos de " + missionId + " (versión " + v.version() + ", " + v.versionStatus()
+                                + "): " + v.summary())
+                        .orElse(missionId + " no tiene requisitos de Aria.");
+            }
+            var approve = APPROVE_STORIES.matcher(normalized);
+            if (approve.find()) {
+                var missionId = approve.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+                return "Requisitos de " + missionId + " aprobados: Neo planifica el incremento 1.";
+            }
+            var reject = REJECT_STORIES.matcher(normalized);
+            if (reject.find()) {
+                var missionId = reject.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+                return "Requisitos de " + missionId + " rechazados: la misión quedó cancelada.";
+            }
+            var adjust = ADJUST_STORIES.matcher(message);
+            if (adjust.find()) {
+                var missionId = adjust.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjust.group(2).strip()));
+                return "Le pasé el ajuste a Aria; te aviso cuando las historias de " + missionId + " estén listas.";
+            }
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
+        return null;
     }
 
     private record DetectedDecision(String missionId, InvestorDecision decision) {
@@ -1646,12 +1719,21 @@ public class ChatIntentRouter {
      */
     private String formatCompanyStatus() {
 
-        var missions = missionMemory.findAll(50).stream()
+        var all = missionMemory.findAll(50);
+        // Spec 2026-10-03 Aria §2: los requisitos esperan al fundador en cualquier entorno.
+        var awaitingSpec = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_SPEC_APPROVAL)
+                .map(MissionResponse::missionId).toList();
+        var specLine = awaitingSpec.isEmpty() ? ""
+                : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec)
+                        + " (\"muéstrame las HU de <misión>\").";
+
+        var missions = all.stream()
                 .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
 
         var active = missions.stream()
                 .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
+                        && m.status() != MissionStatus.AWAITING_SPEC_APPROVAL
                         && m.status() != MissionStatus.FAILED
                         && m.status() != MissionStatus.COMPLETED
                         && m.status() != MissionStatus.CANCELLED)
@@ -1701,7 +1783,7 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + orchestratorLine() + downModelsLine();
+        ) + specLine + orchestratorLine() + downModelsLine();
     }
 
     /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */
