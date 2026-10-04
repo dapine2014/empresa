@@ -39,12 +39,19 @@ public class OpenAiCompatibleClient {
     private volatile String providerName = "nvidia";
     private volatile boolean nvidiaOptions = true;
     private volatile List<String> checkModels = List.of();
+    private volatile String thinkingOffParam = "";
 
     /** Proveedores pagos (2026-10-04): nombre, si lleva las opciones de NVIDIA y con qué modelos se prueba una key. */
     public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels) {
+        configure(providerName, nvidiaOptions, checkModels, "");
+    }
+
+    /** {@code thinkingOffParam}: parámetro propio del proveedor que apaga el razonamiento (Alibaba: enable_thinking). */
+    public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels, String thinkingOffParam) {
         this.providerName = providerName;
         this.nvidiaOptions = nvidiaOptions;
         this.checkModels = List.copyOf(checkModels);
+        this.thinkingOffParam = thinkingOffParam == null ? "" : thinkingOffParam;
     }
 
     public List<String> checkModels() {
@@ -135,6 +142,9 @@ public class OpenAiCompatibleClient {
             if (nvidiaOptions) {
                 body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
             }
+            if (!thinkingOffParam.isBlank()) {
+                body.put(thinkingOffParam, false);
+            }
             probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + candidate)
                     .body(body).retrieve().body(Map.class);
             return KeyCheck.OK;
@@ -158,6 +168,9 @@ public class OpenAiCompatibleClient {
             body.put("max_tokens", 10);
             if (nvidiaOptions) {
                 body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            }
+            if (!thinkingOffParam.isBlank()) {
+                body.put(thinkingOffParam, false);
             }
             var response = probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + apiKey)
                     .body(body).retrieve().body(Map.class);
@@ -203,6 +216,9 @@ public class OpenAiCompatibleClient {
         body.put("temperature", 0.2);
         if (nvidiaOptions) {
             body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+        }
+        if (!thinkingOffParam.isBlank()) {
+            body.put(thinkingOffParam, false);
         }
         if (json) {
             body.put("response_format", Map.of("type", "json_object"));

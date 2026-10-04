@@ -67,7 +67,8 @@ public class CoreConfig {
                     RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(factory).build(),
                     RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(probeFactory).build(),
                     provider.apiKey(), java.time.Duration.ofSeconds(10), totalTimeout);
-            client.configure(provider.name(), provider.nvidiaOptions(), provider.checkModels());
+            client.configure(provider.name(), provider.nvidiaOptions(), provider.checkModels(),
+                    provider.thinkingOffParam());
             clients.put(provider.name(), client);
         }
         return clients;

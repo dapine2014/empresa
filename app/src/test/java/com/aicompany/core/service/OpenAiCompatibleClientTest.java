@@ -53,14 +53,16 @@ class OpenAiCompatibleClientTest {
         server.expect(requestTo("https://api.test/v1/chat/completions"))
                 .andExpect(jsonPath("$.response_format.type").value("json_object"))
                 .andExpect(jsonPath("$.chat_template_kwargs").doesNotExist())
+                // Alibaba (Qwen): el razonamiento se apaga con su propio parámetro.
+                .andExpect(jsonPath("$.enable_thinking").value(false))
                 .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
 
         var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
-        client.configure("alibaba", false, List.of("qwen3-coder-plus"));
+        client.configure("alibaba", false, List.of("qwen3.8-max"), "enable_thinking");
 
-        client.chat("qwen3-coder-plus", MESSAGES, true, 100);
+        client.chat("qwen3.8-max", MESSAGES, true, 100);
         server.verify();
-        assertEquals(List.of("qwen3-coder-plus"), client.checkModels());
+        assertEquals(List.of("qwen3.8-max"), client.checkModels());
     }
 
     // Verificado en vivo (2026-10-04, Alibaba): 403 también es "modelo no habilitado"; el motivo del proveedor se muestra,

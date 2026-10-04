@@ -14,7 +14,8 @@ class RemoteProvidersTest {
     void nvidiaUsesTheDefaultUrlAndPaidProvidersTheirOwn() {
         var env = new MockEnvironment()
                 .withProperty("remote-models.providers.alibaba.base-url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
-                .withProperty("remote-models.providers.alibaba.check-models", "qwen3-coder-plus")
+                .withProperty("remote-models.providers.alibaba.check-models", "qwen3.8-max")
+                .withProperty("remote-models.providers.alibaba.thinking-off-param", "enable_thinking")
                 .withProperty("remote-models.providers.alibaba.api-key", "x");
 
         var providers = RemoteProviders.from(env, "https://integrate.api.nvidia.com/v1");
@@ -27,7 +28,9 @@ class RemoteProvidersTest {
         var alibaba = providers.get(4);
         assertEquals("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", alibaba.baseUrl());
         assertFalse(alibaba.nvidiaOptions());
-        assertEquals(List.of("qwen3-coder-plus"), alibaba.checkModels());
+        assertEquals(List.of("qwen3.8-max"), alibaba.checkModels());
+        assertEquals("enable_thinking", alibaba.thinkingOffParam());
+        assertEquals("", nvidia.thinkingOffParam());
         assertEquals("x", alibaba.apiKey());
     }
 }

@@ -108,7 +108,9 @@ remote-models:
     alibaba:
       base-url: ${ALIBABA_BASE_URL:https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       api-key: ${ALIBABA_API_KEY:}
-      check-models: qwen3-coder-plus
+      # Verificado en vivo (2026-10-04): la familia Qwen3-Coder está en retiro (AccessDenied.Unpurchased).
+      check-models: qwen3.8-max
+      thinking-off-param: enable_thinking
     bedrock:
       base-url: ${BEDROCK_BASE_URL:https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1}
       api-key: ${BEDROCK_API_KEY:}
