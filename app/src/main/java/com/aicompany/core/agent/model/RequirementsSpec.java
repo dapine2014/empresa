@@ -1,5 +1,7 @@
 package com.aicompany.core.agent.model;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -8,14 +10,16 @@ import java.util.Objects;
 /**
  * Spec 2026-10-03 Aria §1: lo que Aria (Product Owner) escribe antes de que se construya nada: roles del producto,
  * historias de usuario con criterios y escenarios, supuestos, fuera de alcance e incrementos (1 = MVP).
+ *
+ * Verificado en vivo (2026-10-04): el modelo puede escribir un texto suelto donde va una lista; vale como un elemento.
  */
-public record RequirementsSpec(String summary, List<String> assumptions, List<String> outOfScope, List<Role> roles,
+public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> assumptions, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> outOfScope, List<Role> roles,
                                List<UserStory> userStories, List<Increment> increments) {
 
     public record Role(String name, String description) {
     }
 
-    public record Scenario(String id, String title, List<String> given, List<String> when, List<String> then) {
+    public record Scenario(String id, String title, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> given, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> when, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> then) {
 
         public Scenario {
             given = orEmpty(given);
@@ -24,8 +28,8 @@ public record RequirementsSpec(String summary, List<String> assumptions, List<St
         }
     }
 
-    public record UserStory(String id, String role, String iWant, String soThat, List<String> acceptanceCriteria,
-                            List<String> dependsOn, List<Scenario> scenarios) {
+    public record UserStory(String id, String role, String iWant, String soThat, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> acceptanceCriteria,
+                            @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> dependsOn, List<Scenario> scenarios) {
 
         public UserStory {
             acceptanceCriteria = orEmpty(acceptanceCriteria);
@@ -46,7 +50,7 @@ public record RequirementsSpec(String summary, List<String> assumptions, List<St
         }
     }
 
-    public record Increment(int number, String goal, List<String> userStoryIds) {
+    public record Increment(int number, String goal, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> userStoryIds) {
 
         public Increment {
             userStoryIds = orEmpty(userStoryIds);

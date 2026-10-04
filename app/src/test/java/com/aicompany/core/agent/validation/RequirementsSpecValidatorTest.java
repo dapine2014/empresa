@@ -109,4 +109,24 @@ class RequirementsSpecValidatorTest {
                 && out.contains("\"given\":[]") && out.contains("\"acceptanceCriteria\":[]")
                 && out.contains("\"userStoryIds\":[]"), out);
     }
+
+    // Verificado en vivo (MISSION-ARIA-CRM-1791092878): nemotron escribió "given": "un vendedor" (texto, no lista) en los
+    // 3 intentos; un texto suelto vale como lista de un elemento.
+    @Test
+    void aSingleTextIsAcceptedAsAOneItemList() {
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        var spec = json.readValue("{\"summary\":\"x\",\"assumptions\":\"a\",\"userStories\":[{\"id\":\"HU-01\","
+                + "\"acceptanceCriteria\":\"c\",\"dependsOn\":\"HU-02\",\"scenarios\":[{\"id\":\"ESC-01\",\"given\":\"un vendedor\","
+                + "\"when\":\"registra\",\"then\":\"queda\"}]}],\"increments\":[{\"number\":1,\"userStoryIds\":\"HU-01\"}],"
+                + "\"outOfScope\":\"reportes\"}", RequirementsSpec.class);
+        var scenario = spec.userStories().get(0).scenarios().get(0);
+        assertEquals(List.of("un vendedor"), scenario.given());
+        assertEquals(List.of("registra"), scenario.when());
+        assertEquals(List.of("queda"), scenario.then());
+        assertEquals(List.of("c"), spec.userStories().get(0).acceptanceCriteria());
+        assertEquals(List.of("HU-02"), spec.userStories().get(0).dependsOn());
+        assertEquals(List.of("HU-01"), spec.increments().get(0).userStoryIds());
+        assertEquals(List.of("a"), spec.assumptions());
+        assertEquals(List.of("reportes"), spec.outOfScope());
+    }
 }
