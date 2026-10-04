@@ -1233,6 +1233,14 @@ public class CeoService {
                 TeamPlanSchema.SCHEMA, TeamPlan.class);
     }
 
+    /** Spec 2026-10-03 Aria §1: requisitos de Aria (format RequirementsSpec.SCHEMA, sin tools). */
+    public com.aicompany.core.agent.model.RequirementsSpec writeRequirements(String agentId, String prompt,
+                                                                             String agentPrompt, String model) {
+        return callStructured("REQUIREMENTS_SPEC", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.RequirementsSpec.SCHEMA,
+                com.aicompany.core.agent.model.RequirementsSpec.class);
+    }
+
     /** Código real de una tarea WORK (spec §6): format DevelopmentResultSchema, sin tools. */
     public DevelopmentResult generateDevelopmentArtifact(String agentId, String prompt, String agentPrompt, String model) {
         return callStructured("DEVELOPMENT_TASK", agentId, prompt, agentPrompt, model,
