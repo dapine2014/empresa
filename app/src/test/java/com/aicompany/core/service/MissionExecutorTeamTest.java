@@ -180,4 +180,83 @@ class MissionExecutorTeamTest {
 
         verifyNoInteractions(planner);
     }
+    private final RequirementsWriter writer = mock(RequirementsWriter.class);
+    private final RequirementsMemoryService requirements = mock(RequirementsMemoryService.class);
+
+    private static final com.aicompany.core.agent.model.RequirementsSpec SPEC = new com.aicompany.core.agent.model.RequirementsSpec(
+            "CRM", List.of(), List.of(), List.of(new com.aicompany.core.agent.model.RequirementsSpec.Role("vendedor", "x")),
+            List.of(new com.aicompany.core.agent.model.RequirementsSpec.UserStory("HU-01", "vendedor", "registrar clientes",
+                            "seguirlos", List.of("c"), List.of(), List.of(new com.aicompany.core.agent.model.RequirementsSpec.Scenario(
+                            "ESC-01", "alta", List.of("d"), List.of("c"), List.of("e")))),
+                    new com.aicompany.core.agent.model.RequirementsSpec.UserStory("HU-02", "vendedor", "oportunidades",
+                            "vender", List.of("c"), List.of(), List.of(new com.aicompany.core.agent.model.RequirementsSpec.Scenario(
+                            "ESC-02", "op", List.of("d"), List.of("c"), List.of("e"))))),
+            List.of(new com.aicompany.core.agent.model.RequirementsSpec.Increment(1, "MVP", List.of("HU-01")),
+                    new com.aicompany.core.agent.model.RequirementsSpec.Increment(2, "Ops", List.of("HU-02"))));
+
+    private void withAria() throws Exception {
+        executor.setRequirements(writer, requirements);
+        when(memory.teamId("M-9")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));
+        when(memory.instructionOf("M-9")).thenReturn(Optional.of("Un CRM"));
+        when(writer.write(eq("M-9"), eq("Un CRM"), eq(Optional.empty()), isNull()))
+                .thenReturn(new RequirementsWriter.Written(1, SPEC));
+        when(requirements.approved("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(SPEC), "APPROVED", "", null)));
+        when(development.execute(any(), any())).thenReturn(new TeamExecutionResult.Development("r", "estado"));
+    }
+
+    // Spec 2026-10-03 Aria §1: tras Aria la misión espera al fundador; Neo no corre.
+    @Test
+    void aDevelopmentMissionStopsAfterAriaWaitingForApproval() throws Exception {
+        withAria();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(), anyString());
+        verify(planner, never()).plan(any(), any(), any(), any());
+        verify(alertMailService).send(contains("M-9"), anyString(), eq(false));
+    }
+
+    // Spec 2026-10-03 Aria §3 + Review Focus 3: aprobar (incluso con un executor nuevo tras reiniciar) planifica solo el incremento 1.
+    @Test
+    void approvingPlansOnlyTheFirstIncrement() throws Exception {
+        withAria();
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+
+        executor.continueAfterApprovalAsync("M-9").get();
+
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("INCREMENTO 1 de 2")
+                && i.contains("HU-01 (vendedor)") && !i.contains("HU-02 (vendedor)") && i.contains("Un CRM")), any());
+        verify(requirements).setBuiltIncrement("M-9", 1);
+    }
+
+    @Test
+    void withTheSwitchOffTheValidSpecGoesStraightToNeo() throws Exception {
+        withAria();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(0.0);
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(requirements).approve("M-9", 1, "policy");
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), contains("INCREMENTO 1"), any());
+    }
+
+    @Test
+    void buildingIncrementTwoReusesThePlanWithItsStoriesAsARound() throws Exception {
+        withAria();
+        var saved = planned("TEAM-DEVELOPMENT");
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build().writeValueAsString(saved.plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(saved.team());
+        when(memory.evidenceRound("M-9")).thenReturn(1);
+
+        executor.buildIncrementAsync("M-9", 2).get();
+
+        verify(development).execute(argThat(c -> c.round() == 2 && c.plan().workTasks().stream()
+                .allMatch(t -> t.objective().contains("INCREMENTO 2 de 2") && t.objective().contains("HU-02"))), any());
+        verify(requirements).addIncrementRound("M-9");
+        verify(memory).setEvidenceRound("M-9", 2);
+        verify(requirements).setBuiltIncrement("M-9", 2);
+    }
 }

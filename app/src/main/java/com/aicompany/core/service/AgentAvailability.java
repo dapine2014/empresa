@@ -17,6 +17,8 @@ import java.util.stream.Collectors;
 public class AgentAvailability {
 
     public static final String CEO = "ceo";
+    /** Spec 2026-10-03 Aria: sin Aria una misión del Development Group no arranca. */
+    public static final String PRODUCT_OWNER = "product-owner";
 
     /** Los 6 agentes que ejecuta una discovery (MissionExecutor). */
     public static final List<String> DISCOVERY_AGENTS = List.of(CEO, "sales", "product", "finance", "engineering", "qa");

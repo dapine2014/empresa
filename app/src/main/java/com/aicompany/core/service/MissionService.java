@@ -9,6 +9,10 @@ import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.MissionStatusResponse;
+import com.aicompany.core.model.RequirementsDecisionCommand;
+import com.aicompany.core.model.RequirementsView;
+import com.aicompany.core.agent.model.RequirementsSpec;
+import com.aicompany.core.agent.validation.RequirementsText;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -75,8 +79,12 @@ public class MissionService {
             return;
         }
         var team = teamMemory.snapshot(teamId);
-        agentAvailability.requireEnabled(
-                java.util.List.of(AgentAvailability.CEO, team.leaderAgentId()), what);
+        var required = new java.util.ArrayList<>(java.util.List.of(AgentAvailability.CEO, team.leaderAgentId()));
+        if (TeamMemoryService.teamType(teamId).map("DEVELOPMENT"::equals).orElse(false)) {
+            required.add(AgentAvailability.PRODUCT_OWNER);
+        }
+        agentAvailability.requireEnabled(required, what);
+
     }
 
     public MissionResponse start(String missionId, String instruction, String environment, FinancialCriteriaCommand financialCriteria) {
@@ -144,6 +152,96 @@ public class MissionService {
         return memory.find(missionId).orElseThrow();
     }
 
+    private RequirementsMemoryService requirementsMemory;
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
+
+    /** Spec 2026-10-03 Aria: requisitos de Aria (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRequirements(RequirementsMemoryService requirementsMemory) {
+        this.requirementsMemory = requirementsMemory;
+    }
+
+    public Optional<RequirementsView> requirements(String missionId) {
+        if (requirementsMemory == null) {
+            return Optional.empty();
+        }
+        var mission = memory.find(missionId);
+        if (mission.isEmpty()) {
+            return Optional.empty();
+        }
+        var latest = requirementsMemory.latest(missionId);
+        var spec = latest.map(v -> JSON.readValue(v.specJson(), RequirementsSpec.class)).orElse(null);
+        return Optional.of(new RequirementsView(missionId, mission.get().status().name(),
+                latest.map(RequirementsMemoryService.Version::version).orElse(null),
+                latest.map(RequirementsMemoryService.Version::status).orElse(null),
+                requirementsMemory.approved(missionId).map(RequirementsMemoryService.Version::version).orElse(null),
+                requirementsMemory.builtIncrement(missionId),
+                spec == null ? 0 : spec.incrementNumbers().size(), spec,
+                spec == null ? "" : RequirementsText.summary(spec)));
+    }
+
+    public RequirementsView decideRequirements(String missionId, RequirementsDecisionCommand command) {
+        var mission = memory.find(missionId)
+                .orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId));
+        if (mission.status() != MissionStatus.AWAITING_SPEC_APPROVAL) {
+            throw new IllegalStateException("MISSION " + missionId + " no está esperando la aprobación de requisitos "
+                    + "(estado actual: " + mission.status() + ").");
+        }
+        var version = requirementsMemory.latest(missionId)
+                .orElseThrow(() -> new IllegalStateException("MISSION " + missionId + " no tiene requisitos."));
+        if (!"DRAFT".equals(version.status())) {
+            // Review Focus 2: el hilo todavía no cambió el estado de la misión; la versión ya decidida lo delata.
+            throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
+                    + " ya está " + version.status() + ".");
+        }
+        switch (command.decision()) {
+            case APPROVE -> {
+                requirementsMemory.approve(missionId, version.version(), "founder");
+                events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", Map.of("version", version.version()));
+                executor.continueAfterApprovalAsync(missionId);
+            }
+            case ADJUST -> {
+                if (command.instruction() == null || command.instruction().isBlank()) {
+                    throw new IllegalArgumentException("Para ajustar los requisitos escribe la instrucción para Aria.");
+                }
+                executor.adjustRequirementsAsync(missionId, command.instruction().strip());
+            }
+            case REJECT -> {
+                requirementsMemory.reject(missionId, version.version());
+                memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Requisitos rechazados",
+                        "El fundador rechazó los requisitos de Aria.");
+                events.publish("EMPRESA_REQUIREMENTS_REJECTED", missionId, null, "human", Map.of("version", version.version()));
+            }
+        }
+        return requirements(missionId).orElseThrow();
+    }
+
+    private static final Set<MissionStatus> STOPPED = Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.COMPLETED,
+            MissionStatus.FAILED);
+
+    public RequirementsView buildIncrement(String missionId, int increment) {
+        var mission = memory.find(missionId)
+                .orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId));
+        var approved = requirementsMemory.approved(missionId)
+                .orElseThrow(() -> new IllegalStateException("MISSION " + missionId + " no tiene requisitos aprobados."));
+        var spec = JSON.readValue(approved.specJson(), RequirementsSpec.class);
+        if (!spec.incrementNumbers().contains(increment)) {
+            throw new IllegalStateException("MISSION " + missionId + " no tiene incremento " + increment
+                    + " (tiene " + spec.incrementNumbers() + ").");
+        }
+        var built = requirementsMemory.builtIncrement(missionId);
+        if (increment != built + 1) {
+            throw new IllegalStateException("El incremento " + increment + " va después del " + (increment - 1)
+                    + "; el último construido es el " + built + ".");
+        }
+        if (!STOPPED.contains(mission.status())) {
+            throw new IllegalStateException("MISSION " + missionId + " está en curso (" + mission.status() + ").");
+        }
+        requireAgentsOn(mission.teamId(), "construir el incremento " + increment + " de " + missionId);
+        executor.buildIncrementAsync(missionId, increment);
+        return requirements(missionId).orElseThrow();
+    }
+
     public Optional<MissionResponse> status(String missionId) {
         return memory.find(missionId);
     }
@@ -198,7 +296,8 @@ public class MissionService {
             if (policies == null) {
                 throw new IllegalStateException("Falta CompanyPolicyService");
             }
-            var current = memory.evidenceRound(missionId);
+            var current = memory.evidenceRound(missionId)
+                    - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId));
             var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
             if (current >= max) {
                 throw new IllegalStateException("MISSION " + missionId + " ya usó " + current + " de " + max
@@ -281,6 +380,7 @@ public class MissionService {
      */
     private static final Set<MissionStatus> DELETABLE_STATUSES = Set.of(
             MissionStatus.AWAITING_INVESTOR,
+            MissionStatus.AWAITING_SPEC_APPROVAL,
             MissionStatus.FAILED,
             MissionStatus.COMPLETED,
             MissionStatus.CANCELLED

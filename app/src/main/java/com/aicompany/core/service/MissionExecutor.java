@@ -213,6 +213,20 @@ public class MissionExecutor {
         }
     }
 
+    private RequirementsWriter requirementsWriter;
+    private RequirementsMemoryService requirementsMemory;
+
+    /** Spec 2026-10-03 Aria: opcional (sin él, el Development Group arranca por el plan de Neo como antes). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRequirements(RequirementsWriter requirementsWriter, RequirementsMemoryService requirementsMemory) {
+        this.requirementsWriter = requirementsWriter;
+        this.requirementsMemory = requirementsMemory;
+    }
+
+    private boolean ariaApplies(TeamExecutionMode mode) {
+        return mode == TeamExecutionMode.DEVELOPMENT && requirementsWriter != null && requirementsMemory != null;
+    }
+
     static String investorBlock(String routedRequest) {
         return "SOLICITUD DEL INVERSIONISTA (ronda de evidencia):\n" + routedRequest;
     }
@@ -385,6 +399,19 @@ public class MissionExecutor {
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("No hay estrategia de ejecución para " + mode));
 
+        if (ariaApplies(mode)) {
+            advanceMission(missionId, MissionStatus.PLANNING, 3, "Requisitos (Aria)",
+                    "Aria está convirtiendo el pedido en historias de usuario.");
+            var written = requirementsWriter.write(missionId, instruction, java.util.Optional.empty(), null);
+            if (companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED) >= 1.0) {
+                awaitApproval(missionId, written);
+                return;
+            }
+            requirementsMemory.approve(missionId, written.version(), "policy");
+            planAndRunIncrement(missionId, instruction, teamId, mode, written.spec(), 1);
+            return;
+        }
+
         advanceMission(
                 missionId,
                 MissionStatus.PLANNING,
@@ -406,6 +433,109 @@ public class MissionExecutor {
 
         runTeamPlan(missionId, instruction, mode,
                 new TeamMissionContext(missionId, instruction, planned.team(), planned.plan()));
+    }
+
+    private void awaitApproval(String missionId, RequirementsWriter.Written written) {
+        events.publish("EMPRESA_REQUIREMENTS_READY", missionId, null, RequirementsWriter.ARIA,
+                Map.of("version", written.version(), "stories", written.spec().userStoriesOrEmpty().size()));
+        advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos listos (Aria)",
+                "Aria escribió " + written.spec().userStoriesOrEmpty().size() + " historias en "
+                        + written.spec().incrementNumbers().size() + " incremento(s). Esperan tu aprobación: "
+                        + com.aicompany.core.agent.validation.RequirementsText.summary(written.spec()));
+    }
+
+    private void planAndRunIncrement(String missionId, String instruction, String teamId, TeamExecutionMode mode,
+                                     com.aicompany.core.agent.model.RequirementsSpec spec, int increment) {
+        var withIncrement = com.aicompany.core.agent.validation.RequirementsText.incrementBlock(spec, increment)
+                + "\nPEDIDO ORIGINAL DEL FUNDADOR: " + instruction;
+        advanceMission(missionId, MissionStatus.PLANNING, 5, "Planificación del equipo",
+                "Neo planifica el incremento " + increment + ".");
+        var planned = teamWorkPlanner.plan(missionId, teamId, withIncrement, mode);
+        advanceMission(missionId, MissionStatus.DELEGATING, 10, "Delegación",
+                "Plan del líder validado: " + planned.plan().tasksOrEmpty().size() + " tareas (incremento "
+                        + increment + ").");
+        requirementsMemory.setBuiltIncrement(missionId, increment);
+        runTeamPlan(missionId, withIncrement, mode, new TeamMissionContext(missionId, withIncrement, planned.team(),
+                planned.plan()));
+    }
+
+    private com.aicompany.core.agent.model.RequirementsSpec approvedSpec(String missionId) {
+        var version = requirementsMemory.approved(missionId)
+                .orElseThrow(() -> new IllegalStateException("MISSION " + missionId + " no tiene requisitos aprobados."));
+        return jsonMapper.readValue(version.specJson(), com.aicompany.core.agent.model.RequirementsSpec.class);
+    }
+
+    /** Spec 2026-10-03 Aria §1: tras aprobar (aunque company-core se haya reiniciado), el plan de Neo con el incremento 1. */
+    public CompletableFuture<Void> continueAfterApprovalAsync(String missionId) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                var teamId = memory.teamId(missionId).orElseThrow();
+                var instruction = memory.instructionOf(missionId).orElse("");
+                var mode = TeamExecutionMode.forTeamType(TeamMemoryService.teamType(teamId).orElseThrow());
+                planAndRunIncrement(missionId, instruction, teamId, mode, approvedSpec(missionId), 1);
+            } catch (Exception ex) {
+                log.error("MISSION {} - could not continue after approval", missionId, ex);
+                safeFail(missionId, ex);
+            }
+        }, orchestratorExecutor);
+    }
+
+    /** Spec 2026-10-03 Aria §2: Aria rehace los requisitos con el ajuste del fundador y vuelve a esperar. */
+    public CompletableFuture<Void> adjustRequirementsAsync(String missionId, String adjustment) {
+        advanceMission(missionId, MissionStatus.PLANNING, 3, "Requisitos (Aria)", "Aria ajusta las historias: " + adjustment);
+        return CompletableFuture.runAsync(() -> {
+            try {
+                var previous = requirementsMemory.latest(missionId).map(v -> jsonMapper.readValue(v.specJson(),
+                        com.aicompany.core.agent.model.RequirementsSpec.class));
+                var written = requirementsWriter.write(missionId, memory.instructionOf(missionId).orElse(""), previous,
+                        adjustment);
+                events.publish("EMPRESA_REQUIREMENTS_ADJUSTED", missionId, null, "human",
+                        Map.of("version", written.version(), "instruction", adjustment));
+                awaitApproval(missionId, written);
+            } catch (Exception ex) {
+                log.error("MISSION {} - requirements adjustment failed", missionId, ex);
+                safeFail(missionId, ex);
+            }
+        }, orchestratorExecutor);
+    }
+
+    /**
+     * Spec 2026-10-03 Aria §3: el incremento N es una ronda de la misma misión sobre el mismo repositorio, con el último
+     * plan del líder y las HU de N antepuestas al objetivo de cada tarea. No cuenta como ronda de evidencia.
+     */
+    public CompletableFuture<Void> buildIncrementAsync(String missionId, int increment) {
+        var round = memory.evidenceRound(missionId) + 1;
+        memory.setEvidenceRound(missionId, round);
+        requirementsMemory.addIncrementRound(missionId);
+        events.publish("EMPRESA_INCREMENT_STARTED", missionId, null, "human", Map.of("increment", increment, "round", round));
+        advanceMission(missionId, MissionStatus.DELEGATING, 10, "Incremento " + increment,
+                "Construyendo el incremento " + increment + " sobre el mismo repositorio.");
+        return CompletableFuture.runAsync(() -> {
+            try {
+                var teamId = memory.teamId(missionId).orElseThrow();
+                var instruction = memory.instructionOf(missionId).orElse("");
+                var mode = TeamExecutionMode.forTeamType(TeamMemoryService.teamType(teamId).orElseThrow());
+                var block = com.aicompany.core.agent.validation.RequirementsText.incrementBlock(approvedSpec(missionId),
+                        increment);
+                var team = teamWorkPlanner.teamSnapshot(teamId);
+                var plan = jsonMapper.readValue(memory.lastTeamPlanJson(missionId).orElseThrow(
+                        () -> new IllegalStateException("MISSION " + missionId + " no tiene plan del líder para reutilizar.")),
+                        TeamPlan.class);
+                var tasks = plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
+                        .map(t -> new TeamPlan.PlannedTask(t.agentId(), t.kind(), t.action(), block + "\n" + t.objective(),
+                                t.requiredCapabilities(), t.ownedPaths(), t.assignments()))
+                        .toList();
+                var withIncrement = new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), tasks,
+                        plan.participationConflicts(), plan.stackProfile(), plan.boundedContexts(),
+                        plan.ubiquitousLanguage(), plan.database(), plan.components());
+                requirementsMemory.setBuiltIncrement(missionId, increment);
+                runTeamPlan(missionId, instruction, mode,
+                        new TeamMissionContext(missionId, block + "\n" + instruction, team, withIncrement, round));
+            } catch (Exception ex) {
+                log.error("MISSION {} - increment {} failed", missionId, increment, ex);
+                safeFail(missionId, ex);
+            }
+        }, orchestratorExecutor);
     }
 
     private void runTeamPlan(String missionId, String instruction, TeamExecutionMode mode, TeamMissionContext context) {
@@ -768,6 +898,11 @@ public class MissionExecutor {
                     false
             );
 
+        } else if (status == MissionStatus.AWAITING_SPEC_APPROVAL) {
+            alertMailService.send("Misión " + missionId + ": requisitos de Aria para aprobar",
+                    "Aria escribió las historias de usuario de " + missionId + ". Revísalas en Missions o en el chat "
+                            + "(\"muéstrame las HU de " + missionId + "\") y apruébalas, ajústalas o recházalas.\n\n"
+                            + message, false);
         } else if (status == MissionStatus.FAILED) {
 
             alertMailService.send(
