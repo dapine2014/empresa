@@ -281,7 +281,7 @@ class MissionExecutorTeamTest {
                 events, JsonMapper.builder().build(), contradictionDetector, companyPolicyService, opportunityMemory,
                 alertMailService, planner, List.of(analysis, development));
         full.setRequirements(writer, requirements);
-        assertTrue(full.buildIncrementAsync("M-9", 2).isCompletedExceptionally());
+        assertTrue(full.buildIncrementAsync("M-9", 2, 2).isCompletedExceptionally());
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
     }
 
@@ -294,6 +294,10 @@ class MissionExecutorTeamTest {
         executor.executeAsync("M-9", "Un CRM").get();
 
         verify(requirements).approve("M-9", 1, "policy");
+        // Revisión final Aria (14): sin aprobación del fundador también quedan los eventos de requisitos listos y aprobados.
+        verify(events).publish(eq("EMPRESA_REQUIREMENTS_READY"), eq("M-9"), isNull(), eq("product-owner"), anyMap());
+        verify(events).publish(eq("EMPRESA_REQUIREMENTS_APPROVED"), eq("M-9"), isNull(), eq("policy"),
+                argThat(d -> "policy".equals(d.get("approvedBy")) && Integer.valueOf(1).equals(d.get("version"))));
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), contains("INCREMENTO 1"), any());
     }
 
@@ -301,7 +305,6 @@ class MissionExecutorTeamTest {
     @Test
     void buildingIncrementTwoIsPlannedByNeoWithItsStoriesAsARound() throws Exception {
         withAria();
-        when(memory.evidenceRound("M-9")).thenReturn(1);
         // Verificado en vivo (incremento 2, segunda corrida): el último plan guardado era el de una corrida fallida con solo
         // el contexto nuevo; Neo debe recibir la unión de TODOS los planes anteriores.
         var json = JsonMapper.builder().build();
@@ -312,7 +315,7 @@ class MissionExecutorTeamTest {
         when(memory.teamPlanJsons("M-9")).thenReturn(List.of(json.writeValueAsString(first), json.writeValueAsString(second)));
         when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
 
-        executor.buildIncrementAsync("M-9", 2).get();
+        executor.buildIncrementAsync("M-9", 2, 2).get();
 
         // Verificado en vivo (incremento 2): Neo recibe el plan del producto existente para conservarlo.
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("INCREMENTO 2 de 2")
@@ -321,7 +324,6 @@ class MissionExecutorTeamTest {
         verify(development).execute(argThat(c -> c.round() == 2 && c.instruction().contains("INCREMENTO 2 de 2")
                 && c.plan().workTasks().stream().noneMatch(t -> t.objective().contains("INCREMENTO"))), any());
         verify(requirements).addIncrementRound("M-9", 2, 2);
-        verify(memory).setEvidenceRound("M-9", 2);
         verify(requirements).setBuildingIncrement("M-9", 2);
     }
 
@@ -357,5 +359,23 @@ class MissionExecutorTeamTest {
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(), anyString());
         verify(planner, never()).plan(any(), any(), any(), any(), anyInt());
         verify(planner, never()).plan(any(), any(), any(), any());
+    }
+
+    // Revisión final Aria (16): una misión anterior a Aria (sin requisitos, con plan de Neo) reutiliza ese plan sin Aria.
+    @Test
+    void anEvidenceRoundOfAMissionThatPredatesAriaReusesThePlanWithoutAria() throws Exception {
+        withAria();
+        when(requirements.approved("M-9")).thenReturn(Optional.empty());
+        when(requirements.predatesRequirements("M-9")).thenReturn(true);
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+
+        executor.reexecuteAsync("M-9", "Un CRM", 1, "más detalle").get();
+
+        verify(writer, never()).write(any(), any(), any(), any());
+        verify(development).execute(argThat(c -> !c.instruction().contains("INCREMENTO")), any());
     }
 }

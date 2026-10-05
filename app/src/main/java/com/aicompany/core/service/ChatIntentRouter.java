@@ -40,6 +40,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -363,11 +364,26 @@ public class ChatIntentRouter {
     }
 
     /** Spec 2026-10-03 Aria §2: los comandos de requisitos son gobernanza (antes de las menciones). */
-    private static boolean isRequirementsCommand(String message) {
+    private boolean isRequirementsCommand(String message) {
         var normalized = normalize(message);
         return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
                 || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
-                || ADJUST_STORIES.matcher(message).find();
+                || requirementsAdjustment(message) != null;
+    }
+
+    /**
+     * Revisión final Aria (13): "para MISSION-X: …" es un ajuste a Aria solo si la misión espera la aprobación de sus
+     * requisitos; si no, el mensaje sigue el ruteo normal (p. ej. "para MISSION-X: pide más evidencia …").
+     */
+    private Matcher requirementsAdjustment(String message) {
+        var adjust = ADJUST_STORIES.matcher(message);
+        if (!adjust.find()) {
+            return null;
+        }
+        var missionId = adjust.group(1).toUpperCase(Locale.ROOT);
+        var waiting = missionService.requirements(missionId)
+                .map(v -> MissionStatus.AWAITING_SPEC_APPROVAL.name().equals(v.status())).orElse(false);
+        return waiting ? adjust : null;
     }
 
     private ChatReply ceoReply(String text) {
@@ -977,8 +993,8 @@ public class ChatIntentRouter {
                         RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
                 return "Requisitos de " + missionId + " rechazados: la misión quedó cancelada.";
             }
-            var adjust = ADJUST_STORIES.matcher(message);
-            if (adjust.find()) {
+            var adjust = requirementsAdjustment(message);
+            if (adjust != null) {
                 var missionId = adjust.group(1).toUpperCase(Locale.ROOT);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjust.group(2).strip()));

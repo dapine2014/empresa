@@ -292,6 +292,26 @@ class ProductOrchestratorTest {
         assertTrue(saved.isEmpty());
     }
 
+    // Revisión final Aria (16): la construcción espera los requisitos de Aria; el ciclo lo anota una vez y no avanza.
+    @Test
+    void aBuildWaitingForTheRequirementsIsAnnouncedOnce() {
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        building(p, MissionStatus.AWAITING_SPEC_APPROVAL);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of())));
+        when(runs.steps("RUN-1")).thenReturn(List.of());
+
+        orchestrator.tick();
+
+        verify(runs).addStep(eq("RUN-1"), eq("AWAITING_REQUIREMENTS"), contains("MISSION-B"));
+        verify(automation, never()).buildFinished(anyString());
+        assertTrue(saved.isEmpty());
+
+        when(runs.steps("RUN-1")).thenReturn(List.of(new com.aicompany.core.model.OrchestratorStep(java.time.Instant.now(),
+                "AWAITING_REQUIREMENTS", "x")));
+        orchestrator.tick();
+        verify(runs, times(1)).addStep(eq("RUN-1"), eq("AWAITING_REQUIREMENTS"), anyString());
+    }
+
     @Test
     void aFinishedBuildThatMeetsEverythingEndsTheRunAsReady() {
         var building = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
@@ -311,7 +331,7 @@ class ProductOrchestratorTest {
         var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
         building(p, MissionStatus.AWAITING_INVESTOR);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción asociada con su validación en VERIFIED."))));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(0);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(0);
 
         orchestrator.tick();
 
@@ -325,7 +345,7 @@ class ProductOrchestratorTest {
         var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
         building(p, MissionStatus.FAILED);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción verificada."))));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(2);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(2);
 
         orchestrator.tick();
 
@@ -473,7 +493,7 @@ class ProductOrchestratorTest {
         building(p, MissionStatus.FAILED);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta el cliente objetivo."))));
         when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(sheet(null, 39, 5));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(0);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(0);
 
         orchestrator.tick();
 
@@ -487,7 +507,7 @@ class ProductOrchestratorTest {
         var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
         building(p, MissionStatus.FAILED);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción asociada con su validación en VERIFIED."))));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(2);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(2);
 
         orchestrator.tick();
 

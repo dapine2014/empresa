@@ -162,6 +162,10 @@ class MissionServiceTest {
     private final MissionService roundService =
             new MissionService(roundMemory, roundExecutor, roundEvents, teamMemory, workspace, policies);
 
+    {
+        when(roundMemory.claimNextRound(anyString(), anyInt())).thenReturn(true);
+    }
+
     private static MissionResponse mission(String id, MissionStatus status) {
         return new MissionResponse(id, status, "TEST", 95, "x", "x", Instant.parse("2026-09-27T00:00:00Z"), null);
     }
@@ -180,7 +184,7 @@ class MissionServiceTest {
         assertEquals(1, response.evidenceRound());
         verify(roundMemory).recordDecision(eq("MISSION-1"), anyString(), eq(InvestorDecision.REQUEST_MORE_EVIDENCE),
                 eq("Quiero precios reales"));
-        verify(roundMemory).setEvidenceRound("MISSION-1", 1);
+        verify(roundMemory).claimNextRound("MISSION-1", 0);
         verify(roundExecutor).reexecuteAsync("MISSION-1", "Buscar un servicio", 1, "Quiero precios reales");
     }
 
@@ -207,6 +211,20 @@ class MissionServiceTest {
                 new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));
 
         assertTrue(ex.getMessage().contains("2 de 2"), ex.getMessage());
+        verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
+        verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
+    }
+
+    // Revisión final Aria (12): dos "pide más evidencia" simultáneos (doble clic) lanzan una sola ronda.
+    @Test
+    void aConcurrentRequestThatLosesTheRoundRecordsNothing() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(0);
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(roundMemory.claimNextRound("MISSION-1", 0)).thenReturn(false);
+
+        assertThrows(IllegalStateException.class, () -> roundService.recordDecision("MISSION-1",
+                new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));
         verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
         verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
     }

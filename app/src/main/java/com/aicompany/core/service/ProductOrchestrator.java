@@ -402,6 +402,10 @@ public class ProductOrchestrator {
             fail(run, "La misión de construcción " + run.buildMissionId() + " ya no existe.");
             return;
         }
+        if (mission.status() == MissionStatus.AWAITING_SPEC_APPROVAL) {
+            awaitingRequirements(run, mission.missionId());
+            return;
+        }
         if (!FINISHED.contains(mission.status())) {
             return;
         }
@@ -460,13 +464,27 @@ public class ProductOrchestrator {
             missing.add(0, "La misión de construcción " + mission.missionId() + " falló.");
         }
         var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
-        if (missionMemory.evidenceRound(run.buildMissionId()) < max) {
+        // Revisión final Aria (16): los incrementos no consumen rondas de evidencia (igual que el endpoint).
+        if (missions.evidenceRoundsUsed(run.buildMissionId()) < max) {
             var reason = "[Orquestador] Para que el producto quede listo para vender falta: " + String.join(" ", missing);
             missions.recordDecision(run.buildMissionId(), new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, reason));
             step(run, "ROUND", reason);
             return;
         }
         fail(run, "No quedó listo para vender tras las rondas de corrección: " + String.join(" ", missing));
+    }
+
+    /**
+     * Revisión final Aria (16): la construcción quedó esperando que el fundador apruebe los requisitos de Aria (el correo
+     * lo manda la misión). El ciclo lo anota una vez en su historial para que se vea en Productos y en el chat.
+     */
+    private void awaitingRequirements(OrchestratorRun run, String missionId) {
+        var steps = runs.steps(run.id());
+        if (!steps.isEmpty() && "AWAITING_REQUIREMENTS".equals(steps.get(steps.size() - 1).step())) {
+            return;
+        }
+        step(run, "AWAITING_REQUIREMENTS", "Aria escribió los requisitos de " + missionId + ": esperan tu aprobación "
+                + "(Missions → \"Requisitos (Aria)\" o el chat: \"apruebo las HU de " + missionId + "\").");
     }
 
     /** El fundador rechazó la misión (REJECT → CANCELLED): es una decisión suya, no un fallo, y no se reintenta. */

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { ApiKeyStatus, PolicySnapshot } from '../api/types'
+import type { ApiKeyStatus, PolicyKey, PolicySnapshot } from '../api/types'
 import { DatabasesSettings } from '../components/DatabasesSettings'
 
-const POLICY_LABELS: Record<string, string> = {
+// Record<PolicyKey, …>: una policy nueva sin etiqueta no compila.
+const POLICY_LABELS: Record<PolicyKey, string> = {
   SEED_CAPITAL_USD: 'Capital semilla (US$)',
   CHALLENGE_DAYS: 'Ventana de tiempo (días)',
   CONTRADICTION_SEED_CAPITAL_MULTIPLE: 'Multiplicador de alerta financiera (x capital semilla)',
@@ -18,6 +19,7 @@ const POLICY_LABELS: Record<string, string> = {
   PROSPECTING_ENABLED: 'Búsqueda de clientes encendida (1 = sí, 0 = no)',
   MAX_PROSPECTS_PER_DAY: 'Prospectos nuevos por día (máximo)',
   MAX_OUTREACH_PER_DAY: 'Correos a prospectos por día (máximo)',
+  SPEC_APPROVAL_REQUIRED: 'Aprobar los requisitos de Aria antes de construir (1 = sí, 0 = no)',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {

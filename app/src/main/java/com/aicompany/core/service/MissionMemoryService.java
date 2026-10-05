@@ -177,12 +177,14 @@ public class MissionMemoryService {
         }
     }
 
-    public void setEvidenceRound(String missionId, int round) {
+    /**
+     * Revisión final Aria (12): CAS contra dos pedidos simultáneos (doble clic): solo uno pasa la ronda de {@code current}
+     * a {@code current + 1}; el otro recibe false y no escribe nada.
+     */
+    public boolean claimNextRound(String missionId, int current) {
         try (var session = driver.session()) {
-            session.executeWrite(tx -> {
-                tx.run("MATCH (m:Mission {id:$id}) SET m.evidenceRound=$round", Map.of("id", missionId, "round", round));
-                return null;
-            });
+            return session.executeWrite(tx -> !tx.run("MATCH (m:Mission {id:$id}) WHERE coalesce(m.evidenceRound, 0) = $current "
+                    + "SET m.evidenceRound = $current + 1 RETURN m.id", Map.of("id", missionId, "current", current)).list().isEmpty());
         }
     }
 

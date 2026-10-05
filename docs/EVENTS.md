@@ -83,7 +83,7 @@ EMPRESA_OUTREACH_DRAFTED, EMPRESA_OUTREACH_APPROVED, EMPRESA_OUTREACH_SENT, EMPR
 
 EMPRESA_REQUIREMENTS_READY (`MissionExecutor`, `agentId="product-owner"`; spec `2026-10-03-aria-v1-design.md`): Aria escribió requisitos válidos y la misión quedó en `AWAITING_SPEC_APPROVAL`. `data: {version, stories}`.
 
-EMPRESA_REQUIREMENTS_APPROVED, EMPRESA_REQUIREMENTS_REJECTED (`MissionService.decideRequirements`, `agentId="human"`): el fundador aprobó (la misión sigue con el plan de Neo del incremento 1) o rechazó (la misión queda `CANCELLED`) la versión vigente. `data: {version}`. Con `SPEC_APPROVAL_REQUIRED = 0` la versión queda `APPROVED` por `policy` sin este evento.
+EMPRESA_REQUIREMENTS_APPROVED, EMPRESA_REQUIREMENTS_REJECTED (`MissionService.decideRequirements`, `agentId="human"`): el fundador aprobó (la misión sigue con el plan de Neo del incremento 1) o rechazó (la misión queda `CANCELLED`) la versión vigente. `data: {version}`. El rechazo publica además `EMPRESA_MISSION_UPDATED` con `CANCELLED`. Con `SPEC_APPROVAL_REQUIRED = 0` la versión queda `APPROVED` por `policy` y se publican igual `EMPRESA_REQUIREMENTS_READY` y `EMPRESA_REQUIREMENTS_APPROVED` (`agentId="policy"`, `data: {version, approvedBy: "policy"}`).
 
 EMPRESA_REQUIREMENTS_ADJUSTED (`MissionExecutor`, `agentId="human"`): Aria rehízo los requisitos con el ajuste del fundador (versión nueva, vuelve a esperar aprobación). `data: {version, instruction}`.
 

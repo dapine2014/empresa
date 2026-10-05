@@ -56,6 +56,18 @@ public class RequirementsMemoryService {
         }
     }
 
+    /**
+     * Revisión final Aria (12): CAS contra dos decisiones simultáneas sobre la misma versión (doble clic): solo la primera
+     * la reclama; la versión sigue en DRAFT hasta que la decisión la cambie.
+     */
+    public boolean claimDecision(String missionId, int version) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> !tx.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion "
+                    + "{version:$v}) WHERE r.status = 'DRAFT' AND r.decisionClaimedAt IS NULL SET r.decisionClaimedAt = datetime() "
+                    + "RETURN r.version", Map.of("id", missionId, "v", version)).list().isEmpty());
+        }
+    }
+
     public void approve(String missionId, int version, String approvedBy) {
         write("MATCH (m:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
                 + "SET r.status='APPROVED', r.approvedBy=$by, r.approvedAt=datetime(), m.approvedSpecVersion=$v",
@@ -65,6 +77,19 @@ public class RequirementsMemoryService {
     public void reject(String missionId, int version) {
         write("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) SET r.status='REJECTED'",
                 Map.of("id", missionId, "v", version));
+    }
+
+    /**
+     * Revisión final Aria (16): misión del Development Group anterior a Aria (sin ninguna versión de requisitos y con un
+     * plan de Neo ya hecho). Sus rondas reutilizan ese plan como antes y no necesitan a Aria.
+     */
+    public boolean predatesRequirements(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN NOT EXISTS { (m)-[:HAS_REQUIREMENTS]->() } "
+                            + "AND EXISTS { (m)-[:HAS_TASK]->(:AgentTask {kind:'PLANNING', status:'COMPLETED'}) } AS legacy",
+                            Map.of("id", missionId))
+                    .list(r -> r.get("legacy").asBoolean()).stream().findFirst().orElse(false);
+        }
     }
 
     public int builtIncrement(String missionId) {

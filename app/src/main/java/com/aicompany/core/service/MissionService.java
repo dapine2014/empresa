@@ -71,6 +71,10 @@ public class MissionService {
 
     /** Agentes sin los cuales la misión no puede correr: discovery, los 6; un equipo, Alex y su líder. */
     private void requireAgentsOn(String teamId, String what) {
+        requireAgentsOn(teamId, what, true);
+    }
+
+    private void requireAgentsOn(String teamId, String what, boolean needsAria) {
         if (agentAvailability == null) {
             return;
         }
@@ -80,7 +84,7 @@ public class MissionService {
         }
         var team = teamMemory.snapshot(teamId);
         var required = new java.util.ArrayList<>(java.util.List.of(AgentAvailability.CEO, team.leaderAgentId()));
-        if (TeamMemoryService.teamType(teamId).map("DEVELOPMENT"::equals).orElse(false)) {
+        if (needsAria && TeamMemoryService.teamType(teamId).map("DEVELOPMENT"::equals).orElse(false)) {
             required.add(AgentAvailability.PRODUCT_OWNER);
         }
         agentAvailability.requireEnabled(required, what);
@@ -198,22 +202,29 @@ public class MissionService {
             // Revisión final Aria (8): aprobar llama a Neo y ajustar a Aria; ninguno puede estar apagado.
             requireAgentsOn(mission.teamId(), "decidir sobre los requisitos de " + missionId);
         }
+        if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && (command.instruction() == null || command.instruction().isBlank())) {
+            throw new IllegalArgumentException("Para ajustar los requisitos escribe la instrucción para Aria.");
+        }
+        if (!requirementsMemory.claimDecision(missionId, version.version())) {
+            // Revisión final Aria (12): doble clic; la primera decisión ya está en curso.
+            throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
+                    + " ya tiene una decisión en curso.");
+        }
         switch (command.decision()) {
             case APPROVE -> {
                 requirementsMemory.approve(missionId, version.version(), "founder");
                 events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", Map.of("version", version.version()));
                 executor.continueAfterApprovalAsync(missionId);
             }
-            case ADJUST -> {
-                if (command.instruction() == null || command.instruction().isBlank()) {
-                    throw new IllegalArgumentException("Para ajustar los requisitos escribe la instrucción para Aria.");
-                }
-                executor.adjustRequirementsAsync(missionId, command.instruction().strip());
-            }
+            case ADJUST -> executor.adjustRequirementsAsync(missionId, command.instruction().strip());
             case REJECT -> {
                 requirementsMemory.reject(missionId, version.version());
                 memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Requisitos rechazados",
                         "El fundador rechazó los requisitos de Aria.");
+                // Revisión final Aria (14): mismo aviso que el REJECT del inversionista.
+                events.publishMission("EMPRESA_MISSION_UPDATED", missionId, MissionStatus.CANCELLED.name(), 100,
+                        "Requisitos rechazados", "El fundador rechazó los requisitos de Aria.");
                 events.publish("EMPRESA_REQUIREMENTS_REJECTED", missionId, null, "human", Map.of("version", version.version()));
             }
         }
@@ -242,8 +253,22 @@ public class MissionService {
             throw new IllegalStateException("MISSION " + missionId + " está en curso (" + mission.status() + ").");
         }
         requireAgentsOn(mission.teamId(), "construir el incremento " + increment + " de " + missionId);
-        executor.buildIncrementAsync(missionId, increment);
+        var lastRound = memory.evidenceRound(missionId);
+        if (!memory.claimNextRound(missionId, lastRound)) {
+            // Revisión final Aria (12): doble clic; el primer pedido ya lanzó la ronda.
+            throw new IllegalStateException("MISSION " + missionId + " ya arrancó otra ronda; espera a que termine.");
+        }
+        executor.buildIncrementAsync(missionId, increment, lastRound + 1);
         return requirements(missionId).orElseThrow();
+    }
+
+    /**
+     * Rondas de evidencia ya usadas contra {@code MAX_EVIDENCE_ROUNDS}. Revisión final Aria (1): los incrementos ocupan
+     * números de ronda (ids -R<n>) pero no consumen el límite.
+     */
+    public int evidenceRoundsUsed(String missionId) {
+        return memory.evidenceRound(missionId)
+                - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId));
     }
 
     public Optional<MissionResponse> status(String missionId) {
@@ -300,17 +325,21 @@ public class MissionService {
             if (policies == null) {
                 throw new IllegalStateException("Falta CompanyPolicyService");
             }
-            // Revisión final Aria (1): los incrementos ocupan números de ronda (ids -R<n>) pero no consumen el límite.
             var lastRound = memory.evidenceRound(missionId);
-            var current = lastRound
-                    - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId));
+            var current = evidenceRoundsUsed(missionId);
             var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
             if (current >= max) {
                 throw new IllegalStateException("MISSION " + missionId + " ya usó " + current + " de " + max
                         + " vueltas de evidencia: decide con APPROVE o REJECT (o sube MAX_EVIDENCE_ROUNDS en Settings).");
             }
             nextRound = lastRound + 1;
-            requireAgentsOn(memory.teamId(missionId).orElse(null), "pedir más evidencia sobre " + missionId);
+            // Revisión final Aria (16): una misión anterior a Aria reutiliza el plan de Neo y no la necesita.
+            requireAgentsOn(memory.teamId(missionId).orElse(null), "pedir más evidencia sobre " + missionId,
+                    requirementsMemory == null || !requirementsMemory.predatesRequirements(missionId));
+            if (!memory.claimNextRound(missionId, lastRound)) {
+                // Revisión final Aria (12): doble clic; el primer pedido ya lanzó la ronda y este no escribe nada.
+                throw new IllegalStateException("MISSION " + missionId + " ya arrancó otra ronda; espera a que termine.");
+            }
         }
 
         var decisionId = missionId + "-DECISION-" + Instant.now().toEpochMilli();
@@ -361,7 +390,6 @@ public class MissionService {
 
         if (nextRound != null) {
             var round = nextRound;
-            memory.setEvidenceRound(missionId, round);
             executor.reexecuteAsync(missionId, memory.instructionOf(missionId).orElse(""), round, command.reasoning())
                     .whenComplete((ignored, error) -> {
                         if (error != null) {

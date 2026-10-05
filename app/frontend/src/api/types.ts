@@ -253,6 +253,10 @@ export type PolicyKey =
   | 'MAX_EVIDENCE_ROUNDS'
   | 'ORCHESTRATOR_ENABLED'
   | 'MAX_AUTONOMOUS_PRODUCTS'
+  | 'PROSPECTING_ENABLED'
+  | 'MAX_PROSPECTS_PER_DAY'
+  | 'MAX_OUTREACH_PER_DAY'
+  | 'SPEC_APPROVAL_REQUIRED'
 
 export interface PolicyVersionSummary {
   version: number

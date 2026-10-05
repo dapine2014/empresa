@@ -2304,6 +2304,20 @@ class ChatIntentRouterTest {
         verifyNoInteractions(ceoService);
     }
 
+    // Revisión final Aria (13): "para MISSION-X: …" es un ajuste a Aria solo si la misión espera la aprobación de
+    // requisitos; si no, sigue el ruteo normal (aquí, una ronda de evidencia).
+    @Test
+    void paraMissionIsAnAdjustmentOnlyWhileTheRequirementsWaitForApproval() {
+        when(missionService.requirements("MISSION-9")).thenReturn(Optional.of(new RequirementsView("MISSION-9",
+                "AWAITING_INVESTOR", 1, "APPROVED", 1, 1, 2, null, "")));
+        when(missionService.recordDecision(eq("MISSION-9"), any())).thenReturn(Optional.empty());
+
+        router.route("para MISSION-9: pide más evidencia sobre los precios");
+
+        verify(missionService, never()).decideRequirements(anyString(), any());
+        verify(missionService).recordDecision(eq("MISSION-9"), argThat(c -> c.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE));
+    }
+
     @Test
     void aRefusedRequirementsCommandExplainsWhy() {
         when(missionService.decideRequirements(eq("MISSION-9"), any()))

@@ -276,7 +276,8 @@ public class MissionExecutor {
         var mode = TeamExecutionMode.forTeamType(TeamMemoryService.teamType(teamId)
                 .orElseThrow(() -> new IllegalStateException("teamId desconocido: " + teamId)));
 
-        if (ariaApplies(mode)) {
+        // Revisión final Aria (16): una misión anterior a Aria sigue como antes, con el plan de Neo que ya tiene.
+        if (ariaApplies(mode) && !requirementsMemory.predatesRequirements(missionId)) {
             var approved = requirementsMemory.approved(missionId);
             if (approved.isEmpty()) {
                 // Revisión final Aria (2c): sin requisitos aprobados Neo nunca planifica; el pedido vuelve a Aria.
@@ -425,7 +426,11 @@ public class MissionExecutor {
                 awaitApproval(missionId, written);
                 return;
             }
+            publishReady(missionId, written);
             requirementsMemory.approve(missionId, written.version(), "policy");
+            // Revisión final Aria (14): aprobado por la policy, no por el fundador (agentId "policy").
+            events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "policy",
+                    Map.of("version", written.version(), "approvedBy", "policy"));
             planAndRunIncrement(missionId, instruction, teamId, mode, written.spec(), 1, 0);
             return;
         }
@@ -453,9 +458,13 @@ public class MissionExecutor {
                 new TeamMissionContext(missionId, instruction, planned.team(), planned.plan()));
     }
 
-    private void awaitApproval(String missionId, RequirementsWriter.Written written) {
+    private void publishReady(String missionId, RequirementsWriter.Written written) {
         events.publish("EMPRESA_REQUIREMENTS_READY", missionId, null, RequirementsWriter.ARIA,
                 Map.of("version", written.version(), "stories", written.spec().userStoriesOrEmpty().size()));
+    }
+
+    private void awaitApproval(String missionId, RequirementsWriter.Written written) {
+        publishReady(missionId, written);
         advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos listos (Aria)",
                 "Aria escribió " + written.spec().userStoriesOrEmpty().size() + " historias en "
                         + written.spec().incrementNumbers().size() + " incremento(s). Esperan tu aprobación: "
@@ -558,11 +567,9 @@ public class MissionExecutor {
 
     /**
      * Spec 2026-10-03 Aria §3: el incremento N es una ronda de la misma misión sobre el mismo repositorio, planificada por
-     * Neo con solo las HU de N. No cuenta como ronda de evidencia.
+     * Neo con solo las HU de N. No cuenta como ronda de evidencia. {@code round} ya lo reclamó {@code MissionService}.
      */
-    public CompletableFuture<Void> buildIncrementAsync(String missionId, int increment) {
-        var round = memory.evidenceRound(missionId) + 1;
-        memory.setEvidenceRound(missionId, round);
+    public CompletableFuture<Void> buildIncrementAsync(String missionId, int increment, int round) {
         requirementsMemory.addIncrementRound(missionId, round, increment);
         events.publish("EMPRESA_INCREMENT_STARTED", missionId, null, "human", Map.of("increment", increment, "round", round));
         advanceMission(missionId, MissionStatus.PLANNING, 5, "Incremento " + increment,

@@ -9,7 +9,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 
 | | Faltante | Por qué frena una misión real | Dónde se resuelve |
 |---|---|---|---|
-| [x] | **Aria (HUs, BDD, MVP por incrementos)** | Hecho (v1, sin cola, 2026-10-04): HU con roles, escenarios e incrementos aprobados por el fundador; CRM de 2 incrementos `VERIFIED`. Pendiente: HU nuevas tras aprobar, incrementos encadenados solos (misiones durables) | Bloque 5 |
+| [x] | **Aria (HUs, BDD, MVP por incrementos)** | Hecho (v1, sin cola, 2026-10-04): HU con roles, escenarios e incrementos aprobados por el fundador; CRM de 2 incrementos `VERIFIED`. Pendiente: HU nuevas tras aprobar, incrementos encadenados solos (misiones durables). Menores de la revisión cerrados (2026-10-05, rama `aria-cierre`) | Bloque 5 |
 | [ ] | **Misiones durables** | Las misiones viven en memoria: un reinicio de `company-core` las corta (pasó con `MISSION-1790905978528`) | Bloque 4 |
 | [ ] | **Corrección hasta cero errores** | Hoy solo se corrigen errores de compilación, en 2 rondas; un test que falla deja la misión en `FAILED` | Bloque 7 |
 | [x] | **Escenarios BDD trazables** | Hecho (2026-10-05, QA casos de uso): cada `ESC-NN` aprobado con un test con su id que pasó; `VERIFIED` exige 100 %; la suite solo crece | Bloques 5 y 6 |
