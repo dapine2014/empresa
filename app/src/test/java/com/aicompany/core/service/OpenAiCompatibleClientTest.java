@@ -101,6 +101,22 @@ class OpenAiCompatibleClientTest {
         server.verify();
     }
 
+    // Costo real por misión (2026-10-04): la respuesta trae los tokens usados.
+    @Test
+    void theReplyCarriesTheTokenUsage() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andRespond(withSuccess("""
+                {"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+                 "usage":{"prompt_tokens":95,"completion_tokens":14,"prompt_tokens_details":{"cached_tokens":20}}}
+                """, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertEquals(new com.aicompany.core.model.TokenUsage(95, 20, 14),
+                client.complete("m", MESSAGES, null, false, 100).usage());
+    }
+
     @Test
     void rateLimitsAndServerErrorsAreRetried() {
         var builder = RestClient.builder().baseUrl("https://api.test/v1");

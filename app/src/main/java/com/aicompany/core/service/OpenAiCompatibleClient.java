@@ -190,9 +190,15 @@ public class OpenAiCompatibleClient {
 
     /** Respuesta remota: content y tool_calls ya en formato Ollama ({"function": {"name", "arguments": Map}}). */
     /** finishReason: "stop", "length" (cortada por el límite de salida), "tool_calls"… o null si no vino. */
-    public record RemoteReply(String content, List<Map<String, Object>> toolCalls, String finishReason) {
+    /** {@code usage}: tokens de la llamada (costo real por misión, 2026-10-04). */
+    public record RemoteReply(String content, List<Map<String, Object>> toolCalls, String finishReason,
+                              com.aicompany.core.model.TokenUsage usage) {
         public RemoteReply(String content, List<Map<String, Object>> toolCalls) {
             this(content, toolCalls, null);
+        }
+
+        public RemoteReply(String content, List<Map<String, Object>> toolCalls, String finishReason) {
+            this(content, toolCalls, finishReason, com.aicompany.core.model.TokenUsage.ZERO);
         }
     }
 
@@ -255,7 +261,8 @@ public class OpenAiCompatibleClient {
                 var rawCalls = message == null ? null : message.get("tool_calls");
                 var finishReason = choices.get(0).get("finish_reason");
                 return new RemoteReply(content == null ? "" : String.valueOf(content), toOllamaToolCalls(rawCalls),
-                        finishReason == null ? null : String.valueOf(finishReason));
+                        finishReason == null ? null : String.valueOf(finishReason),
+                        com.aicompany.core.model.TokenUsage.fromOpenAi(response.get("usage")));
             } catch (RestClientResponseException ex) {
                 var status = ex.getStatusCode().value();
                 var detail = "Modelo remoto " + model + " respondió HTTP " + status + ": "

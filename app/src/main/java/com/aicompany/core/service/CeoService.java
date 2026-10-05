@@ -1752,6 +1752,14 @@ public class CeoService {
 
     private ModelHealthService modelHealth;
 
+    private ModelCostService modelCost;
+
+    /** Costo real por misión (2026-10-04). Setter opcional: los tests que no lo usan no cambian. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelCost(ModelCostService modelCost) {
+        this.modelCost = modelCost;
+    }
+
     /** Spec salud de modelos (2026-09-28). Setter opcional: los tests que no lo usan no cambian. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setModelHealth(ModelHealthService modelHealth) {
@@ -1878,9 +1886,14 @@ public class CeoService {
             if (modelHealth != null) {
                 modelHealth.recordSuccess(model);
             }
-            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={}",
+            var usage = reply.usage() == null ? com.aicompany.core.model.TokenUsage.ZERO : reply.usage();
+            if (modelCost != null) {
+                modelCost.record(remoteRef.get().provider(), remoteModel, actor, operation, usage);
+            }
+            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={} "
+                            + "inputTokens={} cachedTokens={} outputTokens={}",
                     operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
-                    reply.content().length(), reply.toolCalls().size());
+                    reply.content().length(), reply.toolCalls().size(), usage.input(), usage.cached(), usage.output());
             return new ModelMessage(reply.content(), reply.toolCalls(), "length".equals(reply.finishReason()));
         }
 

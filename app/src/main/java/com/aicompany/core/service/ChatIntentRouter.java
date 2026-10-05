@@ -637,6 +637,11 @@ public class ChatIntentRouter {
                     + "/details para ver el progreso y las tareas.";
         }
 
+        var costReply = handleModelCost(message);
+        if (costReply != null) {
+            return costReply;
+        }
+
         var requirementsReply = handleRequirements(message);
         if (requirementsReply != null) {
             return requirementsReply;
@@ -728,6 +733,37 @@ public class ChatIntentRouter {
 
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
     private com.aicompany.core.database.DatabaseApplyService databaseApply;
+    private ModelCostService modelCost;
+
+    /** Costo real por misión (2026-10-04). Opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelCost(ModelCostService modelCost) {
+        this.modelCost = modelCost;
+    }
+
+    private static final Pattern MISSION_COST = Pattern.compile(
+            "(?i)\\bcuanto\\s+(?:costo|cuesta|ha\\s+costado|gasto|se\\s+gasto\\s+en)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern MONTH_COST = Pattern.compile(
+            "(?i)\\bcuanto\\s+(?:hemos\\s+gastado|se\\s+ha\\s+gastado|gastamos|llevamos(?:\\s+gastado)?|cuestan?)\\b.*\\bmodelos?\\b");
+
+    /** Costo real por misión (2026-10-04): respuesta armada en Java desde (:ModelUsage). */
+    private String handleModelCost(String message) {
+        if (modelCost == null) {
+            return null;
+        }
+        var normalized = normalize(message);
+        var mission = MISSION_COST.matcher(normalized);
+        if (mission.find()) {
+            var missionId = mission.group(1).toUpperCase(Locale.ROOT);
+            return "Costo de modelos de " + missionId + ": " + ModelCostService.describe(modelCost.missionCost(missionId))
+                    + ". NVIDIA es gratis (US$ 0); se paga solo Bedrock, el respaldo cuando NVIDIA cae.";
+        }
+        if (MONTH_COST.matcher(normalized).find()) {
+            return "Costo de modelos este mes: " + ModelCostService.describe(modelCost.monthCost())
+                    + ". Presupuesto de AWS: US$ 20 al mes, con alertas al 80 % y al 100 %.";
+        }
+        return null;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setDatabaseConnections(com.aicompany.core.database.DatabaseConnectionService databaseConnections) {

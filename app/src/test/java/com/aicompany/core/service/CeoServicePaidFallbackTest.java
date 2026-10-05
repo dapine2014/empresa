@@ -98,4 +98,20 @@ class CeoServicePaidFallbackTest {
         assertEquals("de kimi", ceoService.planTeamWork("engineering", "prompt", "", KIMI).summary());
         verifyNoInteractions(bedrock);
     }
+
+    // Costo real por misión (2026-10-04): cada llamada remota queda registrada con su proveedor y sus tokens.
+    @Test
+    void theBedrockCallIsRecordedWithItsTokens() {
+        var costs = mock(ModelCostService.class);
+        ceoService.setModelCost(costs);
+        when(health.isDown(KIMI)).thenReturn(true);
+        when(bedrock.complete(anyString(), anyList(), any(), anyBoolean(), anyInt())).thenReturn(
+                new OpenAiCompatibleClient.RemoteReply(BEDROCK_PLAN.content(), List.of(), "stop",
+                        new com.aicompany.core.model.TokenUsage(900, 0, 60)));
+
+        ceoService.planTeamWork("engineering", "prompt", "", KIMI);
+
+        verify(costs).record("bedrock", "global.moonshotai.kimi-k3", "engineering", "TEAM_PLANNING",
+                new com.aicompany.core.model.TokenUsage(900, 0, 60));
+    }
 }

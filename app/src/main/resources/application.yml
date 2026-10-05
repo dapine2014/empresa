@@ -111,3 +111,8 @@ remote-models:
       check-models: global.moonshotai.kimi-k3
       # Verificado en vivo (2026-10-04): kimi-k3 en Bedrock razona por defecto; reasoning_effort=none lo apaga.
       thinking-off: reasoning_effort=none
+      # Costo real por misión (2026-10-04): US$ por millón de tokens de kimi-k3 en Bedrock (perfil global).
+      price:
+        input: 3.0
+        cached: 0.30
+        output: 15.0

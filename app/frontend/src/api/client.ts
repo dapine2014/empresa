@@ -38,6 +38,7 @@ import type {
   Prospect,
   ProspectingRun,
   StrategyView,
+  ModelCostView,
   RequirementsDecision,
   RequirementsView,
 } from './types'
@@ -188,6 +189,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(command),
     }),
+
+  missionModelCost: (missionId: string) => request<ModelCostView>(`/api/company/missions/${missionId}/model-cost`),
 
   requirements: (missionId: string) =>
     request<RequirementsView>(`/api/company/missions/${missionId}/requirements`),

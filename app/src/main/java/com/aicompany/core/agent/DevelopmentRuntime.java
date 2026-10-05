@@ -183,7 +183,9 @@ public class DevelopmentRuntime {
 
     private <T> CompletableFuture<T> submit(String taskId, String missionId, String agentId, Supplier<T> work) {
         try {
-            return CompletableFuture.supplyAsync(work, agentTaskExecutor);
+            // Costo real por misión (2026-10-04): las llamadas de esta tarea quedan atribuidas a su misión.
+            return CompletableFuture.supplyAsync(
+                    () -> com.aicompany.core.service.ModelCallContext.with(missionId, taskId, work), agentTaskExecutor);
         } catch (Exception ex) {
             var message = safeMessage(ex, "No se pudo iniciar la tarea.");
             memory.updateTask(taskId, "FAILED", message);

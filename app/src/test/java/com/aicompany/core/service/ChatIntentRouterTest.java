@@ -2358,4 +2358,21 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("(caído: lo atiende su respaldo pago bedrock:global.moonshotai.kimi-k3)"), response);
     }
+
+    // Costo real por misión (2026-10-04): el chat responde el costo de modelos en Java, sin llamar a un modelo.
+    @Test
+    void theModelCostOfAMissionAndOfTheMonthIsAnsweredInJava() {
+        var costs = mock(ModelCostService.class);
+        router.setModelCost(costs);
+        when(costs.missionCost("MISSION-9")).thenReturn(new ModelCostService.Summary(List.of(
+                new ModelUsageMemoryService.Row("bedrock", "global.moonshotai.kimi-k3", 3, 900_000, 0, 60_000, 3.6))));
+        when(costs.monthCost()).thenReturn(new ModelCostService.Summary(List.of()));
+
+        var mission = router.route("¿cuánto costó MISSION-9?");
+        var month = router.route("¿cuánto hemos gastado en modelos este mes?");
+
+        assertTrue(mission.contains("MISSION-9") && mission.contains("US$ 3.60"), mission);
+        assertTrue(month.contains("este mes") && month.contains("sin llamadas remotas"), month);
+        verifyNoInteractions(ceoService);
+    }
 }

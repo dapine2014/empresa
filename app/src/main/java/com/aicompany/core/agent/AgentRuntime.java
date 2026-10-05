@@ -111,14 +111,15 @@ public class AgentRuntime {
 
         try {
 
+            // Costo real por misión (2026-10-04): las llamadas de esta tarea quedan atribuidas a su misión.
             return CompletableFuture.supplyAsync(
-                    () -> executeInternal(
+                    () -> com.aicompany.core.service.ModelCallContext.with(missionId, taskId, () -> executeInternal(
                             taskId,
                             missionId,
                             agentId,
                             action,
                             instruction
-                    ),
+                    )),
                     agentTaskExecutor
             );
 

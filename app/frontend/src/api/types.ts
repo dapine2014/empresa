@@ -623,3 +623,21 @@ export interface RequirementsView {
 }
 
 export type RequirementsDecision = 'APPROVE' | 'ADJUST' | 'REJECT'
+
+// Costo real por misión (2026-10-04): MissionController.ModelCostView.
+export interface ModelUsageRow {
+  provider: string
+  model: string
+  calls: number
+  input: number
+  cached: number
+  output: number
+  costUsd: number
+}
+
+export interface ModelCostView {
+  missionId: string
+  totalUsd: number
+  calls: number
+  rows: ModelUsageRow[]
+}

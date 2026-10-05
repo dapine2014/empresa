@@ -161,11 +161,12 @@ public class MissionExecutor {
 
         try {
 
+            // Costo real por misión (2026-10-04): las llamadas del hilo de la misión quedan atribuidas a ella.
             return CompletableFuture.runAsync(
-                    () -> executeInternal(
+                    () -> ModelCallContext.with(missionId, null, () -> executeInternal(
                             missionId,
                             instruction
-                    ),
+                    )),
                     orchestratorExecutor
             );
 
@@ -205,7 +206,8 @@ public class MissionExecutor {
 
         try {
             return CompletableFuture.runAsync(
-                    () -> reexecuteInternal(missionId, instruction, round, investorRequest), orchestratorExecutor);
+                    () -> ModelCallContext.with(missionId, null,
+                            () -> reexecuteInternal(missionId, instruction, round, investorRequest)), orchestratorExecutor);
         } catch (Exception ex) {
             log.error("MISSION {} - could not submit evidence round {}", missionId, round, ex);
             safeFail(missionId, ex);
@@ -505,7 +507,7 @@ public class MissionExecutor {
         try {
             return CompletableFuture.runAsync(() -> {
                 try {
-                    work.run();
+                    ModelCallContext.with(missionId, null, work);
                 } catch (Exception ex) {
                     log.error("MISSION {} - {} failed", missionId, what, ex);
                     safeFail(missionId, ex);

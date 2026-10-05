@@ -68,6 +68,27 @@ function MissionDatabase({ missionId }: { missionId: string }) {
   )
 }
 
+/** Costo real por misión (2026-10-04): tokens y US$ de las llamadas remotas (NVIDIA gratis; se paga Bedrock). */
+function MissionModelCost({ missionId }: { missionId: string }) {
+  const query = useQuery({
+    queryKey: ['missionModelCost', missionId],
+    queryFn: () => api.missionModelCost(missionId),
+    refetchInterval: 15_000,
+  })
+  if (!query.data || query.data.calls === 0) {
+    return null
+  }
+  return (
+    <p className="hint">
+      Costo de modelos: <strong>US$ {query.data.totalUsd.toFixed(2)}</strong> en {query.data.calls} llamadas
+      {' — '}
+      {query.data.rows
+        .map((r) => `${r.provider}: ${r.calls} llamadas, ${r.input.toLocaleString()} tokens de entrada y ${r.output.toLocaleString()} de salida (US$ ${r.costUsd.toFixed(2)})`)
+        .join('; ')}
+    </p>
+  )
+}
+
 const INCREMENT_READY = new Set(['AWAITING_INVESTOR', 'COMPLETED', 'FAILED'])
 
 /** Spec 2026-10-03 Aria: requisitos de Aria, aprobación e incrementos (404 = la misión no tiene requisitos). */
@@ -230,6 +251,8 @@ export default function MissionDetailPage() {
         status={mission.status}
         onDeleted={() => navigate('/missions')}
       />
+
+      <MissionModelCost missionId={mission.missionId} />
 
       {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
 

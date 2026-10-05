@@ -95,4 +95,24 @@ public class MissionController {
     public RequirementsView buildIncrement(@PathVariable String missionId, @PathVariable int increment) {
         return missionService.buildIncrement(missionId, increment);
     }
+
+    private com.aicompany.core.service.ModelCostService modelCost;
+
+    /** Costo real por misión (2026-10-04). Opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelCost(com.aicompany.core.service.ModelCostService modelCost) {
+        this.modelCost = modelCost;
+    }
+
+    public record ModelCostView(String missionId, double totalUsd, long calls,
+                                java.util.List<com.aicompany.core.service.ModelUsageMemoryService.Row> rows) {
+    }
+
+    /** Costo real por misión (2026-10-04): tokens y US$ de las llamadas remotas de la misión (NVIDIA = US$ 0). */
+    @GetMapping("/{missionId}/model-cost")
+    public ModelCostView modelCost(@PathVariable String missionId) {
+        var summary = modelCost == null ? new com.aicompany.core.service.ModelCostService.Summary(java.util.List.of())
+                : modelCost.missionCost(missionId);
+        return new ModelCostView(missionId, summary.totalUsd(), summary.calls(), summary.rows());
+    }
 }
