@@ -1102,6 +1102,31 @@ class DevelopmentTeamStrategyTest {
                         "import 'package:forjai_crm/crm/application/clientes_repository.dart';"))));
     }
 
+    // Verificado en vivo (MISSION-ARIA-CRM-1791093806, incremento 2): el import entre contextos lo dejó una corrida
+    // fallida anterior; Mila no devolvió ese archivo y el chequeo al generar no lo vio. Un archivo propio en HEAD con
+    // violación también es un reintento: la dueña tiene que devolverlo corregido.
+    @Test
+    void anOwnedFileAlreadyInTheRepositoryWithAViolationMustBeFixed() {
+        var components = AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
+        var head = Map.of("app/pubspec.yaml", "name: forjai_crm\n",
+                "app/lib/clientes/presentation/clientes_pantallas.dart", "class ClientesPantalla {}",
+                "app/lib/oportunidades/presentation/oportunidades_pantallas.dart",
+                "import '../../clientes/presentation/clientes_pantallas.dart';\nclass OportunidadesPantalla {}");
+        var contexts = List.of("Clientes", "Oportunidades");
+
+        var errors = DevelopmentTeamStrategy.layerErrors(components, contexts, head,
+                List.of(new GeneratedFile("app/lib/oportunidades/domain/oportunidad.dart", "class Oportunidad {}")),
+                List.of("app/lib/oportunidades/presentation"));
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("oportunidades_pantallas.dart") && errors.get(0).contains("ya está en el repositorio"),
+                errors.get(0));
+
+        // Si no es suyo, no se le exige.
+        assertEquals(List.of(), DevelopmentTeamStrategy.layerErrors(components, contexts, head,
+                List.of(new GeneratedFile("app/lib/oportunidades/domain/oportunidad.dart", "class Oportunidad {}")),
+                List.of("app/lib/oportunidades/domain")));
+    }
+
     // Diagnóstico 360 (decisión del fundador 2026-10-03): un test rojo ya no deja la misión FAILED sin más. Neo arbitra
     // (Vera no juzga sus propios tests), Java valida y la corrección va al dueño del código con la regla correcta.
     @Test
