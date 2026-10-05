@@ -145,4 +145,15 @@ class StackProfileTest {
         var contract = StackProfile.DOTNET_APP.executionContract();
         assertTrue(contract.contains("Entity Framework Core NO está disponible"), contract);
     }
+
+    // FALTANTES (Bloque 1, m-6): lo que el modelo lee del Development Group sale de los perfiles habilitados (sin juegos
+    // en la fase 1).
+    @Test
+    void enabledUsagesListOnlyTheProfilesOfTheCurrentPhase() {
+        var usages = StackProfile.enabledUsages();
+        assertTrue(usages.contains(StackProfile.DOTNET_APP.usage()), usages);
+        assertTrue(usages.contains(StackProfile.FLUTTER_WEB_APP.usage()), usages);
+        assertEquals(DevelopmentPhase.CURRENT >= 3, usages.contains(StackProfile.GODOT_DOTNET_GAME.usage()), usages);
+    }
 }
+

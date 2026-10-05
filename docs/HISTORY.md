@@ -1002,3 +1002,10 @@ Rama `aria-cierre` (sobre `qa-casos-de-uso`). Los cinco menores diferidos de la 
 - (16) El orquestador cuenta las rondas sin los incrementos (`MissionService.evidenceRoundsUsed`, la misma cuenta del endpoint) y anota una vez `AWAITING_REQUIREMENTS` cuando la construcción espera los requisitos; las misiones del Development Group anteriores a Aria (`predatesRequirements`) hacen sus rondas con el plan de Neo y sin exigir a Aria.
 
 Sin verificación en vivo (cambios de gobernanza cubiertos por la suite: 1137 tests).
+
+## Neo: pendientes del bloque 1 (2026-10-05)
+
+Rama `neo-cierre` (sobre `aria-cierre`), cada uno con test:
+- (m-2) Una ronda de evidencia reutilizaba el último plan guardado sin validarlo: un plan de `TEAM-ENGINEERING` podía darle código a Neo, o incluir a un agente apagado. Ahora `TeamWorkPlanner.revalidate` lo pasa por `TeamPlanValidator` con el equipo encendido y las conexiones de la misión (sin modelo ni tareas; el plan guardado ya tiene sus rutas resueltas) y, si no pasa, Neo replanifica con el pedido del inversionista. **Verificado contra Neo4j real (solo lectura)**: los planes guardados de las 17 misiones recientes del Development Group (B1, DBA, NEMO, ARIA, QA) siguen pasando, así que las rondas de misiones buenas no replanifican de más.
+- (m-4) Se quitó la rama de "lista concatenada" de `capabilityError`: `isAtomic` rechaza antes cualquier coma.
+- (m-6) La descripción del Development Group que lee el modelo (`query_company_memory`) sale de los perfiles habilitados (`StackProfile.enabledUsages()`): sin "juegos" hasta la fase 3.

@@ -110,6 +110,18 @@ public class TeamWorkPlanner {
         return teamMemory.snapshot(teamId);
     }
 
+    /**
+     * FALTANTES (Bloque 1, m-2): una ronda de evidencia reutiliza el plan guardado; antes se vuelve a validar con las reglas
+     * y el equipo encendido de hoy (un plan de TEAM-ENGINEERING podía darle código a Neo). Sin modelo ni tareas: el plan
+     * guardado ya tiene sus rutas resueltas.
+     */
+    public java.util.List<String> revalidate(String missionId, String teamId, TeamPlan plan, TeamExecutionMode mode) {
+        var connections = databaseConnections == null
+                ? java.util.List.<com.aicompany.core.database.DatabaseConnection>of()
+                : databaseConnections.connectionsOf(missionId);
+        return validator.validate(plan, onlyEnabledMembers(teamMemory.snapshot(teamId)), mode, connections);
+    }
+
     public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode, int round) {
         return plan(missionId, teamId, instruction, mode, round, null);
     }

@@ -376,6 +376,28 @@ class MissionExecutorTeamTest {
         executor.reexecuteAsync("M-9", "Un CRM", 1, "más detalle").get();
 
         verify(writer, never()).write(any(), any(), any(), any());
+        verify(planner, never()).plan(any(), any(), any(), any(), anyInt());
         verify(development).execute(argThat(c -> !c.instruction().contains("INCREMENTO")), any());
     }
+
+    // FALTANTES (Bloque 1, m-2): un plan guardado que ya no cumple las reglas actuales (p. ej. de TEAM-ENGINEERING, con
+    // Neo escribiendo código, o con un agente apagado) no se reutiliza: Neo replanifica con el pedido del inversionista.
+    @Test
+    void anEvidenceRoundWithASavedPlanThatNoLongerValidatesIsReplanned() throws Exception {
+        withAria();
+        when(requirements.predatesRequirements("M-9")).thenReturn(true);
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.revalidate(eq("M-9"), eq("TEAM-DEVELOPMENT"), any(), any()))
+                .thenReturn(List.of("engineering (TECH_LEAD) no escribe código."));
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(1))).thenReturn(planned("TEAM-DEVELOPMENT"));
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+
+        executor.reexecuteAsync("M-9", "Un CRM", 1, "más detalle").get();
+
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), contains("más detalle"), any(), eq(1));
+        verify(development).execute(any(), any());
+    }
 }
+

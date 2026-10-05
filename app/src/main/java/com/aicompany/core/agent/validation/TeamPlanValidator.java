@@ -357,23 +357,10 @@ public class TeamPlanValidator {
     }
 
     /**
-     * Las capabilities son atómicas: si el modelo mandó varias concatenadas
-     * en un solo string (verificado en vivo con Neo), el error lo dice
-     * explícitamente y sugiere los elementos individuales reales.
+     * Capability atómica que no es del agente. Una lista concatenada nunca llega acá: {@link #isAtomic} la rechaza antes
+     * con su propio error (FALTANTES, Bloque 1, m-4: la rama que la detectaba acá no se ejecutaba nunca).
      */
     private static String capabilityError(String agentId, String capability, List<String> realCapabilities) {
-
-        var parts = capability == null ? List.<String>of()
-                : java.util.Arrays.stream(capability.split(",")).map(String::strip).filter(p -> !p.isEmpty()).toList();
-        var realParts = parts.stream().filter(realCapabilities::contains).toList();
-
-        if (parts.size() > 1 && !realParts.isEmpty()) {
-            return "La capability de " + agentId + " es una lista concatenada en un solo texto (\"" + capability
-                    + "\"). requiredCapabilities es un arreglo de capabilities individuales: elige solo las necesarias, "
-                    + "cada una como un elemento separado, p. ej. " + realParts.stream().limit(2)
-                    .map(p -> "\"" + p + "\"").collect(java.util.stream.Collectors.joining(", ", "[", "]")) + ".";
-        }
-
         return "La capability \"" + capability + "\" no pertenece a " + agentId
                 + ". Sus capabilities reales son: " + realCapabilities;
     }

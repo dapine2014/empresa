@@ -66,6 +66,19 @@ class TeamWorkPlannerTest {
         verify(events).publish(eq("EMPRESA_TEAM_PLAN_CREATED"), eq("MISSION-5"), anyString(), eq("growth-content"), anyMap());
     }
 
+    // FALTANTES (Bloque 1, m-2): el plan guardado que reutiliza una ronda se vuelve a validar con las reglas actuales,
+    // sin llamar al modelo ni crear tareas.
+    @Test
+    void aSavedPlanIsRevalidatedWithTheCurrentRulesWithoutTheModel() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+
+        assertTrue(planner.revalidate("MISSION-5", "TEAM-MARKETING-GROWTH", validPlan(), TeamExecutionMode.ANALYSIS).isEmpty());
+        assertFalse(planner.revalidate("MISSION-5", "TEAM-MARKETING-GROWTH", planWithOutsider(), TeamExecutionMode.ANALYSIS)
+                .isEmpty());
+        verifyNoInteractions(ceoService);
+        verify(memory, never()).createTask(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
     // Verificado en vivo (2026-09-29, glm-5.3): el líder omitía summary y se rechazaban planes válidos. Es un campo
     // descriptivo: Java lo arma desde las tareas en vez de gastar intentos.
     @Test

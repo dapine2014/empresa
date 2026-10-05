@@ -209,8 +209,9 @@ public class CeoService {
                                                             + "TEAM-DEVELOPMENT: "
                                                             + "Development Group "
                                                             + "(desarrollo de "
-                                                            + "software: apps, "
-                                                            + "servicios y juegos). "
+                                                            + "software: "
+                                                            + com.aicompany.core.model.StackProfile.enabledUsages()
+                                                            + "). "
                                                             + "TEAM-CREATIVE-PRODUCT-INTELLIGENCE: "
                                                             + "diseño de "
                                                             + "interacción/UX/"

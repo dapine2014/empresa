@@ -337,6 +337,12 @@ public enum StackProfile {
         };
     }
 
+    /** FALTANTES (Bloque 1, m-6): para qué sirve el Development Group hoy, según los perfiles habilitados. */
+    public static String enabledUsages() {
+        return Arrays.stream(values()).filter(StackProfile::enabledNow).map(StackProfile::usage)
+                .collect(Collectors.joining("; "));
+    }
+
     public static String describeAll() {
         return Arrays.stream(values()).filter(StackProfile::enabledNow).map(StackProfile::describe)
                 .collect(Collectors.joining("\n"));

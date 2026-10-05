@@ -293,14 +293,22 @@ public class MissionExecutor {
             }
         }
 
-        TeamSnapshot team;
-        TeamPlan plan;
+        TeamSnapshot team = null;
+        TeamPlan plan = null;
         var saved = memory.lastTeamPlanJson(missionId);
         if (saved.isPresent()) {
-            team = teamWorkPlanner.teamSnapshot(teamId);
-            plan = jsonMapper.readValue(saved.get(), TeamPlan.class);
-        } else {
-            // Falló antes de tener plan: el líder planifica de nuevo con el pedido del inversionista.
+            var savedPlan = jsonMapper.readValue(saved.get(), TeamPlan.class);
+            // FALTANTES (Bloque 1, m-2): el plan guardado se reutiliza solo si cumple las reglas y el equipo de hoy.
+            var errors = teamWorkPlanner.revalidate(missionId, teamId, savedPlan, mode);
+            if (errors.isEmpty()) {
+                team = teamWorkPlanner.teamSnapshot(teamId);
+                plan = savedPlan;
+            } else {
+                log.warn("MISSION {} - saved team plan no longer valid, replanning round {}: {}", missionId, round, errors);
+            }
+        }
+        if (plan == null) {
+            // Falló antes de tener plan (o el guardado ya no vale): el líder planifica de nuevo con el pedido del inversionista.
             advanceMission(missionId, MissionStatus.PLANNING, 5, "Planificación del equipo (ronda " + round + ")",
                     "El líder de " + teamId + " está descomponiendo el trabajo con el pedido del inversionista.");
             var request = investorRequest == null || investorRequest.isBlank()
