@@ -33,7 +33,7 @@ public final class ComponentSandbox {
             passed &= result.passed() && result.testsPassed() > 0;
             for (var step : result.stepsOrEmpty()) {
                 steps.add(new StepResult(component.prefix(step.name()), step.status(), step.exitCode(),
-                        step.durationMs(), step.outputTail(), step.testsPassed(), step.testsFailed()));
+                        step.durationMs(), step.outputTail(), step.testsPassed(), step.testsFailed(), step.tests()));
             }
         }
         return Optional.of(new SandboxResult(passed ? "PASS" : "FAIL", steps));

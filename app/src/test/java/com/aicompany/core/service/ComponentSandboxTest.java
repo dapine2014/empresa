@@ -78,4 +78,18 @@ class ComponentSandboxTest {
         assertEquals(List.of("app/lib/main.dart"),
                 ComponentSandbox.compileErrors(testThenBuild).stream().map(e -> e.path()).toList());
     }
+
+    // QA casos de uso (2026-10-05): los tests con nombre de cada componente llegan combinados.
+    @Test
+    void namedTestsOfEveryComponentAreKept() {
+        var backend = new SandboxResult("PASS", List.of(new StepResult("test", "PASS", 0, 1, "", 1, 0,
+                List.of(new SandboxResult.TestCase("Crm.ESC_01_x", "PASSED")))));
+        var app = new SandboxResult("FAIL", List.of(new StepResult("test", "FAIL", 1, 1, "", 0, 1,
+                List.of(new SandboxResult.TestCase("ESC-11 y", "FAILED")))));
+
+        var combined = ComponentSandbox.combine(FULLSTACK, List.of(Optional.of(backend), Optional.of(app))).orElseThrow();
+
+        assertEquals(List.of(new SandboxResult.TestCase("Crm.ESC_01_x", "PASSED"), new SandboxResult.TestCase("ESC-11 y", "FAILED")),
+                combined.allTests());
+    }
 }

@@ -5,8 +5,27 @@ import java.util.List;
 /** Resultado del sandbox-runner (mismo JSON que sandbox-runner/SandboxResult). */
 public record SandboxResult(String overall, List<StepResult> steps) {
 
+    /** QA casos de uso (2026-10-05): un test con su nombre y resultado ({@code PASSED|FAILED|SKIPPED}). */
+    public record TestCase(String name, String outcome) {
+    }
+
     public record StepResult(String name, String status, int exitCode, long durationMs, String outputTail,
-                             int testsPassed, int testsFailed) {
+                             int testsPassed, int testsFailed, List<TestCase> tests) {
+
+        /** Un runner anterior a los tests con nombre manda {@code tests} ausente: lista vacía. */
+        public StepResult {
+            tests = tests == null ? List.of() : List.copyOf(tests);
+        }
+
+        public StepResult(String name, String status, int exitCode, long durationMs, String outputTail,
+                          int testsPassed, int testsFailed) {
+            this(name, status, exitCode, durationMs, outputTail, testsPassed, testsFailed, List.of());
+        }
+    }
+
+    /** Todos los tests con nombre de todos los pasos (con varios componentes, de todos). */
+    public List<TestCase> allTests() {
+        return stepsOrEmpty().stream().flatMap(s -> s.tests().stream()).toList();
     }
 
     public List<StepResult> stepsOrEmpty() {
