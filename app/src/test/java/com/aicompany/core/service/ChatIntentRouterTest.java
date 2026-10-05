@@ -2465,6 +2465,34 @@ class ChatIntentRouterTest {
         assertTrue(router.route("dame la cobertura de escenarios de MISSION-9").contains("1/1"));
     }
 
+    // Revisión final QA (M7): un guion pegado al final ("MISSION-9-") no es parte del id.
+    @Test
+    void aTrailingHyphenIsNotPartOfTheMissionId() {
+        when(missionMemory.tasks("MISSION-9")).thenReturn(List.of(new AgentTask("MISSION-9-QA-REVIEW", "MISSION-9", "qa",
+                "CODE_REVIEW", "COMPLETED", "", Instant.now(), "VALIDATION", null, null, List.of(), "VERIFIED",
+                "[{\"check\":\"SCENARIO_COVERAGE\",\"status\":\"PASS\",\"detail\":\"1/1 escenarios con test aprobado.\"}]", null)));
+
+        assertTrue(router.route("¿qué escenarios cubre MISSION-9-?").contains("Cobertura de escenarios de MISSION-9 "));
+    }
+
+    // Revisión final QA (M6): el status muestra la cobertura N/M de las misiones que esperan tu decisión.
+    @Test
+    void theStatusShowsTheScenarioCoverageOfMissionsAwaitingTheInvestor() {
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-CRM", MissionStatus.AWAITING_INVESTOR, "TEST", 100, "x", "x", Instant.now(), null)));
+        when(missionMemory.tasks("MISSION-CRM")).thenReturn(List.of(new AgentTask("MISSION-CRM-QA-REVIEW", "MISSION-CRM",
+                "qa", "CODE_REVIEW", "COMPLETED", "", Instant.now(), "VALIDATION", null, null, List.of(), "FAILED",
+                "[{\"check\":\"SCENARIO_COVERAGE\",\"status\":\"FAIL\",\"detail\":\"17/19: sin test aprobado ESC-18 (x); ESC-19 (y).\"}]",
+                null)));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("Cobertura de escenarios: MISSION-CRM 17/19"), response);
+    }
+
     // Revisión final (I2): la gobernanza va primero; la pregunta de cobertura no se roba una decisión.
     @Test
     void aDecisionThatMentionsCoverageIsStillADecision() {

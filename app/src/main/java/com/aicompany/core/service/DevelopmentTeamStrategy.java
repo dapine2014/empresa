@@ -430,7 +430,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Revisión final (I1): sin sandbox (dependencias pendientes, runner caído) no hay cobertura que medir: UNVALIDATED.
         if (coverageMode && sandboxResult != null) {
             var tests = sandboxResult.allTests();
-            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios, tests);
+            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult));
             checks = new ArrayList<>(checks);
             checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
             checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId), tests));
@@ -1332,11 +1333,29 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .anyMatch(m -> m.agentId().equals(agentId) && "QA".equals(m.roleCode()));
     }
 
-    private Map<String, String> testFiles(String missionId, String sha) {
-        var files = new LinkedHashMap<String, String>();
+    /**
+     * Revisión final QA (M4): los tests de un commit (inmutable) se leen de git una vez; cada generación los pedía de nuevo
+     * (cobertura de Vera y crecimiento de la suite). Pocos commits a la vez: se guardan los últimos {@code TEST_CACHE_SIZE}.
+     */
+    private static final int TEST_CACHE_SIZE = 16;
+    private final Map<String, Map<String, String>> testFilesByCommit = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Map<String, String>> eldest) {
+                    return size() > TEST_CACHE_SIZE;
+                }
+            });
+
+    Map<String, String> testFiles(String missionId, String sha) {
         if (sha == null) {
-            return files;
+            return new LinkedHashMap<>();
         }
+        var key = missionId + "@" + sha;
+        var cached = testFilesByCommit.get(key);
+        if (cached != null) {
+            return new LinkedHashMap<>(cached);
+        }
+        var files = new LinkedHashMap<String, String>();
         try {
             for (var path : workspace.filesAtCommit(missionId, sha)) {
                 if (com.aicompany.core.agent.validation.TestInventory.isTestFile(path)) {
@@ -1347,8 +1366,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 }
             }
         } catch (Exception ex) {
+            // Un fallo de lectura no se guarda: el próximo pedido lo intenta de nuevo.
             log.warn("MISSION {} - could not read the tests at {}: {}", missionId, sha, ex.getMessage());
+            return files;
         }
+        testFilesByCommit.put(key, java.util.Collections.unmodifiableMap(new LinkedHashMap<>(files)));
         return files;
     }
 

@@ -58,10 +58,28 @@ public final class ScenarioCoverage {
                 .collect(Collectors.joining("; ")) + ".", null, paths);
     }
 
-    /** Reporte de Vera armado por Java: una línea por escenario. */
+    /**
+     * Revisión final QA (M6): los tests de todos los pasos con el componente delante ({@code [backend] …}, {@code [app] …})
+     * cuando la misión tiene varios; con uno solo, los nombres tal cual.
+     */
+    public static List<SandboxResult.TestCase> componentTests(SandboxResult sandbox) {
+        return sandbox.stepsOrEmpty().stream().flatMap(step -> {
+            var slash = step.name() == null ? -1 : step.name().lastIndexOf('/');
+            var component = slash < 0 ? "" : "[" + step.name().substring(0, slash) + "] ";
+            return step.tests().stream().map(t -> component.isEmpty() ? t
+                    : new SandboxResult.TestCase(component + t.name(), t.outcome()));
+        }).toList();
+    }
+
+    /**
+     * Reporte de Vera armado por Java: una línea por escenario. Revisión final QA (M6): "nuevo" = del incremento en curso
+     * (el mayor), "heredado" = de uno anterior.
+     */
     public static String report(List<Row> rows) {
+        var current = rows.stream().mapToInt(r -> r.scenario().increment()).max().orElse(1);
         return rows.stream().map(r -> (r.covered() ? "✅ " : "❌ ") + r.scenario().id() + " (incremento "
-                        + r.scenario().increment() + ") " + r.scenario().title() + ": "
+                        + r.scenario().increment() + ", " + (r.scenario().increment() == current ? "nuevo" : "heredado")
+                        + ") " + r.scenario().title() + ": "
                         + (r.covered() ? String.join(", ", r.passing()) : "sin test aprobado"))
                 .collect(Collectors.joining("\n"));
     }

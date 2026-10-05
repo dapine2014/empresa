@@ -1358,4 +1358,29 @@ class DevelopmentTeamStrategyTest {
 
         verify(memory, never()).verifiedCommit("M-1");
     }
+
+    // Revisión final QA (M4): un commit no cambia; los tests de un SHA se leen de git una sola vez por generación de misión.
+    @Test
+    void theTestsOfACommitAreReadFromGitOnce() throws Exception {
+        when(workspace.filesAtCommit("M-1", "c".repeat(40))).thenReturn(List.of("tests/Crm.Tests/ClientesTests.cs", "src/X.cs"));
+        when(workspace.readFileAtCommit("M-1", "c".repeat(40), "tests/Crm.Tests/ClientesTests.cs")).thenReturn("[Fact] void ESC_01_x() {}");
+
+        var first = strategy.testFiles("M-1", "c".repeat(40));
+        var second = strategy.testFiles("M-1", "c".repeat(40));
+
+        assertEquals(first, second);
+        assertEquals(java.util.Set.of("tests/Crm.Tests/ClientesTests.cs"), first.keySet());
+        verify(workspace, times(1)).filesAtCommit("M-1", "c".repeat(40));
+    }
+
+    @Test
+    void aFailedReadIsNotCached() throws Exception {
+        when(workspace.filesAtCommit("M-1", "d".repeat(40))).thenThrow(new java.io.IOException("git show falló"))
+                .thenReturn(List.of("tests/Crm.Tests/ClientesTests.cs"));
+        when(workspace.readFileAtCommit("M-1", "d".repeat(40), "tests/Crm.Tests/ClientesTests.cs")).thenReturn("x");
+
+        assertTrue(strategy.testFiles("M-1", "d".repeat(40)).isEmpty());
+        assertEquals(1, strategy.testFiles("M-1", "d".repeat(40)).size());
+    }
 }
+

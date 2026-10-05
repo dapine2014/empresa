@@ -15,6 +15,18 @@ function parseChecks(raw: string | null): StaticCheck[] {
   }
 }
 
+// Revisión final QA (M6): reporte de cobertura de escenarios que Java guarda en la tarea VALIDATION.
+const COVERAGE_REPORT = 'Reporte de cobertura de escenarios (Java, QA casos de uso):'
+
+function coverageLines(result: string | null): string[] {
+  if (!result || !result.startsWith(COVERAGE_REPORT)) return []
+  return result
+    .slice(COVERAGE_REPORT.length)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
 function parseSandbox(raw: string | null): SandboxResult | null {
   if (!raw) return null
   try {
@@ -321,6 +333,26 @@ export default function MissionDetailPage() {
                 </li>
               ))}
             </ul>
+            {(() => {
+              const lines = coverageLines(task.result)
+              if (lines.length === 0) return null
+              const coverage = parseChecks(task.staticChecks).find((check) => check.check === 'SCENARIO_COVERAGE')
+              return (
+                <>
+                  <h3>Cobertura de escenarios</h3>
+                  {coverage && (
+                    <p>
+                      {coverage.status === 'PASS' ? '🟢' : '🔴'} {coverage.detail}
+                    </p>
+                  )}
+                  <ul>
+                    {lines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </>
+              )
+            })()}
             {(() => {
               const sandbox = parseSandbox(task.sandboxResult)
               if (!sandbox) return <p className="hint">El sandbox no corrió: la ejecución no está verificada.</p>

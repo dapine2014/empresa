@@ -34,6 +34,29 @@ class ScenarioCoverageTest {
         assertTrue(rows.get(0).covered());
         assertEquals(List.of("ESC-05 app"), rows.get(0).failing());
     }
+    // Revisión final QA (M6): el reporte dice de qué componente es cada test y qué escenarios son del incremento en curso
+    // (nuevos) o de uno anterior (heredados).
+    @Test void theReportNamesTheComponentAndNewOrInheritedScenarios() {
+        var sandbox = new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("backend/test", "PASS", 0, 1, "", 1, 0,
+                        List.of(new SandboxResult.TestCase("Crm.ESC_01_crear", "PASSED"))),
+                new SandboxResult.StepResult("app/test", "PASS", 0, 1, "", 1, 0,
+                        List.of(new SandboxResult.TestCase("ESC-02 listar", "PASSED")))));
+        var rows = ScenarioCoverage.compute(List.of(new ScenarioCoverage.Scenario("ESC-01", "crear", 1),
+                new ScenarioCoverage.Scenario("ESC-02", "listar", 2)), ScenarioCoverage.componentTests(sandbox));
+
+        var report = ScenarioCoverage.report(rows);
+
+        assertTrue(report.contains("ESC-01 (incremento 1, heredado) crear: [backend] Crm.ESC_01_crear"), report);
+        assertTrue(report.contains("ESC-02 (incremento 2, nuevo) listar: [app] ESC-02 listar"), report);
+    }
+
+    @Test void aSingleComponentKeepsTheTestNamesAsTheyAre() {
+        var sandbox = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 1, 0,
+                List.of(new SandboxResult.TestCase("ESC_01_x", "PASSED")))));
+        assertEquals(List.of(new SandboxResult.TestCase("ESC_01_x", "PASSED")), ScenarioCoverage.componentTests(sandbox));
+    }
+
     @Test void sourceErrorsListMissingAndUnknownIds() {
         var files = Map.of("backend/tests/A.cs", "[Fact] public void ESC_01_x() {}", "app/test/a_test.dart", "test('ESC-09 z', () {});");
         var errors = ScenarioCoverage.sourceErrors(List.of(esc("ESC-01"), esc("ESC-02")), files, files);

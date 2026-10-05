@@ -1009,3 +1009,11 @@ Rama `neo-cierre` (sobre `aria-cierre`), cada uno con test:
 - (m-2) Una ronda de evidencia reutilizaba el último plan guardado sin validarlo: un plan de `TEAM-ENGINEERING` podía darle código a Neo, o incluir a un agente apagado. Ahora `TeamWorkPlanner.revalidate` lo pasa por `TeamPlanValidator` con el equipo encendido y las conexiones de la misión (sin modelo ni tareas; el plan guardado ya tiene sus rutas resueltas) y, si no pasa, Neo replanifica con el pedido del inversionista. **Verificado contra Neo4j real (solo lectura)**: los planes guardados de las 17 misiones recientes del Development Group (B1, DBA, NEMO, ARIA, QA) siguen pasando, así que las rondas de misiones buenas no replanifican de más.
 - (m-4) Se quitó la rama de "lista concatenada" de `capabilityError`: `isAtomic` rechaza antes cualquier coma.
 - (m-6) La descripción del Development Group que lee el modelo (`query_company_memory`) sale de los perfiles habilitados (`StackProfile.enabledUsages()`): sin "juegos" hasta la fase 3.
+
+## Vera: menores de la revisión de QA (2026-10-05)
+
+Rama `neo-cierre`. Diferidos de la revisión final de QA casos de uso (ledger `.superpowers/sdd/2026-10-05-qa-casos-de-uso`), cada uno con test:
+- (M4) Los tests de un commit se leían de git en cada generación (cobertura de Vera y crecimiento de la suite, a veces dos veces). Ahora `DevelopmentTeamStrategy.testFiles` guarda los últimos 16 commits (un SHA es inmutable); un fallo de lectura no se guarda.
+- (M6) El reporte de cobertura marca cada test con su componente (`[backend]`, `[app]`; con un solo componente, el nombre tal cual) y cada escenario como nuevo (incremento en curso) o heredado. "dame un status" muestra "Cobertura de escenarios: MISSION-X 17/19" para las misiones en `AWAITING_INVESTOR`, y el detalle de la misión en Missions tiene la sección "Cobertura de escenarios".
+- (M7) Un id de misión nunca termina en guion: `MISSION_REF` para todos los comandos del chat ("MISSION-9-" → `MISSION-9`).
+- (M8) Ya estaba anotado arriba (en Flutter un test `skipped` no cuenta como aprobado).

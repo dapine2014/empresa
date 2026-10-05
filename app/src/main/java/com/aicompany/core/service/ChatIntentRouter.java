@@ -92,8 +92,11 @@ public class ChatIntentRouter {
     private static final Pattern TEAM_ID_TOKEN =
             Pattern.compile("\\bTEAM-[A-Z]+(?:-[A-Z]+)*\\b");
 
+    /** Revisión final QA (M7): un id de misión nunca termina en guion ("MISSION-9-" → MISSION-9). */
+    private static final String MISSION_REF = "MISSION-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*";
+
     private static final Pattern MISSION_ID =
-            Pattern.compile("(?i)(MISSION-[\\w-]+)");
+            Pattern.compile("(?i)(MISSION-\\w+(?:-\\w+)*)");
 
     private static final Pattern APPROVE =
             Pattern.compile("(?i)\\b(aprueba|apruebo|aprobar)\\b");
@@ -749,9 +752,9 @@ public class ChatIntentRouter {
     private static final Pattern DATABASE_USE = Pattern.compile(
             "\\busa(?:r)?\\s+(?:la\\s+)?base\\s+(?:de\\s+datos\\s+)?([a-z0-9]+(?:-[a-z0-9]+)+|[a-z0-9]*[0-9][a-z0-9]*)\\b");
     private static final Pattern DATABASE_APPLY =
-            Pattern.compile("(?i)\\baplica(?:r)?\\s+el\\s+esquema\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+            Pattern.compile("(?i)\\baplica(?:r)?\\s+el\\s+esquema\\s+de\\s+(" + MISSION_REF + ")");
     private static final Pattern DATABASE_STATUS =
-            Pattern.compile("(?i)c[oó]mo\\s+va\\s+la\\s+base\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+            Pattern.compile("(?i)c[oó]mo\\s+va\\s+la\\s+base\\s+de\\s+(" + MISSION_REF + ")");
 
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
     private com.aicompany.core.database.DatabaseApplyService databaseApply;
@@ -779,13 +782,13 @@ public class ChatIntentRouter {
     }
 
     private static final Pattern MISSION_COST = Pattern.compile(
-            "(?i)\\bcuanto\\s+(?:costo|cuesta|ha\\s+costado|gasto|se\\s+gasto\\s+en)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\bcuanto\\s+(?:costo|cuesta|ha\\s+costado|gasto|se\\s+gasto\\s+en)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern MONTH_COST = Pattern.compile(
             "(?i)\\bcuanto\\s+(?:hemos\\s+gastado|se\\s+ha\\s+gastado|gastamos|llevamos(?:\\s+gastado)?|cuestan?)\\b.*\\bmodelos?\\b");
 
     private static final Pattern SCENARIO_COVERAGE = Pattern.compile(
             "(?i)(?:\\b(?:que|cuales)\\s+escenarios\\b|\\bcobertura\\s+de\\s+(?:escenarios|tests|pruebas)\\b"
-                    + "|\\bescenarios\\s+(?:cubre|cubiertos|faltan|fallan)\\b)[^.;]*?(MISSION-[A-Za-z0-9-]+)");
+                    + "|\\bescenarios\\s+(?:cubre|cubiertos|faltan|fallan)\\b)[^.;]*?(" + MISSION_REF + ")");
     private static final tools.jackson.databind.json.JsonMapper CHECKS_JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
     /** QA casos de uso (spec 2026-10-05 §6): la cobertura de escenarios de la última validación, armada en Java. */
@@ -795,13 +798,34 @@ public class ChatIntentRouter {
             return null;
         }
         var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        var latest = latestCoverage(missionId);
+        if (latest.isEmpty()) {
+            return missionId + " no tiene cobertura de escenarios (misión sin requisitos de Aria o sin validar).";
+        }
+        var coverage = latest.get();
+        return "Cobertura de escenarios de " + missionId + " (validación " + coverage.validationStatus() + "): "
+                + coverage.detail() + (coverage.report().isBlank() ? "" : "\n" + coverage.report());
+    }
+
+    private record Coverage(String validationStatus, String detail, String report) {
+        /** "17/19" al inicio del detalle de SCENARIO_COVERAGE (lo arma ScenarioCoverage.check). */
+        String ratio() {
+            var m = COVERAGE_RATIO.matcher(detail);
+            return m.find() ? m.group(1) : "?";
+        }
+    }
+
+    private static final Pattern COVERAGE_RATIO = Pattern.compile("^(\\d+/\\d+)");
+
+    /** La cobertura de escenarios de la última validación de la misión (QA casos de uso), si la tiene. */
+    private Optional<Coverage> latestCoverage(String missionId) {
         var latest = missionMemory.tasks(missionId).stream()
                 .filter(t -> "VALIDATION".equals(t.kind()) && t.staticChecks() != null
                         && t.staticChecks().contains("SCENARIO_COVERAGE"))
                 .max(java.util.Comparator.comparing(AgentTask::updatedAt, java.util.Comparator.nullsFirst(
                         java.util.Comparator.naturalOrder())));
         if (latest.isEmpty()) {
-            return missionId + " no tiene cobertura de escenarios (misión sin requisitos de Aria o sin validar).";
+            return Optional.empty();
         }
         var detail = "";
         try {
@@ -815,8 +839,7 @@ public class ChatIntentRouter {
         }
         var report = latest.get().result() == null ? "" : latest.get().result()
                 .replace(DevelopmentTeamStrategy.COVERAGE_REPORT, "");
-        return "Cobertura de escenarios de " + missionId + " (validación " + latest.get().validationStatus() + "): "
-                + detail + (report.isBlank() ? "" : "\n" + report);
+        return Optional.of(new Coverage(latest.get().validationStatus(), detail, report));
     }
 
     /** Costo real por misión (2026-10-04): respuesta armada en Java desde (:ModelUsage). */
@@ -949,16 +972,16 @@ public class ChatIntentRouter {
 
     /** Spec 2026-10-03 Aria §2: comandos de requisitos; van antes que la decisión del inversionista. */
     private static final Pattern SHOW_STORIES = Pattern.compile(
-            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern APPROVE_STORIES = Pattern.compile(
-            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern REJECT_STORIES = Pattern.compile(
-            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
-    private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(MISSION-[A-Za-z0-9-]+)\\s*:\\s*(.+)$",
+            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
+    private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*:\\s*(.+)$",
             Pattern.DOTALL);
     private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos)\\b");
     private static final Pattern BUILD_INCREMENT = Pattern.compile(
-            "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(" + MISSION_REF + ")");
 
     private String handleRequirements(String message) {
         var normalized = normalize(message);
@@ -1853,6 +1876,13 @@ public class ChatIntentRouter {
         var specLine = awaitingSpec.isEmpty() ? ""
                 : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec)
                         + " (\"muéstrame las HU de <misión>\").";
+        // Revisión final QA (M6): cobertura N/M de las misiones que esperan tu decisión (cualquier entorno).
+        var coverage = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
+                .flatMap(m -> latestCoverage(m.missionId()).map(c -> m.missionId() + " " + c.ratio()).stream())
+                .toList();
+        var coverageLine = coverage.isEmpty() ? ""
+                : " Cobertura de escenarios: " + String.join(", ", coverage)
+                        + " (\"¿qué escenarios cubre <misión>?\").";
 
         var missions = all.stream()
                 .filter(m -> "PRODUCTION".equals(m.environment()))
@@ -1910,7 +1940,7 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + specLine + orchestratorLine() + downModelsLine();
+        ) + specLine + coverageLine + orchestratorLine() + downModelsLine();
     }
 
     /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */
