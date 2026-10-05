@@ -34,4 +34,16 @@ class RemoteProvidersTest {
         assertEquals("reasoning_effort=none", bedrock.thinkingOff());
         assertEquals("x", bedrock.apiKey());
     }
+
+    // Lentitud como caída (decisión del fundador 2026-10-05): NVIDIA gratis tiene su propio plazo por llamada (6 min);
+    // al pasarlo la llamada se repite en Bedrock. Sin plazo propio, el general.
+    @Test
+    void eachProviderCanHaveItsOwnTotalTimeout() {
+        var env = new MockEnvironment().withProperty("remote-models.providers.nvidia.total-timeout", "6m");
+
+        var providers = RemoteProviders.from(env, "https://integrate.api.nvidia.com/v1");
+
+        assertEquals(java.time.Duration.ofMinutes(6), providers.get(0).totalTimeout(java.time.Duration.ofMinutes(12)));
+        assertEquals(java.time.Duration.ofMinutes(12), providers.get(4).totalTimeout(java.time.Duration.ofMinutes(12)));
+    }
 }

@@ -98,6 +98,10 @@ remote-models:
   providers:
     nvidia:
       api-key: ${NVIDIA_API_KEY:}
+      # Lentitud como caída (decisión del fundador 2026-10-05): sano, kimi en NVIDIA no pasa de ~5 min por llamada
+      # (medido: mediana 2,4, máx. 4,7); degradado llegó a 7–15 min. Pasado el plazo, la llamada se repite en el respaldo
+      # pago (Bedrock) y dos cortes seguidos marcan el modelo caído.
+      total-timeout: ${NVIDIA_TOTAL_TIMEOUT:6m}
     nvidia-discovery:
       api-key: ${NVIDIA_API_KEY_DISCOVERY:}
     nvidia-creative:
