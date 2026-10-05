@@ -1332,4 +1332,30 @@ class DevelopmentTeamStrategyTest {
 
         verify(runtime).review(anyString(), eq("M-1"), eq("qa"), anyString(), anyMap());
     }
+
+    // Revisión final (I1): si el sandbox no corrió (p. ej. dependencias pendientes), UNVALIDATED, no FAILED.
+    @Test
+    void withScenariosAndNoSandboxTheMissionIsUnvalidated() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("UNVALIDATED"),
+                argThat(json -> !json.contains("SCENARIO_COVERAGE")));
+    }
+
+    // Revisión final (declinado → spec §3): sin requisitos de Aria no hay gate de crecimiento.
+    @Test
+    void withoutRequirementsThereIsNoGrowthGate() throws Exception {
+        stubFullstack();
+        when(memory.verifiedCommit("M-1")).thenReturn(Optional.of("7".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        strategy.execute(fullstackContext(), progress);
+
+        verify(memory, never()).verifiedCommit("M-1");
+    }
 }

@@ -31,4 +31,29 @@ class TestSuiteGrowthGateTest {
         assertFalse(check.passed());
         assertTrue(check.detail().contains("ESC-11 z"), check.detail());
     }
+
+    // Revisión final (I4): formas comunes de C# y Dart.
+    @Test
+    void theInventoryReadsCommonTestShapes() {
+        var inventory = TestInventory.of(Map.of(
+                "backend/tests/A.cs", "[Fact, Trait(\"Escenario\", \"ESC-03\")]\npublic async ValueTask ESC_03_a() {}\n"
+                        + "[Theory]\n[InlineData(\"a;b{\")]\npublic void ESC_04_b(string s) {}\n"
+                        + "[Fact(Skip = \"luego\")] public async Task<int> ESC_05_c() => 1;",
+                "app/test/a_test.dart", "test('ESC-11 x', () { expect(1, 1); }, skip: true);\ntest('ESC-12 y', () { expect(1, 1); });"));
+        assertEquals(java.util.Map.of("ESC_03_a", false, "ESC_04_b", false, "ESC_05_c", true, "ESC-11 x", true, "ESC-12 y", false),
+                inventory);
+    }
+
+    // Revisión final (I3): corregir un InlineData, mover un test de clase o renombrar un grupo no es perder un test
+    // mientras su escenario siga con un test aprobado.
+    @Test
+    void renamesThatKeepTheScenarioCoveredAreNotLosses() {
+        var before = List.of(new SandboxResult.TestCase("Ns.A.ESC_06_t(x: 1)", "PASSED"),
+                new SandboxResult.TestCase("Clientes ESC-11 crea", "PASSED"));
+        var now = List.of(new SandboxResult.TestCase("Ns.B.ESC_06_t(x: 2)", "PASSED"),
+                new SandboxResult.TestCase("Clientes v2 ESC-11 crea", "PASSED"));
+        assertTrue(TestSuiteGrowthGate.check(before, now).passed());
+        var lost = TestSuiteGrowthGate.check(List.of(new SandboxResult.TestCase("Ns.A.Sin_escenario", "PASSED")), now);
+        assertFalse(lost.passed());
+    }
 }

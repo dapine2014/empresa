@@ -36,7 +36,7 @@ public final class ScenarioCoverage {
             var passing = new ArrayList<String>();
             var failing = new ArrayList<String>();
             for (var test : tests) {
-                if (ScenarioIds.in(test.name()).contains(scenario.id())) {
+                if (ScenarioIds.inTestName(test.name()).contains(scenario.id())) {
                     ("PASSED".equals(test.outcome()) ? passing : failing).add(test.name());
                 }
             }
@@ -66,18 +66,24 @@ public final class ScenarioCoverage {
                 .collect(Collectors.joining("\n"));
     }
 
-    /** Al generar: escenarios sin test que los nombre y ids que no existen en el spec. */
-    public static List<String> sourceErrors(List<Scenario> scenarios, Map<String, String> testFiles) {
+    /**
+     * Al generar: escenarios sin un test que los nombre (solo nombres de test: revisión final C2, el TRX no trae Trait y
+     * un comentario no es un test) e ids inexistentes en lo devuelto en este intento (revisión final M3).
+     */
+    public static List<String> sourceErrors(List<Scenario> scenarios, Map<String, String> testFiles,
+                                            Map<String, String> returnedTestFiles) {
         var known = scenarios.stream().map(Scenario::id).collect(Collectors.toCollection(LinkedHashSet::new));
         var named = new LinkedHashSet<String>();
-        testFiles.values().forEach(content -> named.addAll(ScenarioIds.in(content)));
+        TestInventory.of(testFiles).keySet().forEach(name -> named.addAll(ScenarioIds.inTestName(name)));
+        var returned = new LinkedHashSet<String>();
+        TestInventory.of(returnedTestFiles).keySet().forEach(name -> returned.addAll(ScenarioIds.inTestName(name)));
         var errors = new ArrayList<String>();
         var missing = known.stream().filter(id -> !named.contains(id)).toList();
         if (!missing.isEmpty()) {
             errors.add("Faltan tests para " + String.join(", ", missing) + ": escribe al menos un test por escenario con "
-                    + "el id en el nombre (.NET: ESC_03_… o [Trait(\"Escenario\", \"ESC-03\")]; Flutter: test('ESC-03 …')).");
+                    + "el id en el nombre del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 …')).");
         }
-        var unknown = named.stream().filter(id -> !known.contains(id)).sorted().toList();
+        var unknown = returned.stream().filter(id -> !known.contains(id)).sorted().toList();
         if (!unknown.isEmpty()) {
             errors.add("Los escenarios " + String.join(", ", unknown) + " no existen en los requisitos aprobados: usa solo "
                     + String.join(", ", known) + ".");

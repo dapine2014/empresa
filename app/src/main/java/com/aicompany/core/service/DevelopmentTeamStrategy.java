@@ -427,8 +427,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // revisión de Vera la reemplaza un reporte armado por Java (sin llamar al modelo).
         var scenarios = scenarios(missionId);
         var coverageMode = !scenarios.isEmpty();
-        if (coverageMode) {
-            var tests = sandboxResult == null ? List.<SandboxResult.TestCase>of() : sandboxResult.allTests();
+        // Revisión final (I1): sin sandbox (dependencias pendientes, runner caído) no hay cobertura que medir: UNVALIDATED.
+        if (coverageMode && sandboxResult != null) {
+            var tests = sandboxResult.allTests();
             var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios, tests);
             checks = new ArrayList<>(checks);
             checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
@@ -1367,8 +1368,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return "";
         }
         return "\n\nESCENARIOS A CUBRIR (QA, obligatorio): escribe al menos un test automatizado por escenario, con el id "
-                + "en el nombre (.NET: método ESC_03_descripcion o [Trait(\"Escenario\", \"ESC-03\")]; Flutter: "
-                + "test('ESC-03 descripción') o testWidgets('ESC-03 …')). Cada test verifica el dado/cuando/entonces del "
+                + "en el NOMBRE del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 descripción') o "
+                + "testWidgets('ESC-03 …')); un Trait o un comentario no cuentan. Cada test verifica el dado/cuando/entonces del "
                 + "escenario. No borres, renombres ni saltes tests que ya existen: la suite solo crece.\n"
                 + scenarios.stream().map(sc -> "- " + sc.id() + " " + sc.title() + " (incremento " + sc.increment() + ")")
                 .collect(Collectors.joining("\n")) + "\n";
@@ -1399,9 +1400,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (!scenarios.isEmpty() && isQa(context, agentId)) {
             var headTests = testFiles(missionId, headSha);
             checks.add(result -> com.aicompany.core.agent.validation.ScenarioCoverage.sourceErrors(scenarios,
-                    withReturned(headTests, result)));
+                    withReturned(headTests, result), withReturned(Map.of(), result)));
         }
-        var verified = memory.verifiedCommit(missionId).orElse(null);
+        // Revisión final (spec §3): sin requisitos de Aria, reglas anteriores (sin gate de crecimiento).
+        var verified = scenarios.isEmpty() ? null : memory.verifiedCommit(missionId).orElse(null);
         if (verified != null) {
             var before = com.aicompany.core.agent.validation.TestInventory.of(testFiles(missionId, verified));
             if (!before.isEmpty()) {

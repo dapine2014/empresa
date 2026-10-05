@@ -637,11 +637,6 @@ public class ChatIntentRouter {
                     + "/details para ver el progreso y las tareas.";
         }
 
-        var coverageReply = handleScenarioCoverage(message);
-        if (coverageReply != null) {
-            return coverageReply;
-        }
-
         var costReply = handleModelCost(message);
         if (costReply != null) {
             return costReply;
@@ -660,6 +655,12 @@ public class ChatIntentRouter {
 
         if (decision != null) {
             return handleDecision(decision, message);
+        }
+
+        // Revisión final QA (I2): la gobernanza va primero; la cobertura es una consulta.
+        var coverageReply = handleScenarioCoverage(message);
+        if (coverageReply != null) {
+            return coverageReply;
         }
 
         var missionStatusId = detectMissionStatusQuery(message);

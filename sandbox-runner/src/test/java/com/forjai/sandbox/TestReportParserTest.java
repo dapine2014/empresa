@@ -43,7 +43,7 @@ class TestReportParserTest {
     void aMissingReportCountsAsZero() {
         assertEquals(new TestReportParser.TestCounts(0, 0), TestReportParser.parse(work));
     }
-    // QA casos de uso (2026-10-05): cada test con su nombre y resultado; los Trait del TRX se suman al nombre.
+    // QA casos de uso (2026-10-05): cada test con su nombre y resultado (revisión final C2: el TRX real no trae Trait).
     @Test
     void trxTestsComeWithNameOutcomeAndTraits(@TempDir Path dir) throws Exception {
         Files.createDirectories(dir.resolve(".forjai"));
@@ -60,7 +60,7 @@ class TestReportParserTest {
         var counts = TestReportParser.parse(dir);
         assertEquals(1, counts.passed());
         assertEquals(List.of(new SandboxResult.TestCase("Crm.Tests.ClientesTests.ESC_01_crea_cliente", "PASSED"),
-                new SandboxResult.TestCase("Crm.Tests.ClientesTests.Lista [ESC-02]", "FAILED"),
+                new SandboxResult.TestCase("Crm.Tests.ClientesTests.Lista", "FAILED"),
                 new SandboxResult.TestCase("Crm.Tests.ClientesTests.Viejo", "SKIPPED")), counts.tests());
     }
 
@@ -80,5 +80,25 @@ class TestReportParserTest {
         assertEquals(List.of(new SandboxResult.TestCase("ESC-11 crea oportunidad", "PASSED"),
                 new SandboxResult.TestCase("ESC-12 lista", "SKIPPED"),
                 new SandboxResult.TestCase("ESC-13 borra", "FAILED")), counts.tests());
+    }
+
+    // Revisión final QA (C1): el reporter real de package:test emite "type" al final de cada línea.
+    @Test
+    void realFlutterReporterOrderStillGivesNames(@TempDir Path dir) throws Exception {
+        Files.createDirectories(dir.resolve(".forjai"));
+        Files.writeString(dir.resolve(".forjai/results.json"), String.join("\n",
+                "{\"test\":{\"id\":3,\"name\":\"Clientes ESC-11 crea \\\"oportunidad\\\"\",\"suiteID\":0,\"groupIDs\":[2]},\"type\":\"testStart\",\"time\":3}",
+                "{\"testID\":3,\"result\":\"success\",\"skipped\":false,\"hidden\":false,\"type\":\"testDone\",\"time\":9}"));
+        var counts = TestReportParser.parse(dir);
+        assertEquals(List.of(new SandboxResult.TestCase("Clientes ESC-11 crea \"oportunidad\"", "PASSED")), counts.tests());
+    }
+
+    // Revisión final QA (M5): los nombres del TRX se desescapan.
+    @Test
+    void trxNamesAreUnescaped(@TempDir Path dir) throws Exception {
+        Files.createDirectories(dir.resolve(".forjai"));
+        Files.writeString(dir.resolve(".forjai/results.trx"),
+                "<TestRun><Results><UnitTestResult testId=\"a\" outcome=\"Passed\" testName=\"Ns.C.ESC_06_t(s: &quot;a&amp;b&quot;)\" /></Results></TestRun>");
+        assertEquals(List.of(new SandboxResult.TestCase("Ns.C.ESC_06_t(s: \"a&b\")", "PASSED")), TestReportParser.parse(dir).tests());
     }
 }

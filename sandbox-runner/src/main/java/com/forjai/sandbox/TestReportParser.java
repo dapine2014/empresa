@@ -5,13 +5,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.regex.Pattern;
 
 /**
  * Conteo de tests desde reportes estructurados (TRX de dotnet test, JSON de flutter test), nunca texto libre. QA casos de
- * uso (2026-10-05): además, cada test con su nombre y resultado; los ESC-NN de los Trait del TRX se suman al nombre.
+ * uso (2026-10-05): además, cada test con su nombre y resultado.
  */
 public final class TestReportParser {
 
@@ -24,10 +23,8 @@ public final class TestReportParser {
     private static final Pattern TRX_COUNTERS = Pattern.compile(
             "<Counters[^>]*\\bpassed=\"(\\d+)\"[^>]*\\bfailed=\"(\\d+)\"");
     private static final Pattern TRX_RESULT = Pattern.compile("<UnitTestResult\\b[^>]*>");
-    private static final Pattern TRX_DEFINITION = Pattern.compile("<UnitTest\\b[^>]*\\bid=\"([^\"]+)\"[^>]*>(.*?)</UnitTest>",
-            Pattern.DOTALL);
-    private static final Pattern SCENARIO = Pattern.compile("ESC-\\d{2}");
-    private static final Pattern JSON_START = Pattern.compile("\"type\":\"testStart\".*?\"id\":(\\d+).*?\"name\":\"((?:[^\"\\\\]|\\\\.)*)\"");
+    // Revisión final QA (C1): el reporter real pone "type" al final; se lee el objeto "test" sin depender del orden.
+    private static final Pattern JSON_START = Pattern.compile("\"test\":\\{\"id\":(\\d+),\"name\":\"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final Pattern JSON_DONE_ID = Pattern.compile("\"testID\":(\\d+)");
 
     private TestReportParser() {
@@ -52,7 +49,7 @@ public final class TestReportParser {
                 var tests = new ArrayList<SandboxResult.TestCase>();
                 for (var line : Files.readAllLines(json)) {
                     var start = JSON_START.matcher(line);
-                    if (start.find()) {
+                    if (line.contains("\"type\":\"testStart\"") && start.find()) {
                         names.put(start.group(1), start.group(2).replace("\\\"", "\"").replace("\\\\", "\\"));
                         continue;
                     }
@@ -78,17 +75,8 @@ public final class TestReportParser {
         return new TestCounts(0, 0);
     }
 
+    /** Revisión final QA (C2): el TRX de vstest no trae los Trait; el id del escenario va en el nombre del método. */
     private static List<SandboxResult.TestCase> trxTests(String content) {
-        var traits = new HashMap<String, LinkedHashSet<String>>();
-        var definitions = TRX_DEFINITION.matcher(content);
-        while (definitions.find()) {
-            var ids = new LinkedHashSet<String>();
-            var scenario = SCENARIO.matcher(definitions.group(2));
-            while (scenario.find()) {
-                ids.add(scenario.group());
-            }
-            traits.put(definitions.group(1), ids);
-        }
         var tests = new ArrayList<SandboxResult.TestCase>();
         var results = TRX_RESULT.matcher(content);
         while (results.find()) {
@@ -99,15 +87,15 @@ public final class TestReportParser {
                 case "Failed", "Error", "Timeout", "Aborted" -> "FAILED";
                 default -> "SKIPPED";
             };
-            var extra = traits.getOrDefault(attribute(tag, "testId"), new LinkedHashSet<>());
-            tests.add(new SandboxResult.TestCase(extra.isEmpty() ? name : name + " [" + String.join(", ", extra) + "]",
-                    outcome));
+            tests.add(new SandboxResult.TestCase(name, outcome));
         }
         return tests;
     }
 
     private static String attribute(String tag, String name) {
         var m = Pattern.compile("\\b" + name + "=\"([^\"]*)\"").matcher(tag);
-        return m.find() ? m.group(1) : "";
+        // Revisión final QA (M5): entidades XML del TRX.
+        return m.find() ? m.group(1).replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<")
+                .replace("&gt;", ">").replace("&amp;", "&") : "";
     }
 }

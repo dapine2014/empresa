@@ -2450,4 +2450,18 @@ class ChatIntentRouterTest {
         assertTrue(router.route("¿qué escenarios cubre MISSION-8?").contains("no tiene cobertura de escenarios"));
         assertTrue(router.route("dame la cobertura de escenarios de MISSION-9").contains("1/1"));
     }
+
+    // Revisión final (I2): la gobernanza va primero; la pregunta de cobertura no se roba una decisión.
+    @Test
+    void aDecisionThatMentionsCoverageIsStillADecision() {
+        when(missionService.recordDecision(eq("MISSION-12"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-12", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 1)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-12")).thenReturn(Optional.empty());
+
+        router.route("revisé la cobertura de escenarios de MISSION-12: pide más evidencia sobre MISSION-12");
+
+        verify(missionService).recordDecision(eq("MISSION-12"),
+                argThat(c -> c.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE));
+    }
 }
