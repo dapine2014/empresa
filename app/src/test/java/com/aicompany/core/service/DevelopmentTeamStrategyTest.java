@@ -1286,4 +1286,50 @@ class DevelopmentTeamStrategyTest {
     void withoutRequirementsNothingChanges() {
         assertEquals(List.of(), strategy.scenarios("M-1"));
     }
+
+    private static Optional<SandboxResult> runWith(String... passed) {
+        var tests = java.util.Arrays.stream(passed).map(n -> new SandboxResult.TestCase(n, "PASSED")).toList();
+        return Optional.of(new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "",
+                tests.size(), 0, tests))));
+    }
+
+    // Spec QA §3 y §5: con escenarios, VERIFIED exige cobertura completa y la revisión de Vera no llama al modelo.
+    @Test
+    void withScenariosCoverageDecidesAndVeraIsNotAskedToReview() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(runtime, never()).review(anyString(), anyString(), anyString(), anyString(), anyMap());
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("VERIFIED"),
+                argThat(json -> json.contains("SCENARIO_COVERAGE") && json.contains("2/2")));
+        verify(memory).updateTask(eq("M-1-QA-REVIEW"), eq("COMPLETED"), argThat(r -> r.contains("✅ ESC-01")));
+    }
+
+    @Test
+    void aScenarioWithoutAPassingTestFailsTheMission() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(runWith("Crm.ESC_01_alta_valida"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("ESC-02") && json.contains("1/2")));
+    }
+
+    // Review Focus 5: sin requisitos de Aria la revisión de Vera sigue como hoy.
+    @Test
+    void withoutScenariosVeraStillReviews() throws Exception {
+        stubFullstack();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        strategy.execute(fullstackContext(), progress);
+
+        verify(runtime).review(anyString(), eq("M-1"), eq("qa"), anyString(), anyMap());
+    }
 }

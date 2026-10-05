@@ -117,4 +117,18 @@ class StaticValidationStatusTest {
         assertEquals(StaticValidationStatus.FAILED,
                 StaticValidationStatus.compute(ALL_PASS, review("BLOCKER"), sandbox("PASS", 3)));
     }
+
+    // QA casos de uso (spec 2026-10-05 §3): sin revisión de Vera; la cobertura es un chequeo más.
+    @Test
+    void inCoverageModeTheChecksAndTheSandboxDecide() {
+        var green = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 2, 0)));
+        var coverage = new java.util.ArrayList<>(ALL_PASS);
+        coverage.add(StaticCheck.pass("SCENARIO_COVERAGE", "2/2", null, List.of()));
+        assertEquals(StaticValidationStatus.VERIFIED, StaticValidationStatus.compute(coverage, null, green, true));
+
+        var missing = new java.util.ArrayList<>(ALL_PASS);
+        missing.add(StaticCheck.fail("SCENARIO_COVERAGE", "1/2", null, List.of()));
+        assertEquals(StaticValidationStatus.FAILED, StaticValidationStatus.compute(missing, null, green, true));
+        assertEquals(StaticValidationStatus.UNVALIDATED, StaticValidationStatus.compute(coverage, null, null, true));
+    }
 }

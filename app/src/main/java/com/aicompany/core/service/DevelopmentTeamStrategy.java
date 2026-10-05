@@ -423,7 +423,24 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         String reviewError = null;
         var reviewStarted = false;
 
-        try {
+        // QA casos de uso (spec 2026-10-05 §3 y §5): con escenarios de Aria, VERIFIED lo decide la cobertura y la
+        // revisión de Vera la reemplaza un reporte armado por Java (sin llamar al modelo).
+        var scenarios = scenarios(missionId);
+        var coverageMode = !scenarios.isEmpty();
+        if (coverageMode) {
+            var tests = sandboxResult == null ? List.<SandboxResult.TestCase>of() : sandboxResult.allTests();
+            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios, tests);
+            checks = new ArrayList<>(checks);
+            checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
+            checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId), tests));
+            var report = com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
+            reviewError = COVERAGE_REPORT + report;
+            memory.updateTask(validationTaskId, "COMPLETED", COVERAGE_REPORT + report);
+            events.publishTask("EMPRESA_TASK_COMPLETED", validationTaskId, missionId, validation.agentId(), "COMPLETED",
+                    "Reporte de cobertura de escenarios.");
+        }
+
+        if (!coverageMode) try {
 
             var filesBySha = new LinkedHashMap<String, Set<String>>();
 
@@ -463,7 +480,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         generatedByForjai.addAll(forjaiFiles);
         review = withoutFindingsOn(review, generatedByForjai);
 
-        var status = StaticValidationStatus.compute(checks, review, sandboxResult);
+        var status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
+                : StaticValidationStatus.compute(checks, review, sandboxResult);
         if (status == StaticValidationStatus.VERIFIED) {
             // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
             memory.recordVerifiedCommit(missionId, headSha);
@@ -1261,6 +1279,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private RequirementsMemoryService requirementsMemory;
 
+    static final String COVERAGE_REPORT = "Reporte de cobertura de escenarios (Java, QA casos de uso):\n";
+
+    /** Spec QA §4: los tests del último sandbox VERIFIED de la misión (vacío si no hubo). */
+    private List<SandboxResult.TestCase> previousVerifiedTests(String missionId) {
+        try {
+            return memory.lastVerifiedSandboxJson(missionId)
+                    .map(json -> jsonMapper.readValue(json, SandboxResult.class).allTests()).orElse(List.of());
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the last verified sandbox: {}", missionId, ex.getMessage());
+            return List.of();
+        }
+    }
+
     /** QA casos de uso (spec 2026-10-05): escenarios aprobados de Aria. Opcional: sin él, reglas anteriores. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setRequirements(RequirementsMemoryService requirementsMemory) {
@@ -1832,7 +1863,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("\nSANDBOX (ejecución real): ").append(sandboxSummary).append("\n");
 
         out.append("\nREVISIÓN ESTÁTICA: ");
-        if (review == null) {
+        if (review == null && reviewError != null && reviewError.startsWith(COVERAGE_REPORT)) {
+            out.append(reviewError).append("\n");
+        } else if (review == null) {
             out.append("no se completó (").append(reviewError).append(")\n");
         } else {
             out.append(review.verdict()).append("\n");
