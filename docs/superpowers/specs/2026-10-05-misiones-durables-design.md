@@ -84,10 +84,12 @@ La ronda en curso es `Mission.evidenceRound`. El pedido de una ronda de evidenci
 guardado con la ronda (§3). Retomar nunca gasta otra ronda ni otro número de ronda.
 
 **Retomar la generación sin repetir trabajo** (`DevelopmentTeamStrategy` + `DevelopmentWorkspaceService`):
-1. **Workspace limpio**: antes de generar, `resetTo(missionId, sha)` (`git reset --hard <sha>` + `git clean -fd`) al último
-   commit registrado en Neo4j (el `commitSha` más reciente de las tareas de la misión, o el del scaffold). Un commit que
-   llegó a git pero no a Neo4j se descarta y su tarea se repite. Sin workspace (o sin el commit registrado) → `BLOCKED` con
-   el motivo.
+1. **Workspace limpio**: antes de generar, si el workspace ya tiene commits, se descarta lo no commiteado
+   (`git reset --hard HEAD` + `git clean -fd`) y, si el último commit lleva el trailer `Forjai-Task` de una tarea `WORK`
+   que no quedó `COMPLETED` en Neo4j (el reinicio cayó entre el commit y el registro), se retrocede ese commit
+   (`reset --hard HEAD~1`) y su tarea se repite. Los commits de Forjai (scaffold, rutas, dependencias, auto-fix) no se
+   registran como tareas y se conservan. Una ronda 0 con workspace usa el scaffold existente (`existingScaffold`, que solo
+   agrega lo que falte) en vez de volver a escribirlo. Sin workspace en una ronda > 0 → `BLOCKED` con el motivo.
 2. **Lo ya hecho se salta**: el scaffold y cada tarea `WORK` de la ronda en `COMPLETED` con `commitSha` alcanzable desde
    `HEAD` entran directo a `committed`; sus `packages` salen del `DevelopmentResult` guardado como resultado de la tarea.
    Lo mismo para los commits de Forjai de la ronda (`-API-ROUTES`, `-DEPENDENCIES`).
