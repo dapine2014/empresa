@@ -39,6 +39,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | `CeoService` describe `TEAM-DEVELOPMENT` con "juegos" (son fase 3) | Bloque 1 (m-6) | Texto para el modelo |
 | [ ] | El chat no reconoce "equipo de desarrollo" como nombre del equipo | Bloque 1 (m-7) | Agregar frases exactas, no la palabra suelta "desarrollo" |
 | [ ] | Etiquetas "Engineering" en `DependenciesPage` y `ProductsPage` | Bloque 1 | Solo texto |
+| [ ] | `ProductStatus.PUBLISHED` inalcanzable (`ProductStatusService.isPublished` devuelve `false`) y su javadoc dice que los tres estados son alcanzables | Previo | Corregir el javadoc o implementar la publicación |
 | [ ] | El resultado guardado de cada tarea incluye `"complete":true,"remainingPaths":[]` | Bloque 3 (m-12) | Ruido en Activity, sin efecto funcional |
 
 ## 3. Fuera del código
