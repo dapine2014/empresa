@@ -17,6 +17,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1204,5 +1205,85 @@ class DevelopmentTeamStrategyTest {
                 anyList(), eq(List.of("backend/tests/Clientes.Tests/ClienteTests.cs")), any());
         verify(runtime, never()).generate(eq("M-1-BACKEND"), eq("M-1"), eq("backend"), contains("DIAGNÓSTICO"), anyList(),
                 anyList(), anyList(), any());
+    }
+
+    // ---- QA casos de uso (spec 2026-10-05) ----
+
+    private static final com.aicompany.core.agent.model.RequirementsSpec QA_SPEC = new com.aicompany.core.agent.model.RequirementsSpec(
+            "CRM", List.of(), List.of(), List.of(new com.aicompany.core.agent.model.RequirementsSpec.Role("vendedor", "x")),
+            List.of(new com.aicompany.core.agent.model.RequirementsSpec.UserStory("HU-01", "vendedor", "crear", "seguir",
+                    List.of("c"), List.of(), List.of(
+                            new com.aicompany.core.agent.model.RequirementsSpec.Scenario("ESC-01", "alta válida", List.of("d"), List.of("c"), List.of("e")),
+                            new com.aicompany.core.agent.model.RequirementsSpec.Scenario("ESC-02", "alta sin nombre", List.of("d"), List.of("c"), List.of("e"))))),
+            List.of(new com.aicompany.core.agent.model.RequirementsSpec.Increment(1, "MVP", List.of("HU-01"))));
+
+    private TeamMissionContext withQaWork() throws Exception {
+        var requirements = mock(RequirementsMemoryService.class);
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(QA_SPEC), "APPROVED", "", null)));
+        when(requirements.currentIncrement("M-1")).thenReturn(1);
+        strategy.setRequirements(requirements);
+        var base = fullstackContext();
+        var tasks = new ArrayList<>(base.plan().tasksOrEmpty());
+        tasks.add(new PlannedTask("qa", "WORK", "TESTS", "Tests", List.of("qa"), List.of("backend/tests", "app/test")));
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, tasks, List.of(), p.stackProfile(), p.boundedContexts(),
+                p.ubiquitousLanguage(), null, p.components());
+        var qa = CompletableFuture.completedFuture(dev("backend/tests/ClientesTests.cs"));
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any())).thenReturn(qa);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("4".repeat(40), List.of("backend/tests/ClientesTests.cs")));
+        return new TeamMissionContext("M-1", "un CRM simple", base.team(), plan);
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.function.Function<DevelopmentResult, List<String>> checksOf(String taskId) {
+        var checks = (org.mockito.ArgumentCaptor<java.util.function.Function<DevelopmentResult, List<String>>>)
+                (org.mockito.ArgumentCaptor<?>) org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime, atLeastOnce()).generate(eq(taskId), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), checks.capture());
+        return checks.getValue();
+    }
+
+    // Spec QA §1: Vera recibe los escenarios y Java exige un test por escenario al generar.
+    @Test
+    void veraGetsTheScenariosAndEveryScenarioNeedsATest() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+
+        strategy.execute(context, progress);
+
+        verify(runtime).generate(eq("M-1-QA"), anyString(), eq("qa"),
+                argThat(p -> p.contains("ESC-01 alta válida") && p.contains("ESC-02 alta sin nombre")), anyList(), anyList(), anyList(), any());
+        var errors = checksOf("M-1-QA").apply(new DevelopmentResult("r", List.of(new GeneratedFile(
+                "backend/tests/ClientesTests.cs", "[Fact] public void ESC_01_alta_valida() {}"))));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("ESC-02")), errors.toString());
+        assertEquals(List.of(), checksOf("M-1-QA").apply(new DevelopmentResult("r", List.of(new GeneratedFile(
+                "backend/tests/ClientesTests.cs", "[Fact] public void ESC_01_a() {}\n[Fact] public void ESC_02_b() {}")))));
+    }
+
+    // Spec QA §4: un test del último VERIFIED no se puede borrar, en ninguna tarea.
+    @Test
+    void aVerifiedTestCannotDisappear() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var verified = "7".repeat(40);
+        when(memory.verifiedCommit("M-1")).thenReturn(Optional.of(verified));
+        when(workspace.filesAtCommit("M-1", verified)).thenReturn(List.of("backend/tests/ViejosTests.cs"));
+        when(workspace.readFileAtCommit("M-1", verified, "backend/tests/ViejosTests.cs"))
+                .thenReturn("[Fact] public void ESC_01_viejo() {}");
+
+        strategy.execute(context, progress);
+
+        var errors = checksOf("M-1-BACKEND").apply(new DevelopmentResult("r", List.of(new GeneratedFile(
+                "backend/src/Clientes.Api/Program.cs", PROGRAM))));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("ESC_01_viejo") && e.contains("borraste o renombraste")),
+                errors.toString());
+    }
+
+    // Sin requisitos de Aria: ni regla ni gates nuevos.
+    @Test
+    void withoutRequirementsNothingChanges() {
+        assertEquals(List.of(), strategy.scenarios("M-1"));
     }
 }

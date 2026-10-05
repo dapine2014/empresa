@@ -1259,6 +1259,90 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return com.aicompany.core.database.ConnectionContract.variables(connection == null ? "app" : connection.name());
     }
 
+    private RequirementsMemoryService requirementsMemory;
+
+    /** QA casos de uso (spec 2026-10-05): escenarios aprobados de Aria. Opcional: sin él, reglas anteriores. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRequirements(RequirementsMemoryService requirementsMemory) {
+        this.requirementsMemory = requirementsMemory;
+    }
+
+    /** Escenarios de los incrementos 1..N (N = el que se construye o el último construido); vacío sin requisitos. */
+    List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios(String missionId) {
+        if (requirementsMemory == null) {
+            return List.of();
+        }
+        try {
+            var approved = requirementsMemory.approved(missionId);
+            if (approved == null || approved.isEmpty()) {
+                return List.of();
+            }
+            var spec = jsonMapper.readValue(approved.get().specJson(), com.aicompany.core.agent.model.RequirementsSpec.class);
+            var upTo = Math.max(1, requirementsMemory.currentIncrement(missionId));
+            var out = new ArrayList<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario>();
+            for (int n = 1; n <= upTo; n++) {
+                for (var story : spec.storiesOf(n)) {
+                    for (var scenario : story.scenariosOrEmpty()) {
+                        out.add(new com.aicompany.core.agent.validation.ScenarioCoverage.Scenario(scenario.id(),
+                                scenario.title(), n));
+                    }
+                }
+            }
+            return out;
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the approved scenarios: {}", missionId, ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private static boolean isQa(TeamMissionContext context, String agentId) {
+        return context.team() != null && context.team().members().stream()
+                .anyMatch(m -> m.agentId().equals(agentId) && "QA".equals(m.roleCode()));
+    }
+
+    private Map<String, String> testFiles(String missionId, String sha) {
+        var files = new LinkedHashMap<String, String>();
+        if (sha == null) {
+            return files;
+        }
+        try {
+            for (var path : workspace.filesAtCommit(missionId, sha)) {
+                if (com.aicompany.core.agent.validation.TestInventory.isTestFile(path)) {
+                    var content = readOrNull(missionId, sha, path);
+                    if (content != null) {
+                        files.put(path, content);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the tests at {}: {}", missionId, sha, ex.getMessage());
+        }
+        return files;
+    }
+
+    private static Map<String, String> withReturned(Map<String, String> head, DevelopmentResult result) {
+        var files = new LinkedHashMap<>(head);
+        if (result.files() != null) {
+            result.files().stream().filter(f -> f != null && f.path() != null
+                            && com.aicompany.core.agent.validation.TestInventory.isTestFile(f.path()))
+                    .forEach(f -> files.put(f.path(), f.content()));
+        }
+        return files;
+    }
+
+    /** Spec QA §1: la regla de trazabilidad que recibe Vera. */
+    static String qaScenarioRule(List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios) {
+        if (scenarios.isEmpty()) {
+            return "";
+        }
+        return "\n\nESCENARIOS A CUBRIR (QA, obligatorio): escribe al menos un test automatizado por escenario, con el id "
+                + "en el nombre (.NET: método ESC_03_descripcion o [Trait(\"Escenario\", \"ESC-03\")]; Flutter: "
+                + "test('ESC-03 descripción') o testWidgets('ESC-03 …')). Cada test verifica el dado/cuando/entonces del "
+                + "escenario. No borres, renombres ni saltes tests que ya existen: la suite solo crece.\n"
+                + scenarios.stream().map(sc -> "- " + sc.id() + " " + sc.title() + " (incremento " + sc.increment() + ")")
+                .collect(Collectors.joining("\n")) + "\n";
+    }
+
     /**
      * Los chequeos de base de datos (spec 2026-10-02 §2.4) solo aplican si el plan declara base: en ese caso se usa
      * la variante de generate con chequeos extra; si no, las mismas llamadas de siempre. requiredPaths null = las
@@ -1278,6 +1362,22 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var layers = layerChecks(context, owned, headSha);
         if (layers != null) {
             checks.add(layers);
+        }
+        // QA casos de uso (spec 2026-10-05 §1 y §4): cobertura de escenarios en la tarea de Vera; la suite no decrece.
+        var scenarios = scenarios(missionId);
+        if (!scenarios.isEmpty() && isQa(context, agentId)) {
+            var headTests = testFiles(missionId, headSha);
+            checks.add(result -> com.aicompany.core.agent.validation.ScenarioCoverage.sourceErrors(scenarios,
+                    withReturned(headTests, result)));
+        }
+        var verified = memory.verifiedCommit(missionId).orElse(null);
+        if (verified != null) {
+            var before = com.aicompany.core.agent.validation.TestInventory.of(testFiles(missionId, verified));
+            if (!before.isEmpty()) {
+                var headTests = testFiles(missionId, headSha);
+                checks.add(result -> com.aicompany.core.agent.validation.TestSuiteGrowthGate.errors(before,
+                        com.aicompany.core.agent.validation.TestInventory.of(withReturned(headTests, result))));
+            }
         }
         if (checks.isEmpty()) {
             return requiredPaths == null
@@ -1558,7 +1658,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
-        return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task);
+        return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task)
+                + (isQa(context, task.agentId()) ? qaScenarioRule(scenarios(context.missionId())) : "");
     }
 
     private String buildWorkPromptBase(TeamMissionContext context, PlannedTask task) {
