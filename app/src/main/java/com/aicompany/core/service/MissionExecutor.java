@@ -563,7 +563,7 @@ public class MissionExecutor {
     public CompletableFuture<Void> buildIncrementAsync(String missionId, int increment) {
         var round = memory.evidenceRound(missionId) + 1;
         memory.setEvidenceRound(missionId, round);
-        requirementsMemory.addIncrementRound(missionId);
+        requirementsMemory.addIncrementRound(missionId, round, increment);
         events.publish("EMPRESA_INCREMENT_STARTED", missionId, null, "human", Map.of("increment", increment, "round", round));
         advanceMission(missionId, MissionStatus.PLANNING, 5, "Incremento " + increment,
                 "Neo planifica el incremento " + increment + " sobre el mismo repositorio.");

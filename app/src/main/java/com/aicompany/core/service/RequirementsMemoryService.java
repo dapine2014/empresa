@@ -97,9 +97,29 @@ public class RequirementsMemoryService {
         return intProperty(missionId, "incrementRounds");
     }
 
-    public void addIncrementRound(String missionId) {
-        write("MATCH (m:Mission {id:$id}) SET m.incrementRounds = coalesce(m.incrementRounds, 0) + 1",
-                Map.of("id", missionId));
+    /** Verificado en vivo (2026-10-04): se guarda qué ronda fue de qué incremento (el chat las etiquetaba mal). */
+    public void addIncrementRound(String missionId, int round, int increment) {
+        write("MATCH (m:Mission {id:$id}) SET m.incrementRounds = coalesce(m.incrementRounds, 0) + 1, "
+                        + "m.incrementRoundNumbers = coalesce(m.incrementRoundNumbers, []) + $round, "
+                        + "m.incrementNumbers = coalesce(m.incrementNumbers, []) + $increment",
+                Map.of("id", missionId, "round", round, "increment", increment));
+    }
+
+    /** Ronda → incremento que se construyó en ella. */
+    public Map<Integer, Integer> incrementRoundsByNumber(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN coalesce(m.incrementRoundNumbers, []) AS r, "
+                            + "coalesce(m.incrementNumbers, []) AS n", Map.of("id", missionId))
+                    .list(rec -> {
+                        var rounds = rec.get("r").asList(v -> v.asInt());
+                        var increments = rec.get("n").asList(v -> v.asInt());
+                        var out = new java.util.LinkedHashMap<Integer, Integer>();
+                        for (int i = 0; i < Math.min(rounds.size(), increments.size()); i++) {
+                            out.put(rounds.get(i), increments.get(i));
+                        }
+                        return (Map<Integer, Integer>) out;
+                    }).stream().findFirst().orElse(Map.of());
+        }
     }
 
     private int intProperty(String missionId, String property) {

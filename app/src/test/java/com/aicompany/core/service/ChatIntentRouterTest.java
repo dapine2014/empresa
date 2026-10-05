@@ -2375,4 +2375,61 @@ class ChatIntentRouterTest {
         assertTrue(month.contains("este mes") && month.contains("sin llamadas remotas"), month);
         verifyNoInteractions(ceoService);
     }
+
+    // Verificado en vivo (2026-10-04): "pide más evidencia … sin agregar historias nuevas" caía en el estado de la misión
+    // porque la palabra "historias" bloqueaba toda decisión. Solo bloquea aprobar/rechazar.
+    @Test
+    void anEvidenceRequestThatMentionsStoriesStillStartsTheRound() {
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-1", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 1)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+
+        router.route("pide más evidencia sobre MISSION-1: corrige las rutas. Sin agregar historias nuevas.");
+
+        verify(missionService).recordDecision(eq("MISSION-1"),
+                argThat(c -> c.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE));
+    }
+
+    // Verificado en vivo (2026-10-04): con incrementos el chat decía "Ronda de evidencia 4 de 2 (quedan 0)" y le ponía
+    // a la ronda 4 (un incremento) el pedido de la ronda 1.
+    @Test
+    void incrementRoundsAreLabeledAndDoNotCountAsEvidence() {
+        var requirements = mock(RequirementsMemoryService.class);
+        router.setRequirementsMemory(requirements);
+        when(requirements.incrementRoundsByNumber("MISSION-5")).thenReturn(java.util.Map.of(2, 2, 3, 2));
+        var mission = new MissionResponse("MISSION-5", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-5")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-5")).thenReturn(List.of(
+                new AgentTask("MISSION-5-QA", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-5-QA-R1", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-5-QA-R2", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-5-QA-R3", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-5")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.evidenceRound("MISSION-5")).thenReturn(3);
+        when(missionMemory.evidenceRequests("MISSION-5")).thenReturn(List.of("Corrige el 409"));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        var response = router.route("¿Cómo va MISSION-5?");
+
+        assertTrue(response.contains("Ronda de evidencia 1 de 2 (queda 1)"), response);
+        assertTrue(response.contains("Ronda 1 (pedido: \"Corrige el 409\")"), response);
+        assertTrue(response.contains("Ronda 2 (incremento 2)") && response.contains("Ronda 3 (incremento 2)"), response);
+    }
+
+    @Test
+    void theRoundStartedMessageCountsOnlyEvidenceRounds() {
+        var requirements = mock(RequirementsMemoryService.class);
+        router.setRequirementsMemory(requirements);
+        when(requirements.incrementRoundsByNumber("MISSION-1")).thenReturn(java.util.Map.of(2, 2, 3, 2, 4, 2));
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-1", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 5)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+
+        var response = router.route("pide más evidencia sobre MISSION-1: corrige las rutas");
+
+        assertTrue(response.contains("ronda 2 de 2"), response);
+    }
 }

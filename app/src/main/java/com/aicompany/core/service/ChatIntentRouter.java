@@ -734,6 +734,21 @@ public class ChatIntentRouter {
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
     private com.aicompany.core.database.DatabaseApplyService databaseApply;
     private ModelCostService modelCost;
+    private RequirementsMemoryService requirementsMemory;
+
+    /** Aria (2026-10-04): qué rondas fueron incrementos, para no contarlas como evidencia. Opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRequirementsMemory(RequirementsMemoryService requirementsMemory) {
+        this.requirementsMemory = requirementsMemory;
+    }
+
+    private Map<Integer, Integer> incrementRoundsOf(String missionId) {
+        if (requirementsMemory == null) {
+            return Map.of();
+        }
+        var rounds = requirementsMemory.incrementRoundsByNumber(missionId);
+        return rounds == null ? Map.of() : rounds;
+    }
 
     /** Costo real por misión (2026-10-04). Opcional en tests. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -948,13 +963,15 @@ public class ChatIntentRouter {
 
         var missionId = missionIdMatcher.group(1).toUpperCase(Locale.ROOT);
 
-        // Revisión final Aria (7): un mensaje sobre las HU o los requisitos nunca cierra ni cancela la misión.
-        if (REQUIREMENTS_WORD.matcher(normalize(message)).find()) {
-            return null;
-        }
-
         if (MORE_EVIDENCE.matcher(normalize(message)).find()) {
             return new DetectedDecision(missionId, InvestorDecision.REQUEST_MORE_EVIDENCE);
+        }
+
+        // Revisión final Aria (7): un mensaje sobre las HU o los requisitos nunca cierra ni cancela la misión. Verificado
+        // en vivo (2026-10-04): solo bloquea aprobar/rechazar; "pide más evidencia … sin agregar historias" sigue siendo
+        // una ronda.
+        if (REQUIREMENTS_WORD.matcher(normalize(message)).find()) {
+            return null;
         }
 
         if (APPROVE.matcher(message).find()) {
@@ -1254,7 +1271,10 @@ public class ChatIntentRouter {
                 ? "Sales, Product, Finance, Engineering y QA"
                 : teamMemory.snapshot(teamId).members().stream().map(TeamMemberInfo::name)
                         .collect(Collectors.joining(", "));
-        return "Arrancó la ronda " + round + " de " + max + " de más evidencia sobre " + missionId + ". Trabajan: "
+        // Verificado en vivo (2026-10-04): las rondas de incremento no cuentan como evidencia.
+        var increments = incrementRoundsOf(missionId);
+        var evidenceNumber = round - (int) increments.keySet().stream().filter(r -> r < round).count();
+        return "Arrancó la ronda " + evidenceNumber + " de " + max + " de más evidencia sobre " + missionId + ". Trabajan: "
                 + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
     }
 
@@ -1268,13 +1288,20 @@ public class ChatIntentRouter {
         var max = (int) companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
         var byRound = new java.util.TreeMap<Integer, List<AgentTask>>();
         tasks.forEach(t -> byRound.computeIfAbsent(TaskIds.roundOf(t.taskId()), k -> new ArrayList<>()).add(t));
+        // Verificado en vivo (2026-10-04): las rondas de incremento se etiquetan aparte y no consumen el límite.
+        var increments = incrementRoundsOf(missionId);
+        var evidenceRounds = java.util.stream.IntStream.rangeClosed(1, round).filter(r -> !increments.containsKey(r))
+                .boxed().toList();
+        var used = evidenceRounds.size();
         var lines = new ArrayList<String>();
-        lines.add(" Ronda de evidencia " + round + " de " + max + " (queda" + (max - round == 1 ? " 1" : "n " + Math.max(0, max - round)) + ").");
+        lines.add(" Ronda de evidencia " + used + " de " + max + " (queda" + (max - used == 1 ? " 1" : "n " + Math.max(0, max - used)) + ").");
         byRound.forEach((r, list) -> {
             // Los pedidos se alinean desde el final: uno registrado antes de existir las rondas no disparó ninguna.
-            var index = requests.size() - round + (r - 1);
-            var label = r == 0 ? "Ronda 0" : "Ronda " + r + " (pedido: \""
-                    + (index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
+            var position = evidenceRounds.indexOf(r);
+            var index = requests.size() - used + position;
+            var label = r == 0 ? "Ronda 0" : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
+                    : "Ronda " + r + " (pedido: \""
+                    + (position >= 0 && index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
             lines.add(" " + label + ": " + list.stream().map(t -> t.agentId() + "=" + t.action() + " " + t.status())
                     .collect(Collectors.joining(", ")) + ".");
         });

@@ -320,7 +320,7 @@ class MissionExecutorTeamTest {
                 argThat(p -> p != null && p.contextNames().equals(List.of("Clientes", "Oportunidades"))));
         verify(development).execute(argThat(c -> c.round() == 2 && c.instruction().contains("INCREMENTO 2 de 2")
                 && c.plan().workTasks().stream().noneMatch(t -> t.objective().contains("INCREMENTO"))), any());
-        verify(requirements).addIncrementRound("M-9");
+        verify(requirements).addIncrementRound("M-9", 2, 2);
         verify(memory).setEvidenceRound("M-9", 2);
         verify(requirements).setBuildingIncrement("M-9", 2);
     }
