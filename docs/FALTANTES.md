@@ -12,8 +12,8 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [x] | **Aria (HUs, BDD, MVP por incrementos)** | Hecho (v1, sin cola, 2026-10-04): HU con roles, escenarios e incrementos aprobados por el fundador; CRM de 2 incrementos `VERIFIED`. Pendiente: HU nuevas tras aprobar, incrementos encadenados solos (misiones durables) | Bloque 5 |
 | [ ] | **Misiones durables** | Las misiones viven en memoria: un reinicio de `company-core` las corta (pasó con `MISSION-1790905978528`) | Bloque 4 |
 | [ ] | **Corrección hasta cero errores** | Hoy solo se corrigen errores de compilación, en 2 rondas; un test que falla deja la misión en `FAILED` | Bloque 7 |
-| [ ] | **Escenarios BDD trazables** | `VERIFIED` solo exige que compile y pase al menos 1 test, no que se cumplan los criterios de aceptación | Bloques 5 y 6 |
-| [ ] | **Sandbox con 6 pasos y tests con nombre** | El arranque está mezclado con el smoke y los tests solo se cuentan, no se identifican | Bloque 2 |
+| [x] | **Escenarios BDD trazables** | Hecho (2026-10-05, QA casos de uso): cada `ESC-NN` aprobado con un test con su id que pasó; `VERIFIED` exige 100 %; la suite solo crece | Bloques 5 y 6 |
+| [ ] | **Sandbox con 6 pasos** (tests con nombre: hecho 2026-10-05) | El arranque está mezclado con el smoke | Bloque 2 |
 | [x] | **Varios stacks en una misión** (B1, rama `apps-completas-b1`) | Una misión usa un solo perfil: Flutter + .NET + PostgreSQL juntos no existe (Neo eligió solo Flutter en el intento de psicología) | Fase 2 |
 | [ ] | **PostgreSQL en el sandbox** | Un producto con base de datos no tiene dónde probarse | Fase 2 |
 | [ ] | **Entrega y DevOps (Andrea)** | No hay Dockerfile ni CI del producto generado | Fase 2 |
