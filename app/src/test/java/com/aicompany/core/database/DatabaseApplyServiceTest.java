@@ -97,13 +97,18 @@ class DatabaseApplyServiceTest {
         when(memory.lastValidationStatus("M-1")).thenReturn(java.util.Optional.of("VERIFIED"));
         when(memory.find("M-1")).thenReturn(java.util.Optional.of(mission(com.aicompany.core.model.MissionStatus.BLOCKED)));
         when(memory.verifiedCommit("M-1")).thenReturn(java.util.Optional.of("verificado"));
-        when(memory.lastTeamPlanJson("M-1")).thenReturn(java.util.Optional.of("{\"summary\":\"Citas\",\"stackProfile\":\"DOTNET_APP\",\"tasks\":[]}"));
+        when(memory.lastTeamPlanJson("M-1")).thenReturn(java.util.Optional.of(
+                "{\"summary\":\"Citas\",\"stackProfile\":\"DOTNET_APP\",\"tasks\":[],"
+                        + "\"database\":{\"engine\":\"POSTGRESQL\",\"connectionName\":\"citas-dev-aws\"}}"));
+        when(connections.connectionsOf("M-1")).thenReturn(List.of(CITAS));
+        when(connections.password(CITAS)).thenReturn("S3cret-9876");
+        when(workspace.filesAtCommit("M-1", "verificado")).thenReturn(List.of());
+        when(applier.apply(any(), any(), anyList(), any(), any()))
+                .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(), null, null, false));
 
-        try {
-            service.applyLatest("M-1");
-        } catch (IllegalStateException ex) {
-            assertFalse(ex.getMessage().contains("detenida"), ex.getMessage());
-        }
+        service.applyLatest("M-1");
+
+        verify(applier).apply(eq(CITAS), eq("S3cret-9876"), anyList(), eq("M-1"), eq("verificado"));
     }
 
     @Test

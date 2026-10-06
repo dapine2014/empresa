@@ -174,6 +174,17 @@ class MissionRecoveryServiceTest {
         assertFalse(service.needsStrategy("M-1", 1, 3));
     }
 
+    @Test void fewerThanTwoAutomaticRoundsNeverAskForAStrategy() {
+        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 4, false)));
+        assertFalse(service.needsStrategy("M-1", 1, 9));
+    }
+
+    @Test void aFounderRoundResetsTheStrategyCount() {
+        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 4, false),
+                new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "fundador", 4, true)));
+        assertFalse(service.needsStrategy("M-1", 1, 4));
+    }
+
     @Test void aFounderRoundResetsTheCounter() {
         when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 5, false),
                 new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "c", 3, false),

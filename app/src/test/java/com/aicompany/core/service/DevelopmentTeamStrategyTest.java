@@ -409,13 +409,17 @@ class DevelopmentTeamStrategyTest {
         when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
 
-        try {
-            strategy.execute(roundOne, progress);
-        } catch (RuntimeException ignored) {
-            // lo que importa es que se pidió el commit del scaffold antes de generar
-        }
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI-R1"), eq("frontend-ui"), eq("Mila"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+
+        strategy.execute(roundOne, progress);
 
         verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any());
+        // El camino del scaffold existente (existingScaffold) no se usó: no leyó ningún archivo en un commit previo.
+        verify(workspace, never()).headSha("M-1");
     }
 
     @Test
