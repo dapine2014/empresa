@@ -5,7 +5,8 @@ package com.aicompany.core.recovery;
  */
 public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increment) {
 
-    public enum Stage { REQUIREMENTS, ADJUSTMENT, AWAIT_APPROVAL, PLAN, GENERATE, VERIFY, INTERRUPT }
+    /** HUMAN_VERIFY (revisión 2026-10-06 §5): una verificación humana cortada se repite como verificación, sin modelos. */
+    public enum Stage { REQUIREMENTS, ADJUSTMENT, AWAIT_APPROVAL, PLAN, GENERATE, VERIFY, INTERRUPT, HUMAN_VERIFY }
 
     public enum RoundKind { ORIGINAL, INCREMENT, EVIDENCE, CORRECTION }
 
@@ -19,6 +20,9 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
         var increment = s.incrementOfRound();
         if (!DEVELOPMENT_TEAM.equals(s.teamId())) {
             return new ResumePoint(Stage.INTERRUPT, s.round(), kind, increment);
+        }
+        if (s.humanVerifyTask() != null) {
+            return new ResumePoint(Stage.HUMAN_VERIFY, s.round(), kind, increment);
         }
         if (!s.requirementsApproved()) {
             if (s.pendingAdjustment() != null) {

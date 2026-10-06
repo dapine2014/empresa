@@ -21,6 +21,17 @@ class ResumePointTest {
         assertEquals(ResumePoint.Stage.INTERRUPT, ResumePoint.of(new MissionSnapshot("M-1", "TEAM-MARKETING-GROWTH", 0, null,
                 false, null, false, null, false, List.of())).stage());
     }
+    // Revisión 2026-10-06 §5 (fix 2): una verificación humana cortada se repite como verificación (nunca una ronda).
+    @Test void anInterruptedHumanVerificationIsVerifiedAgain() {
+        var s = new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 3, 1, true, "APPROVED", true, null, true, List.of(
+                new MissionSnapshot.RoundTask("M-1-BACKEND-R3", "RUNNING", null)), "M-1-HUMAN-VERIFY-2");
+        var p = ResumePoint.of(s);
+        assertEquals(ResumePoint.Stage.HUMAN_VERIFY, p.stage());
+        assertEquals(3, p.round());
+        assertEquals(ResumePoint.Stage.GENERATE, ResumePoint.of(new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 3, 1, true,
+                "APPROVED", true, null, true, List.of(new MissionSnapshot.RoundTask("M-1-BACKEND-R3", "RUNNING", null)), null))
+                .stage());
+    }
     @Test void withoutRequirementsAriaWritesAgain() {
         assertEquals(ResumePoint.Stage.REQUIREMENTS, ResumePoint.of(dev(0, null, false, null, false, null, false, List.of())).stage());
     }

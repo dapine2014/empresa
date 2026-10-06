@@ -117,11 +117,17 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Spec misiones durables §2: con workspace, primero se limpia y se lee lo ya commiteado de esta ronda.
         var head = workspace.headIfAny(missionId);
         var done = new LinkedHashMap<String, AgentTask>();
+        var stashNote = "";
         if (head.isPresent()) {
             var byId = memory.tasks(missionId).stream()
                     .collect(Collectors.toMap(AgentTask::taskId, t -> t, (a, b) -> b));
             try {
-                workspace.discardUncommitted(missionId);
+                // Revisión 2026-10-06 §5 (fix 1): lo sin commit no se pierde, queda en git stash.
+                var stash = workspace.discardUncommitted(missionId);
+                if (stash != null && stash.isPresent()) {
+                    log.info("MISSION {} - uncommitted changes saved in git stash: {}", missionId, stash.get());
+                    stashNote = "Lo que estaba sin commit quedó guardado en git stash (" + stash.get() + ").";
+                }
                 var headTask = workspace.headTask(missionId).orElse(null);
                 var headRecord = headTask == null ? null : byId.get(headTask);
                 // El commit raíz no se retrocede: la tarea se regenera encima.
@@ -559,14 +565,16 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
                         repairRounds, autofixRounds, dependencyOutcome, triageNotes)
-                        + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText));
+                        + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText)
+                        + (stashNote.isEmpty() ? "" : "\n" + stashNote));
     }
 
     static final String HUMAN_AGENT = "human";
     /** Agente de la tarea VALIDATION de la verificación humana (Vera; la crea MissionExecutor). */
     public static final String HUMAN_VERIFY_AGENT = "qa";
     static final String UNCOMMITTED_NOTE = "Hay cambios sin commit en el repositorio: NO se verificaron (solo cuenta el "
-            + "último commit) y no se borraron. Haz commit y vuelve a pedir \"verifica\".";
+            + "último commit). No se borran: si la corrección automática arranca, quedan guardados en git stash. Haz "
+            + "commit y vuelve a pedir \"verifica\".";
 
     /**
      * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): un desarrollador corrigió el código e hizo commit.
@@ -602,7 +610,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         SandboxResult sandboxResult = null;
         String sandboxError;
-        if (!checks.stream().allMatch(StaticCheck::passed) || components.isEmpty()) {
+        if (components.isEmpty()) {
+            sandboxError = "Sandbox omitido: el plan no declara componentes que compilar.";
+        } else if (!checks.stream().allMatch(StaticCheck::passed)) {
             sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
         } else if (!dependencyOutcome.pending().isEmpty() || dependencyOutcome.error() != null) {
             sandboxError = "Dependencias pendientes de aprobación (🔴): "

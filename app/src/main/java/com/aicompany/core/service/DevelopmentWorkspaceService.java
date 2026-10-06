@@ -142,11 +142,27 @@ public class DevelopmentWorkspaceService {
         }
     }
 
-    /** Spec misiones durables §2: lo que quedó escrito sin commit (el proceso murió a mitad) se descarta. */
-    public synchronized void discardUncommitted(String missionId) throws IOException {
-        var dir = missionWorkspace(missionId);
-        git.run(dir, "reset", "-q", "--hard", "HEAD");
-        git.run(dir, "clean", "-q", "-fd");
+    /**
+     * Spec misiones durables §2: el worktree vuelve a HEAD antes de trabajar encima (el proceso pudo morir a mitad).
+     * Revisión 2026-10-06 §5 (fix 1): nunca se pierde trabajo (p. ej. el de un desarrollador sin commit): lo modificado y
+     * lo sin seguimiento quedan en {@code git stash}. Devuelve el mensaje del stash, o vacío si no había nada.
+     */
+    public synchronized Optional<String> discardUncommitted(String missionId) throws IOException {
+        if (!hasUncommitted(missionId)) {
+            return Optional.empty();
+        }
+        var message = "Forjai: sin commit antes de retomar " + java.time.Instant.now();
+        git.run(missionWorkspace(missionId),
+                "-c", "user.name=Forjai company-core",
+                "-c", "user.email=company-core@forjai.local",
+                // Verificado con Git real: con GIT_LITERAL_PATHSPECS=1 (lo fija GitCommandRunner) "stash -u" guarda los
+                // archivos sin seguimiento pero no los saca del worktree. Acá no hay rutas de agentes.
+                "--no-literal-pathspecs",
+                "stash", "push", "-q", "-u", "-m", message);
+        if (hasUncommitted(missionId)) {
+            throw new IOException("git stash no dejó el repositorio limpio (lo sin commit sigue en " + message + ").");
+        }
+        return Optional.of(message);
     }
 
     /**

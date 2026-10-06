@@ -225,8 +225,8 @@ public class MissionRecoveryService {
     /**
      * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): "verifica MISSION-X". Un desarrollador corrigió el
      * código en el repositorio de la misión e hizo commit; se verifica el HEAD real sin llamar a ningún modelo (por eso no
-     * exige agentes encendidos) y el contador de correcciones automáticas del incremento vuelve a cero, así un resultado
-     * FAILED arranca la corrección con todas sus rondas. Sincronizado con recoverAll: nunca corre junto a una corrección.
+     * exige agentes encendidos); verifyAsync pone en cero el contador de correcciones automáticas del incremento, así un
+     * resultado FAILED arranca la corrección con todas sus rondas. Sincronizado con recoverAll: nunca corre junto a una corrección.
      */
     public synchronized void verify(String missionId) {
         var mission = missions.find(missionId).orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId));
@@ -246,7 +246,7 @@ public class MissionRecoveryService {
         if (missions.lastTeamPlanJson(missionId).isEmpty()) {
             throw new IllegalStateException("MISSION " + missionId + " no tiene un plan de Neo guardado: no se sabe qué verificar.");
         }
-        recovery.resetCounter(missionId, Math.max(1, requirements.currentIncrement(missionId)));
+        // Revisión 2026-10-06 §5 (fix 5): el contador lo pone en cero verifyAsync, tras pasar a EVALUATING.
         executor.verifyAsync(missionId);
     }
 
@@ -415,10 +415,15 @@ public class MissionRecoveryService {
                 .map(t -> new MissionSnapshot.RoundTask(t.taskId(), t.status(), t.commitSha())).toList();
         var planTask = all.stream().anyMatch(t -> "PLANNING".equals(t.kind())
                 && "COMPLETED".equals(t.status()) && TaskIds.roundOf(t.taskId()) == round);
+        // Revisión 2026-10-06 §5: la última tarea es una verificación humana sin resultado → se cortó a mitad.
+        var humanVerify = all.stream()
+                .max(Comparator.comparing(AgentTask::updatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
+                .filter(t -> t.taskId().contains(MissionExecutor.HUMAN_VERIFY_SUFFIX) && t.validationStatus() == null)
+                .map(AgentTask::taskId).orElse(null);
         return new MissionSnapshot(missionId, mission.teamId(), round, increment, correction,
                 latest.map(RequirementsMemoryService.Version::status).orElse(null),
                 requirements.approved(missionId).isPresent(), requirements.pendingAdjustment(missionId).orElse(null),
-                planTask || !tasks.isEmpty(), tasks);
+                planTask || !tasks.isEmpty(), tasks, humanVerify);
     }
 
     private Optional<AgentTask> lastValidation(String missionId) {

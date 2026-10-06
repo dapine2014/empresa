@@ -1507,6 +1507,49 @@ class DevelopmentTeamStrategyTest {
         verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), any(), any(), any());
     }
 
+    // Revisión 2026-10-06 §5 (fix 1): verificación humana FAILED con cambios sin commit → la corrección que sigue los
+    // guarda en git stash (nunca un reset destructivo) y el estado verificable lo dice.
+    @Test
+    void aCorrectionAfterAFailedHumanVerificationStashesTheUncommittedWork() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headTask("M-1")).thenReturn(Optional.empty());
+        when(workspace.hasUncommitted("M-1")).thenReturn(true);
+        when(memory.tasks("M-1")).thenReturn(List.of());
+        when(workspace.discardUncommitted("M-1")).thenReturn(Optional.of("Forjai: sin commit antes de retomar 2026-10-06T12:00:00Z"));
+
+        var human = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+        verify(workspace, never()).discardUncommitted(anyString());
+        assertTrue(human.verifiableState().contains("git stash"), human.verifiableState());
+
+        // La limpieza con stash es la misma en toda ronda con repositorio (la corrección es una ronda más).
+        var result = (TeamExecutionResult.Development) strategy.execute(context, progress);
+
+        verify(workspace).discardUncommitted("M-1");
+        verify(workspace, never()).dropHeadCommit(anyString());
+        assertTrue(result.verifiableState().contains("quedó guardado en git stash (Forjai: sin commit antes de retomar"),
+                result.verifiableState());
+    }
+
+    // Fix 4: sin componentes el sandbox no corre, pero no porque fallaran los chequeos.
+    @Test
+    void verifyHeadWithoutComponentsSaysSo() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        var p = context.plan();
+        var noComponents = new TeamPlan(p.summary(), null, null, p.tasksOrEmpty(), List.of(), null, p.boundedContexts(),
+                p.ubiquitousLanguage());
+        when(validator.validate(eq("M-1"), anyList(), anyList(), anyList(), anyList(), anyList()))
+                .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(
+                new TeamMissionContext("M-1", "x", context.team(), noComponents), "M-1-HUMAN-VERIFY-1");
+
+        assertFalse(result.verifiableState().contains("chequeos deterministas fallaron"), result.verifiableState());
+        assertTrue(result.verifiableState().contains("no declara componentes"), result.verifiableState());
+    }
+
     // Review Focus 1: el último commit es de una tarea que no quedó COMPLETED -> se retrocede y la tarea se repite.
     @Test
     void anUnrecordedLastCommitIsDroppedAndItsTaskRepeated() throws Exception {

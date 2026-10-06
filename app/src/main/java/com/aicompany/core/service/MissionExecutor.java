@@ -578,6 +578,23 @@ public class MissionExecutor {
             interrupt(missionId);
             return CompletableFuture.completedFuture(null);
         }
+        if (point.stage() == com.aicompany.core.recovery.ResumePoint.Stage.HUMAN_VERIFY) {
+            // Revisión 2026-10-06 §5 (fix 2): la verificación cortada queda FAILED y se verifica de nuevo (tarea n+1),
+            // sin modelos y sin tocar el repositorio; nunca se retoma como una ronda.
+            var prefix = missionId + HUMAN_VERIFY_SUFFIX;
+            memory.tasks(missionId).stream()
+                    .filter(t -> t.taskId().startsWith(prefix) && t.validationStatus() == null
+                            && !"FAILED".equals(t.status()))
+                    .forEach(t -> {
+                        var message = "Verificación humana interrumpida por un reinicio de company-core; se repite.";
+                        memory.updateTask(t.taskId(), "FAILED", message);
+                        events.publishTask("EMPRESA_TASK_FAILED", t.taskId(), missionId,
+                                DevelopmentTeamStrategy.HUMAN_VERIFY_AGENT, "FAILED", message);
+                    });
+            events.publish("EMPRESA_MISSION_RESUMED", missionId, null, "system",
+                    Map.of("stage", point.stage().name(), "round", point.round(), "kind", point.kind().name()));
+            return verifyAsync(missionId);
+        }
         events.publish("EMPRESA_MISSION_RESUMED", missionId, null, "system",
                 Map.of("stage", point.stage().name(), "round", point.round(), "kind", point.kind().name()));
         return submit(missionId, "resume " + point.stage(), () -> resumeInternal(missionId, point));
@@ -723,7 +740,7 @@ public class MissionExecutor {
         }
     }
 
-    static final String HUMAN_VERIFY_SUFFIX = "-HUMAN-VERIFY-";
+    public static final String HUMAN_VERIFY_SUFFIX = "-HUMAN-VERIFY-";
 
     /**
      * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): verifica el HEAD real del repositorio (chequeos
@@ -734,6 +751,15 @@ public class MissionExecutor {
     public CompletableFuture<Void> verifyAsync(String missionId) {
         advanceMission(missionId, MissionStatus.EVALUATING, 75, "Verificación humana",
                 "Verificando el último commit del repositorio sin modelos: chequeos deterministas, sandbox y escenarios.");
+        // Fix 5: el contador de correcciones del incremento vuelve a cero recién con la misión en EVALUATING.
+        if (recoveryMemory != null) {
+            try {
+                recoveryMemory.resetCounter(missionId,
+                        requirementsMemory == null ? 1 : Math.max(1, requirementsMemory.currentIncrement(missionId)));
+            } catch (Exception ex) {
+                log.warn("MISSION {} - could not reset the correction counter: {}", missionId, ex.getMessage());
+            }
+        }
         return submit(missionId, "human verification", () -> {
             var teamId = memory.teamId(missionId).orElseThrow();
             var plan = jsonMapper.readValue(memory.lastTeamPlanJson(missionId).orElseThrow(() -> new IllegalStateException(
@@ -749,7 +775,17 @@ public class MissionExecutor {
                     "PENDING", "Verificación humana del último commit.");
             var context = new TeamMissionContext(missionId, memory.instructionOf(missionId).orElse(""),
                     teamWorkPlanner.teamSnapshot(teamId), plan, memory.evidenceRound(missionId));
-            var result = strategy.verifyHead(context, taskId);
+            memory.updateTask(taskId, "RUNNING", "Verificando el último commit sin modelos.");
+            TeamExecutionResult result;
+            try {
+                result = strategy.verifyHead(context, taskId);
+            } catch (RuntimeException ex) {
+                var message = "Verificación humana fallida: " + (ex.getMessage() == null ? "error inesperado" : ex.getMessage());
+                memory.updateTask(taskId, "FAILED", message);
+                events.publishTask("EMPRESA_TASK_FAILED", taskId, missionId, DevelopmentTeamStrategy.HUMAN_VERIFY_AGENT,
+                        "FAILED", message);
+                throw ex;
+            }
             var verifiable = result instanceof TeamExecutionResult.Development development
                     ? development.verifiableState() : "";
             advanceMission(missionId, MissionStatus.AWAITING_INVESTOR, 95, "Verificación humana",

@@ -97,7 +97,8 @@ function MissionHumanVerify({ mission }: { mission: MissionResponse }) {
       </button>
       <p className="hint">
         Para cuando un desarrollador corrigió el código en ~/forjai-products/{mission.missionId} e hizo commit. Verifica el
-        último commit sin modelos; lo que no tenga commit no se verifica.
+        último commit sin modelos; lo que no tenga commit no se verifica (si arranca la corrección automática, queda guardado
+        en git stash).
       </p>
       {verify.isError && <p className="error">{(verify.error as Error).message}</p>}
     </div>

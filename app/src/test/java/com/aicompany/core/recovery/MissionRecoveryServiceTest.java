@@ -193,17 +193,38 @@ class MissionRecoveryServiceTest {
         verify(executor, never()).verifyAsync(anyString());
     }
 
-    @Test void verifyResetsTheCounterAndRuns() {
+    // Fix 5: el contador lo pone en cero verifyAsync, tras pasar a EVALUATING (no acá).
+    @Test void verifyRunsInEveryStoppedState() {
         for (var status : List.of(MissionStatus.BLOCKED, MissionStatus.FAILED, MissionStatus.AWAITING_INVESTOR,
                 MissionStatus.INTERRUPTED)) {
             verifiable(status);
             service.verify("M-1");
         }
-        var order = inOrder(recovery, executor);
-        order.verify(recovery).resetCounter("M-1", 2);
-        order.verify(executor).verifyAsync("M-1");
-        verify(recovery, times(4)).resetCounter("M-1", 2);
         verify(executor, times(4)).verifyAsync("M-1");
+        verify(recovery, never()).resetCounter(anyString(), anyInt());
+    }
+
+    // Fix 2: una huérfana cuya última tarea es una verificación humana sin resultado se retoma como verificación.
+    @Test void anOrphanHumanVerificationIsResumedAsAHumanVerification() {
+        when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-1", MissionStatus.EVALUATING, "TEAM-DEVELOPMENT")));
+        approved("M-1");
+        when(missions.evidenceRound("M-1")).thenReturn(2);
+        var now = Instant.now();
+        when(missions.tasks("M-1")).thenReturn(List.of(
+                new com.aicompany.core.model.AgentTask("M-1-BACKEND-R2", "M-1", "backend", "X", "COMPLETED", "{}",
+                        now.minusSeconds(60), "WORK", "/w", "a".repeat(40), List.of(), null, null),
+                new com.aicompany.core.model.AgentTask("M-1-HUMAN-VERIFY-1", "M-1", "qa", "HUMAN_VERIFY", "RUNNING", "x",
+                        now, "VALIDATION", null, null, List.of(), null, null)));
+        service.onStartup();
+        verify(executor).resumeAsync(eq("M-1"), argThat(p -> p.stage() == ResumePoint.Stage.HUMAN_VERIFY));
+    }
+
+    @Test void aFinishedHumanVerificationIsNotPending() {
+        var now = Instant.now();
+        when(missions.evidenceRound("M-1")).thenReturn(0);
+        when(missions.tasks("M-1")).thenReturn(List.of(new com.aicompany.core.model.AgentTask("M-1-HUMAN-VERIFY-1", "M-1",
+                "qa", "HUMAN_VERIFY", "COMPLETED", "x", now, "VALIDATION", null, null, List.of(), "FAILED", "[]")));
+        assertNull(service.snapshot(mission("M-1", MissionStatus.EVALUATING, "TEAM-DEVELOPMENT")).humanVerifyTask());
     }
 
     // Revisión 2026-10-06 §5: tras una verificación humana, las 20 rondas del incremento vuelven a estar disponibles.

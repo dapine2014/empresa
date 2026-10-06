@@ -129,6 +129,37 @@ class DevelopmentWorkspaceServiceTest {
         assertEquals(Optional.of("M-1-BACKEND"), service.headTask("M-1"));
     }
 
+    // Revisión 2026-10-06 §5 (fix 1): lo no commiteado nunca se pierde: queda en git stash y el worktree vuelve a HEAD.
+    @Test
+    void uncommittedWorkIsStashedNeverLost() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+        var dir = service.missionWorkspace("M-1");
+        Files.writeString(dir.resolve("src/A.cs"), "editado a mano");
+        Files.writeString(dir.resolve("src/B.cs"), "sin commit");
+
+        var stash = service.discardUncommitted("M-1");
+
+        assertTrue(stash.orElseThrow().startsWith("Forjai: sin commit antes de retomar "), stash.toString());
+        assertEquals("class A {}", Files.readString(dir.resolve("src/A.cs")));
+        assertFalse(Files.exists(dir.resolve("src/B.cs")));
+        assertFalse(service.hasUncommitted("M-1"));
+        assertTrue(git.run(dir, "stash", "list").contains(stash.get()));
+        var saved = git.run(dir, "stash", "show", "-p", "--include-untracked", "stash@{0}");
+        assertTrue(saved.contains("editado a mano") && saved.contains("sin commit"), saved);
+    }
+
+    @Test
+    void aCleanWorkspaceHasNothingToStash() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+
+        assertEquals(Optional.empty(), service.discardUncommitted("M-1"));
+        assertTrue(git.run(service.missionWorkspace("M-1"), "stash", "list").isBlank());
+    }
+
     // Revisión 2026-10-06 §5 (manos humanas): saber si quedaron cambios sin commit, sin tocarlos.
     @Test
     void knowsWhetherThereAreUncommittedChangesWithoutTouchingThem() throws Exception {

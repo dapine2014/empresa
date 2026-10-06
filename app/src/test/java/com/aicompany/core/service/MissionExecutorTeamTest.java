@@ -636,6 +636,7 @@ class MissionExecutorTeamTest {
 
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.EVALUATING), anyInt(), anyString(), anyString());
         verify(memory).createTask("M-9-HUMAN-VERIFY-2", "M-9", "qa", "HUMAN_VERIFY", "VALIDATION");
+        verify(memory).updateTask(eq("M-9-HUMAN-VERIFY-2"), eq("RUNNING"), anyString());
         verify(dev).verifyHead(argThat(c -> c.missionId().equals("M-9") && c.round() == 3
                 && c.team().teamId().equals("TEAM-DEVELOPMENT")), eq("M-9-HUMAN-VERIFY-2"));
         verify(dev, never()).execute(any(), any());
@@ -658,5 +659,56 @@ class MissionExecutorTeamTest {
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
         verify(requirements, never()).confirmBuildingIncrement(anyString());
         verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+    }
+
+    // Fix 5: el contador del incremento vuelve a cero recién después de pasar a EVALUATING.
+    @Test
+    void aHumanVerificationResetsTheCounterAfterEvaluating() throws Exception {
+        var dev = mock(DevelopmentTeamStrategy.class);
+        var exec = humanVerifyExecutor(dev);
+        var recovery = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        exec.setRecoveryMemory(recovery);
+        when(requirements.currentIncrement("M-9")).thenReturn(2);
+        when(dev.verifyHead(any(), anyString())).thenReturn(new TeamExecutionResult.Development("r", "ESTADO"));
+
+        exec.verifyAsync("M-9").get();
+
+        var order = inOrder(memory, recovery, dev);
+        order.verify(memory).updateMission(eq("M-9"), eq(MissionStatus.EVALUATING), anyInt(), anyString(), anyString());
+        order.verify(recovery).resetCounter("M-9", 2);
+        order.verify(dev).verifyHead(any(), anyString());
+    }
+
+    // Fix 3: si verifyHead lanza, la tarea queda FAILED con el error.
+    @Test
+    void aHumanVerificationThatThrowsFailsItsTask() throws Exception {
+        var dev = mock(DevelopmentTeamStrategy.class);
+        var exec = humanVerifyExecutor(dev);
+        when(dev.verifyHead(any(), anyString())).thenThrow(new IllegalStateException("git roto"));
+
+        exec.verifyAsync("M-9").get();
+
+        verify(memory).updateTask(eq("M-9-HUMAN-VERIFY-2"), eq("FAILED"), contains("git roto"));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), contains("git roto"));
+    }
+
+    // Fix 2: retomar una verificación humana cortada la marca FAILED y verifica de nuevo, sin modelos ni repositorio.
+    @Test
+    void resumingAnInterruptedHumanVerificationVerifiesAgain() throws Exception {
+        var dev = mock(DevelopmentTeamStrategy.class);
+        var exec = humanVerifyExecutor(dev);
+        when(memory.tasks("M-9")).thenReturn(List.of(new AgentTask("M-9-HUMAN-VERIFY-1", "M-9", "qa", "HUMAN_VERIFY",
+                "RUNNING", "x", java.time.Instant.now(), "VALIDATION", null, null, List.of(), null, null)));
+        when(dev.verifyHead(any(), eq("M-9-HUMAN-VERIFY-2"))).thenReturn(new TeamExecutionResult.Development("r", "ESTADO"));
+
+        exec.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
+                com.aicompany.core.recovery.ResumePoint.Stage.HUMAN_VERIFY, 3,
+                com.aicompany.core.recovery.ResumePoint.RoundKind.CORRECTION, 1)).get();
+
+        verify(memory).updateTask(eq("M-9-HUMAN-VERIFY-1"), eq("FAILED"), contains("reinicio"));
+        verify(dev).verifyHead(any(), eq("M-9-HUMAN-VERIFY-2"));
+        verify(dev, never()).execute(any(), any());
+        verifyNoInteractions(ceoService, runtime);
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
     }
 }
