@@ -399,5 +399,81 @@ class MissionExecutorTeamTest {
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), contains("más detalle"), any(), eq(1));
         verify(development).execute(any(), any());
     }
-}
 
+    // Spec misiones durables §2: retomar la generación de la ronda 0 usa el plan guardado de esa ronda (sin replanificar).
+    @Test
+    void resumingTheOriginalRoundUsesItsSavedPlan() throws Exception {
+        withAria();
+        when(memory.planJson(TaskIds.planTask("M-9", "engineering", 0))).thenReturn(Optional.of(
+                JsonMapper.builder().build().writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+
+        executor.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
+                com.aicompany.core.recovery.ResumePoint.Stage.GENERATE, 0,
+                com.aicompany.core.recovery.ResumePoint.RoundKind.ORIGINAL, null)).get();
+
+        verify(planner, never()).plan(any(), any(), any(), any());
+        verify(development).execute(argThat(c -> c.round() == 0 && c.instruction().contains("INCREMENTO 1")), any());
+        verify(events).publish(eq("EMPRESA_MISSION_RESUMED"), eq("M-9"), isNull(), eq("system"), anyMap());
+    }
+
+    // Spec misiones durables §2: sin plan, Neo planifica la misma ronda e incremento.
+    @Test
+    void resumingWithoutPlanPlansTheSameIncrement() throws Exception {
+        withAria();
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+        executor.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
+                com.aicompany.core.recovery.ResumePoint.Stage.PLAN, 2,
+                com.aicompany.core.recovery.ResumePoint.RoundKind.INCREMENT, 2)).get();
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), contains("INCREMENTO 2"), any(), eq(2), any());
+    }
+
+    // Review Focus 4: una corrección cortada se retoma con su pedido guardado (misma ronda).
+    @Test
+    void resumingACorrectionRoundUsesItsSavedRequest() throws Exception {
+        withAria();
+        var recovery = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        executor.setRecoveryMemory(recovery);
+        when(recovery.correctionRound("M-9", 3)).thenReturn(Optional.of(
+                new com.aicompany.core.recovery.CorrectionRound(3, 1, "CORRECCIÓN AUTOMÁTICA (Java):\n- x", 2, false)));
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+
+        executor.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
+                com.aicompany.core.recovery.ResumePoint.Stage.GENERATE, 3,
+                com.aicompany.core.recovery.ResumePoint.RoundKind.CORRECTION, null)).get();
+
+        verify(development).execute(argThat(c -> c.round() == 3
+                && c.plan().workTasks().stream().allMatch(t -> t.objective().contains("CORRECCIÓN AUTOMÁTICA"))), any());
+        verify(recovery, never()).addCorrectionRound(any(), any());
+    }
+
+    // Spec misiones durables §1: discovery y otros equipos quedan INTERRUPTED.
+    @Test
+    void anInterruptPointLeavesTheMissionInterrupted() throws Exception {
+        executor.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
+                com.aicompany.core.recovery.ResumePoint.Stage.INTERRUPT, 0,
+                com.aicompany.core.recovery.ResumePoint.RoundKind.ORIGINAL, null)).get();
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.INTERRUPTED), anyInt(), anyString(), anyString());
+    }
+
+    // Spec misiones durables §3: la corrección es una ronda de equipo con el reporte como pedido.
+    @Test
+    void aCorrectionRunsTheTeamRoundWithTheReport() throws Exception {
+        withAria();
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+
+        executor.correctAsync("M-9", 2, "CORRECCIÓN AUTOMÁTICA (Java):\n- ESC-05").get();
+
+        verify(events).publish(eq("EMPRESA_MISSION_CORRECTION_STARTED"), eq("M-9"), isNull(), eq("system"), anyMap());
+        verify(development).execute(argThat(c -> c.round() == 2), any());
+    }
+}

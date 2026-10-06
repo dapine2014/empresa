@@ -543,6 +543,97 @@ public class MissionExecutor {
         }
     }
 
+    private com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryMemory(com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory) {
+        this.recoveryMemory = recoveryMemory;
+    }
+
+    /**
+     * Spec misiones durables §2: retoma una huérfana desde {@code point}, en la misma ronda (nunca gasta otra). Discovery y
+     * otros equipos quedan INTERRUPTED.
+     */
+    public CompletableFuture<Void> resumeAsync(String missionId, com.aicompany.core.recovery.ResumePoint point) {
+        if (point.stage() == com.aicompany.core.recovery.ResumePoint.Stage.INTERRUPT) {
+            interrupt(missionId);
+            return CompletableFuture.completedFuture(null);
+        }
+        events.publish("EMPRESA_MISSION_RESUMED", missionId, null, "system",
+                Map.of("stage", point.stage().name(), "round", point.round(), "kind", point.kind().name()));
+        return submit(missionId, "resume " + point.stage(), () -> resumeInternal(missionId, point));
+    }
+
+    private void resumeInternal(String missionId, com.aicompany.core.recovery.ResumePoint point) {
+        var teamId = memory.teamId(missionId).orElseThrow();
+        var instruction = memory.instructionOf(missionId).orElse("");
+        var mode = TeamExecutionMode.forTeamType(TeamMemoryService.teamType(teamId).orElseThrow());
+        switch (point.stage()) {
+            case REQUIREMENTS -> executeTeamMission(missionId, instruction, teamId);
+            case ADJUSTMENT -> {
+                var adjustment = requirementsMemory.pendingAdjustment(missionId).orElseThrow();
+                var written = rewriteRequirements(missionId, instruction, adjustment);
+                events.publish("EMPRESA_REQUIREMENTS_ADJUSTED", missionId, null, "human",
+                        Map.of("version", written.version(), "instruction", adjustment));
+                awaitApproval(missionId, written);
+            }
+            case AWAIT_APPROVAL -> {
+                var latest = requirementsMemory.latest(missionId).orElseThrow();
+                awaitApproval(missionId, new RequirementsWriter.Written(latest.version(), jsonMapper.readValue(
+                        latest.specJson(), com.aicompany.core.agent.model.RequirementsSpec.class)));
+            }
+            case PLAN, GENERATE, VERIFY -> resumeRound(missionId, instruction, teamId, mode, point);
+            case INTERRUPT -> interrupt(missionId);
+        }
+    }
+
+    private void resumeRound(String missionId, String instruction, String teamId, TeamExecutionMode mode,
+                             com.aicompany.core.recovery.ResumePoint point) {
+        var round = point.round();
+        switch (point.kind()) {
+            case ORIGINAL, INCREMENT -> {
+                var increment = point.increment() == null ? 1 : point.increment();
+                var spec = approvedSpec(missionId);
+                var team = teamWorkPlanner.teamSnapshot(teamId);
+                var saved = memory.planJson(TaskIds.planTask(missionId, team.leaderAgentId(), round));
+                if (saved.isEmpty()) {
+                    planAndRunIncrement(missionId, instruction, teamId, mode, spec, increment, round);
+                    return;
+                }
+                var withIncrement = withIncrement(spec, increment, instruction);
+                requirementsMemory.setBuildingIncrement(missionId, increment);
+                advanceMission(missionId, MissionStatus.DELEGATING, 10, "Retomada",
+                        "Retomando el incremento " + increment + " tras un reinicio.");
+                runTeamPlan(missionId, withIncrement, mode, new TeamMissionContext(missionId, withIncrement, team,
+                        jsonMapper.readValue(saved.get(), TeamPlan.class), round));
+            }
+            case EVIDENCE -> {
+                var requests = memory.evidenceRequests(missionId);
+                var request = requests.isEmpty() ? CeoService.NO_INVESTOR_COMMENT : requests.get(requests.size() - 1);
+                reexecuteTeamMission(missionId, instruction, teamId, round, request, priorRoundResults(missionId, round),
+                        companyMemory.agentModel("ceo", defaultCeoModel));
+            }
+            case CORRECTION -> {
+                var request = recoveryMemory.correctionRound(missionId, round)
+                        .map(com.aicompany.core.recovery.CorrectionRound::request).orElseThrow();
+                reexecuteTeamMission(missionId, instruction, teamId, round, request, priorRoundResults(missionId, round),
+                        companyMemory.agentModel("ceo", defaultCeoModel));
+            }
+        }
+    }
+
+    /**
+     * Spec misiones durables §3: ronda de corrección ({@code round} ya reclamado con claimNextRound y registrado en
+     * correctionRounds por MissionRecoveryService o MissionService). No consume MAX_EVIDENCE_ROUNDS.
+     */
+    public CompletableFuture<Void> correctAsync(String missionId, int round, String request) {
+        events.publish("EMPRESA_MISSION_CORRECTION_STARTED", missionId, null, "system", Map.of("round", round));
+        advanceMission(missionId, MissionStatus.DELEGATING, 10, "Corrección automática (ronda " + round + ")",
+                "Corrigiendo contra las HU, los criterios y los escenarios del incremento.");
+        return submit(missionId, "correction " + round, () -> reexecuteInternal(missionId,
+                memory.instructionOf(missionId).orElse(""), round, request));
+    }
+
     /** Revisión final Aria (6): un pool lleno no deja la misión trabada en un estado intermedio. */
     private CompletableFuture<Void> submit(String missionId, String what, Runnable work) {
         try {
