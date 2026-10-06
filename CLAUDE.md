@@ -55,7 +55,7 @@ docker compose build && docker compose up
 
 Sandbox (una vez): `systemctl --user enable --now podman.socket`, `mkdir -p ~/forjai-sandbox-work`, `SANDBOX_RUNNER_TOKEN` en `.env`, `bash sandbox/build-images.sh`.
 
-**Antes de reconstruir/reiniciar `company-core`**: las misiones corren en threads en memoria y no sobreviven un restart. Confirmar que no haya una misión viva; si se corta una, corregir por Cypher (`status='FAILED'` en la misión y en las tareas `RUNNING`; `Agent.status` `WORKING` → `IDLE`) y relanzar.
+Las misiones del Development Group sobreviven un reinicio: al arrancar, `MissionRecoveryService` las retoma donde quedaron (las de discovery y otros equipos quedan `INTERRUPTED`: "reanuda MISSION-X"). Igual conviene no reiniciar a mitad de una llamada larga: esa llamada se repite.
 
 ## Convenciones que no se pueden romper
 
@@ -77,7 +77,7 @@ Sandbox (una vez): `systemctl --user enable --now podman.socket`, `mkdir -p ~/fo
 
 Servicio REST monolítico (Spring Boot 4.1.1, Java 21) que orquesta agentes LLM, con memoria en Neo4j y eventos en Kafka. Detalle de cada pieza en `docs/ARCHITECTURE.md`.
 
-- **Flujo de misión**: `MissionService.start` → `MissionExecutor` (hilo propio) → `AgentRuntime` / `DevelopmentRuntime` → `CeoService` (único punto que llama a un modelo). Estados `PLANNING → DELEGATING → WAITING_AGENT_RESULTS → EVALUATING → CONSOLIDATING → AWAITING_INVESTOR` (+ `AWAITING_SPEC_APPROVAL` en el Development Group). `MissionExecutor.advanceMission` es el **único** que persiste transiciones, publica a Kafka y manda correos. Una misión nunca llega sola a `COMPLETED`: decide el fundador (`APPROVE`/`REJECT`/`REQUEST_MORE_EVIDENCE` = ronda de evidencia, ids `-R<n>`). Un agente fallido no tumba la misión; si fallan todos, `FAILED`.
+- **Flujo de misión**: `MissionService.start` → `MissionExecutor` (hilo propio) → `AgentRuntime` / `DevelopmentRuntime` → `CeoService` (único punto que llama a un modelo). Estados `PLANNING → DELEGATING → WAITING_AGENT_RESULTS → EVALUATING → CONSOLIDATING → AWAITING_INVESTOR` (+ `AWAITING_SPEC_APPROVAL` en el Development Group; `INTERRUPTED` = cortada por un reinicio sin retomar, `BLOCKED` = un freno de la corrección automática: decide el fundador, ver `docs/ARCHITECTURE.md` "Misiones durables"). `MissionExecutor.advanceMission` es el **único** que persiste transiciones, publica a Kafka y manda correos. Una misión nunca llega sola a `COMPLETED`: decide el fundador (`APPROVE`/`REJECT`/`REQUEST_MORE_EVIDENCE` = ronda de evidencia, ids `-R<n>`). Un agente fallido no tumba la misión; si fallan todos, `FAILED`.
 - **Discovery** (sin `teamId`): 5 tareas fijas en paralelo (`sales`, `product`, `finance`, `engineering`, `qa`) + `ContradictionDetector` + consolidación del CEO.
 - **Misiones por equipo** (`teamId`): el líder planifica (`TeamWorkPlanner`), Java valida (`TeamPlanValidator`) y ejecuta por tipo (`AnalysisTeamStrategy` / `DevelopmentTeamStrategy`).
 - **Development Group** (`TEAM-DEVELOPMENT`): Aria escribe requisitos (HU + escenarios `ESC-NN` + incrementos) que aprueba el fundador → Neo planifica → Forjai commitea el scaffold → cada agente genera su capa DDD en orden con gates deterministas y commit propio en `products.workspace-root/<missionId>/` → validación estática → sandbox (`restore → build → test → smoke`) con ciclo de corrección → `StaticValidationStatus.compute` decide `VERIFIED`/`FAILED`/`UNVALIDATED` (exige cobertura de todos los escenarios y que la suite no decrezca). Stacks habilitados: `FLUTTER_WEB_APP`, `DOTNET_APP` (`DevelopmentPhase.CURRENT = 1`).

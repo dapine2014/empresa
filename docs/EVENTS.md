@@ -88,3 +88,11 @@ EMPRESA_REQUIREMENTS_APPROVED, EMPRESA_REQUIREMENTS_REJECTED (`MissionService.de
 EMPRESA_REQUIREMENTS_ADJUSTED (`MissionExecutor`, `agentId="human"`): Aria rehízo los requisitos con el ajuste del fundador (versión nueva, vuelve a esperar aprobación). `data: {version, instruction}`.
 
 EMPRESA_INCREMENT_STARTED (`MissionExecutor.buildIncrementAsync`, `agentId="human"`): arrancó el incremento N sobre el mismo repositorio, como ronda de la misión que no consume `MAX_EVIDENCE_ROUNDS`. `data: {increment, round}`.
+
+EMPRESA_MISSION_RESUMED (`MissionExecutor.resumeAsync`, `agentId="system"`; spec misiones durables): una misión del Development Group se retomó tras un reinicio (o con "reanuda MISSION-X" / `POST /missions/{id}/resume`). `data: {stage, round, kind}` — `stage` = `ResumePoint.Stage` (dónde sigue), `round` = ronda en curso, `kind` = `ResumePoint.Kind`.
+
+EMPRESA_MISSION_INTERRUPTED (`MissionExecutor.interrupt`, `agentId="system"`): la misión no se pudo retomar (huérfana de discovery u otro equipo, o del Development Group sin punto de retoma) y quedó `INTERRUPTED`. `data: {}`.
+
+EMPRESA_MISSION_CORRECTION_STARTED (`MissionExecutor.correctAsync`, `agentId="system"`): arrancó una ronda de corrección automática (o la que pide el fundador con indicación) para una misión con validación `FAILED`. `data: {round}`.
+
+EMPRESA_MISSION_BLOCKED (`MissionExecutor.block`, `agentId="system"`): un freno (`MAX_AUTO_CORRECTIONS`, `MAX_MISSION_COST_USD` o "sin progreso" en 2 rondas) detuvo la corrección; la misión queda `BLOCKED` y manda correo. `data: {reason}`.

@@ -1017,3 +1017,14 @@ Rama `neo-cierre`. Diferidos de la revisión final de QA casos de uso (ledger `.
 - (M6) El reporte de cobertura marca cada test con su componente (`[backend]`, `[app]`; con un solo componente, el nombre tal cual) y cada escenario como nuevo (incremento en curso) o heredado. "dame un status" muestra "Cobertura de escenarios: MISSION-X 17/19" para las misiones en `AWAITING_INVESTOR`, y el detalle de la misión en Missions tiene la sección "Cobertura de escenarios".
 - (M7) Un id de misión nunca termina en guion: `MISSION_REF` para todos los comandos del chat ("MISSION-9-" → `MISSION-9`).
 - (M8) Ya estaba anotado arriba (en Flutter un test `skipped` no cuenta como aprobado).
+
+## Misiones durables y corrección automática (2026-10-05)
+
+Rama `misiones-durables`. Implementado:
+- Estados `INTERRUPTED` (huérfana de discovery/otros equipos, o del Development Group sin retomar) y `BLOCKED` (un freno disparó; decide el fundador: "pide más evidencia" con indicación = ronda de corrección `byFounder` que reinicia el contador y no consume `MAX_EVIDENCE_ROUNDS`; APPROVE → `COMPLETED`; REJECT → `CANCELLED`). Ambos borrables; `BLOCKED` manda correo; el orquestador los trata como espera.
+- Policies `MAX_AUTO_CORRECTIONS` (3, por incremento) y `MAX_MISSION_COST_USD` (5), más el freno fijo de "sin progreso" (2 rondas de corrección sin bajar la cantidad de fallas).
+- Paquete `recovery`: `ResumePoint` + `MissionSnapshot`, `CorrectionReport`, `CorrectionRound` + `RecoveryMemoryService` (`Mission.correctionRounds`), `MissionRecoveryService` (pasada al arrancar tras `CompanyMemoryInitializer`; cada 5 min y al terminar una misión; una misión de desarrollo a la vez).
+- `MissionExecutor`: contador vivo por misión (`isLive`), `resumeAsync`, `correctAsync`, `interrupt`, `block`. `DevelopmentTeamStrategy` limpia el workspace al retomar, reutiliza el scaffold y salta las `WORK` ya `COMPLETED` con commit; `createTask` ya no reinicia `COMPLETED`; `claimDecision` guarda `pendingAdjustment`.
+- `POST /api/company/missions/{id}/resume`, chat "reanuda MISSION-X" y líneas de status, botón "Reanudar" en Missions. Eventos `EMPRESA_MISSION_RESUMED|INTERRUPTED|CORRECTION_STARTED|BLOCKED`.
+
+Verificación en vivo: pendiente.
