@@ -67,8 +67,14 @@ public class CorrectionStrategist {
             }
             String correction = null;
             for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-                var proposal = ceo.proposeCorrectionStrategy(AGENT, prompt(failure, tried, pages, correction),
-                        promptMemory.activePrompt(AGENT), companyMemory.agentModel(AGENT, defaultModel));
+                StrategyProposal proposal;
+                try {
+                    proposal = ceo.proposeCorrectionStrategy(AGENT, prompt(failure, tried, pages, correction),
+                            promptMemory.activePrompt(AGENT), companyMemory.agentModel(AGENT, defaultModel));
+                } catch (Exception ex) {
+                    correction = "- La llamada falló: " + ex.getMessage();
+                    continue;
+                }
                 var errors = errors(proposal, pages.keySet(), tried);
                 if (errors.isEmpty()) {
                     return Optional.of(new CorrectionStrategy(fingerprint, round, proposal.strategyOrEmpty().strip(),
@@ -83,24 +89,22 @@ public class CorrectionStrategist {
         }
     }
 
-    /** La falla que se repite en las 2 últimas rondas y en la actual; si ninguna, la primera de la actual. */
+    /** Spec §3: la primera falla actual presente en las 2 rondas previas; si no hay 2 o ninguna se repite, la primera. */
     static String persistentFailure(CorrectionReport current, List<CorrectionReport> previous) {
         if (current == null || current.failures().isEmpty()) {
             return null;
         }
-        var recent = previous.subList(Math.max(0, previous.size() - 2), previous.size());
-        String best = null;
-        long bestHits = -1;
-        for (var failure : current.failures()) {
-            var fp = CorrectionReport.fingerprint(failure);
-            long hits = recent.stream().filter(r -> r.failures().stream()
-                    .anyMatch(f -> CorrectionReport.fingerprint(f).equals(fp))).count();
-            if (hits > bestHits) {
-                best = failure;
-                bestHits = hits;
+        if (previous.size() >= 2) {
+            var recent = previous.subList(previous.size() - 2, previous.size());
+            for (var failure : current.failures()) {
+                var fp = CorrectionReport.fingerprint(failure);
+                if (recent.stream().allMatch(r -> r.failures().stream()
+                        .anyMatch(f -> CorrectionReport.fingerprint(f).equals(fp)))) {
+                    return failure;
+                }
             }
         }
-        return best;
+        return current.failures().get(0);
     }
 
     /** Mensaje y código del error sin rutas ni números de línea, más el stack. */

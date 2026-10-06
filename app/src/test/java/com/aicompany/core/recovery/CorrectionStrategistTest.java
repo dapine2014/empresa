@@ -112,4 +112,24 @@ class CorrectionStrategistTest {
         assertTrue(strategist.propose("M1", 2, report(ERROR), List.of(), ".NET 8").isEmpty());
         verifyNoInteractions(ceo);
     }
+
+    @Test
+    void persistentFailureFollowsTheSpecRule() {
+        var a = "error A"; var b = "error B"; var c = "error C";
+        assertEquals(a, CorrectionStrategist.persistentFailure(report(a, b), List.of(report(b), report(c))));
+        assertEquals(b, CorrectionStrategist.persistentFailure(report(a, b), List.of(report(b), report(b, c))));
+        assertEquals(a, CorrectionStrategist.persistentFailure(report(a, b), List.of(report(b))));
+        assertEquals(a, CorrectionStrategist.persistentFailure(report(a, b), List.of(report(c), report(c))));
+    }
+
+    @Test
+    void anExceptionInOneAttemptStillUsesTheRemainingAttempts() {
+        twoPages();
+        when(ceo.proposeCorrectionStrategy(anyString(), anyString(), any(), anyString()))
+                .thenThrow(new IllegalStateException("timeout"))
+                .thenReturn(new StrategyProposal("Algo bueno", List.of(U1)));
+
+        assertTrue(strategist.propose("M1", 2, report(ERROR), List.of(), ".NET 8").isPresent());
+        verify(ceo, times(2)).proposeCorrectionStrategy(anyString(), anyString(), any(), anyString());
+    }
 }
