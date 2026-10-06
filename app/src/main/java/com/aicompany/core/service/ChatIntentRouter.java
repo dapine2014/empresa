@@ -363,7 +363,75 @@ public class ChatIntentRouter {
                 || MISSION_START.matcher(message).find()
                 || detectFreeMissionStart(normalize(message))
                 || detectDecision(message) != null
-                || isRequirementsCommand(message);
+                || isRequirementsCommand(message)
+                || RESUME.matcher(normalize(message)).find();
+    }
+
+    private static final Pattern RESUME = Pattern.compile("(?i)^\\s*(?:reanuda|retoma|reanudar|retomar)\\s+(" + MISSION_REF + ")\\b");
+
+    private com.aicompany.core.recovery.MissionRecoveryService recoveryService;
+    private com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryService(com.aicompany.core.recovery.MissionRecoveryService recoveryService) {
+        this.recoveryService = recoveryService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryMemory(com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory) {
+        this.recoveryMemory = recoveryMemory;
+    }
+
+    /** Spec misiones durables §4: "reanuda MISSION-X" (gobernanza). */
+    private String handleResume(String message) {
+        var m = RESUME.matcher(normalize(message));
+        if (!m.find() || recoveryService == null) {
+            return null;
+        }
+        var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        try {
+            recoveryService.resume(missionId);
+            return "Retomé " + missionId + " donde quedó, sin gastar rondas. Te aviso cuando vuelva a esperar tu decisión.";
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
+    }
+
+    /** Spec misiones durables §4: línea de la recuperación en "dame un status". */
+    private String recoveryLine(List<MissionResponse> all) {
+        var parts = new ArrayList<String>();
+        if (recoveryService != null && !recoveryService.resumedSinceStart().isEmpty()) {
+            parts.add("Retomadas tras el reinicio: " + String.join(", ", recoveryService.resumedSinceStart()) + ".");
+        }
+        if (recoveryMemory != null) {
+            var max = (int) companyPolicyService.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS);
+            var correcting = all.stream().filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
+                            && m.status() != MissionStatus.FAILED && m.status() != MissionStatus.COMPLETED
+                            && m.status() != MissionStatus.CANCELLED && m.status() != MissionStatus.BLOCKED
+                            && m.status() != MissionStatus.INTERRUPTED && m.status() != MissionStatus.AWAITING_SPEC_APPROVAL)
+                    .flatMap(m -> {
+                        var rounds = recoveryMemory.correctionRounds(m.missionId());
+                        var round = missionMemory.evidenceRound(m.missionId());
+                        var current = rounds.stream().filter(r -> r.round() == round).findFirst();
+                        if (current.isEmpty()) {
+                            return java.util.stream.Stream.<String>empty();
+                        }
+                        var n = rounds.stream().filter(r -> r.increment() == current.get().increment() && !r.byFounder()).count();
+                        return java.util.stream.Stream.of(m.missionId() + " (ronda " + n + " de " + max + ")");
+                    }).toList();
+            if (!correcting.isEmpty()) {
+                parts.add("En corrección automática: " + String.join(", ", correcting) + ".");
+            }
+        }
+        var blocked = all.stream().filter(m -> m.status() == MissionStatus.BLOCKED).map(MissionResponse::missionId).toList();
+        if (!blocked.isEmpty()) {
+            parts.add("Bloqueadas (esperan tu indicación): " + String.join(", ", blocked) + ".");
+        }
+        var interrupted = all.stream().filter(m -> m.status() == MissionStatus.INTERRUPTED).map(MissionResponse::missionId).toList();
+        if (!interrupted.isEmpty()) {
+            parts.add("Interrumpidas: " + String.join(", ", interrupted) + " (\"reanuda <misión>\").");
+        }
+        return parts.isEmpty() ? "" : " " + String.join(" ", parts);
     }
 
     /** Spec 2026-10-03 Aria §2: los comandos de requisitos son gobernanza (antes de las menciones). */
@@ -627,6 +695,12 @@ public class ChatIntentRouter {
         var prospectConvert = PROSPECT_CONVERT.matcher(normalizedMessage);
         if (prospectConvert.matches()) {
             return handleProspectConvert(prospectConvert.group(1));
+        }
+
+        // Va antes de PRODUCT_COMMAND, que también acepta "reanuda <algo>".
+        var resumeReply = handleResume(message);
+        if (resumeReply != null) {
+            return resumeReply;
         }
 
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));
@@ -1371,7 +1445,12 @@ public class ChatIntentRouter {
         tasks.forEach(t -> byRound.computeIfAbsent(TaskIds.roundOf(t.taskId()), k -> new ArrayList<>()).add(t));
         // Verificado en vivo (2026-10-04): las rondas de incremento se etiquetan aparte y no consumen el límite.
         var increments = incrementRoundsOf(missionId);
-        var evidenceRounds = java.util.stream.IntStream.rangeClosed(1, round).filter(r -> !increments.containsKey(r))
+        // Spec misiones durables §4: las rondas de corrección tampoco consumen el límite de evidencia.
+        var corrections = recoveryMemory == null ? Map.<Integer, com.aicompany.core.recovery.CorrectionRound>of()
+                : recoveryMemory.correctionRounds(missionId).stream().collect(Collectors.toMap(
+                        com.aicompany.core.recovery.CorrectionRound::round, c -> c, (a, b) -> a));
+        var evidenceRounds = java.util.stream.IntStream.rangeClosed(1, round)
+                .filter(r -> !increments.containsKey(r) && !corrections.containsKey(r))
                 .boxed().toList();
         var used = evidenceRounds.size();
         var lines = new ArrayList<String>();
@@ -1380,7 +1459,9 @@ public class ChatIntentRouter {
             // Los pedidos se alinean desde el final: uno registrado antes de existir las rondas no disparó ninguna.
             var position = evidenceRounds.indexOf(r);
             var index = requests.size() - used + position;
-            var label = r == 0 ? "Ronda 0" : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
+            var label = r == 0 ? "Ronda 0" : corrections.containsKey(r)
+                    ? "Ronda " + r + " (corrección" + (corrections.get(r).byFounder() ? " con tu indicación" : " automática") + ")"
+                    : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
                     : "Ronda " + r + " (pedido: \""
                     + (position >= 0 && index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
             lines.add(" " + label + ": " + list.stream().map(t -> t.agentId() + "=" + t.action() + " " + t.status())
@@ -1884,6 +1965,8 @@ public class ChatIntentRouter {
                 : " Cobertura de escenarios: " + String.join(", ", coverage)
                         + " (\"¿qué escenarios cubre <misión>?\").";
 
+        var recoveryLine = recoveryLine(all);
+
         var missions = all.stream()
                 .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
@@ -1893,7 +1976,9 @@ public class ChatIntentRouter {
                         && m.status() != MissionStatus.AWAITING_SPEC_APPROVAL
                         && m.status() != MissionStatus.FAILED
                         && m.status() != MissionStatus.COMPLETED
-                        && m.status() != MissionStatus.CANCELLED)
+                        && m.status() != MissionStatus.CANCELLED
+                        && m.status() != MissionStatus.BLOCKED
+                        && m.status() != MissionStatus.INTERRUPTED)
                 .count();
 
         var awaitingInvestor = missions.stream()
@@ -1906,7 +1991,8 @@ public class ChatIntentRouter {
 
         var rerunning = missions.stream()
                 .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR && m.status() != MissionStatus.FAILED
-                        && m.status() != MissionStatus.COMPLETED && m.status() != MissionStatus.CANCELLED)
+                        && m.status() != MissionStatus.COMPLETED && m.status() != MissionStatus.CANCELLED
+                        && m.status() != MissionStatus.BLOCKED && m.status() != MissionStatus.INTERRUPTED)
                 .filter(m -> missionMemory.evidenceRound(m.missionId()) > 0)
                 .count();
 
@@ -1940,7 +2026,7 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + specLine + coverageLine + orchestratorLine() + downModelsLine();
+        ) + specLine + coverageLine + recoveryLine + orchestratorLine() + downModelsLine();
     }
 
     /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */

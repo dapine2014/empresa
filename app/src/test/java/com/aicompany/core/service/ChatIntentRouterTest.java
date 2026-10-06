@@ -2506,4 +2506,52 @@ class ChatIntentRouterTest {
         verify(missionService).recordDecision(eq("MISSION-12"),
                 argThat(c -> c.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE));
     }
+
+    // Spec misiones durables §4: "reanuda MISSION-X" es gobernanza y no toca al modelo.
+    @Test
+    void resumeIsAGovernanceCommand() {
+        var recovery = mock(com.aicompany.core.recovery.MissionRecoveryService.class);
+        router.setRecoveryService(recovery);
+        var response = router.route("reanuda MISSION-9");
+        verify(recovery).resume("MISSION-9");
+        assertTrue(response.contains("Retomé MISSION-9"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void aRefusedResumeExplainsWhy() {
+        var recovery = mock(com.aicompany.core.recovery.MissionRecoveryService.class);
+        router.setRecoveryService(recovery);
+        doThrow(new IllegalStateException("MISSION MISSION-9 no está INTERRUPTED")).when(recovery).resume("MISSION-9");
+        assertTrue(router.route("reanuda MISSION-9").contains("no está INTERRUPTED"));
+    }
+
+    // Spec misiones durables §4: el status muestra retomadas, en corrección, bloqueadas e interrumpidas.
+    @Test
+    void theStatusShowsTheRecovery() {
+        var recovery = mock(com.aicompany.core.recovery.MissionRecoveryService.class);
+        var recoveryMemory = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        router.setRecoveryService(recovery);
+        router.setRecoveryMemory(recoveryMemory);
+        when(recovery.resumedSinceStart()).thenReturn(List.of("MISSION-R"));
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-C", MissionStatus.WAITING_AGENT_RESULTS, "TEST", 30, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-B", MissionStatus.BLOCKED, "TEST", 100, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-I", MissionStatus.INTERRUPTED, "TEST", 100, "x", "x", Instant.now(), null)));
+        when(missionMemory.evidenceRound("MISSION-C")).thenReturn(2);
+        when(recoveryMemory.correctionRounds("MISSION-C")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, "a", 3, false),
+                new com.aicompany.core.recovery.CorrectionRound(2, 1, "b", 2, false)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS)).thenReturn(3.0);
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("Retomadas tras el reinicio: MISSION-R"), response);
+        assertTrue(response.contains("En corrección automática: MISSION-C (ronda 2 de 3)"), response);
+        assertTrue(response.contains("Bloqueadas (esperan tu indicación): MISSION-B"), response);
+        assertTrue(response.contains("Interrumpidas: MISSION-I"), response);
+    }
 }
