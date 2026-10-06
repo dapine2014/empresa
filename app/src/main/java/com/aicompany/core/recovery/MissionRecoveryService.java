@@ -23,9 +23,9 @@ import java.util.concurrent.Executor;
  * (Development Group se retoma; el resto queda INTERRUPTED), las INTERRUPTED del Development Group y las que fallaron (corrección automática con frenos). Una
  * misión de desarrollo a la vez. Nunca lanza: un error se registra y se sigue con la siguiente.
  * <p>
- * Las huérfanas solo se detectan en el pase de arranque ({@code pendingOrphans}): un hilo vivo siempre se desregistra en
- * su {@code finally}, así que no aparecen huérfanas después, y una misión recién persistida en un estado de trabajo
- * (antes de registrarse como viva) nunca se confunde con una.
+ * Las huérfanas solo se detectan en el pase de arranque ({@code pendingOrphans}; si ese pase falla, el siguiente lo
+ * reintenta): un hilo vivo siempre se desregistra en su {@code finally}, así que no aparecen huérfanas después, y una
+ * misión recién persistida en un estado de trabajo (antes de registrarse como viva) nunca se confunde con una.
  */
 @Service
 public class MissionRecoveryService {
