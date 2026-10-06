@@ -146,4 +146,17 @@ class DevelopmentWorkspaceServiceTest {
     void aMissionWithoutWorkspaceHasNoHead() {
         assertEquals(Optional.empty(), workspace().headIfAny("M-NUEVA"));
     }
+
+    // Spec misiones durables §2: el commit raíz no se puede retroceder; hay que saber si HEAD tiene padre.
+    @Test
+    void knowsWhetherHeadHasAParent() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-SCAFFOLD", "forjai", "Forjai",
+                new DevelopmentResult("base", List.of(new GeneratedFile("a.txt", "1"))));
+        assertFalse(service.headHasParent("M-1"));
+
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("backend", List.of(new GeneratedFile("b.txt", "2"))));
+        assertTrue(service.headHasParent("M-1"));
+    }
 }

@@ -44,6 +44,11 @@ class DevelopmentTeamStrategyTest {
     private final DevelopmentTeamStrategy strategy = new DevelopmentTeamStrategy(
             memory, runtime, workspace, validator, events, JsonMapper.builder().build(), sandbox, dependencies);
 
+    {
+        // Sin workspace previo (misión nueva) el flujo es el de siempre.
+        when(workspace.headIfAny(anyString())).thenReturn(Optional.empty());
+    }
+
     private static TeamMissionContext context() {
         var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "R", List.of("arquitectura backend"), "m"),
@@ -1382,5 +1387,82 @@ class DevelopmentTeamStrategyTest {
         assertTrue(strategy.testFiles("M-1", "d".repeat(40)).isEmpty());
         assertEquals(1, strategy.testFiles("M-1", "d".repeat(40)).size());
     }
-}
 
+    /** Misión de 2 tareas WORK (Neo, Mila) + revisión de Vera, lista para ejecutar y retomar. */
+    private TeamMissionContext resumableContext() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        return context();
+    }
+
+    // Spec misiones durables §2: retomar salta las tareas ya commiteadas (con sus paquetes) y limpia el workspace.
+    @Test
+    void resumingSkipsCommittedTasksAndCleansTheWorkspace() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "COMPLETED", "{\"summary\":\"api\",\"files\":[],\"packages\":[{\"name\":\"Npgsql\",\"version\":\"8.0.5\"}]}",
+                java.time.Instant.now(), "WORK", "/w", "a".repeat(40), List.of("game/Game.cs"), null, null)));
+
+        strategy.execute(context, progress);
+
+        verify(workspace).discardUncommitted("M-1");
+        verify(workspace, never()).dropHeadCommit("M-1");
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any());
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), any());
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), any(), any());
+        // La otra tarea sí se genera; los paquetes de la ya hecha llegan al commit de dependencias.
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), any(), any(), any());
+    }
+
+    // Review Focus 1: el último commit es de una tarea que no quedó COMPLETED -> se retrocede y la tarea se repite.
+    @Test
+    void anUnrecordedLastCommitIsDroppedAndItsTaskRepeated() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headHasParent("M-1")).thenReturn(true);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "RUNNING", null, java.time.Instant.now(), "WORK", null, null, null, null, null)));
+
+        strategy.execute(context, progress);
+
+        verify(workspace).dropHeadCommit("M-1");
+        verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+    }
+
+    // El commit raíz no se retrocede (la tarea se regenera encima).
+    @Test
+    void anUnrecordedRootCommitIsNotDropped() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headHasParent("M-1")).thenReturn(false);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "RUNNING", null, java.time.Instant.now(), "WORK", null, null, null, null, null)));
+
+        strategy.execute(context, progress);
+
+        verify(workspace, never()).dropHeadCommit(anyString());
+    }
+
+    // Ronda 0 con workspace: el scaffold existente se reutiliza (no se vuelve a escribir encima del código).
+    @Test
+    void aRound0WithWorkspaceReusesTheScaffold() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headTask("M-1")).thenReturn(Optional.empty());
+        when(memory.tasks("M-1")).thenReturn(List.of());
+
+        strategy.execute(context, progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), any(), any(), any());
+    }
+}

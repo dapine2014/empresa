@@ -14,6 +14,7 @@ import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.AppComponent;
 import com.aicompany.core.model.ComponentScaffold;
 import com.aicompany.core.model.DependencyRef;
@@ -113,6 +114,33 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 ? com.aicompany.core.model.TaskIds.reviewTask(missionId, validation.agentId(), context.round())
                 : taskId(context, validation.agentId());
 
+        // Spec misiones durables §2: con workspace, primero se limpia y se lee lo ya commiteado de esta ronda.
+        var head = workspace.headIfAny(missionId);
+        var done = new LinkedHashMap<String, AgentTask>();
+        if (head.isPresent()) {
+            var byId = memory.tasks(missionId).stream()
+                    .collect(Collectors.toMap(AgentTask::taskId, t -> t, (a, b) -> b));
+            try {
+                workspace.discardUncommitted(missionId);
+                var headTask = workspace.headTask(missionId).orElse(null);
+                var headRecord = headTask == null ? null : byId.get(headTask);
+                // El commit raíz no se retrocede: la tarea se regenera encima.
+                if (headRecord != null && TeamPlan.KIND_WORK.equals(headRecord.kind())
+                        && !"COMPLETED".equals(headRecord.status()) && workspace.headHasParent(missionId)) {
+                    workspace.dropHeadCommit(missionId);
+                }
+            } catch (Exception ex) {
+                throw new IllegalStateException("No se pudo preparar el repositorio para retomar: "
+                        + safeMessage(ex, "error de Git"), ex);
+            }
+            for (var task : work) {
+                var record = byId.get(taskId(context, task.agentId()));
+                if (record != null && "COMPLETED".equals(record.status()) && record.commitSha() != null) {
+                    done.put(record.taskId(), record);
+                }
+            }
+        }
+
         for (var task : work) {
             createTask(context, task, TeamPlan.KIND_WORK, taskId(context, task.agentId()));
         }
@@ -121,7 +149,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var expectedProjects = ComponentScaffold.projectFiles(plan.resolvedComponents(), plan.contextNames());
         CommittedWork scaffold;
         try {
-            scaffold = context.round() > 0 ? existingScaffold(context) : commitProjectScaffold(context);
+            scaffold = context.round() > 0 || head.isPresent() ? existingScaffold(context) : commitProjectScaffold(context);
         } catch (IllegalStateException ex) {
             // Sin estructura de proyectos no hay nada que generar: ninguna tarea queda colgada en PENDING.
             for (var task : plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
@@ -161,6 +189,23 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     generationHead = routes.commitSha();
                 }
                 routesCommitted = true;
+            }
+
+            var already = done.get(id);
+            if (already != null) {
+                // Spec misiones durables §2: ya commiteada antes del reinicio; sus paquetes salen del resultado guardado.
+                committed.add(new CommittedWork(id, task.agentId(), already.commitSha(),
+                        already.files() == null ? List.of() : already.files()));
+                generationHead = already.commitSha();
+                try {
+                    var saved = jsonMapper.readValue(already.result(), DevelopmentResult.class);
+                    if (!saved.packagesOrEmpty().isEmpty()) {
+                        packagesByTask.put(task, saved.packagesOrEmpty());
+                    }
+                } catch (Exception ex) {
+                    log.warn("MISSION {} - could not read the saved result of {}: {}", missionId, id, ex.getMessage());
+                }
+                continue;
             }
 
             progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30 + (40 * i / ordered.size()), "Desarrollo por capas",

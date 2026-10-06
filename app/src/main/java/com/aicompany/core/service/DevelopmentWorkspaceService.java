@@ -156,6 +156,16 @@ public class DevelopmentWorkspaceService {
                 .map(l -> l.substring("Forjai-Task:".length()).strip()).findFirst();
     }
 
+    /** Spec misiones durables §2: false si HEAD es el commit raíz (no se puede retroceder). */
+    public boolean headHasParent(String missionId) throws IOException {
+        try {
+            git.run(missionWorkspace(missionId), "rev-parse", "--verify", "-q", "HEAD~1");
+            return true;
+        } catch (IOException ex) {
+            return false;
+        }
+    }
+
     /** Spec misiones durables §2: el último commit no llegó a registrarse en Neo4j; su tarea se repite. */
     public synchronized void dropHeadCommit(String missionId) throws IOException {
         git.run(missionWorkspace(missionId), "reset", "-q", "--hard", "HEAD~1");
