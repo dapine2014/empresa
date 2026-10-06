@@ -2581,4 +2581,72 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("…\")"), response);
         assertFalse(response.contains("CORRECCIÓN AUTOMÁTICA (Java)"), response);
     }
+
+    // Revisión final (7): las rondas de corrección tampoco cuentan como evidencia ("ronda 3 de 2" no).
+    @Test
+    void theRoundStartedMessageDiscountsCorrectionRounds() {
+        var recoveryMemory = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        router.setRecoveryMemory(recoveryMemory);
+        when(recoveryMemory.correctionRounds("MISSION-1")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, "a", 3, false),
+                new com.aicompany.core.recovery.CorrectionRound(2, 1, "b", 2, false)));
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-1", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 3)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+
+        var response = router.route("pide más evidencia sobre MISSION-1: corrige las rutas");
+
+        assertTrue(response.contains("ronda 1 de 2"), response);
+    }
+
+    // Revisión final (7): la indicación del fundador sobre una BLOCKED se anuncia como corrección, con la indicación.
+    @Test
+    void aFounderIndicationOnABlockedMissionIsAnnouncedAsACorrection() {
+        var recoveryMemory = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        router.setRecoveryMemory(recoveryMemory);
+        when(recoveryMemory.correctionRounds("MISSION-1")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, "a", 3, false),
+                new com.aicompany.core.recovery.CorrectionRound(2, 1, com.aicompany.core.recovery.CorrectionRound.FOUNDER_PREFIX
+                        + "usa otra librería\n\nCORRECCIÓN AUTOMÁTICA (Java):\n- ESC-01", 3, true)));
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-1", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 2)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+
+        var response = router.route("pide más evidencia sobre MISSION-1: usa otra librería");
+
+        assertTrue(response.contains("ronda de corrección sobre MISSION-1 con tu indicación: \"usa otra librería\""), response);
+        assertFalse(response.contains("de más evidencia"), response);
+        assertFalse(response.contains("ESC-01"), response);
+    }
+
+    // Revisión final (8): "ronda n de max" cuenta solo las automáticas del incremento tras la última del fundador.
+    @Test
+    void theCorrectionCounterInTheStatusRestartsAfterAFounderRound() {
+        var recoveryMemory = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        router.setRecoveryMemory(recoveryMemory);
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-C", MissionStatus.WAITING_AGENT_RESULTS, "TEST", 30, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-F", MissionStatus.DELEGATING, "TEST", 30, "x", "x", Instant.now(), null)));
+        when(missionMemory.evidenceRound("MISSION-C")).thenReturn(5);
+        when(recoveryMemory.correctionRounds("MISSION-C")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, "a", 3, false),
+                new com.aicompany.core.recovery.CorrectionRound(2, 1, "b", 3, false),
+                new com.aicompany.core.recovery.CorrectionRound(3, 1, "c", 3, true),
+                new com.aicompany.core.recovery.CorrectionRound(4, 2, "d", 3, false),
+                new com.aicompany.core.recovery.CorrectionRound(5, 1, "e", 2, false)));
+        when(missionMemory.evidenceRound("MISSION-F")).thenReturn(1);
+        when(recoveryMemory.correctionRounds("MISSION-F")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, "INDICACIÓN DEL FUNDADOR: x", 3, true)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS)).thenReturn(3.0);
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("MISSION-C (ronda 1 de 3)"), response);
+        assertTrue(response.contains("MISSION-F (con tu indicación)"), response);
+    }
 }

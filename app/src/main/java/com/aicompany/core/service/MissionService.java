@@ -412,7 +412,7 @@ public class MissionService {
                     .max(java.util.Comparator.comparing(com.aicompany.core.model.AgentTask::updatedAt,
                             java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())));
             var report = com.aicompany.core.recovery.CorrectionReport.from(lastValidation, mission.get().message());
-            var request = "INDICACIÓN DEL FUNDADOR: " + command.reasoning() + "\n\n" + report.text();
+            var request = com.aicompany.core.recovery.CorrectionRound.FOUNDER_PREFIX + command.reasoning() + "\n\n" + report.text();
             var increment = requirementsMemory == null ? 1 : Math.max(1, requirementsMemory.currentIncrement(missionId));
             if (recoveryMemory != null) {
                 recoveryMemory.addCorrectionRound(missionId,

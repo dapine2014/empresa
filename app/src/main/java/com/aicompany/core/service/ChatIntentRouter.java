@@ -416,7 +416,12 @@ public class ChatIntentRouter {
                         if (current.isEmpty()) {
                             return java.util.stream.Stream.<String>empty();
                         }
-                        var n = rounds.stream().filter(r -> r.increment() == current.get().increment() && !r.byFounder()).count();
+                        if (current.get().byFounder()) {
+                            return java.util.stream.Stream.of(m.missionId() + " (con tu indicación)");
+                        }
+                        // Revisión final (8): la misma cuenta que el freno (automáticas del incremento tras la última del fundador).
+                        var n = com.aicompany.core.recovery.CorrectionRound.automaticSinceFounder(
+                                rounds.stream().filter(r -> r.round() <= round).toList(), current.get().increment()).size();
                         return java.util.stream.Stream.of(m.missionId() + " (ronda " + n + " de " + max + ")");
                     }).toList();
             if (!correcting.isEmpty()) {
@@ -1426,9 +1431,21 @@ public class ChatIntentRouter {
                 ? "Sales, Product, Finance, Engineering y QA"
                 : teamMemory.snapshot(teamId).members().stream().map(TeamMemberInfo::name)
                         .collect(Collectors.joining(", "));
-        // Verificado en vivo (2026-10-04): las rondas de incremento no cuentan como evidencia.
+        var corrections = recoveryMemory == null ? List.<com.aicompany.core.recovery.CorrectionRound>of()
+                : recoveryMemory.correctionRounds(missionId);
+        // Revisión final (7): la indicación del fundador sobre una BLOCKED es una ronda de corrección, no de evidencia.
+        var correction = corrections.stream().filter(c -> c.round() == round).findFirst();
+        if (correction.isPresent()) {
+            var indication = correction.get().founderIndication().replaceAll("\\s+", " ");
+            return "Arrancó una ronda de corrección sobre " + missionId + (indication.isEmpty() ? ""
+                    : " con tu indicación: \"" + (indication.length() > 200 ? indication.substring(0, 200) + "…" : indication)
+                    + "\"") + ". No consume rondas de evidencia y pone en cero las correcciones automáticas del incremento. "
+                    + "Trabajan: " + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
+        }
+        // Verificado en vivo (2026-10-04): las rondas de incremento no cuentan como evidencia; las de corrección tampoco.
         var increments = incrementRoundsOf(missionId);
-        var evidenceNumber = round - (int) increments.keySet().stream().filter(r -> r < round).count();
+        var evidenceNumber = round - (int) increments.keySet().stream().filter(r -> r < round).count()
+                - (int) corrections.stream().filter(c -> c.round() < round && !increments.containsKey(c.round())).count();
         return "Arrancó la ronda " + evidenceNumber + " de " + max + " de más evidencia sobre " + missionId + ". Trabajan: "
                 + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
     }

@@ -1,9 +1,39 @@
 package com.aicompany.core.recovery;
 
+import java.util.List;
+
 /**
  * Spec misiones durables §3: una ronda de corrección (automática o con la indicación del fundador sobre una BLOCKED).
  * {@code failing}: cuántas cosas fallaban al lanzarla (freno "sin avance"); {@code request}: el pedido completo, para
  * retomarla tras un reinicio.
  */
 public record CorrectionRound(int round, int increment, String request, int failing, boolean byFounder) {
+
+    /** Encabezado del pedido de una ronda con la indicación del fundador (antes del CorrectionReport). */
+    public static final String FOUNDER_PREFIX = "INDICACIÓN DEL FUNDADOR: ";
+
+    /**
+     * Spec misiones durables §3: las rondas automáticas del incremento desde la última ronda del fundador (la indicación del
+     * fundador pone el contador en cero). Misma regla para el freno y para el chat.
+     */
+    public static List<CorrectionRound> automaticSinceFounder(List<CorrectionRound> rounds, int increment) {
+        var ofIncrement = rounds.stream().filter(r -> r.increment() == increment).toList();
+        var lastFounder = -1;
+        for (int i = 0; i < ofIncrement.size(); i++) {
+            if (ofIncrement.get(i).byFounder()) {
+                lastFounder = i;
+            }
+        }
+        return ofIncrement.subList(lastFounder + 1, ofIncrement.size()).stream().filter(r -> !r.byFounder()).toList();
+    }
+
+    /** La indicación del fundador (primera parte del pedido, sin el encabezado ni el reporte de Java); vacío si es automática. */
+    public String founderIndication() {
+        if (!byFounder() || request() == null) {
+            return "";
+        }
+        var text = request().startsWith(FOUNDER_PREFIX) ? request().substring(FOUNDER_PREFIX.length()) : request();
+        var end = text.indexOf("\n\n" + CorrectionReport.HEADER);
+        return (end >= 0 ? text.substring(0, end) : text).strip();
+    }
 }

@@ -327,14 +327,7 @@ public class MissionRecoveryService {
 
     /** Spec §3: contador por incremento (desde la última ronda del fundador), costo de la misión y "sin avance". */
     public Optional<String> brake(String missionId, int increment, int failingNow) {
-        var rounds = recovery.correctionRounds(missionId).stream().filter(r -> r.increment() == increment).toList();
-        var lastFounder = -1;
-        for (int i = 0; i < rounds.size(); i++) {
-            if (rounds.get(i).byFounder()) {
-                lastFounder = i;
-            }
-        }
-        var auto = rounds.subList(lastFounder + 1, rounds.size()).stream().filter(r -> !r.byFounder()).toList();
+        var auto = CorrectionRound.automaticSinceFounder(recovery.correctionRounds(missionId), increment);
         var max = (int) policies.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS);
         if (auto.size() >= max) {
             return Optional.of("Se agotaron las " + max + " correcciones automáticas del incremento " + increment + ".");
