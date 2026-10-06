@@ -40,4 +40,35 @@ class CorrectionReportTest {
         assertTrue(report.text().contains("no produjo un plan válido"), report.text());
         assertEquals(1, report.failing());
     }
+
+    @Test void countsEachDistinctCompileErrorOfAFailedBuild() {
+        var tail = "  Domain -> /work/backend/src/Domain/bin/Domain.dll\n"
+                + "/work/src/Application/Orders/CreateOrder.cs(12,17): error CS0246: The type or namespace name 'IOrderRepository' "
+                + "could not be found (are you missing a using directive or an assembly reference?) [/work/src/Application/Application.csproj]\n"
+                + "/work/src/Api/Program.cs(5,1): error CS0103: The name 'builder' does not exist in the current context [/work/src/Api/Api.csproj]\n"
+                + "/work/src/Api/Program.cs(7,9): warning CS8618: Non-nullable property\n"
+                + "Build FAILED.\n"
+                + "/work/src/Application/Orders/CreateOrder.cs(12,17): error CS0246: The type or namespace name 'IOrderRepository' "
+                + "could not be found (are you missing a using directive or an assembly reference?) [/work/src/Application/Application.csproj]\n"
+                + "    2 Error(s)\n";
+        var sandbox = "{\"overall\":\"FAIL\",\"steps\":[{\"name\":\"backend/restore\",\"status\":\"PASS\",\"exitCode\":0,\"durationMs\":1,"
+                + "\"outputTail\":\"ok\",\"testsPassed\":0,\"testsFailed\":0},{\"name\":\"backend/build\",\"status\":\"FAIL\","
+                + "\"exitCode\":1,\"durationMs\":1,\"outputTail\":" + tools.jackson.databind.json.JsonMapper.builder().build()
+                .writeValueAsString(tail) + ",\"testsPassed\":0,\"testsFailed\":0}]}";
+
+        var report = CorrectionReport.from(Optional.of(validation("[]", sandbox, "")), "");
+
+        assertEquals(2, report.failing(), report.text());
+        assertTrue(report.text().contains("backend/src/Application/Orders/CreateOrder.cs:12 CS0246"), report.text());
+        assertTrue(report.text().contains("backend/src/Api/Program.cs:5 CS0103 The name 'builder' does not exist"), report.text());
+        assertFalse(report.text().contains("CS8618"), report.text());
+    }
+
+    @Test void aFailedBuildWithoutReadableErrorsCountsAsOne() {
+        var sandbox = "{\"overall\":\"FAIL\",\"steps\":[{\"name\":\"build\",\"status\":\"FAIL\",\"exitCode\":1,\"durationMs\":1,"
+                + "\"outputTail\":\"MSBUILD : error MSB1009: Project file does not exist.\",\"testsPassed\":0,\"testsFailed\":0}]}";
+        var report = CorrectionReport.from(Optional.of(validation("[]", sandbox, "")), "");
+        assertEquals(1, report.failing(), report.text());
+        assertTrue(report.text().contains("MSB1009"), report.text());
+    }
 }
