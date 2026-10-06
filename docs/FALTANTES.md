@@ -41,6 +41,10 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | Etiquetas "Engineering" en `DependenciesPage` y `ProductsPage` | Bloque 1 | Solo texto |
 | [ ] | `ProductStatus.PUBLISHED` inalcanzable (`ProductStatusService.isPublished` devuelve `false`) y su javadoc dice que los tres estados son alcanzables | Previo | Corregir el javadoc o implementar la publicación |
 | [ ] | El resultado guardado de cada tarea incluye `"complete":true,"remainingPaths":[]` | Bloque 3 (m-12) | Ruido en Activity, sin efecto funcional |
+| [ ] | Una tarea `WORK` saltada al retomar no verifica que su `commitSha` sea alcanzable desde `HEAD` | Misiones durables (revisión final) | El spec §2 lo pide; hoy basta `COMPLETED` + `commitSha` |
+| [ ] | Ventanas de reinicio entre `claimNextRound`, `addCorrectionRound` y `correctAsync` | Misiones durables (revisión final) | Un reinicio justo ahí deja la ronda reclamada sin pedido guardado o sin lanzar |
+| [ ] | Se pierden los `packages` de una tarea saltada si su resultado guardado no se puede leer | Misiones durables (revisión final) | La tarea se salta igual; el `.csproj` puede quedar sin el paquete |
+| [ ] | La lista "Retomadas tras el reinicio" del status crece sin límite mientras no se reinicie | Misiones durables (revisión final) | Recortar a las recientes o a las que siguen en curso |
 
 ## 3. Fuera del código
 
