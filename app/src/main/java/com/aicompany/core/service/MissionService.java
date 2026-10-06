@@ -308,7 +308,7 @@ public class MissionService {
      * corriendo agentes.
      */
     private static final Set<MissionStatus> DECIDABLE_STATUSES =
-            Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.FAILED);
+            Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.FAILED, MissionStatus.BLOCKED);
 
     public Optional<DecisionResponse> recordDecision(
             String missionId,
@@ -323,7 +323,7 @@ public class MissionService {
         if (!DECIDABLE_STATUSES.contains(mission.get().status())) {
             throw new IllegalStateException(
                     "Solo se puede registrar una decisión sobre una misión "
-                            + "en AWAITING_INVESTOR o FAILED (estado actual: "
+                            + "en AWAITING_INVESTOR, FAILED o BLOCKED (estado actual: "
                             + mission.get().status()
                             + ")"
             );
@@ -331,6 +331,7 @@ public class MissionService {
 
         // Spec evidence-rounds (revisión 2026-09-27): el límite se chequea antes de escribir nada.
         Integer nextRound = null;
+        var blockedIndication = false;
         if (command.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE) {
             if (policies == null) {
                 throw new IllegalStateException("Falta CompanyPolicyService");
@@ -338,7 +339,9 @@ public class MissionService {
             var lastRound = memory.evidenceRound(missionId);
             var current = evidenceRoundsUsed(missionId);
             var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
-            if (current >= max) {
+            blockedIndication = mission.get().status() == MissionStatus.BLOCKED;
+            // Spec misiones durables §3: la indicación sobre una BLOCKED no consume rondas de evidencia.
+            if (!blockedIndication && current >= max) {
                 throw new IllegalStateException("MISSION " + missionId + " ya usó " + current + " de " + max
                         + " vueltas de evidencia: decide con APPROVE o REJECT (o sube MAX_EVIDENCE_ROUNDS en Settings).");
             }
@@ -398,7 +401,26 @@ public class MissionService {
                 )
         );
 
-        if (nextRound != null) {
+        if (nextRound != null && blockedIndication) {
+            var round = nextRound;
+            var lastValidation = memory.tasks(missionId).stream()
+                    .filter(t -> "VALIDATION".equals(t.kind()) && t.validationStatus() != null)
+                    .max(java.util.Comparator.comparing(com.aicompany.core.model.AgentTask::updatedAt,
+                            java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())));
+            var report = com.aicompany.core.recovery.CorrectionReport.from(lastValidation, mission.get().message());
+            var request = "INDICACIÓN DEL FUNDADOR: " + command.reasoning() + "\n\n" + report.text();
+            var increment = requirementsMemory == null ? 1 : Math.max(1, requirementsMemory.currentIncrement(missionId));
+            if (recoveryMemory != null) {
+                recoveryMemory.addCorrectionRound(missionId,
+                        new com.aicompany.core.recovery.CorrectionRound(round, increment, request, report.failing(), true));
+            }
+            executor.correctAsync(missionId, round, request)
+                    .whenComplete((ignored, error) -> {
+                        if (error != null) {
+                            log.error("MISSION {} - correction round {} failed", missionId, round, error);
+                        }
+                    });
+        } else if (nextRound != null) {
             var round = nextRound;
             executor.reexecuteAsync(missionId, memory.instructionOf(missionId).orElse(""), round, command.reasoning())
                     .whenComplete((ignored, error) -> {

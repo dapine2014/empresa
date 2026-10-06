@@ -170,6 +170,33 @@ class MissionServiceTest {
         return new MissionResponse(id, status, "TEST", 95, "x", "x", Instant.parse("2026-09-27T00:00:00Z"), null);
     }
 
+    // Spec misiones durables §3: sobre una BLOCKED, "más evidencia" sigue con la indicación sin gastar rondas de evidencia.
+    @Test
+    void aFounderIndicationOnABlockedMissionIsACorrectionRound() {
+        var recovery = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        roundService.setRecoveryMemory(recovery);
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.BLOCKED)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(5);
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(1.0);
+        when(roundMemory.tasks("MISSION-1")).thenReturn(List.of());
+        when(roundMemory.claimNextRound("MISSION-1", 5)).thenReturn(true);
+        when(roundExecutor.correctAsync(anyString(), anyInt(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+
+        roundService.recordDecision("MISSION-1", new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "usa otra librería"));
+
+        verify(roundMemory).claimNextRound("MISSION-1", 5);
+        verify(recovery).addCorrectionRound(eq("MISSION-1"), argThat(r -> r.round() == 6 && r.byFounder()));
+        verify(roundExecutor).correctAsync(eq("MISSION-1"), eq(6), argThat(s -> s.startsWith("INDICACIÓN DEL FUNDADOR: usa otra librería")));
+        verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void aBlockedMissionCanBeApprovedOrRejected() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.BLOCKED)));
+        roundService.recordDecision("MISSION-1", new DecisionCommand(InvestorDecision.APPROVE, "así está bien"));
+        verify(roundMemory).updateMission(eq("MISSION-1"), eq(MissionStatus.COMPLETED), anyInt(), anyString(), anyString());
+    }
+
     @Test
     void requestMoreEvidenceStartsTheNextRoundWithTheOriginalInstruction() {
         when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));

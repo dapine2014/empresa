@@ -19,8 +19,19 @@ import java.util.List;
 public class MissionController {
     private final MissionService missionService;
 
-    public MissionController(MissionService missionService) {
+    private final com.aicompany.core.recovery.MissionRecoveryService recoveryService;
+
+    public MissionController(MissionService missionService,
+                             com.aicompany.core.recovery.MissionRecoveryService recoveryService) {
         this.missionService = missionService;
+        this.recoveryService = recoveryService;
+    }
+
+    /** Spec misiones durables §1: retoma una misión INTERRUPTED del Development Group. */
+    @PostMapping("/{missionId}/resume")
+    public ResponseEntity<MissionResponse> resume(@PathVariable String missionId) {
+        recoveryService.resume(missionId);
+        return missionService.status(missionId).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @PostMapping
