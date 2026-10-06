@@ -325,7 +325,7 @@ public class MissionRecoveryService {
         }
     }
 
-    /** Spec §3: contador por incremento (desde la última ronda del fundador), costo de la misión y "sin avance". */
+    /** Spec §3: contador por incremento (desde la última ronda del fundador), y costo de la misión (el "sin avance" ya no frena: ver needsStrategy). */
     public Optional<String> brake(String missionId, int increment, int failingNow) {
         var auto = CorrectionRound.automaticSinceFounder(recovery.correctionRounds(missionId), increment);
         var max = (int) policies.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS);
@@ -337,15 +337,18 @@ public class MissionRecoveryService {
         if (spent >= maxCost) {
             return Optional.of(String.format(Locale.ROOT, "La misión gastó US$ %.2f en modelos (máximo US$ %.2f).", spent, maxCost));
         }
-        if (auto.size() >= 2) {
-            var before = auto.get(auto.size() - 2).failing();
-            var last = auto.get(auto.size() - 1).failing();
-            if (last >= before && failingNow >= last) {
-                return Optional.of("Dos rondas de corrección seguidas sin avance (" + before + " → " + last + " → "
-                        + failingNow + " cosas que fallan).");
-            }
-        }
         return Optional.empty();
+    }
+
+    /** Revisión 2026-10-06 §2: dos rondas automáticas seguidas sin bajar lo que falla piden una estrategia nueva. */
+    public boolean needsStrategy(String missionId, int increment, int failingNow) {
+        var auto = CorrectionRound.automaticSinceFounder(recovery.correctionRounds(missionId), increment);
+        if (auto.size() < 2) {
+            return false;
+        }
+        var before = auto.get(auto.size() - 2).failing();
+        var last = auto.get(auto.size() - 1).failing();
+        return last >= before && failingNow >= last;
     }
 
     MissionSnapshot snapshot(MissionResponse mission) {

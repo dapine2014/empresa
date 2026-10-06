@@ -149,7 +149,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var expectedProjects = ComponentScaffold.projectFiles(plan.resolvedComponents(), plan.contextNames());
         CommittedWork scaffold;
         try {
-            scaffold = context.round() > 0 || head.isPresent() ? existingScaffold(context) : commitProjectScaffold(context);
+            // Revisión 2026-10-06 §6: sin repositorio (aunque sea una ronda > 0) se escribe el scaffold de nuevo.
+            scaffold = head.isPresent() ? existingScaffold(context) : commitProjectScaffold(context);
         } catch (IllegalStateException ex) {
             // Sin estructura de proyectos no hay nada que generar: ninguna tarea queda colgada en PENDING.
             for (var task : plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)

@@ -47,8 +47,8 @@ class CompanyPolicyDefaultsTest {
     @Test
     void theCorrectionBrakesHaveTheirDefaults() {
         var defaults = CompanyPolicyService.defaults(new AppProperties("Forjai", 50, 60));
-        assertEquals(3.0, defaults.get(PolicyKey.MAX_AUTO_CORRECTIONS));
-        assertEquals(5.0, defaults.get(PolicyKey.MAX_MISSION_COST_USD));
+        assertEquals(20.0, defaults.get(PolicyKey.MAX_AUTO_CORRECTIONS));
+        assertEquals(10.0, defaults.get(PolicyKey.MAX_MISSION_COST_USD));
         assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.MAX_AUTO_CORRECTIONS, 0));
     }
 

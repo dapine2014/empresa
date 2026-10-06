@@ -91,6 +91,21 @@ class DatabaseApplyServiceTest {
         verifyNoInteractions(applier);
     }
 
+    // Revisión 2026-10-06 §4: BLOCKED cuenta como detenida (como FAILED).
+    @Test
+    void onDemandItAcceptsABlockedMission() throws Exception {
+        when(memory.lastValidationStatus("M-1")).thenReturn(java.util.Optional.of("VERIFIED"));
+        when(memory.find("M-1")).thenReturn(java.util.Optional.of(mission(com.aicompany.core.model.MissionStatus.BLOCKED)));
+        when(memory.verifiedCommit("M-1")).thenReturn(java.util.Optional.of("verificado"));
+        when(memory.lastTeamPlanJson("M-1")).thenReturn(java.util.Optional.of("{\"summary\":\"Citas\",\"stackProfile\":\"DOTNET_APP\",\"tasks\":[]}"));
+
+        try {
+            service.applyLatest("M-1");
+        } catch (IllegalStateException ex) {
+            assertFalse(ex.getMessage().contains("detenida"), ex.getMessage());
+        }
+    }
+
     @Test
     void onDemandItUsesTheVerifiedCommit() throws Exception {
         when(memory.lastValidationStatus("M-1")).thenReturn(java.util.Optional.of("VERIFIED"));

@@ -165,12 +165,13 @@ class MissionRecoveryServiceTest {
         assertTrue(service.brake("M-1", 1, 2).orElseThrow().contains("US$"));
     }
 
-    // Review Focus 3: dos rondas seguidas sin bajar lo que falla -> BLOCKED (falla de infraestructura repetida).
-    @Test void noProgressInTwoRoundsBlocks() {
+    // Revisión 2026-10-06 §2: sin avance ya no bloquea; pide una estrategia nueva.
+    @Test void noProgressAsksForAStrategyInsteadOfBlocking() {
         when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 4, false),
                 new CorrectionRound(2, 1, "b", 4, false)));
-        assertTrue(service.brake("M-1", 1, 4).orElseThrow().contains("sin avance"));
-        assertTrue(service.brake("M-1", 1, 3).isEmpty());
+        assertTrue(service.brake("M-1", 1, 4).isEmpty());
+        assertTrue(service.needsStrategy("M-1", 1, 4));
+        assertFalse(service.needsStrategy("M-1", 1, 3));
     }
 
     @Test void aFounderRoundResetsTheCounter() {

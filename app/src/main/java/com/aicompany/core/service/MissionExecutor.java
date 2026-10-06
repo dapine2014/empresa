@@ -727,9 +727,11 @@ public class MissionExecutor {
     private void runTeamPlan(String missionId, String instruction, TeamExecutionMode mode, TeamMissionContext context) {
 
         // Spec misiones durables §2.1: una ronda > 0 del Development Group trabaja sobre el repositorio de la misión; sin
-        // él no hay nada que retomar ni corregir y la misión espera al fundador (sin gastar más llamadas).
+        // él no hay nada que retomar ni corregir y la misión espera al fundador (sin gastar más llamadas). Revisión
+        // 2026-10-06 §6: solo si el repositorio existió (alguna tarea con commit); si nunca existió, se escribe el scaffold.
         if (mode == TeamExecutionMode.DEVELOPMENT && context.round() > 0 && workspace != null
-                && workspace.headIfAny(missionId).isEmpty()) {
+                && workspace.headIfAny(missionId).isEmpty()
+                && memory.tasks(missionId).stream().anyMatch(t -> t.commitSha() != null)) {
             block(missionId, NO_WORKSPACE);
             return;
         }

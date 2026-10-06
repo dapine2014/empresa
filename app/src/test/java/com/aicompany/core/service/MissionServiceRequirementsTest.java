@@ -117,6 +117,18 @@ class MissionServiceRequirementsTest {
         verifyNoInteractions(executor);
     }
 
+    // Revisión 2026-10-06 §4: se construye el incremento siguiente sobre una BLOCKED.
+    @Test
+    void anIncrementCanBeBuiltOnABlockedMission() {
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.BLOCKED)));
+        when(requirements.approved("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                "{\"increments\":[{\"number\":1},{\"number\":2}]}", "APPROVED", "", null)));
+        when(requirements.builtIncrement("M-9")).thenReturn(1);
+        when(memory.evidenceRound("M-9")).thenReturn(3);
+        when(memory.claimNextRound(eq("M-9"), eq(3), anySet())).thenReturn(true);
+        assertDoesNotThrow(() -> service.buildIncrement("M-9", 2));
+    }
+
     // Review Focus 5.
     @Test
     void anIncrementNeedsAnApprovedSpecThePreviousOneBuiltAndAStoppedMission() {
@@ -132,7 +144,7 @@ class MissionServiceRequirementsTest {
 
         when(memory.evidenceRound("M-9")).thenReturn(3);
         service.buildIncrement("M-9", 2);
-        verify(memory).claimNextRound(eq("M-9"), eq(3), argThat(s -> s.equals(java.util.Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.COMPLETED, MissionStatus.FAILED))));
+        verify(memory).claimNextRound(eq("M-9"), eq(3), argThat(s -> s.equals(java.util.Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.COMPLETED, MissionStatus.FAILED, MissionStatus.BLOCKED))));
         verify(executor).buildIncrementAsync("M-9", 2, 4);
     }
 

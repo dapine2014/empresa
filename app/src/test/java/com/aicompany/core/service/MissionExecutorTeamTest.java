@@ -480,7 +480,29 @@ class MissionExecutorTeamTest {
 
     // Spec misiones durables §2.1: sin repositorio, una ronda > 0 del Development Group queda BLOCKED con el motivo.
     @Test
-    void aRoundAfterTheFirstWithoutRepositoryIsBlocked() throws Exception {
+    void aRoundWhoseRepositoryWasLostIsBlocked() throws Exception {
+        withAria();
+        var workspace = mock(DevelopmentWorkspaceService.class);
+        executor.setWorkspace(workspace);
+        when(workspace.headIfAny("M-9")).thenReturn(Optional.empty());
+        when(memory.tasks("M-9")).thenReturn(List.of(new AgentTask("M-9-ENGINEERING", "M-9", "engineering", "ARCHITECTURE",
+                "COMPLETED", "{}", java.time.Instant.now(), "WORK", "/w", "a".repeat(40), List.of(), null, null)));
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+
+        executor.correctAsync("M-9", 2, "CORRECCIÓN AUTOMÁTICA (Java):\n- ESC-05").get();
+
+        verify(development, never()).execute(any(), any());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.BLOCKED), anyInt(), anyString(),
+                eq(MissionExecutor.NO_WORKSPACE));
+        verify(events).publish(eq("EMPRESA_MISSION_BLOCKED"), eq("M-9"), isNull(), eq("system"), anyMap());
+    }
+
+    // Revisión 2026-10-06 §6: sin repositorio que nunca existió (ninguna tarea con commit) la ronda sigue.
+    @Test
+    void aRoundWithoutRepositoryThatNeverExistedRuns() throws Exception {
         withAria();
         var workspace = mock(DevelopmentWorkspaceService.class);
         executor.setWorkspace(workspace);
@@ -493,10 +515,8 @@ class MissionExecutorTeamTest {
 
         executor.correctAsync("M-9", 2, "CORRECCIÓN AUTOMÁTICA (Java):\n- ESC-05").get();
 
-        verify(development, never()).execute(any(), any());
-        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.BLOCKED), anyInt(), anyString(),
-                eq(MissionExecutor.NO_WORKSPACE));
-        verify(events).publish(eq("EMPRESA_MISSION_BLOCKED"), eq("M-9"), isNull(), eq("system"), anyMap());
+        verify(development).execute(argThat(c -> c.round() == 2), any());
+        verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.BLOCKED), anyInt(), anyString(), anyString());
     }
 
     @Test

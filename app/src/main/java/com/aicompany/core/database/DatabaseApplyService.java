@@ -32,7 +32,7 @@ public class DatabaseApplyService {
     static final String DBA = "devops";
     private static final java.util.Set<com.aicompany.core.model.MissionStatus> STOPPED = java.util.Set.of(
             com.aicompany.core.model.MissionStatus.AWAITING_INVESTOR, com.aicompany.core.model.MissionStatus.COMPLETED,
-            com.aicompany.core.model.MissionStatus.FAILED);
+            com.aicompany.core.model.MissionStatus.FAILED, com.aicompany.core.model.MissionStatus.BLOCKED);
 
     private final DatabaseConnectionService connections;
     private final DatabaseSchemaApplier applier;

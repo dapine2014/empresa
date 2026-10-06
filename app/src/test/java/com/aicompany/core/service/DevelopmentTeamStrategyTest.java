@@ -328,6 +328,7 @@ class DevelopmentTeamStrategyTest {
     void anEvidenceRoundDoesNotRecreateTheScaffoldAndUsesSuffixedTaskIds() throws Exception {
         var base = context();
         var roundOne = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
         when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
         when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
@@ -365,6 +366,7 @@ class DevelopmentTeamStrategyTest {
     void aRoundCommitsOnlyTheMissingScaffoldFiles() throws Exception {
         var base = context();
         var roundTwo = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 2);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
         when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
@@ -392,6 +394,28 @@ class DevelopmentTeamStrategyTest {
         // Lo que ya estaba en el repositorio al empezar la ronda sigue permitido aunque su dueño no esté en este plan.
         verify(validator).validate(eq("M-1"), anyList(), anyList(), anyList(),
                 argThat(allowed -> allowed.contains("db/postgres/migrations/V1__clientes.sql")), anyList());
+    }
+
+    // Revisión 2026-10-06 §6: una ronda > 0 sin repositorio (nunca existió) escribe el scaffold de nuevo.
+    @Test
+    void aLaterRoundWithoutRepositoryWritesTheScaffold() throws Exception {
+        stubHappyPath();
+        var base = context();
+        var roundOne = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+
+        try {
+            strategy.execute(roundOne, progress);
+        } catch (RuntimeException ignored) {
+            // lo que importa es que se pidió el commit del scaffold antes de generar
+        }
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any());
     }
 
     @Test

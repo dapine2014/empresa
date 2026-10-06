@@ -237,7 +237,7 @@ public class MissionService {
     }
 
     private static final Set<MissionStatus> STOPPED = Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.COMPLETED,
-            MissionStatus.FAILED);
+            MissionStatus.FAILED, MissionStatus.BLOCKED);
 
     public RequirementsView buildIncrement(String missionId, int increment) {
         var mission = memory.find(missionId)
