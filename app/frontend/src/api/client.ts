@@ -204,6 +204,9 @@ export const api = {
   buildIncrement: (missionId: string, increment: number) =>
     request<RequirementsView>(`/api/company/missions/${missionId}/increments/${increment}`, { method: 'POST' }),
 
+  resumeMission: (missionId: string) =>
+    request<MissionResponse>(`/api/company/missions/${missionId}/resume`, { method: 'POST' }),
+
   deleteMission: (missionId: string) =>
     request<void>(`/api/company/missions/${missionId}`, { method: 'DELETE' }),
 

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { InvestorDecision, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
+import type { InvestorDecision, MissionResponse, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -42,7 +42,29 @@ function sandboxDot(step: SandboxStep): string {
   return '🔴'
 }
 
-const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED'])
+const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED', 'BLOCKED'])
+
+/** Spec misiones durables §4: motivo de una BLOCKED/INTERRUPTED y "Reanudar" para las INTERRUPTED. */
+function MissionRecovery({ mission }: { mission: MissionResponse }) {
+  const queryClient = useQueryClient()
+  const resume = useMutation({
+    mutationFn: () => api.resumeMission(mission.missionId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['missionDetails', mission.missionId] }),
+  })
+  if (mission.status !== 'INTERRUPTED' && mission.status !== 'BLOCKED') return null
+  return (
+    <section>
+      <h2>{mission.status === 'BLOCKED' ? 'Bloqueada: espera tu indicación' : 'Interrumpida por un reinicio'}</h2>
+      <pre className="mission-message">{mission.message}</pre>
+      {mission.status === 'INTERRUPTED' && (
+        <button type="button" disabled={resume.isPending} onClick={() => resume.mutate()}>
+          Reanudar
+        </button>
+      )}
+      {resume.isError && <p className="error">{(resume.error as Error).message}</p>}
+    </section>
+  )
+}
 
 /** Spec 2026-10-02 §4: migraciones de Diego y "Aplicar esquema" (404 = la misión no declara base). */
 function MissionDatabase({ missionId }: { missionId: string }) {
@@ -264,6 +286,8 @@ export default function MissionDetailPage() {
         onDeleted={() => navigate('/missions')}
       />
 
+      <MissionRecovery mission={mission} />
+
       <MissionModelCost missionId={mission.missionId} />
 
       {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
@@ -379,7 +403,7 @@ export default function MissionDetailPage() {
       <h2>Decisión del inversionista</h2>
       {!canDecide && (
         <p className="hint">
-          Solo se puede decidir sobre una misión en AWAITING_INVESTOR o FAILED (estado actual: {mission.status}).
+          Solo se puede decidir sobre una misión en AWAITING_INVESTOR, FAILED o BLOCKED (estado actual: {mission.status}).
         </p>
       )}
       {canDecide && (
