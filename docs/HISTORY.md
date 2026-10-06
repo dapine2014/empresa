@@ -1028,3 +1028,14 @@ Rama `misiones-durables`. Implementado:
 - `POST /api/company/missions/{id}/resume`, chat "reanuda MISSION-X" y líneas de status, botón "Reanudar" en Missions. Eventos `EMPRESA_MISSION_RESUMED|INTERRUPTED|CORRECTION_STARTED|BLOCKED`.
 
 Verificación en vivo: pendiente.
+
+## Misiones durables: revisión 2026-10-06
+
+Rama `misiones-durables`. Cambios acordados con el fundador:
+- Defaults `MAX_AUTO_CORRECTIONS` 20 y `MAX_MISSION_COST_USD` 10. "Sin avance" ya no bloquea: `MissionRecoveryService.needsStrategy` lanza la ronda con una estrategia nueva.
+- `CorrectionStrategist` (error persistente = primera falla actual presente en los dos reportes previos; búsqueda web en inglés, hasta 3 páginas; Neo propone con `format`; Java valida fuentes y no repetir; nunca lanza). La ronda antepone "ESTRATEGIA NUEVA (error persistente)", se guarda en `Mission.correctionStrategies` y publica `EMPRESA_CORRECTION_STRATEGY_PROPOSED`. El chat la muestra con el dominio de su fuente.
+- `BLOCKED` se acepta como `FAILED` para construir el siguiente incremento y aplicar el esquema. Una ronda > 0 sin repositorio queda `BLOCKED` solo si la misión ya tenía commits; si falló antes del código, se vuelve a escribir el scaffold.
+- Manos humanas: "verifica MISSION-X" / `POST /missions/{id}/verify` / botón en Missions verifican el HEAD sin modelos (tarea `<misión>-HUMAN-VERIFY-<n>`), ponen en cero el contador (`correctionCounterResets`) y se retoman tras un reinicio (`HUMAN_VERIFY`).
+- `discardUncommitted` ahora aparta con `git stash push -u` en vez de borrar: el trabajo sin commit nunca se pierde.
+
+Verificación en vivo: pendiente.

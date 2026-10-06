@@ -448,6 +448,15 @@ public class ChatIntentRouter {
             if (!correcting.isEmpty()) {
                 parts.add("En corrección automática: " + String.join(", ", correcting) + ".");
             }
+            // Revisión 2026-10-06 §3: la última estrategia nueva de cada misión en corrección, con el dominio de su fuente.
+            var strategyLines = all.stream().filter(m -> correcting.stream().anyMatch(c -> c.startsWith(m.missionId() + " ")))
+                    .map(m -> recoveryMemory.strategies(m.missionId()).stream().reduce((a, b) -> b)
+                            .map(st -> m.missionId() + ": nueva estrategia: " + shorten(st.strategy())
+                                    + sourceSuffix(st.sources())))
+                    .flatMap(java.util.Optional::stream).toList();
+            if (!strategyLines.isEmpty()) {
+                parts.add(String.join(" ", strategyLines.stream().map(l -> l + ".").toList()));
+            }
         }
         var blocked = all.stream().filter(m -> m.status() == MissionStatus.BLOCKED).map(MissionResponse::missionId).toList();
         if (!blocked.isEmpty()) {
@@ -1475,9 +1484,50 @@ public class ChatIntentRouter {
                 + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
     }
 
+    private static final String STRATEGY_PREFIX = "ESTRATEGIA NUEVA (error persistente): ";
+
+    /** Revisión 2026-10-06 §3: ", estrategia: "…" (fuente: dominio)" si el pedido de la ronda lleva la estrategia nueva. */
+    private static String strategyForChat(com.aicompany.core.recovery.CorrectionRound round) {
+        var request = round.request() == null ? "" : round.request().strip();
+        if (!request.startsWith(STRATEGY_PREFIX)) {
+            return "";
+        }
+        var lines = request.substring(STRATEGY_PREFIX.length()).split("\\R", 3);
+        var sources = lines.length > 1 && lines[1].startsWith("Fuentes: ")
+                ? java.util.Arrays.stream(lines[1].substring("Fuentes: ".length()).split(",")).map(String::strip)
+                        .filter(u -> !u.isEmpty()).toList()
+                : List.<String>of();
+        return ", estrategia: \"" + shorten(lines[0]) + "\"" + sourceSuffix(sources);
+    }
+
+    /** " (fuente: dominio)" con el host de la primera fuente; vacío si no hay o no se puede leer. */
+    private static String sourceSuffix(List<String> sources) {
+        for (var url : sources) {
+            try {
+                var host = java.net.URI.create(url.strip()).getHost();
+                if (host != null && !host.isBlank()) {
+                    return " (fuente: " + host + ")";
+                }
+            } catch (IllegalArgumentException ignored) {
+                // una fuente ilegible no tumba el chat
+            }
+        }
+        return "";
+    }
+
+    private static String shorten(String text) {
+        var t = text == null ? "" : text.replaceAll("\\s+", " ").strip();
+        return t.length() > 200 ? t.substring(0, 200) + "…" : t;
+    }
+
     /** Spec misiones durables §4: el pedido de una corrección en una línea (sin el encabezado de Java si es automática). */
     private static String correctionRequestForChat(com.aicompany.core.recovery.CorrectionRound round) {
         var request = round.request() == null ? "" : round.request().strip();
+        if (request.startsWith(STRATEGY_PREFIX)) {
+            // Revisión 2026-10-06 §3: Java antepuso la estrategia (se muestra aparte); el pedido sigue tras la línea en blanco.
+            var cut = request.indexOf("\n\n");
+            request = cut < 0 ? "" : request.substring(cut + 2).strip();
+        }
         var lines = request.split("\\R", 2);
         var text = !round.byFounder() && lines.length > 1 ? lines[1] : request;
         text = text.replaceAll("\\s+", " ").strip();
@@ -1512,6 +1562,7 @@ public class ChatIntentRouter {
             var index = requests.size() - used + position;
             var label = r == 0 ? "Ronda 0" : corrections.containsKey(r)
                     ? "Ronda " + r + " (corrección" + (corrections.get(r).byFounder() ? " con tu indicación" : " automática")
+                            + strategyForChat(corrections.get(r))
                             + ", pedido: \"" + correctionRequestForChat(corrections.get(r)) + "\")"
                     : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
                     : "Ronda " + r + " (pedido: \""

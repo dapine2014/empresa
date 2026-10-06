@@ -95,4 +95,6 @@ EMPRESA_MISSION_INTERRUPTED (`MissionExecutor.interrupt`, `agentId="system"`): l
 
 EMPRESA_MISSION_CORRECTION_STARTED (`MissionExecutor.correctAsync`, `agentId="system"`): arrancó una ronda de corrección automática (o la que pide el fundador con indicación) para una misión con validación `FAILED`. `data: {round}`.
 
-EMPRESA_MISSION_BLOCKED (`MissionExecutor.block`, `agentId="system"`): un freno (`MAX_AUTO_CORRECTIONS`, `MAX_MISSION_COST_USD` o "sin progreso" en 2 rondas) detuvo la corrección; la misión queda `BLOCKED` y manda correo. `data: {reason}`.
+EMPRESA_MISSION_BLOCKED (`MissionExecutor.block`, `agentId="system"`): un freno (`MAX_AUTO_CORRECTIONS` o `MAX_MISSION_COST_USD`; "sin avance" ya no bloquea desde la revisión 2026-10-06) detuvo la corrección; la misión queda `BLOCKED` y manda correo. `data: {reason}`.
+
+EMPRESA_CORRECTION_STRATEGY_PROPOSED (`MissionExecutor`, `agentId="engineering"`; revisión 2026-10-06): ante un error persistente, Neo propuso una estrategia nueva (con búsqueda web) para la ronda de corrección. `data: {round, fingerprint, sources}` — `fingerprint` = identidad de la falla repetida, `sources` = URL leídas.

@@ -2603,6 +2603,55 @@ class ChatIntentRouterTest {
         assertFalse(response.contains("CORRECCIÓN AUTOMÁTICA (Java)"), response);
     }
 
+    // Revisión 2026-10-06 §3: el status muestra la última estrategia (con el dominio de su fuente) de una misión en corrección.
+    @Test
+    void theStatusShowsTheLastStrategyOfAMissionInCorrection() {
+        var recoveryMemory = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        router.setRecoveryMemory(recoveryMemory);
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-C", MissionStatus.WAITING_AGENT_RESULTS, "TEST", 30, "x", "x", Instant.now(), null)));
+        when(missionMemory.evidenceRound("MISSION-C")).thenReturn(2);
+        when(recoveryMemory.correctionRounds("MISSION-C")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(2, 1, "b", 2, false)));
+        when(recoveryMemory.strategies("MISSION-C")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionStrategy("fp", 2, "Usar el paquete X en vez de Y",
+                        List.of("https://learn.microsoft.com/x"))));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS)).thenReturn(20.0);
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("nueva estrategia: Usar el paquete X en vez de Y (fuente: learn.microsoft.com)"), response);
+    }
+
+    // Revisión 2026-10-06 §3: "¿cómo va?" muestra la estrategia de la ronda y no la confunde con el pedido.
+    @Test
+    void theRoundProgressShowsItsStrategy() {
+        var recoveryMemory = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        router.setRecoveryMemory(recoveryMemory);
+        var request = "ESTRATEGIA NUEVA (error persistente): Cambiar el enfoque del test\nFuentes: https://a.dev/x\n\n"
+                + "CORRECCIÓN AUTOMÁTICA (Java):\nfalla el test X";
+        when(recoveryMemory.correctionRounds("MISSION-6")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, request, 3, false)));
+        var mission = new MissionResponse("MISSION-6", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-6")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-6")).thenReturn(List.of(
+                new AgentTask("MISSION-6-QA", "MISSION-6", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-6-QA-R1", "MISSION-6", "qa", "TESTS", "COMPLETED", "{}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-6")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.evidenceRound("MISSION-6")).thenReturn(1);
+        when(missionMemory.evidenceRequests("MISSION-6")).thenReturn(List.of());
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        var response = router.route("¿Cómo va MISSION-6?");
+
+        assertTrue(response.contains("estrategia: \"Cambiar el enfoque del test\" (fuente: a.dev)"), response);
+        assertTrue(response.contains("pedido: \"falla el test X\""), response);
+    }
+
     // Revisión final (7): las rondas de corrección tampoco cuentan como evidencia ("ronda 3 de 2" no).
     @Test
     void theRoundStartedMessageDiscountsCorrectionRounds() {
