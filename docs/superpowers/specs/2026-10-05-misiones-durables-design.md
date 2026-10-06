@@ -191,3 +191,42 @@ decisiones sobre `BLOCKED`, chat ("reanuda", status) y policies.
    tareas commiteadas y termina.
 2. Reiniciar durante la verificación: vuelve a verificar y termina.
 3. Una misión que falla la validación: se corrige sola hasta `VERIFIED`, o queda `BLOCKED` con su motivo al agotar un freno.
+
+## Revisión 2026-10-06 (decisiones del fundador)
+
+Tras la implementación inicial, el fundador redefinió el punto de equilibrio: *ninguna misión debería quedarse en
+`BLOCKED` ni en `FAILED`; si tras 20 ciclos de corrección no avanza, se enfrascó en el error y entra el inversionista
+(aprobar o manos humanas)*. Esta revisión reemplaza lo que contradiga en §3 y §4.
+
+1. **20 rondas**: `MAX_AUTO_CORRECTIONS` = 20 por incremento (default; editable). `MAX_MISSION_COST_USD` = 10 (default;
+   el presupuesto mensual de AWS `forjai-mensual-20usd` es otra cosa: alerta de la cuenta, no tope por misión).
+2. **"Sin avance" ya no bloquea**: 2 rondas automáticas seguidas sin bajar el conteo de lo que falla disparan una
+   **estrategia nueva con búsqueda en internet** para la ronda siguiente. Solo bloquean las 20 rondas o el costo.
+3. **Estrategia** (`CorrectionStrategist`, Java + Neo, sin `tools`):
+   - Java elige el error persistente: la primera línea de lo que falla (huella normalizada: sin números de línea ni
+     rutas temporales) presente en los dos últimos reportes y en el actual; si ninguna se repite, la primera del actual.
+   - Java arma la consulta (mensaje y código del error + stack: ".NET 8"/"Flutter 3.41"), busca con `WebSearchPort`
+     (hasta 5 resultados, idioma `en`) y lee hasta 3 páginas con `EvidenceAcquisitionService.fetchPage` (protección SSRF).
+   - Neo (`engineering`, `format`, sin `tools`) recibe el error, lo intentado antes para esa huella y los extractos con su
+     URL, y propone `{strategy, sources[]}`: reescribir el archivo desde cero, cambiar el enfoque, reasignar o pedir una
+     dependencia.
+   - Java valida: ≥1 fuente entre las URLs leídas y estrategia distinta (normalizada) de las ya intentadas para esa
+     huella; hasta 3 intentos con corrección. Si no hay estrategia válida (o la búsqueda falla), la ronda sigue sin ella
+     (queda en el log; no bloquea).
+   - La estrategia se antepone al pedido de la ronda (`ESTRATEGIA NUEVA (error persistente): … Fuentes: …`), se guarda
+     (`Mission.correctionStrategies`: huella, ronda, estrategia, fuentes) y se publica `EMPRESA_CORRECTION_STRATEGY_PROPOSED`.
+     Corre dentro del hilo de la ronda (nunca en el hilo del despachador). El pedido guardado de la ronda se actualiza
+     con la estrategia, así que retomar tras un reinicio no vuelve a buscar.
+4. **`BLOCKED` = `FAILED`** para las acciones del fundador: construir el siguiente incremento (si el actual ya estaba
+   construido) y aplicar el esquema del último commit `VERIFIED` también aceptan `BLOCKED`.
+5. **Manos humanas**: un desarrollador corrige en el repositorio de la misión y hace commit. "verifica MISSION-X" (chat,
+   `POST /api/company/missions/{id}/verify`, botón en Missions) corre sobre el `HEAD` real los chequeos deterministas, el
+   sandbox y la cobertura de escenarios **sin llamar a ningún modelo** (sin reparaciones, sin diagnóstico 360, sin revisión
+   de Vera), en una tarea `VALIDATION` nueva (`<misión>-HUMAN-VERIFY-<n>`), y deja la misión en `AWAITING_INVESTOR`
+   con su `validationStatus`. Acepta `BLOCKED`, `FAILED`, `AWAITING_INVESTOR` e `INTERRUPTED` (misión detenida, no viva).
+   Si queda `VERIFIED`, el incremento cuenta como construido como siempre; si queda `FAILED`, la corrección automática
+   arranca con el contador del incremento en cero (marca de reinicio, igual que una indicación del fundador).
+6. **Falla antes del código**: una ronda > 0 sin repositorio queda `BLOCKED` solo si la misión tuvo commits antes (el
+   repositorio existió y se perdió); si nunca tuvo, la ronda crea el scaffold de nuevo (`commitProjectScaffold`).
+7. **Chat**: "dame un status" muestra la última estrategia de cada misión en corrección ("nueva estrategia: … (fuente:
+   dominio)"); "¿cómo va MISSION-X?" la muestra en su ronda; comando "verifica MISSION-X" (gobernanza).
