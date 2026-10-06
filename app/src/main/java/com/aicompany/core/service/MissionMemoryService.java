@@ -80,7 +80,8 @@ public class MissionMemoryService {
                 params.put("teamId", teamId);
                 tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, "
                                 + "m.environment=$environment, m.status='CREATED', m.progress=0, "
-                                + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt"
+                                + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt, "
+                                + "m.createdAt=coalesce(m.createdAt, $updatedAt)"
                                 + financialCriteriaSet + teamIdSet,
                         params);
                 tx.run("MATCH (m:Mission {id:$id}), (c:Company {id:'AI-COMPANY'}) MERGE (c)-[:HAS_MISSION]->(m)", Map.of("id", missionId));
@@ -479,7 +480,9 @@ public class MissionMemoryService {
                 params.put("updatedAt", Instant.now().toString());
                 tx.run("MATCH (m:Mission {id:$missionId}), (a:Agent {id:$agentId}) " +
                                 "MERGE (t:AgentTask {id:$taskId}) SET t.missionId=$missionId, t.agentId=$agentId, " +
-                                "t.action=$action, t.kind=$kind, t.status='PENDING', t.updatedAt=$updatedAt " +
+                                // Spec misiones durables §2: retomar no pisa una tarea ya terminada.
+                                "t.action=$action, t.kind=$kind, t.status=CASE WHEN t.status = 'COMPLETED' THEN t.status ELSE 'PENDING' END, "
+                                + "t.updatedAt=$updatedAt " +
                                 "MERGE (m)-[:HAS_TASK]->(t) MERGE (a)-[:ASSIGNED_TASK]->(t) " +
                                 "MERGE (m)-[:INVOLVES_AGENT]->(a)",
                         params);
@@ -790,6 +793,30 @@ public class MissionMemoryService {
                             nullableString(r.get("validationStatus")),
                             nullableString(r.get("staticChecks")),
                             nullableString(r.get("sandboxResult"))));
+        }
+    }
+
+    /** Spec misiones durables §1: al arrancar ningún agente está trabajando (sus hilos murieron con el proceso). */
+    public int resetWorkingAgents() {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> tx.run("MATCH (a:Agent {status:'WORKING'}) SET a.status = 'IDLE' "
+                    + "RETURN count(a) AS n").single().get("n").asInt());
+        }
+    }
+
+    /** Spec misiones durables §2: el plan de Neo guardado como resultado de su tarea de planificación. */
+    public Optional<String> planJson(String taskId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (t:AgentTask {id:$id, kind:'PLANNING', status:'COMPLETED'}) WHERE t.result IS NOT NULL "
+                    + "RETURN t.result AS r", Map.of("id", taskId)).list(r -> r.get("r").asString()).stream().findFirst();
+        }
+    }
+
+    /** Spec misiones durables §1: la más antigua se recupera primero (las anteriores a este campo no lo tienen). */
+    public Optional<Instant> createdAt(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.createdAt IS NOT NULL RETURN m.createdAt AS c",
+                    Map.of("id", missionId)).list(r -> Instant.parse(r.get("c").asString())).stream().findFirst();
         }
     }
 }

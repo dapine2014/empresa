@@ -34,7 +34,7 @@ class MissionServiceRequirementsTest {
         when(executor.reexecuteAsync(anyString(), anyString(), anyInt(), anyString()))
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(memory.instructionOf("M-9")).thenReturn(Optional.of("Un CRM"));
-        when(requirements.claimDecision(anyString(), anyInt())).thenReturn(true);
+        when(requirements.claimDecision(anyString(), anyInt(), any())).thenReturn(true);
         when(memory.claimNextRound(anyString(), anyInt())).thenReturn(true);
     }
 
@@ -92,7 +92,7 @@ class MissionServiceRequirementsTest {
     void aConcurrentDecisionThatLosesTheClaimDoesNothing() {
         when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
         when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(2, "{}", "DRAFT", "", null)));
-        when(requirements.claimDecision("M-9", 2)).thenReturn(false);
+        when(requirements.claimDecision(eq("M-9"), eq(2), any())).thenReturn(false);
 
         for (var decision : RequirementsDecisionCommand.RequirementsDecision.values()) {
             assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9",
@@ -205,5 +205,30 @@ class MissionServiceRequirementsTest {
         when(requirements.incrementRounds("M-9")).thenReturn(2);
         assertEquals(1, service.evidenceRoundsUsed("M-9"));
     }
-}
 
+    // Spec misiones durables §2: el ajuste reclamado guarda su instrucción, para retomarlo tras un reinicio.
+    @Test
+    void anAdjustmentClaimKeepsItsInstruction() {
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "DRAFT", "", null)));
+        when(requirements.claimDecision(anyString(), anyInt(), any())).thenReturn(true);
+
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, " solo clientes "));
+
+        verify(requirements).claimDecision("M-9", 1, "solo clientes");
+    }
+
+    // Spec misiones durables §3: las correcciones no consumen rondas de evidencia.
+    @Test
+    void correctionRoundsDoNotCountAgainstTheEvidenceLimit() {
+        var recovery = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        service.setRecoveryMemory(recovery);
+        when(memory.evidenceRound("M-9")).thenReturn(4);
+        when(requirements.incrementRounds("M-9")).thenReturn(1);
+        when(recovery.correctionRounds("M-9")).thenReturn(java.util.List.of(
+                new com.aicompany.core.recovery.CorrectionRound(2, 1, "x", 3, false),
+                new com.aicompany.core.recovery.CorrectionRound(3, 1, "y", 2, false)));
+        assertEquals(1, service.evidenceRoundsUsed("M-9"));
+    }
+}

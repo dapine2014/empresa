@@ -60,11 +60,27 @@ public class RequirementsMemoryService {
      * Revisión final Aria (12): CAS contra dos decisiones simultáneas sobre la misma versión (doble clic): solo la primera
      * la reclama; la versión sigue en DRAFT hasta que la decisión la cambie.
      */
-    public boolean claimDecision(String missionId, int version) {
+    public boolean claimDecision(String missionId, int version, String pendingAdjustment) {
+        // Map.of no admite null: el ajuste es null cuando la decisión no es un ADJUST.
+        var params = new java.util.HashMap<String, Object>();
+        params.put("id", missionId);
+        params.put("v", version);
+        params.put("adjust", pendingAdjustment);
         try (var session = driver.session()) {
             return session.executeWrite(tx -> !tx.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion "
-                    + "{version:$v}) WHERE r.status = 'DRAFT' AND r.decisionClaimedAt IS NULL SET r.decisionClaimedAt = datetime() "
-                    + "RETURN r.version", Map.of("id", missionId, "v", version)).list().isEmpty());
+                    + "{version:$v}) WHERE r.status = 'DRAFT' AND r.decisionClaimedAt IS NULL SET r.decisionClaimedAt = datetime(), "
+                    + "r.pendingAdjustment = $adjust RETURN r.version",
+                    params).list().isEmpty());
+        }
+    }
+
+    /** Spec misiones durables §2: el ajuste reclamado sobre la última versión DRAFT (Aria no llegó a escribir la nueva). */
+    public Optional<String> pendingAdjustment(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {status:'DRAFT'}) "
+                            + "WHERE r.decisionClaimedAt IS NOT NULL AND r.pendingAdjustment IS NOT NULL "
+                            + "RETURN r.pendingAdjustment AS a ORDER BY r.version DESC LIMIT 1", Map.of("id", missionId))
+                    .list(r -> r.get("a").asString()).stream().findFirst();
         }
     }
 

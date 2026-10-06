@@ -206,7 +206,8 @@ public class MissionService {
                 && (command.instruction() == null || command.instruction().isBlank())) {
             throw new IllegalArgumentException("Para ajustar los requisitos escribe la instrucción para Aria.");
         }
-        if (!requirementsMemory.claimDecision(missionId, version.version())) {
+        if (!requirementsMemory.claimDecision(missionId, version.version(),
+                command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST ? command.instruction().strip() : null)) {
             // Revisión final Aria (12): doble clic; la primera decisión ya está en curso.
             throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
                     + " ya tiene una decisión en curso.");
@@ -268,7 +269,16 @@ public class MissionService {
      */
     public int evidenceRoundsUsed(String missionId) {
         return memory.evidenceRound(missionId)
-                - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId));
+                - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId))
+                // Spec misiones durables §3: las correcciones tampoco consumen el límite.
+                - (recoveryMemory == null ? 0 : recoveryMemory.correctionRounds(missionId).size());
+    }
+
+    private com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryMemory(com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory) {
+        this.recoveryMemory = recoveryMemory;
     }
 
     public Optional<MissionResponse> status(String missionId) {
