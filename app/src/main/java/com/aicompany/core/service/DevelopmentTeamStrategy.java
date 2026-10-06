@@ -662,10 +662,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         events.publish("EMPRESA_STATIC_VALIDATION_COMPLETED", missionId, validationTaskId, HUMAN_VERIFY_AGENT,
                 Map.of("validationStatus", status.name(), "failedChecks", checks.stream().filter(c -> !c.passed()).count()));
 
-        var sandboxText = sandboxSummary(sandboxResult, sandboxError);
         return new TeamExecutionResult.Development(
-                resultsForCeo(context, committed, checks, null, coverageReport != null ? coverageReport : summary, status,
-                        List.of(), sandboxText),
+                // Revisión final: verifyAsync solo usa el estado verificable; nadie consolida con el CEO tras una verificación humana.
+                "",
                 (uncommitted.isEmpty() ? "" : uncommitted + "\n")
                         + verifiableState(context, null, committed, checks, status, List.of(), sandboxResult, sandboxError,
                                 0, 0, dependencyOutcome, List.of()));

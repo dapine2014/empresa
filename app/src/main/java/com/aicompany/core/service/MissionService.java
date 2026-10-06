@@ -416,7 +416,7 @@ public class MissionService {
             var increment = requirementsMemory == null ? 1 : Math.max(1, requirementsMemory.currentIncrement(missionId));
             if (recoveryMemory != null) {
                 recoveryMemory.addCorrectionRound(missionId,
-                        new com.aicompany.core.recovery.CorrectionRound(round, increment, request, report.failing(), true));
+                        new com.aicompany.core.recovery.CorrectionRound(round, increment, request, report.failing(), true, report.failures()));
             }
             executor.correctAsync(missionId, round, request)
                     .whenComplete((ignored, error) -> {

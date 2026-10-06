@@ -132,4 +132,17 @@ class CorrectionStrategistTest {
         assertTrue(strategist.propose("M1", 2, report(ERROR), List.of(), ".NET 8").isPresent());
         verify(ceo, times(2)).proposeCorrectionStrategy(anyString(), anyString(), any(), anyString());
     }
+
+    // Revisión final (triage): una excepción sin mensaje no escribe "null" en la corrección del siguiente intento.
+    @Test
+    void anExceptionWithoutMessageUsesItsClassNameInTheCorrection() {
+        twoPages();
+        when(ceo.proposeCorrectionStrategy(anyString(), anyString(), any(), anyString()))
+                .thenThrow(new IllegalStateException())
+                .thenReturn(new StrategyProposal("Algo bueno", List.of(U1)));
+
+        assertTrue(strategist.propose("M1", 2, report(ERROR), List.of(), ".NET 8").isPresent());
+        verify(ceo).proposeCorrectionStrategy(anyString(), argThat(p -> p.contains("IllegalStateException") && !p.contains("null")),
+                any(), anyString());
+    }
 }

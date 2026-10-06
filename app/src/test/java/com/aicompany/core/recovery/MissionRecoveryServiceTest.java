@@ -219,6 +219,19 @@ class MissionRecoveryServiceTest {
         verify(executor).resumeAsync(eq("M-1"), argThat(p -> p.stage() == ResumePoint.Stage.HUMAN_VERIFY));
     }
 
+    // Revisión final (1): una verificación humana FAILED (verifyHead lanzó) seguida de una corrección cortada no es una
+    // verificación pendiente: la misión se retoma como corrección.
+    @Test void aFailedHumanVerificationIsNotPendingAndTheCutCorrectionResumes() {
+        var now = Instant.now();
+        when(missions.evidenceRound("M-1")).thenReturn(3);
+        when(recovery.correctionRound("M-1", 3)).thenReturn(Optional.of(new CorrectionRound(3, 1, "x", 1, false)));
+        when(missions.tasks("M-1")).thenReturn(List.of(new com.aicompany.core.model.AgentTask("M-1-HUMAN-VERIFY-1", "M-1",
+                "qa", "HUMAN_VERIFY", "FAILED", "x", now, "VALIDATION", null, null, List.of(), null, null)));
+        var snapshot = service.snapshot(mission("M-1", MissionStatus.EVALUATING, "TEAM-DEVELOPMENT"));
+        assertNull(snapshot.humanVerifyTask());
+        assertTrue(snapshot.correctionRound());
+    }
+
     @Test void aFinishedHumanVerificationIsNotPending() {
         var now = Instant.now();
         when(missions.evidenceRound("M-1")).thenReturn(0);
@@ -273,8 +286,21 @@ class MissionRecoveryServiceTest {
     // Revisión 2026-10-06 §2: la decisión se toma antes de registrar la ronda que se lanza.
     @Test void noProgressLaunchesTheCorrectionWithStrategy() {
         realStore(List.of(new CorrectionRound(1, 1, "a", 1, false), new CorrectionRound(2, 1, "b", 1, false)));
+        failedValidation();
         service.recoverAll();
         verify(executor).correctAsync(eq("M-1"), eq(3), anyString(), eq(true));
+    }
+
+    // Revisión final (5): una falla del mensaje de la misión (sin validación) no busca estrategia en internet.
+    @Test void aFailureWithoutValidationNeverSearchesAStrategy() {
+        realStore(List.of(new CorrectionRound(1, 1, "a", 1, false), new CorrectionRound(2, 1, "b", 1, false)));
+        service.recoverAll();
+        verify(executor).correctAsync(eq("M-1"), eq(3), anyString(), eq(false));
+    }
+
+    private void failedValidation() {
+        when(missions.tasks("M-1")).thenReturn(List.of(new com.aicompany.core.model.AgentTask("M-1-QA-REVIEW", "M-1",
+                "qa", "X", "COMPLETED", "x", Instant.now(), "VALIDATION", null, null, List.of(), "FAILED", "[]")));
     }
 
     @Test void aSinglePriorRoundNeverLaunchesWithStrategy() {

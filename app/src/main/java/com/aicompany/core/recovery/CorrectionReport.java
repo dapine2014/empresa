@@ -17,7 +17,12 @@ import java.util.Optional;
  * sin test aprobado + chequeos fallidos (sin contar SCENARIO_COVERAGE) + errores de compilación distintos de cada restore/build fallido (o el paso, si no se leen) + los demás pasos fallidos; sin validación, 1
  * (la falla antes del código).
  */
-public record CorrectionReport(String text, int failing, List<String> failures) {
+public record CorrectionReport(String text, int failing, List<String> failures, boolean fromValidation) {
+
+    /** Revisión final (5): {@code fromValidation} = el reporte sale de una validación del estado actual (no del mensaje de la misión). */
+    public CorrectionReport(String text, int failing, List<String> failures) {
+        this(text, failing, failures, true);
+    }
 
     public static final String HEADER = "CORRECCIÓN AUTOMÁTICA (Java)";
     public static final String RULE = "Corrige hasta que todos los escenarios del incremento pasen. No borres, renombres ni "
@@ -86,7 +91,8 @@ public record CorrectionReport(String text, int failing, List<String> failures) 
                 failures.add("La validación terminó en " + task.validationStatus() + " sin un detalle legible");
             }
         }
-        return new CorrectionReport(HEADER + ":\n" + String.join("\n", lines) + "\n" + RULE, failing, List.copyOf(failures));
+        return new CorrectionReport(HEADER + ":\n" + String.join("\n", lines) + "\n" + RULE, failing, List.copyOf(failures),
+                lastValidation.isPresent());
     }
 
     /**

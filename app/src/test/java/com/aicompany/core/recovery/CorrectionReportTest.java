@@ -41,6 +41,12 @@ class CorrectionReportTest {
         assertEquals(1, report.failing());
     }
 
+    // Revisión final (5): solo el reporte que sale de una validación pide estrategia.
+    @Test void onlyAReportFromAValidationIsMarkedAsSuch() {
+        assertFalse(CorrectionReport.from(Optional.empty(), "falló").fromValidation());
+        assertTrue(new CorrectionReport("t", 1, List.of("x")).fromValidation());
+    }
+
     @Test void countsEachDistinctCompileErrorOfAFailedBuild() {
         var tail = "  Domain -> /work/backend/src/Domain/bin/Domain.dll\n"
                 + "/work/src/Application/Orders/CreateOrder.cs(12,17): error CS0246: The type or namespace name 'IOrderRepository' "

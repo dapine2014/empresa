@@ -185,7 +185,7 @@ class MissionServiceTest {
         roundService.recordDecision("MISSION-1", new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "usa otra librería"));
 
         verify(roundMemory).claimNextRound(eq("MISSION-1"), eq(5), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)));
-        verify(recovery).addCorrectionRound(eq("MISSION-1"), argThat(r -> r.round() == 6 && r.byFounder()));
+        verify(recovery).addCorrectionRound(eq("MISSION-1"), argThat(r -> r.round() == 6 && r.byFounder() && r.failures().size() == 1));
         verify(roundExecutor).correctAsync(eq("MISSION-1"), eq(6), argThat(s -> s.startsWith("INDICACIÓN DEL FUNDADOR: usa otra librería")));
         verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
     }

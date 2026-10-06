@@ -72,7 +72,7 @@ public class CorrectionStrategist {
                     proposal = ceo.proposeCorrectionStrategy(AGENT, prompt(failure, tried, pages, correction),
                             promptMemory.activePrompt(AGENT), companyMemory.agentModel(AGENT, defaultModel));
                 } catch (Exception ex) {
-                    correction = "- La llamada falló: " + ex.getMessage();
+                    correction = "- La llamada falló: " + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
                     continue;
                 }
                 var errors = errors(proposal, pages.keySet(), tried);

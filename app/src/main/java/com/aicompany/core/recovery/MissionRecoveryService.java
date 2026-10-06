@@ -358,7 +358,8 @@ public class MissionRecoveryService {
             var round = current + 1;
             // Revisión 2026-10-06 §2: sin avance, la ronda busca una estrategia nueva antes de correr. Se decide ANTES de
             // registrar la ronda: needsStrategy compara las rondas anteriores contra lo que falla ahora.
-            var withStrategy = needsStrategy(missionId, increment, report.failing());
+            // Revisión final (5): una falla que viene del mensaje de la misión (sin validación) no se busca en internet.
+            var withStrategy = report.fromValidation() && needsStrategy(missionId, increment, report.failing());
             recovery.addCorrectionRound(missionId, new CorrectionRound(round, increment, report.text(), report.failing(), false,
                     report.failures()));
             executor.correctAsync(missionId, round, report.text(), withStrategy);
@@ -418,7 +419,9 @@ public class MissionRecoveryService {
         // Revisión 2026-10-06 §5: la última tarea es una verificación humana sin resultado → se cortó a mitad.
         var humanVerify = all.stream()
                 .max(Comparator.comparing(AgentTask::updatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
-                .filter(t -> t.taskId().contains(MissionExecutor.HUMAN_VERIFY_SUFFIX) && t.validationStatus() == null)
+                .filter(t -> t.taskId().contains(MissionExecutor.HUMAN_VERIFY_SUFFIX) && t.validationStatus() == null
+                        // Revisión final (1): una verificación ya FAILED (verifyHead lanzó) no es una verificación a medias.
+                        && !"FAILED".equals(t.status()))
                 .map(AgentTask::taskId).orElse(null);
         return new MissionSnapshot(missionId, mission.teamId(), round, increment, correction,
                 latest.map(RequirementsMemoryService.Version::status).orElse(null),
