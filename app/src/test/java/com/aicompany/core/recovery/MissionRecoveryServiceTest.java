@@ -174,16 +174,34 @@ class MissionRecoveryServiceTest {
         assertFalse(service.needsStrategy("M-1", 1, 3));
     }
 
-    // Revisión 2026-10-06 §2: sin avance, la corrección se lanza con estrategia.
-    @Test void noProgressLaunchesTheCorrectionWithStrategy() {
+    /** El almacén real: addCorrectionRound agrega la ronda a lo que devuelve correctionRounds. */
+    private void realStore(List<CorrectionRound> prior) {
+        var store = new java.util.ArrayList<>(prior);
+        when(recovery.correctionRounds("M-1")).thenAnswer(inv -> List.copyOf(store));
+        doAnswer(inv -> store.add(inv.getArgument(1))).when(recovery).addCorrectionRound(eq("M-1"), any());
         listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
         when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "APPROVED", "", null)));
         when(requirements.currentIncrement("M-1")).thenReturn(1);
-        when(missions.evidenceRound("M-1")).thenReturn(2);
-        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 1, false),
-                new CorrectionRound(2, 1, "b", 1, false)));
+        when(missions.evidenceRound("M-1")).thenReturn(prior.size());
+    }
+
+    // Revisión 2026-10-06 §2: la decisión se toma antes de registrar la ronda que se lanza.
+    @Test void noProgressLaunchesTheCorrectionWithStrategy() {
+        realStore(List.of(new CorrectionRound(1, 1, "a", 1, false), new CorrectionRound(2, 1, "b", 1, false)));
         service.recoverAll();
         verify(executor).correctAsync(eq("M-1"), eq(3), anyString(), eq(true));
+    }
+
+    @Test void aSinglePriorRoundNeverLaunchesWithStrategy() {
+        realStore(List.of(new CorrectionRound(1, 1, "a", 1, false)));
+        service.recoverAll();
+        verify(executor).correctAsync(eq("M-1"), eq(2), anyString(), eq(false));
+    }
+
+    @Test void progressLaunchesWithoutStrategy() {
+        realStore(List.of(new CorrectionRound(1, 1, "a", 5, false), new CorrectionRound(2, 1, "b", 4, false)));
+        service.recoverAll();
+        verify(executor).correctAsync(eq("M-1"), eq(3), anyString(), eq(false));
     }
 
     @Test void fewerThanTwoAutomaticRoundsNeverAskForAStrategy() {

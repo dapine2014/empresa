@@ -316,10 +316,11 @@ public class MissionRecoveryService {
                 return false;
             }
             var round = current + 1;
+            // Revisión 2026-10-06 §2: sin avance, la ronda busca una estrategia nueva antes de correr. Se decide ANTES de
+            // registrar la ronda: needsStrategy compara las rondas anteriores contra lo que falla ahora.
+            var withStrategy = needsStrategy(missionId, increment, report.failing());
             recovery.addCorrectionRound(missionId, new CorrectionRound(round, increment, report.text(), report.failing(), false,
                     report.failures()));
-            // Revisión 2026-10-06 §2: sin avance, la ronda busca una estrategia nueva antes de correr.
-            var withStrategy = needsStrategy(missionId, increment, report.failing());
             executor.correctAsync(missionId, round, report.text(), withStrategy);
             return true;
         } catch (Exception ex) {
