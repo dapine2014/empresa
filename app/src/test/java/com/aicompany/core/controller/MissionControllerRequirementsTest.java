@@ -42,4 +42,15 @@ class MissionControllerRequirementsTest {
         assertEquals(view, controller.resume("M-9").getBody());
         verify(recoveryService).resume("M-9");
     }
+
+    // Revisión 2026-10-06 §5 (manos humanas).
+    @Test
+    void verifyIsAnEndpoint() {
+        var view = new com.aicompany.core.model.MissionResponse("M-9", com.aicompany.core.model.MissionStatus.EVALUATING,
+                "TEST", 75, "x", "m", java.time.Instant.now(), null, "TEAM-DEVELOPMENT");
+        when(service.status("M-9")).thenReturn(Optional.of(view));
+
+        assertEquals(view, controller.verify("M-9").getBody());
+        verify(recoveryService).verify("M-9");
+    }
 }

@@ -364,7 +364,25 @@ public class ChatIntentRouter {
                 || detectFreeMissionStart(normalize(message))
                 || detectDecision(message) != null
                 || isRequirementsCommand(message)
-                || RESUME.matcher(normalize(message)).find();
+                || RESUME.matcher(normalize(message)).find()
+                || VERIFY.matcher(normalize(message)).find();
+    }
+
+    /** Revisión 2026-10-06 §5 (manos humanas): "verifica MISSION-X". */
+    private static final Pattern VERIFY = Pattern.compile("(?i)^\\s*verifica(?:r)?\\s+(" + MISSION_REF + ")\\b");
+
+    private String handleVerify(String message) {
+        var m = VERIFY.matcher(normalize(message));
+        if (!m.find() || recoveryService == null) {
+            return null;
+        }
+        var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        try {
+            recoveryService.verify(missionId);
+            return "Verificando " + missionId + " sobre el último commit, sin modelos. Te aviso el resultado.";
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
     }
 
     private static final Pattern RESUME = Pattern.compile("(?i)^\\s*(?:reanuda|retoma|reanudar|retomar)\\s+(" + MISSION_REF + ")\\b");
@@ -420,8 +438,11 @@ public class ChatIntentRouter {
                             return java.util.stream.Stream.of(m.missionId() + " (con tu indicación)");
                         }
                         // Revisión final (8): la misma cuenta que el freno (automáticas del incremento tras la última del fundador).
+                        // Revisión 2026-10-06 §5: también desde la última verificación humana (marca de reinicio).
+                        var increment = current.get().increment();
                         var n = com.aicompany.core.recovery.CorrectionRound.automaticSinceFounder(
-                                rounds.stream().filter(r -> r.round() <= round).toList(), current.get().increment()).size();
+                                rounds.stream().filter(r -> r.round() <= round).toList(), increment,
+                                recoveryMemory.counterResetAfter(m.missionId(), increment)).size();
                         return java.util.stream.Stream.of(m.missionId() + " (ronda " + n + " de " + max + ")");
                     }).toList();
             if (!correcting.isEmpty()) {
@@ -706,6 +727,10 @@ public class ChatIntentRouter {
         var resumeReply = handleResume(message);
         if (resumeReply != null) {
             return resumeReply;
+        }
+        var verifyReply = handleVerify(message);
+        if (verifyReply != null) {
+            return verifyReply;
         }
 
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));

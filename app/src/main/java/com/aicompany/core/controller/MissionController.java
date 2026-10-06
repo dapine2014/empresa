@@ -34,6 +34,16 @@ public class MissionController {
         return missionService.status(missionId).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): verifica el último commit del repositorio sin
+     * modelos (un desarrollador corrigió e hizo commit).
+     */
+    @PostMapping("/{missionId}/verify")
+    public ResponseEntity<MissionResponse> verify(@PathVariable String missionId) {
+        recoveryService.verify(missionId);
+        return missionService.status(missionId).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @PostMapping
     public ResponseEntity<MissionResponse> start(@Valid @RequestBody MissionCommand command) {
         return ResponseEntity.accepted().body(

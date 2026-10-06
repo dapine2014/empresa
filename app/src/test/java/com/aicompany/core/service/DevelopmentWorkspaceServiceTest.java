@@ -129,6 +129,25 @@ class DevelopmentWorkspaceServiceTest {
         assertEquals(Optional.of("M-1-BACKEND"), service.headTask("M-1"));
     }
 
+    // Revisión 2026-10-06 §5 (manos humanas): saber si quedaron cambios sin commit, sin tocarlos.
+    @Test
+    void knowsWhetherThereAreUncommittedChangesWithoutTouchingThem() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+        assertFalse(service.hasUncommitted("M-1"));
+
+        var dir = service.missionWorkspace("M-1");
+        Files.writeString(dir.resolve("src/B.cs"), "sin commit");
+        assertTrue(service.hasUncommitted("M-1"));
+        assertEquals("sin commit", Files.readString(dir.resolve("src/B.cs")));
+
+        Files.delete(dir.resolve("src/B.cs"));
+        Files.writeString(dir.resolve("src/A.cs"), "editado a mano");
+        assertTrue(service.hasUncommitted("M-1"));
+        assertEquals("editado a mano", Files.readString(dir.resolve("src/A.cs")));
+    }
+
     @Test
     void anUnrecordedLastCommitCanBeDropped() throws Exception {
         var service = workspace();

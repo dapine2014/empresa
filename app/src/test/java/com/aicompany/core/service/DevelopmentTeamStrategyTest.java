@@ -1392,6 +1392,66 @@ class DevelopmentTeamStrategyTest {
         verify(memory, never()).verifiedCommit("M-1");
     }
 
+    // Revisión 2026-10-06 §5 (manos humanas): verifica HEAD sin llamar a ningún modelo ni tocar el repositorio.
+    @Test
+    void verifyHeadRunsChecksSandboxAndCoverageOnHeadWithoutAnyModel() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verifyNoInteractions(runtime);
+        verify(workspace, never()).commitAgentWork(any(), any(), any(), any(), any());
+        verify(sandbox).verify("M-1", head, "DOTNET_APP", "backend");
+        verify(sandbox).verify("M-1", head, "FLUTTER_WEB_APP", "app");
+        // Los commits del desarrollador no llevan autor de agente ni trailer: solo se valida HEAD.
+        verify(validator).validate(eq("M-1"), eq(List.of()), anyList(), anyList(), anyList(), anyList());
+        verify(memory).recordSandboxResult(eq("M-1-HUMAN-VERIFY-1"), anyString());
+        verify(memory).updateTask(eq("M-1-HUMAN-VERIFY-1"), eq("COMPLETED"), argThat(r -> r.contains("✅ ESC-01")));
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("VERIFIED"),
+                argThat(json -> json.contains("SCENARIO_COVERAGE") && json.contains("TEST_SUITE_GROWTH")));
+        verify(memory).recordVerifiedCommit("M-1", head);
+        assertTrue(result.verifiableState().contains(head), result.verifiableState());
+    }
+
+    // Review Focus 5: lo no commiteado no se borra ni se verifica, y se avisa.
+    @Test
+    void verifyHeadDoesNotTouchUncommittedFilesAndSaysSo() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(workspace.hasUncommitted("M-1")).thenReturn(true);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(workspace, never()).discardUncommitted(anyString());
+        verify(workspace, never()).dropHeadCommit(anyString());
+        verify(memory).updateTask(eq("M-1-HUMAN-VERIFY-1"), eq("COMPLETED"), argThat(r -> r.contains("sin commit")));
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        assertTrue(result.verifiableState().contains("sin commit"), result.verifiableState());
+    }
+
+    // Sin escenarios de Aria la revisión sería de Vera (modelo): la verificación humana no la pide y queda UNVALIDATED.
+    @Test
+    void verifyHeadWithoutScenariosNeverAsksVeraAndIsUnvalidated() throws Exception {
+        stubFullstack();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        strategy.verifyHead(fullstackContext(), "M-1-HUMAN-VERIFY-1");
+
+        verifyNoInteractions(runtime);
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("UNVALIDATED"), anyString());
+    }
+
     // Revisión final QA (M4): un commit no cambia; los tests de un SHA se leen de git una sola vez por generación de misión.
     @Test
     void theTestsOfACommitAreReadFromGitOnce() throws Exception {

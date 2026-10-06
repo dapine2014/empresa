@@ -74,6 +74,36 @@ function MissionRecovery({ mission }: { mission: MissionResponse }) {
   )
 }
 
+const VERIFIABLE = new Set(['BLOCKED', 'FAILED', 'AWAITING_INVESTOR', 'INTERRUPTED'])
+
+/**
+ * Revisión 2026-10-06 §5 (manos humanas): un desarrollador corrigió el código e hizo commit; Forjai verifica el último
+ * commit (chequeos, sandbox y escenarios) sin modelos.
+ */
+function MissionHumanVerify({ mission }: { mission: MissionResponse }) {
+  const queryClient = useQueryClient()
+  const verify = useMutation({
+    mutationFn: () => api.verifyMission(mission.missionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['missionDetails', mission.missionId] })
+      void queryClient.invalidateQueries({ queryKey: ['missions'] })
+    },
+  })
+  if (mission.teamId !== 'TEAM-DEVELOPMENT' || !VERIFIABLE.has(mission.status)) return null
+  return (
+    <div className="decision-form">
+      <button type="button" disabled={verify.isPending} onClick={() => verify.mutate()}>
+        Verificar (manos humanas)
+      </button>
+      <p className="hint">
+        Para cuando un desarrollador corrigió el código en ~/forjai-products/{mission.missionId} e hizo commit. Verifica el
+        último commit sin modelos; lo que no tenga commit no se verifica.
+      </p>
+      {verify.isError && <p className="error">{(verify.error as Error).message}</p>}
+    </div>
+  )
+}
+
 /** Spec 2026-10-02 §4: migraciones de Diego y "Aplicar esquema" (404 = la misión no declara base). */
 function MissionDatabase({ missionId }: { missionId: string }) {
   const queryClient = useQueryClient()
@@ -295,6 +325,7 @@ export default function MissionDetailPage() {
       />
 
       <MissionRecovery mission={mission} />
+      <MissionHumanVerify mission={mission} />
 
       <MissionModelCost missionId={mission.missionId} />
 

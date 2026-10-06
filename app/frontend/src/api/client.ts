@@ -206,6 +206,9 @@ export const api = {
 
   resumeMission: (missionId: string) =>
     request<MissionResponse>(`/api/company/missions/${missionId}/resume`, { method: 'POST' }),
+  /** Revisión 2026-10-06 §5 (manos humanas): verifica el último commit sin modelos. */
+  verifyMission: (missionId: string) =>
+    request<MissionResponse>(`/api/company/missions/${missionId}/verify`, { method: 'POST' }),
 
   deleteMission: (missionId: string) =>
     request<void>(`/api/company/missions/${missionId}`, { method: 'DELETE' }),

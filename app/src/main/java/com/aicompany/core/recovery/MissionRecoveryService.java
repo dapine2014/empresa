@@ -218,6 +218,46 @@ public class MissionRecoveryService {
         resumed.add(missionId);
     }
 
+    /** Revisión 2026-10-06 §5: estados desde los que el fundador puede pedir la verificación humana (misión detenida). */
+    static final Set<MissionStatus> VERIFIABLE = EnumSet.of(MissionStatus.BLOCKED, MissionStatus.FAILED,
+            MissionStatus.AWAITING_INVESTOR, MissionStatus.INTERRUPTED);
+
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): "verifica MISSION-X". Un desarrollador corrigió el
+     * código en el repositorio de la misión e hizo commit; se verifica el HEAD real sin llamar a ningún modelo (por eso no
+     * exige agentes encendidos) y el contador de correcciones automáticas del incremento vuelve a cero, así un resultado
+     * FAILED arranca la corrección con todas sus rondas. Sincronizado con recoverAll: nunca corre junto a una corrección.
+     */
+    public synchronized void verify(String missionId) {
+        var mission = missions.find(missionId).orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId));
+        if (executor.isLive(missionId)) {
+            throw new IllegalStateException("MISSION " + missionId + " se está ejecutando: espera a que termine para verificarla.");
+        }
+        if (!VERIFIABLE.contains(mission.status())) {
+            throw new IllegalStateException("MISSION " + missionId + " no está detenida (estado: " + mission.status()
+                    + "); se verifica en BLOCKED, FAILED, AWAITING_INVESTOR o INTERRUPTED.");
+        }
+        if (!DEVELOPMENT_TEAM.equals(mission.teamId())) {
+            throw new IllegalStateException("MISSION " + missionId + " no es del Development Group: no tiene código que verificar.");
+        }
+        if (workspace == null || workspace.headIfAny(missionId).isEmpty()) {
+            throw new IllegalStateException("MISSION " + missionId + " no tiene repositorio con commits que verificar.");
+        }
+        if (missions.lastTeamPlanJson(missionId).isEmpty()) {
+            throw new IllegalStateException("MISSION " + missionId + " no tiene un plan de Neo guardado: no se sabe qué verificar.");
+        }
+        recovery.resetCounter(missionId, Math.max(1, requirements.currentIncrement(missionId)));
+        executor.verifyAsync(missionId);
+    }
+
+    private DevelopmentWorkspaceService workspace;
+
+    /** Revisión 2026-10-06 §5: para saber si la misión tiene repositorio (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setWorkspace(DevelopmentWorkspaceService workspace) {
+        this.workspace = workspace;
+    }
+
     private boolean dispatchResume(MissionResponse mission) {
         if (executor.isLive(mission.missionId())) {
             return false;
@@ -331,7 +371,7 @@ public class MissionRecoveryService {
 
     /** Spec §3: contador por incremento (desde la última ronda del fundador), y costo de la misión (el "sin avance" ya no frena: ver needsStrategy). */
     public Optional<String> brake(String missionId, int increment, int failingNow) {
-        var auto = CorrectionRound.automaticSinceFounder(recovery.correctionRounds(missionId), increment);
+        var auto = automaticRounds(missionId, increment);
         var max = (int) policies.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS);
         if (auto.size() >= max) {
             return Optional.of("Se agotaron las " + max + " correcciones automáticas del incremento " + increment + ".");
@@ -346,13 +386,19 @@ public class MissionRecoveryService {
 
     /** Revisión 2026-10-06 §2: dos rondas automáticas seguidas sin bajar lo que falla piden una estrategia nueva. */
     public boolean needsStrategy(String missionId, int increment, int failingNow) {
-        var auto = CorrectionRound.automaticSinceFounder(recovery.correctionRounds(missionId), increment);
+        var auto = automaticRounds(missionId, increment);
         if (auto.size() < 2) {
             return false;
         }
         var before = auto.get(auto.size() - 2).failing();
         var last = auto.get(auto.size() - 1).failing();
         return last >= before && failingNow >= last;
+    }
+
+    /** Rondas automáticas del incremento desde la última del fundador o la última verificación humana (revisión 2026-10-06 §5). */
+    private List<CorrectionRound> automaticRounds(String missionId, int increment) {
+        return CorrectionRound.automaticSinceFounder(recovery.correctionRounds(missionId), increment,
+                recovery.counterResetAfter(missionId, increment));
     }
 
     MissionSnapshot snapshot(MissionResponse mission) {

@@ -149,6 +149,14 @@ public class DevelopmentWorkspaceService {
         git.run(dir, "clean", "-q", "-fd");
     }
 
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): true si quedaron cambios sin commit (modificados o
+     * sin seguimiento). Solo lee: nunca los borra.
+     */
+    public boolean hasUncommitted(String missionId) throws IOException {
+        return !git.run(missionWorkspace(missionId), "status", "--porcelain").isBlank();
+    }
+
     /** Spec misiones durables §2: la tarea del último commit (trailer Forjai-Task). */
     public Optional<String> headTask(String missionId) throws IOException {
         var body = git.run(missionWorkspace(missionId), "log", "-1", "--format=%B");

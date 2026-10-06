@@ -603,4 +603,60 @@ class MissionExecutorTeamTest {
 
         verify(development).execute(argThat(c -> c.round() == 2), any());
     }
+
+    /** Revisión 2026-10-06 §5: executor con la estrategia de desarrollo real (mock de la clase) para verifyHead. */
+    private MissionExecutor humanVerifyExecutor(DevelopmentTeamStrategy dev) throws Exception {
+        when(dev.mode()).thenReturn(TeamExecutionMode.DEVELOPMENT);
+        var exec = new MissionExecutor(
+                memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory,
+                "qwen2.5-coder:14b", Runnable::run, events, JsonMapper.builder().build(), contradictionDetector,
+                companyPolicyService, opportunityMemory, alertMailService, planner, List.of(analysis, dev));
+        exec.setRequirements(writer, requirements);
+        when(memory.teamId("M-9")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));
+        when(memory.instructionOf("M-9")).thenReturn(Optional.of("Un CRM"));
+        when(memory.evidenceRound("M-9")).thenReturn(3);
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+        when(memory.tasks("M-9")).thenReturn(List.of(new AgentTask("M-9-HUMAN-VERIFY-1", "M-9", "qa", "HUMAN_VERIFY",
+                "COMPLETED", "x", java.time.Instant.now(), "VALIDATION", null, null, List.of(), null, null)));
+        return exec;
+    }
+
+    // Revisión 2026-10-06 §5 (manos humanas): una tarea VALIDATION nueva, verifyHead sin modelos y AWAITING_INVESTOR.
+    @Test
+    void aHumanVerificationRunsVerifyHeadWithoutModelsAndAwaitsTheInvestor() throws Exception {
+        var dev = mock(DevelopmentTeamStrategy.class);
+        var exec = humanVerifyExecutor(dev);
+        when(dev.verifyHead(any(), eq("M-9-HUMAN-VERIFY-2")))
+                .thenReturn(new TeamExecutionResult.Development("r", "ESTADO VERIFICABLE (generado por Forjai)"));
+        when(memory.lastValidationStatus("M-9")).thenReturn(Optional.of("VERIFIED"));
+
+        exec.verifyAsync("M-9").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.EVALUATING), anyInt(), anyString(), anyString());
+        verify(memory).createTask("M-9-HUMAN-VERIFY-2", "M-9", "qa", "HUMAN_VERIFY", "VALIDATION");
+        verify(dev).verifyHead(argThat(c -> c.missionId().equals("M-9") && c.round() == 3
+                && c.team().teamId().equals("TEAM-DEVELOPMENT")), eq("M-9-HUMAN-VERIFY-2"));
+        verify(dev, never()).execute(any(), any());
+        verifyNoInteractions(ceoService);
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(),
+                contains("ESTADO VERIFICABLE"));
+        // Mismo cierre que una ronda: VERIFIED confirma el incremento.
+        verify(requirements).confirmBuildingIncrement("M-9");
+    }
+
+    @Test
+    void aFailedHumanVerificationAlsoAwaitsTheInvestor() throws Exception {
+        var dev = mock(DevelopmentTeamStrategy.class);
+        var exec = humanVerifyExecutor(dev);
+        when(dev.verifyHead(any(), anyString())).thenReturn(new TeamExecutionResult.Development("r", "ESTADO"));
+        when(memory.lastValidationStatus("M-9")).thenReturn(Optional.of("FAILED"));
+
+        exec.verifyAsync("M-9").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
+        verify(requirements, never()).confirmBuildingIncrement(anyString());
+        verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+    }
 }

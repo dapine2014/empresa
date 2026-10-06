@@ -2526,6 +2526,27 @@ class ChatIntentRouterTest {
         assertTrue(router.route("reanuda MISSION-9").contains("no está INTERRUPTED"));
     }
 
+    // Revisión 2026-10-06 §5: "verifica MISSION-X" es gobernanza y no toca al modelo.
+    @Test
+    void verifyIsAGovernanceCommand() {
+        var recovery = mock(com.aicompany.core.recovery.MissionRecoveryService.class);
+        router.setRecoveryService(recovery);
+        var response = router.route("verifica MISSION-9");
+        verify(recovery).verify("MISSION-9");
+        assertTrue(response.contains("Verificando MISSION-9"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void aRefusedVerificationExplainsWhy() {
+        var recovery = mock(com.aicompany.core.recovery.MissionRecoveryService.class);
+        router.setRecoveryService(recovery);
+        doThrow(new IllegalStateException("MISSION MISSION-9 ya se está ejecutando.")).when(recovery).verify("MISSION-9");
+        var response = router.route("Verificar MISSION-9");
+        assertTrue(response.startsWith("No se pudo:") && response.contains("ya se está ejecutando"), response);
+        verifyNoInteractions(ceoService);
+    }
+
     // Spec misiones durables §4: el status muestra retomadas, en corrección, bloqueadas e interrumpidas.
     @Test
     void theStatusShowsTheRecovery() {

@@ -723,6 +723,41 @@ public class MissionExecutor {
         }
     }
 
+    static final String HUMAN_VERIFY_SUFFIX = "-HUMAN-VERIFY-";
+
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): verifica el HEAD real del repositorio (chequeos
+     * deterministas, sandbox y cobertura de escenarios) sin llamar a ningún modelo, en una tarea VALIDATION nueva
+     * {@code <misión>-HUMAN-VERIFY-<n>}, y deja la misión en AWAITING_INVESTOR con su validationStatus (si queda VERIFIED,
+     * advanceMission confirma el incremento como en cualquier ronda). Los chequeos de estado los hace MissionRecoveryService.
+     */
+    public CompletableFuture<Void> verifyAsync(String missionId) {
+        advanceMission(missionId, MissionStatus.EVALUATING, 75, "Verificación humana",
+                "Verificando el último commit del repositorio sin modelos: chequeos deterministas, sandbox y escenarios.");
+        return submit(missionId, "human verification", () -> {
+            var teamId = memory.teamId(missionId).orElseThrow();
+            var plan = jsonMapper.readValue(memory.lastTeamPlanJson(missionId).orElseThrow(() -> new IllegalStateException(
+                    "MISSION " + missionId + " no tiene un plan de Neo guardado.")), TeamPlan.class);
+            var strategy = teamStrategies.stream().filter(DevelopmentTeamStrategy.class::isInstance)
+                    .map(DevelopmentTeamStrategy.class::cast).findFirst()
+                    .orElseThrow(() -> new IllegalStateException("No hay estrategia de desarrollo."));
+            var prefix = missionId + HUMAN_VERIFY_SUFFIX;
+            var taskId = prefix + (memory.tasks(missionId).stream().filter(t -> t.taskId().startsWith(prefix)).count() + 1);
+            memory.createTask(taskId, missionId, DevelopmentTeamStrategy.HUMAN_VERIFY_AGENT, "HUMAN_VERIFY",
+                    TeamPlan.KIND_VALIDATION);
+            events.publishTask("EMPRESA_TASK_CREATED", taskId, missionId, DevelopmentTeamStrategy.HUMAN_VERIFY_AGENT,
+                    "PENDING", "Verificación humana del último commit.");
+            var context = new TeamMissionContext(missionId, memory.instructionOf(missionId).orElse(""),
+                    teamWorkPlanner.teamSnapshot(teamId), plan, memory.evidenceRound(missionId));
+            var result = strategy.verifyHead(context, taskId);
+            var verifiable = result instanceof TeamExecutionResult.Development development
+                    ? development.verifiableState() : "";
+            advanceMission(missionId, MissionStatus.AWAITING_INVESTOR, 95, "Verificación humana",
+                    "Verificación humana del último commit (" + taskId + ", sin modelos).\n\n" + verifiable);
+            catalog(missionId, "build", () -> productAutomation.buildFinished(missionId));
+        });
+    }
+
     /** Revisión final Aria (6): un pool lleno no deja la misión trabada en un estado intermedio. */
     private CompletableFuture<Void> submit(String missionId, String what, Runnable work) {
         try {

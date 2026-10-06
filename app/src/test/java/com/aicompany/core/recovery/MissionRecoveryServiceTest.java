@@ -153,6 +153,70 @@ class MissionRecoveryServiceTest {
         assertThrows(IllegalStateException.class, () -> service.resume("M-1"));
     }
 
+    /** Revisión 2026-10-06 §5: misión del Development Group detenida, con repositorio y plan guardado. */
+    private DevelopmentWorkspaceService verifiable(MissionStatus status) {
+        var workspace = mock(DevelopmentWorkspaceService.class);
+        service.setWorkspace(workspace);
+        when(missions.find("M-1")).thenReturn(Optional.of(mission("M-1", status, "TEAM-DEVELOPMENT")));
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(missions.lastTeamPlanJson("M-1")).thenReturn(Optional.of("{}"));
+        when(requirements.currentIncrement("M-1")).thenReturn(2);
+        when(executor.verifyAsync("M-1")).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+        return workspace;
+    }
+
+    // Review Focus 4: nunca en paralelo con un hilo vivo ni sobre una misión en curso.
+    @Test void verifyIsRejectedForALiveOrRunningMission() {
+        verifiable(MissionStatus.AWAITING_INVESTOR);
+        when(executor.isLive("M-1")).thenReturn(true);
+        assertTrue(assertThrows(IllegalStateException.class, () -> service.verify("M-1")).getMessage()
+                .contains("se está ejecutando"));
+
+        when(executor.isLive("M-1")).thenReturn(false);
+        when(missions.find("M-1")).thenReturn(Optional.of(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT")));
+        assertTrue(assertThrows(IllegalStateException.class, () -> service.verify("M-1")).getMessage().contains("PLANNING"));
+
+        verify(executor, never()).verifyAsync(anyString());
+        verify(recovery, never()).resetCounter(anyString(), anyInt());
+    }
+
+    @Test void verifyNeedsADevelopmentMissionWithRepository() {
+        var workspace = verifiable(MissionStatus.FAILED);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.empty());
+        assertThrows(IllegalStateException.class, () -> service.verify("M-1"));
+
+        when(missions.find("M-1")).thenReturn(Optional.of(mission("M-1", MissionStatus.FAILED, "TEAM-MARKETING-GROWTH")));
+        assertThrows(IllegalStateException.class, () -> service.verify("M-1"));
+
+        when(missions.find("M-0")).thenReturn(Optional.empty());
+        assertThrows(IllegalArgumentException.class, () -> service.verify("M-0"));
+        verify(executor, never()).verifyAsync(anyString());
+    }
+
+    @Test void verifyResetsTheCounterAndRuns() {
+        for (var status : List.of(MissionStatus.BLOCKED, MissionStatus.FAILED, MissionStatus.AWAITING_INVESTOR,
+                MissionStatus.INTERRUPTED)) {
+            verifiable(status);
+            service.verify("M-1");
+        }
+        var order = inOrder(recovery, executor);
+        order.verify(recovery).resetCounter("M-1", 2);
+        order.verify(executor).verifyAsync("M-1");
+        verify(recovery, times(4)).resetCounter("M-1", 2);
+        verify(executor, times(4)).verifyAsync("M-1");
+    }
+
+    // Revisión 2026-10-06 §5: tras una verificación humana, las 20 rondas del incremento vuelven a estar disponibles.
+    @Test void theCounterRestartsAfterAHumanVerification() {
+        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 5, false),
+                new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "c", 3, false)));
+        assertTrue(service.brake("M-1", 1, 2).isPresent());
+
+        when(recovery.counterResetAfter("M-1", 1)).thenReturn(3);
+        assertTrue(service.brake("M-1", 1, 2).isEmpty());
+        assertFalse(service.needsStrategy("M-1", 1, 3));
+    }
+
     @Test void theCorrectionCounterBlocks() {
         when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 5, false),
                 new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "c", 3, false)));

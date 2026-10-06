@@ -27,7 +27,15 @@ public record CorrectionRound(int round, int increment, String request, int fail
      * fundador pone el contador en cero). Misma regla para el freno y para el chat.
      */
     public static List<CorrectionRound> automaticSinceFounder(List<CorrectionRound> rounds, int increment) {
-        var ofIncrement = rounds.stream().filter(r -> r.increment() == increment).toList();
+        return automaticSinceFounder(rounds, increment, 0);
+    }
+
+    /**
+     * Revisión 2026-10-06 §5: además, una verificación humana deja una marca de reinicio ({@code resetAfterRound}, ver
+     * {@link RecoveryMemoryService#resetCounter}); solo cuentan las rondas posteriores a la marca y a la última del fundador.
+     */
+    public static List<CorrectionRound> automaticSinceFounder(List<CorrectionRound> rounds, int increment, int resetAfterRound) {
+        var ofIncrement = rounds.stream().filter(r -> r.increment() == increment && r.round() > resetAfterRound).toList();
         var lastFounder = -1;
         for (int i = 0; i < ofIncrement.size(); i++) {
             if (ofIncrement.get(i).byFounder()) {

@@ -562,6 +562,138 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText));
     }
 
+    static final String HUMAN_AGENT = "human";
+    /** Agente de la tarea VALIDATION de la verificación humana (Vera; la crea MissionExecutor). */
+    public static final String HUMAN_VERIFY_AGENT = "qa";
+    static final String UNCOMMITTED_NOTE = "Hay cambios sin commit en el repositorio: NO se verificaron (solo cuenta el "
+            + "último commit) y no se borraron. Haz commit y vuelve a pedir \"verifica\".";
+
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): un desarrollador corrigió el código e hizo commit.
+     * Sobre el HEAD real corre los chequeos deterministas, el sandbox y la cobertura de escenarios con las mismas piezas
+     * que {@link #execute}, pero <b>sin ningún modelo</b>: sin auto-fix, sin correcciones, sin diagnóstico 360 y sin la
+     * revisión de Vera (sin escenarios de Aria queda UNVALIDATED). No toca el repositorio: lo no commiteado ni se verifica
+     * ni se borra, y el resultado lo dice. La tarea {@code validationTaskId} ya existe (la crea MissionExecutor).
+     */
+    public TeamExecutionResult verifyHead(TeamMissionContext context, String validationTaskId) {
+        var missionId = context.missionId();
+        var plan = context.plan();
+        var components = plan.resolvedComponents();
+        var headSha = workspace.headIfAny(missionId).orElseThrow(() -> new IllegalStateException(
+                "MISSION " + missionId + " no tiene repositorio con commits que verificar."));
+        var uncommitted = uncommittedNote(missionId);
+
+        List<String> files;
+        try {
+            files = workspace.filesAtCommit(missionId, headSha);
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudo leer el último commit: " + safeMessage(ex, "error de Git"), ex);
+        }
+        var committed = List.of(new CommittedWork(validationTaskId, HUMAN_AGENT, headSha, files));
+        var forjaiFiles = fullstackApp(plan).map(app -> List.of(app.prefix(ApiRoutesGenerator.PATH))).orElse(List.of());
+        // Los commits de un desarrollador no llevan el autor de un agente ni el trailer Forjai-Task: solo se valida HEAD,
+        // y todo lo que ya está en el repositorio está permitido.
+        var checks = staticValidator.validate(missionId, List.of(), components, plan.contextNames(), files, forjaiFiles);
+
+        var requestedRefs = headDependencies(missionId, headSha, plan);
+        var dependencyOutcome = requestedRefs.isEmpty()
+                ? new DependencyService.Outcome(List.of(), List.of(), null)
+                : dependencies.resolve(missionId, HUMAN_AGENT, requestedRefs);
+
+        SandboxResult sandboxResult = null;
+        String sandboxError;
+        if (!checks.stream().allMatch(StaticCheck::passed) || components.isEmpty()) {
+            sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
+        } else if (!dependencyOutcome.pending().isEmpty() || dependencyOutcome.error() != null) {
+            sandboxError = "Dependencias pendientes de aprobación (🔴): "
+                    + dependencyOutcome.pending().stream().map(DependencyRef::id).toList()
+                    + (dependencyOutcome.error() == null ? "" : " — " + dependencyOutcome.error());
+        } else {
+            var verified = verifyComponents(missionId, headSha, components);
+            sandboxResult = verified.orElse(null);
+            sandboxError = verified.isEmpty() ? (components.size() == 1 ? sandbox.lastError() : lastSandboxError) : null;
+        }
+
+        if (sandboxResult != null) {
+            memory.recordSandboxResult(validationTaskId, toJson(sandboxResult));
+            memory.recordEvidence(validationTaskId, missionId, "sandbox", sandboxEvidence(missionId, headSha, sandboxResult));
+            events.publish("EMPRESA_SANDBOX_VERIFICATION_COMPLETED", missionId, validationTaskId, "sandbox",
+                    Map.of("overall", sandboxResult.overall(), "testsPassed", sandboxResult.testsPassed(),
+                            "testsFailed", sandboxResult.testsFailed()));
+        }
+
+        var scenarios = scenarios(missionId);
+        var coverageMode = !scenarios.isEmpty();
+        String coverageReport = null;
+        if (coverageMode && sandboxResult != null) {
+            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult));
+            checks = new ArrayList<>(checks);
+            checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
+            checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId),
+                    sandboxResult.allTests()));
+            coverageReport = COVERAGE_REPORT + com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
+        }
+
+        var status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
+        var summary = "Verificación humana del commit " + headSha + " (sin modelos: sin correcciones, sin diagnóstico de "
+                + "tests ni revisión de un agente).\n"
+                + (uncommitted.isEmpty() ? "" : uncommitted + "\n")
+                + (coverageReport != null ? coverageReport
+                        : coverageMode ? "Sin sandbox no hay cobertura de escenarios que medir."
+                        : "Sin escenarios de Aria: sin la revisión de un agente el resultado no puede quedar VERIFIED.");
+        memory.updateTask(validationTaskId, "COMPLETED", summary);
+        events.publishTask("EMPRESA_TASK_COMPLETED", validationTaskId, missionId, HUMAN_VERIFY_AGENT, "COMPLETED",
+                "Verificación humana del commit " + headSha + ".");
+        if (status == StaticValidationStatus.VERIFIED) {
+            memory.recordVerifiedCommit(missionId, headSha);
+        }
+        memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
+        events.publish("EMPRESA_STATIC_VALIDATION_COMPLETED", missionId, validationTaskId, HUMAN_VERIFY_AGENT,
+                Map.of("validationStatus", status.name(), "failedChecks", checks.stream().filter(c -> !c.passed()).count()));
+
+        var sandboxText = sandboxSummary(sandboxResult, sandboxError);
+        return new TeamExecutionResult.Development(
+                resultsForCeo(context, committed, checks, null, coverageReport != null ? coverageReport : summary, status,
+                        List.of(), sandboxText),
+                (uncommitted.isEmpty() ? "" : uncommitted + "\n")
+                        + verifiableState(context, null, committed, checks, status, List.of(), sandboxResult, sandboxError,
+                                0, 0, dependencyOutcome, List.of()));
+    }
+
+    /** Aviso de lo no commiteado (vacío si no hay); nunca lanza. */
+    private String uncommittedNote(String missionId) {
+        try {
+            return workspace.hasUncommitted(missionId) ? UNCOMMITTED_NOTE : "";
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the git status: {}", missionId, ex.getMessage());
+            return "No se pudo saber si hay cambios sin commit: solo se verificó el último commit.";
+        }
+    }
+
+    /**
+     * Dependencias que declara HEAD (las que agregó el desarrollador): pub de cada pubspec.yaml y, en .NET, los
+     * PackageReference de los .csproj de la estructura que no son del perfil. Pasan por la misma política que las pedidas.
+     */
+    private List<DependencyRef> headDependencies(String missionId, String headSha, TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        var refs = new ArrayList<>(dependencyRefs(components, List.of(), path -> readOrNull(missionId, headSha, path)));
+        if (components.stream().anyMatch(c -> c.profile().ecosystem() == StackProfile.Ecosystem.NUGET)) {
+            var projects = new LinkedHashMap<String, List<DependencyRef>>();
+            var headProjects = new LinkedHashMap<String, String>();
+            for (var project : ComponentScaffold.projectFiles(components, plan.contextNames())) {
+                projects.put(project, List.of());
+                var content = readOrNull(missionId, headSha, project);
+                if (content != null) {
+                    headProjects.put(project, content);
+                }
+            }
+            withPackagesInHead(projects, headProjects, components, plan.contextNames()).values().stream()
+                    .flatMap(List::stream).filter(r -> !refs.contains(r)).forEach(refs::add);
+        }
+        return refs;
+    }
+
     private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
         if (review == null || generatedByForjai.isEmpty()) {
             return review;

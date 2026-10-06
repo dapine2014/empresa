@@ -55,6 +55,34 @@ public class RecoveryMemoryService {
         }
     }
 
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5: una verificación humana pone en cero el contador de correcciones
+     * automáticas del incremento, como una indicación del fundador. La marca es la última ronda de corrección registrada:
+     * cuentan solo las posteriores. En {@code Mission.correctionCounterResets} (JSON {incremento: ronda}).
+     */
+    public synchronized void resetCounter(String missionId, int increment) {
+        var afterRound = correctionRounds(missionId).stream().mapToInt(CorrectionRound::round).max().orElse(0);
+        var resets = new java.util.TreeMap<>(counterResets(missionId));
+        resets.put(increment, afterRound);
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.correctionCounterResets = $json",
+                    Map.of("id", missionId, "json", JSON.writeValueAsString(resets))).consume());
+        }
+    }
+
+    /** Revisión 2026-10-06 §5: la ronda de la última marca de reinicio del incremento; 0 si nunca se reinició. */
+    public int counterResetAfter(String missionId, int increment) {
+        return counterResets(missionId).getOrDefault(increment, 0);
+    }
+
+    private Map<Integer, Integer> counterResets(String missionId) {
+        try (var session = driver.session()) {
+            var json = session.run("MATCH (m:Mission {id:$id}) RETURN m.correctionCounterResets AS r", Map.of("id", missionId))
+                    .list(r -> r.get("r").isNull() ? null : r.get("r").asString()).stream().findFirst().orElse(null);
+            return json == null ? Map.of() : JSON.readValue(json, new TypeReference<Map<Integer, Integer>>() { });
+        }
+    }
+
     /** Spec misiones durables §3 (revisión 2026-10-06): estrategias buscadas por falla repetida, en {@code Mission.correctionStrategies}. */
     public synchronized void addStrategy(String missionId, CorrectionStrategy strategy) {
         var all = new ArrayList<>(strategies(missionId));
