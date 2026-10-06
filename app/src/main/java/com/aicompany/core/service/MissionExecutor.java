@@ -162,13 +162,10 @@ public class MissionExecutor {
         try {
 
             // Costo real por misión (2026-10-04): las llamadas del hilo de la misión quedan atribuidas a ella.
-            return CompletableFuture.runAsync(
-                    () -> ModelCallContext.with(missionId, null, () -> executeInternal(
-                            missionId,
-                            instruction
-                    )),
-                    orchestratorExecutor
-            );
+            return runLive(missionId, () -> executeInternal(
+                    missionId,
+                    instruction
+            ));
 
         } catch (Exception ex) {
 
@@ -205,9 +202,7 @@ public class MissionExecutor {
                 "Arrancando la ronda " + round + " con el pedido del inversionista.");
 
         try {
-            return CompletableFuture.runAsync(
-                    () -> ModelCallContext.with(missionId, null,
-                            () -> reexecuteInternal(missionId, instruction, round, investorRequest)), orchestratorExecutor);
+            return runLive(missionId, () -> reexecuteInternal(missionId, instruction, round, investorRequest));
         } catch (Exception ex) {
             log.error("MISSION {} - could not submit evidence round {}", missionId, round, ex);
             safeFail(missionId, ex);
@@ -519,17 +514,46 @@ public class MissionExecutor {
         return product;
     }
 
-    /** Revisión final Aria (6): un pool lleno no deja la misión trabada en un estado intermedio. */
-    private CompletableFuture<Void> submit(String missionId, String what, Runnable work) {
+    /** Spec misiones durables §2: misiones con un hilo trabajando. Al arrancar está vacío: toda misión en curso es huérfana. */
+    private final java.util.Set<String> liveMissions = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public boolean isLive(String missionId) {
+        return liveMissions.contains(missionId);
+    }
+
+    public java.util.Set<String> liveMissionIds() {
+        return java.util.Set.copyOf(liveMissions);
+    }
+
+    /** Corre {@code work} en el pool de misiones con la misión registrada como viva mientras dure. */
+    private CompletableFuture<Void> runLive(String missionId, Runnable work) {
+        liveMissions.add(missionId);
         try {
             return CompletableFuture.runAsync(() -> {
                 try {
+                    // Costo real por misión (2026-10-04): las llamadas del hilo quedan atribuidas a la misión.
                     ModelCallContext.with(missionId, null, work);
+                } finally {
+                    liveMissions.remove(missionId);
+                }
+            }, orchestratorExecutor);
+        } catch (RuntimeException ex) {
+            liveMissions.remove(missionId);
+            throw ex;
+        }
+    }
+
+    /** Revisión final Aria (6): un pool lleno no deja la misión trabada en un estado intermedio. */
+    private CompletableFuture<Void> submit(String missionId, String what, Runnable work) {
+        try {
+            return runLive(missionId, () -> {
+                try {
+                    work.run();
                 } catch (Exception ex) {
                     log.error("MISSION {} - {} failed", missionId, what, ex);
                     safeFail(missionId, ex);
                 }
-            }, orchestratorExecutor);
+            });
         } catch (Exception ex) {
             log.error("MISSION {} - could not submit {}", missionId, what, ex);
             safeFail(missionId, ex);

@@ -67,6 +67,25 @@ class MissionExecutorTest {
             contradictionDetector, companyPolicyService, opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of()
     );
 
+    private MissionExecutor executorWith(java.util.concurrent.Executor pool) {
+        return new MissionExecutor(
+                memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory,
+                "qwen2.5-coder:14b", pool, events, jsonMapper, contradictionDetector, companyPolicyService,
+                opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of());
+    }
+
+    // Spec misiones durables §2 y §5: una misión con hilo vivo está registrada; al terminar sale.
+    @Test
+    void aRunningMissionIsLiveUntilItsThreadEnds() {
+        var pending = new java.util.ArrayList<Runnable>();
+        var held = executorWith(pending::add);
+        held.executeAsync("M-1", "x");
+        assertTrue(held.isLive("M-1"));
+        assertEquals(java.util.Set.of("M-1"), held.liveMissionIds());
+        pending.forEach(Runnable::run);
+        assertFalse(held.isLive("M-1"));
+    }
+
     @Test
     void reachesAwaitingInvestorWhenAllAgentsSucceed() throws Exception {
         stubAgent("sales");
