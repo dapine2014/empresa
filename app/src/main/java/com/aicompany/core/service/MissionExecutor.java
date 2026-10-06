@@ -864,6 +864,20 @@ public class MissionExecutor {
                 : ex.getMessage();
     }
 
+    /** Spec misiones durables §1: una interrupción no es una falla (sin correo, el orquestador no la cuenta). */
+    public void interrupt(String missionId) {
+        advanceMission(missionId, MissionStatus.INTERRUPTED, 100, "Interrumpida",
+                "Interrumpida por un reinicio de company-core el " + java.time.Instant.now()
+                        + ". Reanúdala con \"reanuda " + missionId + "\".");
+        events.publish("EMPRESA_MISSION_INTERRUPTED", missionId, null, "system", Map.of());
+    }
+
+    /** Spec misiones durables §3: un freno de la corrección automática deja la misión esperando al fundador. */
+    public void block(String missionId, String reason) {
+        advanceMission(missionId, MissionStatus.BLOCKED, 100, "Bloqueada", reason);
+        events.publish("EMPRESA_MISSION_BLOCKED", missionId, null, "system", Map.of("reason", reason));
+    }
+
     private void safeFail(
             String missionId,
             Exception ex) {
@@ -962,6 +976,10 @@ public class MissionExecutor {
                     "La misión " + missionId + " terminó en FAILED: " + message,
                     true
             );
+        } else if (status == MissionStatus.BLOCKED) {
+            alertMailService.send("Misión " + missionId + " bloqueada: espera tu indicación",
+                    "La misión " + missionId + " quedó BLOCKED: " + message + "\n\nDecide en Missions o en el chat "
+                            + "(\"pide más evidencia sobre " + missionId + ": <tu indicación>\", aprobar o rechazar).", true);
         }
 
         if (status == MissionStatus.AWAITING_INVESTOR && requirementsMemory != null) {

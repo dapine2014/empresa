@@ -344,6 +344,17 @@ class MissionServiceTest {
         verifyNoInteractions(eventPublisher);
     }
 
+    // Spec misiones durables §4: INTERRUPTED y BLOCKED se pueden borrar.
+    @Test
+    void interruptedAndBlockedMissionsCanBeDeleted() {
+        for (var status : List.of(MissionStatus.INTERRUPTED, MissionStatus.BLOCKED)) {
+            var memory = mock(MissionMemoryService.class);
+            when(memory.find("M-X")).thenReturn(Optional.of(missionIn("M-X", status)));
+            var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
+            assertTrue(service.delete("M-X"));
+        }
+    }
+
     @Test
     void deleteRejectsMissionThatIsStillRunning() {
         var memory = mock(MissionMemoryService.class);

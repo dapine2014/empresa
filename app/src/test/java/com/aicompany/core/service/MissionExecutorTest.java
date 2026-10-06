@@ -94,6 +94,15 @@ class MissionExecutorTest {
         verify(alertMailService).send(contains("MISSION-1"), anyString(), anyBoolean());
     }
 
+    // Spec misiones durables §3: BLOCKED avisa por correo; INTERRUPTED no (no es una falla).
+    @Test
+    void blockedSendsMailAndInterruptedDoesNot() {
+        executor.block("M-1", "Se agotaron las 3 correcciones automáticas.");
+        verify(alertMailService).send(contains("M-1"), contains("Se agotaron"), eq(true));
+        executor.interrupt("M-2");
+        verify(alertMailService, never()).send(contains("M-2"), anyString(), anyBoolean());
+    }
+
     @Test
     void recordsCustomerCandidatesFromAgentResults() throws Exception {
         stubAgent("product");

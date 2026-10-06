@@ -59,6 +59,9 @@ public class CompanyPolicyService {
         map.put(PolicyKey.MAX_OUTREACH_PER_DAY, 10.0);
         // Spec 2026-10-03 Aria §2: las HU de Aria esperan la aprobación del fundador (1) mientras el equipo se entrena.
         map.put(PolicyKey.SPEC_APPROVAL_REQUIRED, 1.0);
+        // Spec misiones durables §3: frenos de la corrección automática (por incremento y por misión).
+        map.put(PolicyKey.MAX_AUTO_CORRECTIONS, 3.0);
+        map.put(PolicyKey.MAX_MISSION_COST_USD, 5.0);
         return map;
     }
 

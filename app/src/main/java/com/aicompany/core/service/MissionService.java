@@ -416,6 +416,8 @@ public class MissionService {
             MissionStatus.AWAITING_INVESTOR,
             MissionStatus.AWAITING_SPEC_APPROVAL,
             MissionStatus.FAILED,
+            MissionStatus.INTERRUPTED,
+            MissionStatus.BLOCKED,
             MissionStatus.COMPLETED,
             MissionStatus.CANCELLED
     );

@@ -20,6 +20,8 @@ const POLICY_LABELS: Record<PolicyKey, string> = {
   MAX_PROSPECTS_PER_DAY: 'Prospectos nuevos por día (máximo)',
   MAX_OUTREACH_PER_DAY: 'Correos a prospectos por día (máximo)',
   SPEC_APPROVAL_REQUIRED: 'Aprobar los requisitos de Aria antes de construir (1 = sí, 0 = no)',
+  MAX_AUTO_CORRECTIONS: 'Correcciones automáticas por incremento (máximo)',
+  MAX_MISSION_COST_USD: 'Costo máximo de modelos por misión (US$)',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {

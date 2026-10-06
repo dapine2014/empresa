@@ -12,6 +12,8 @@ export type MissionStatus =
   | 'AWAITING_SPEC_APPROVAL'
   | 'AWAITING_INVESTOR'
   | 'EXECUTING'
+  | 'INTERRUPTED'
+  | 'BLOCKED'
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELLED'
@@ -257,6 +259,8 @@ export type PolicyKey =
   | 'MAX_PROSPECTS_PER_DAY'
   | 'MAX_OUTREACH_PER_DAY'
   | 'SPEC_APPROVAL_REQUIRED'
+  | 'MAX_AUTO_CORRECTIONS'
+  | 'MAX_MISSION_COST_USD'
 
 export interface PolicyVersionSummary {
   version: number

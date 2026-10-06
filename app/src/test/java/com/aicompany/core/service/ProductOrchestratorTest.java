@@ -292,6 +292,19 @@ class ProductOrchestratorTest {
         assertTrue(saved.isEmpty());
     }
 
+    // Spec misiones durables §3: BLOCKED e INTERRUPTED esperan al fundador; el ciclo no avanza ni falla.
+    @Test
+    void aBlockedOrInterruptedBuildIsWaitingForTheFounder() {
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        for (var status : List.of(MissionStatus.BLOCKED, MissionStatus.INTERRUPTED)) {
+            building(p, status);
+            when(products.view("P1")).thenReturn(Optional.of(view(p, List.of())));
+            orchestrator.tick();
+        }
+        verify(automation, never()).buildFinished(anyString());
+        assertTrue(saved.isEmpty());
+    }
+
     // Revisión final Aria (16): la construcción espera los requisitos de Aria; el ciclo lo anota una vez y no avanza.
     @Test
     void aBuildWaitingForTheRequirementsIsAnnouncedOnce() {
