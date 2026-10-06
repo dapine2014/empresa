@@ -83,6 +83,27 @@ class MissionRecoveryServiceTest {
         verify(executor, times(1)).resumeAsync(eq("M-1"), any());
     }
 
+    @Test void aDevelopmentInterruptedMissionIsResumedByRecoverAll() {
+        when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-1", MissionStatus.INTERRUPTED, "TEAM-DEVELOPMENT")));
+        service.recoverAll();
+        verify(executor).resumeAsync(eq("M-1"), any());
+    }
+
+    @Test void aDiscoveryInterruptedMissionIsNotResumedByRecoverAll() {
+        when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-D", MissionStatus.INTERRUPTED, null)));
+        service.recoverAll();
+        verify(executor, never()).resumeAsync(anyString(), any());
+    }
+
+    @Test void aPendingOrphanGoesBeforeAnInterruptedMission() {
+        when(missions.findAll(anyInt())).thenReturn(List.of(
+                mission("M-I", MissionStatus.INTERRUPTED, "TEAM-DEVELOPMENT"),
+                mission("M-O", MissionStatus.PLANNING, "TEAM-DEVELOPMENT")));
+        service.onStartup();
+        verify(executor).resumeAsync(eq("M-O"), any());
+        verify(executor, never()).resumeAsync(eq("M-I"), any());
+    }
+
     @Test void aFailedValidationWithApprovedRequirementsStartsACorrection() {
         when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-1", MissionStatus.AWAITING_INVESTOR, "TEAM-DEVELOPMENT")));
         when(missions.lastValidationStatus("M-1")).thenReturn(Optional.of("FAILED"));

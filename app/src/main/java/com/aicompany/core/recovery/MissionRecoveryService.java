@@ -20,7 +20,7 @@ import java.util.concurrent.Executor;
 
 /**
  * Spec misiones durables §1 y §3: al arrancar, al terminar cada misión y cada 5 minutos recupera, en orden, las huérfanas
- * (Development Group se retoma; el resto queda INTERRUPTED) y las que fallaron (corrección automática con frenos). Una
+ * (Development Group se retoma; el resto queda INTERRUPTED), las INTERRUPTED del Development Group y las que fallaron (corrección automática con frenos). Una
  * misión de desarrollo a la vez. Nunca lanza: un error se registra y se sigue con la siguiente.
  * <p>
  * Las huérfanas solo se detectan en el pase de arranque ({@code pendingOrphans}): un hilo vivo siempre se desregistra en
@@ -142,6 +142,14 @@ public class MissionRecoveryService {
             return;
         }
         for (var m : orphans) {
+            if (dispatchResume(m)) {
+                return;
+            }
+        }
+        // Spec §1: las INTERRUPTED del Development Group se retoman solas (las de discovery u otros equipos, a pedido).
+        var interrupted = all.stream().filter(m -> m.status() == MissionStatus.INTERRUPTED
+                && DEVELOPMENT_TEAM.equals(m.teamId()) && !executor.isLive(m.missionId())).sorted(byAge).toList();
+        for (var m : interrupted) {
             if (dispatchResume(m)) {
                 return;
             }
