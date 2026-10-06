@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Workspace real por misión = un repo Git real (spec §6). Cada agente
@@ -126,6 +127,38 @@ public class DevelopmentWorkspaceService {
 
     public String readFileAtCommit(String missionId, String sha, String path) throws IOException {
         return git.run(missionWorkspace(missionId), "show", sha + ":" + OwnedPaths.normalize(path));
+    }
+
+    /** Spec misiones durables §2: HEAD si la misión ya tiene repositorio con commits; vacío si no. */
+    public Optional<String> headIfAny(String missionId) {
+        var dir = missionWorkspace(missionId);
+        if (!Files.exists(dir.resolve(".git"))) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(git.run(dir, "rev-parse", "HEAD").trim());
+        } catch (IOException ex) {
+            return Optional.empty();
+        }
+    }
+
+    /** Spec misiones durables §2: lo que quedó escrito sin commit (el proceso murió a mitad) se descarta. */
+    public synchronized void discardUncommitted(String missionId) throws IOException {
+        var dir = missionWorkspace(missionId);
+        git.run(dir, "reset", "-q", "--hard", "HEAD");
+        git.run(dir, "clean", "-q", "-fd");
+    }
+
+    /** Spec misiones durables §2: la tarea del último commit (trailer Forjai-Task). */
+    public Optional<String> headTask(String missionId) throws IOException {
+        var body = git.run(missionWorkspace(missionId), "log", "-1", "--format=%B");
+        return lines(body).stream().filter(l -> l.startsWith("Forjai-Task:"))
+                .map(l -> l.substring("Forjai-Task:".length()).strip()).findFirst();
+    }
+
+    /** Spec misiones durables §2: el último commit no llegó a registrarse en Neo4j; su tarea se repite. */
+    public synchronized void dropHeadCommit(String missionId) throws IOException {
+        git.run(missionWorkspace(missionId), "reset", "-q", "--hard", "HEAD~1");
     }
 
     public void deleteWorkspace(String missionId) throws IOException {

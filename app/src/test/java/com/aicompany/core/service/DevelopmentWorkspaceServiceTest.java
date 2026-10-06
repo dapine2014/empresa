@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -109,5 +110,40 @@ class DevelopmentWorkspaceServiceTest {
                 new GeneratedFile(":notas.md", "literal")));
 
         assertEquals(List.of(":notas.md"), ws.filesAtCommit("MISSION-5", record.sha()));
+    }
+
+    // Spec misiones durables §2: el workspace se limpia antes de retomar.
+    @Test
+    void resumingDiscardsWhatWasNotCommittedAndReadsTheLastTask() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+        var dir = service.missionWorkspace("M-1");
+        Files.writeString(dir.resolve("src/A.cs"), "a medias");
+        Files.writeString(dir.resolve("src/B.cs"), "sin commit");
+
+        service.discardUncommitted("M-1");
+
+        assertEquals("class A {}", Files.readString(dir.resolve("src/A.cs")));
+        assertFalse(Files.exists(dir.resolve("src/B.cs")));
+        assertEquals(Optional.of("M-1-BACKEND"), service.headTask("M-1"));
+    }
+
+    @Test
+    void anUnrecordedLastCommitCanBeDropped() throws Exception {
+        var service = workspace();
+        var first = service.commitAgentWork("M-1", "M-1-SCAFFOLD", "forjai", "Forjai",
+                new DevelopmentResult("scaffold", List.of(new GeneratedFile("a.txt", "1"))));
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("backend", List.of(new GeneratedFile("b.txt", "2"))));
+
+        service.dropHeadCommit("M-1");
+
+        assertEquals(Optional.of(first.sha()), service.headIfAny("M-1"));
+    }
+
+    @Test
+    void aMissionWithoutWorkspaceHasNoHead() {
+        assertEquals(Optional.empty(), workspace().headIfAny("M-NUEVA"));
     }
 }
