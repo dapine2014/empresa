@@ -2554,4 +2554,31 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("Bloqueadas (esperan tu indicación): MISSION-B"), response);
         assertTrue(response.contains("Interrumpidas: MISSION-I"), response);
     }
+
+    // Spec misiones durables §4: la ronda de corrección muestra su pedido y no cuenta como evidencia.
+    @Test
+    void correctionRoundsShowTheirRequestAndDoNotCountAsEvidence() {
+        var recoveryMemory = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        router.setRecoveryMemory(recoveryMemory);
+        var longRequest = "CORRECCIÓN AUTOMÁTICA (Java):\n" + "falla el test X ".repeat(40);
+        when(recoveryMemory.correctionRounds("MISSION-6")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, longRequest, 3, false)));
+        var mission = new MissionResponse("MISSION-6", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-6")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-6")).thenReturn(List.of(
+                new AgentTask("MISSION-6-QA", "MISSION-6", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-6-QA-R1", "MISSION-6", "qa", "TESTS", "COMPLETED", "{}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-6")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.evidenceRound("MISSION-6")).thenReturn(1);
+        when(missionMemory.evidenceRequests("MISSION-6")).thenReturn(List.of());
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        var response = router.route("¿Cómo va MISSION-6?");
+
+        assertTrue(response.contains("Ronda de evidencia 0 de 2"), response);
+        assertTrue(response.contains("Ronda 1 (corrección automática, pedido: \"falla el test X falla"), response);
+        assertTrue(response.contains("…\")"), response);
+        assertFalse(response.contains("CORRECCIÓN AUTOMÁTICA (Java)"), response);
+    }
 }

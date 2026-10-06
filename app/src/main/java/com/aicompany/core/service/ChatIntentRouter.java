@@ -1433,6 +1433,15 @@ public class ChatIntentRouter {
                 + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
     }
 
+    /** Spec misiones durables §4: el pedido de una corrección en una línea (sin el encabezado de Java si es automática). */
+    private static String correctionRequestForChat(com.aicompany.core.recovery.CorrectionRound round) {
+        var request = round.request() == null ? "" : round.request().strip();
+        var lines = request.split("\\R", 2);
+        var text = !round.byFounder() && lines.length > 1 ? lines[1] : request;
+        text = text.replaceAll("\\s+", " ").strip();
+        return text.length() > 200 ? text.substring(0, 200) + "…" : text;
+    }
+
     /** Rondas de una misión: vacío si nunca pidió más evidencia (misiones previas a la feature incluidas). */
     private String formatEvidenceRounds(String missionId, List<AgentTask> tasks) {
         var round = missionMemory.evidenceRound(missionId);
@@ -1460,7 +1469,8 @@ public class ChatIntentRouter {
             var position = evidenceRounds.indexOf(r);
             var index = requests.size() - used + position;
             var label = r == 0 ? "Ronda 0" : corrections.containsKey(r)
-                    ? "Ronda " + r + " (corrección" + (corrections.get(r).byFounder() ? " con tu indicación" : " automática") + ")"
+                    ? "Ronda " + r + " (corrección" + (corrections.get(r).byFounder() ? " con tu indicación" : " automática")
+                            + ", pedido: \"" + correctionRequestForChat(corrections.get(r)) + "\")"
                     : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
                     : "Ronda " + r + " (pedido: \""
                     + (position >= 0 && index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
