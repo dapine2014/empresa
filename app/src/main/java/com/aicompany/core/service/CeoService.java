@@ -1273,6 +1273,14 @@ public class CeoService {
                 com.aicompany.core.agent.model.TestTriage.SCHEMA, com.aicompany.core.agent.model.TestTriage.class);
     }
 
+    /** Spec misiones durables §3 (revisión 2026-10-06): estrategia nueva para un error persistente. Sin tools. */
+    public com.aicompany.core.agent.model.StrategyProposal proposeCorrectionStrategy(String agentId, String prompt,
+                                                                                    String agentPrompt, String model) {
+        return callStructured("CORRECTION_STRATEGY", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.StrategyProposal.SCHEMA,
+                com.aicompany.core.agent.model.StrategyProposal.class);
+    }
+
     /** Revisión estática del repo (spec §7, capa 2): format StaticReviewResultSchema, sin tools. */
     public StaticReviewResult reviewStaticWorkspace(String agentId, String prompt, String agentPrompt, String model) {
         return callStructured("STATIC_REVIEW", agentId, prompt, agentPrompt, model,
