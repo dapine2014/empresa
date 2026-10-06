@@ -71,4 +71,26 @@ class CorrectionReportTest {
         assertEquals(1, report.failing(), report.text());
         assertTrue(report.text().contains("MSB1009"), report.text());
     }
+
+    @Test void eachFailureIsListedAndFingerprintsIgnoreLineNumbersAndPaths() {
+        var tail = "/work/src/A.cs(12,5): error CS0246: The type 'Foo' could not be found [/work/src/A.csproj]\n"
+                + "/work/src/A.cs(40,9): error CS0246: The type 'Bar' could not be found [/work/src/A.csproj]\n";
+        var sandbox = "{\"overall\":\"FAIL\",\"steps\":[{\"name\":\"build\",\"status\":\"FAIL\",\"exitCode\":1,\"durationMs\":1,"
+                + "\"outputTail\":" + tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(tail)
+                + ",\"testsPassed\":0,\"testsFailed\":0}]}";
+        var report = CorrectionReport.from(Optional.of(validation(
+                "[{\"check\":\"DDD_LAYERS\",\"status\":\"FAIL\",\"detail\":\"domain importa infrastructure\"}]", sandbox, "")), "");
+        assertEquals(3, report.failing());
+        assertEquals(report.failing(), report.failures().size());
+        assertEquals(CorrectionReport.fingerprint("src/A.cs(12,5): error CS0246: The type 'Foo' could not be found"),
+                CorrectionReport.fingerprint("src/A.cs(40,9): error CS0246: The type 'Foo' could not be found"));
+        assertEquals(CorrectionReport.fingerprint("src/A.cs:12 CS0246 x in /tmp/job-123/work"),
+                CorrectionReport.fingerprint("src/A.cs:99 CS0246 x in /tmp/job-456/work"));
+        assertNotEquals(CorrectionReport.fingerprint("error CS0246: 'Foo'"), CorrectionReport.fingerprint("error CS0103: 'Foo'"));
+    }
+
+    @Test void fallbacksCountAsOneFailureEach() {
+        assertEquals(1, CorrectionReport.from(Optional.empty(), "x").failures().size());
+        assertEquals(1, CorrectionReport.from(Optional.of(validation("[]", null, "")), "").failures().size());
+    }
 }

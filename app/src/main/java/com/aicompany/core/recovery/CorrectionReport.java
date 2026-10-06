@@ -17,7 +17,7 @@ import java.util.Optional;
  * sin test aprobado + chequeos fallidos (sin contar SCENARIO_COVERAGE) + errores de compilación distintos de cada restore/build fallido (o el paso, si no se leen) + los demás pasos fallidos; sin validación, 1
  * (la falla antes del código).
  */
-public record CorrectionReport(String text, int failing) {
+public record CorrectionReport(String text, int failing, List<String> failures) {
 
     public static final String HEADER = "CORRECCIÓN AUTOMÁTICA (Java)";
     public static final String RULE = "Corrige hasta que todos los escenarios del incremento pasen. No borres, renombres ni "
@@ -28,9 +28,11 @@ public record CorrectionReport(String text, int failing) {
     public static CorrectionReport from(Optional<AgentTask> lastValidation, String missionMessage) {
         var lines = new ArrayList<String>();
         var failing = 0;
+        var failures = new ArrayList<String>();
         if (lastValidation.isEmpty()) {
             lines.add("- La misión falló antes de tener código: " + (missionMessage == null ? "" : missionMessage));
             failing = 1;
+            failures.add("La misión falló antes de tener código: " + (missionMessage == null ? "" : missionMessage));
         } else {
             var task = lastValidation.get();
             var result = task.result() == null ? "" : task.result();
@@ -38,6 +40,7 @@ public record CorrectionReport(String text, int failing) {
                 for (var line : result.substring(COVERAGE_REPORT.length()).split("\n")) {
                     if (line.strip().startsWith("❌")) {
                         lines.add("- Escenario sin test aprobado: " + line.strip().substring(1).strip());
+                        failures.add("Escenario sin test aprobado: " + line.strip().substring(1).strip());
                         failing++;
                     }
                 }
@@ -48,6 +51,7 @@ public record CorrectionReport(String text, int failing) {
                         var check = node.path("check").asString();
                         if (!"PASS".equals(node.path("status").asString()) && !"SCENARIO_COVERAGE".equals(check)) {
                             lines.add("- Chequeo " + check + " falló: " + node.path("detail").asString());
+                            failures.add("Chequeo " + check + " falló: " + node.path("detail").asString());
                             failing++;
                         }
                     }
@@ -61,12 +65,14 @@ public record CorrectionReport(String text, int failing) {
                                 lines.add("- Paso del sandbox " + step.name() + " " + step.status() + ", " + errors.size()
                                         + " error(es) de compilación:");
                                 errors.forEach(e -> lines.add("  - " + e));
+                                failures.addAll(errors);
                                 failing += errors.size();
                                 continue;
                             }
                             var tail = step.outputTail() == null ? "" : step.outputTail();
                             lines.add("- Paso del sandbox " + step.name() + " " + step.status() + ":\n"
                                     + tail.substring(Math.max(0, tail.length() - 3000)));
+                            failures.add("Paso del sandbox " + step.name() + " " + step.status() + ": " + lastLine(tail));
                             failing++;
                         }
                     }
@@ -77,9 +83,32 @@ public record CorrectionReport(String text, int failing) {
             if (failing == 0) {
                 lines.add("- La validación terminó en " + task.validationStatus() + " sin un detalle legible.");
                 failing = 1;
+                failures.add("La validación terminó en " + task.validationStatus() + " sin un detalle legible");
             }
         }
-        return new CorrectionReport(HEADER + ":\n" + String.join("\n", lines) + "\n" + RULE, failing);
+        return new CorrectionReport(HEADER + ":\n" + String.join("\n", lines) + "\n" + RULE, failing, List.copyOf(failures));
+    }
+
+    /**
+     * Spec misiones durables §3 (revisión 2026-10-06): la huella de una falla para saber si es la misma de una ronda
+     * anterior: minúsculas, sin números de línea ({@code :12}, {@code (12,5)}), sin números largos ni rutas temporales.
+     */
+    public static String fingerprint(String failure) {
+        if (failure == null) {
+            return "";
+        }
+        return failure.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("/tmp/\\S*|\\bjob-\\S*", "<tmp>")
+                .replaceAll("\\(\\d+,\\d+\\)", "(<n>)")
+                .replaceAll(":\\d+", ":<n>")
+                .replaceAll("(?<![a-z\\d])\\d{4,}", "<n>")
+                .replaceAll("\\s+", " ")
+                .strip();
+    }
+
+    private static String lastLine(String text) {
+        var lines = text.strip().split("\n");
+        return lines.length == 0 ? "" : lines[lines.length - 1].strip();
     }
 
     /**
