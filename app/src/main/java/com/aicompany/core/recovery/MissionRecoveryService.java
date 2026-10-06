@@ -316,8 +316,11 @@ public class MissionRecoveryService {
                 return false;
             }
             var round = current + 1;
-            recovery.addCorrectionRound(missionId, new CorrectionRound(round, increment, report.text(), report.failing(), false));
-            executor.correctAsync(missionId, round, report.text());
+            recovery.addCorrectionRound(missionId, new CorrectionRound(round, increment, report.text(), report.failing(), false,
+                    report.failures()));
+            // Revisión 2026-10-06 §2: sin avance, la ronda busca una estrategia nueva antes de correr.
+            var withStrategy = needsStrategy(missionId, increment, report.failing());
+            executor.correctAsync(missionId, round, report.text(), withStrategy);
             return true;
         } catch (Exception ex) {
             log.warn("RECOVERY - could not start the correction of {}: {}", missionId, ex.getMessage());

@@ -31,7 +31,7 @@ class MissionRecoveryServiceTest {
         when(policies.activeValue(PolicyKey.MAX_MISSION_COST_USD)).thenReturn(5.0);
         when(cost.missionCost(anyString())).thenReturn(new ModelCostService.Summary(List.of()));
         when(executor.resumeAsync(anyString(), any())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
-        when(executor.correctAsync(anyString(), anyInt(), anyString())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+        when(executor.correctAsync(anyString(), anyInt(), anyString(), anyBoolean())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
         when(missions.claimNextRound(anyString(), anyInt(), anySet())).thenReturn(true);
     }
 
@@ -126,7 +126,7 @@ class MissionRecoveryServiceTest {
         service.recoverAll();
         verify(recovery).addCorrectionRound(eq("M-1"), argThat(r -> r.round() == 1 && r.increment() == 1 && !r.byFounder()));
         verify(missions).claimNextRound("M-1", 0, MissionRecoveryService.CORRECTABLE);
-        verify(executor).correctAsync(eq("M-1"), eq(1), startsWith(CorrectionReport.HEADER));
+        verify(executor).correctAsync(eq("M-1"), eq(1), startsWith(CorrectionReport.HEADER), eq(false));
     }
 
     @Test void unvalidatedCancelledOrWithoutRequirementsAreLeftAlone() {
@@ -137,7 +137,7 @@ class MissionRecoveryServiceTest {
         when(missions.lastValidationStatus("M-U")).thenReturn(Optional.of("UNVALIDATED"));
         when(requirements.approved(anyString())).thenReturn(Optional.empty());
         service.recoverAll();
-        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString(), anyBoolean());
     }
 
     // Spec misiones durables §2: "reanuda" relanza una discovery INTERRUPTED como la primera vez.
@@ -174,6 +174,18 @@ class MissionRecoveryServiceTest {
         assertFalse(service.needsStrategy("M-1", 1, 3));
     }
 
+    // Revisión 2026-10-06 §2: sin avance, la corrección se lanza con estrategia.
+    @Test void noProgressLaunchesTheCorrectionWithStrategy() {
+        listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "APPROVED", "", null)));
+        when(requirements.currentIncrement("M-1")).thenReturn(1);
+        when(missions.evidenceRound("M-1")).thenReturn(2);
+        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 1, false),
+                new CorrectionRound(2, 1, "b", 1, false)));
+        service.recoverAll();
+        verify(executor).correctAsync(eq("M-1"), eq(3), anyString(), eq(true));
+    }
+
     @Test void fewerThanTwoAutomaticRoundsNeverAskForAStrategy() {
         when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 4, false)));
         assertFalse(service.needsStrategy("M-1", 1, 9));
@@ -200,7 +212,7 @@ class MissionRecoveryServiceTest {
                 new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "c", 3, false)));
         service.recoverAll();
         verify(executor).block(eq("M-1"), contains("correcciones"));
-        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString(), anyBoolean());
     }
 
     @Test void aLostRoundClaimDoesNotStartACorrection() {
@@ -209,7 +221,7 @@ class MissionRecoveryServiceTest {
         when(requirements.currentIncrement("M-1")).thenReturn(1);
         when(missions.claimNextRound("M-1", 0, MissionRecoveryService.CORRECTABLE)).thenReturn(false);
         service.recoverAll();
-        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString(), anyBoolean());
     }
 
     // Revisión final (1b): entre el listado y el CAS el fundador lanzó otra ronda; la recuperación no lanza ni bloquea.
@@ -222,7 +234,7 @@ class MissionRecoveryServiceTest {
         service.recoverAll();
         verify(missions, never()).claimNextRound(anyString(), anyInt(), anySet());
         verify(executor, never()).block(anyString(), anyString());
-        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString(), anyBoolean());
     }
 
     @Test void aMissionThatBecameLiveIsNeverBlocked() {
@@ -256,7 +268,7 @@ class MissionRecoveryServiceTest {
         service.recoverAll();
         verify(executor, never()).resumeAsync(anyString(), any());
         verify(missions, never()).claimNextRound(anyString(), anyInt(), anySet());
-        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString(), anyBoolean());
         verify(executor, never()).block(anyString(), anyString());
     }
 

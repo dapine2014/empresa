@@ -646,11 +646,81 @@ public class MissionExecutor {
      * correctionRounds por MissionRecoveryService o MissionService). No consume MAX_EVIDENCE_ROUNDS.
      */
     public CompletableFuture<Void> correctAsync(String missionId, int round, String request) {
+        return correctAsync(missionId, round, request, false);
+    }
+
+    private com.aicompany.core.recovery.CorrectionStrategist correctionStrategist;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCorrectionStrategist(@org.springframework.context.annotation.Lazy
+                                        com.aicompany.core.recovery.CorrectionStrategist correctionStrategist) {
+        this.correctionStrategist = correctionStrategist;
+    }
+
+    /**
+     * Revisión 2026-10-06 §2: {@code withStrategy} (sin avance en las últimas rondas) busca una estrategia nueva en el hilo de
+     * la ronda, antes de correr; sin estrategia válida la ronda corre igual.
+     */
+    public CompletableFuture<Void> correctAsync(String missionId, int round, String request, boolean withStrategy) {
         events.publish("EMPRESA_MISSION_CORRECTION_STARTED", missionId, null, "system", Map.of("round", round));
         advanceMission(missionId, MissionStatus.DELEGATING, 10, "Corrección automática (ronda " + round + ")",
                 "Corrigiendo contra las HU, los criterios y los escenarios del incremento.");
         return submit(missionId, "correction " + round, () -> reexecuteInternal(missionId,
-                memory.instructionOf(missionId).orElse(""), round, request));
+                memory.instructionOf(missionId).orElse(""), round,
+                withStrategy ? withNewStrategy(missionId, round, request) : request));
+    }
+
+    /** Antepone la estrategia buscada al pedido y la deja guardada (para retomar sin volver a buscar). Nunca lanza. */
+    private String withNewStrategy(String missionId, int round, String request) {
+        if (correctionStrategist == null || recoveryMemory == null) {
+            return request;
+        }
+        try {
+            var rounds = recoveryMemory.correctionRounds(missionId).stream()
+                    .sorted(java.util.Comparator.comparingInt(com.aicompany.core.recovery.CorrectionRound::round)).toList();
+            var current = rounds.stream().filter(r -> r.round() == round).findFirst()
+                    .map(r -> new com.aicompany.core.recovery.CorrectionReport(r.request(), r.failing(), r.failures()))
+                    .orElse(null);
+            var previous = rounds.stream().filter(r -> r.round() < round)
+                    .map(r -> new com.aicompany.core.recovery.CorrectionReport(r.request(), r.failing(), r.failures()))
+                    .toList();
+            var strategy = correctionStrategist.propose(missionId, round, current, previous, stackOf(missionId));
+            if (strategy.isEmpty()) {
+                return request;
+            }
+            var s = strategy.get();
+            var withStrategy = "ESTRATEGIA NUEVA (error persistente): " + s.strategy() + "\nFuentes: "
+                    + String.join(", ", s.sources()) + "\n\n" + request;
+            recoveryMemory.addStrategy(missionId, s);
+            recoveryMemory.updateCorrectionRequest(missionId, round, withStrategy);
+            events.publish("EMPRESA_CORRECTION_STRATEGY_PROPOSED", missionId, null, "engineering",
+                    Map.of("round", round, "fingerprint", s.fingerprint(), "sources", s.sources()));
+            return withStrategy;
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not get a correction strategy: {}", missionId, ex.getMessage());
+            return request;
+        }
+    }
+
+    /** Stack para la búsqueda: lo que declara el último plan guardado. */
+    private String stackOf(String missionId) {
+        try {
+            var saved = memory.lastTeamPlanJson(missionId);
+            if (saved.isEmpty()) {
+                return "";
+            }
+            var profiles = jsonMapper.readValue(saved.get(), TeamPlan.class).componentProfiles();
+            var parts = new java.util.ArrayList<String>();
+            if (profiles.contains(com.aicompany.core.model.StackProfile.DOTNET_APP)) {
+                parts.add(".NET 8");
+            }
+            if (profiles.contains(com.aicompany.core.model.StackProfile.FLUTTER_WEB_APP)) {
+                parts.add("Flutter 3.41");
+            }
+            return String.join(" ", parts);
+        } catch (Exception ex) {
+            return "";
+        }
     }
 
     /** Revisión final Aria (6): un pool lleno no deja la misión trabada en un estado intermedio. */

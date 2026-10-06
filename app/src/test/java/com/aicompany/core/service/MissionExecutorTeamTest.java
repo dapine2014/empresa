@@ -452,6 +452,74 @@ class MissionExecutorTeamTest {
         verify(recovery, never()).addCorrectionRound(any(), any());
     }
 
+    private com.aicompany.core.recovery.RecoveryMemoryService strategyRecovery(com.aicompany.core.recovery.CorrectionStrategist strategist)
+            throws Exception {
+        withAria();
+        var recovery = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        executor.setRecoveryMemory(recovery);
+        executor.setCorrectionStrategist(strategist);
+        when(recovery.correctionRounds("M-9")).thenReturn(List.of(
+                new com.aicompany.core.recovery.CorrectionRound(1, 1, "a", 1, false, List.of("e1")),
+                new com.aicompany.core.recovery.CorrectionRound(2, 1, "b", 1, false, List.of("e1")),
+                new com.aicompany.core.recovery.CorrectionRound(3, 1, "CORRECCIÓN AUTOMÁTICA (Java):\n- x", 1, false, List.of("e1"))));
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+        return recovery;
+    }
+
+    // Revisión 2026-10-06 §2: con estrategia, se antepone al pedido, se guarda y se publica.
+    @Test
+    void aCorrectionWithStrategyPrependsSavesAndPublishesIt() throws Exception {
+        var strategist = mock(com.aicompany.core.recovery.CorrectionStrategist.class);
+        var recovery = strategyRecovery(strategist);
+        when(strategist.propose(eq("M-9"), eq(3), any(), anyList(), anyString())).thenReturn(Optional.of(
+                new com.aicompany.core.recovery.CorrectionStrategy("fp", 3, "Reescribe X desde cero", List.of("https://a"))));
+
+        executor.correctAsync("M-9", 3, "CORRECCIÓN AUTOMÁTICA (Java):\n- x", true).get();
+
+        verify(strategist).propose(eq("M-9"), eq(3), argThat(r -> r.failures().equals(List.of("e1"))),
+                argThat(p -> p.size() == 2), anyString());
+        verify(recovery).addStrategy(eq("M-9"), any());
+        verify(recovery).updateCorrectionRequest(eq("M-9"), eq(3),
+                startsWith("ESTRATEGIA NUEVA (error persistente): Reescribe X desde cero"));
+        verify(events).publish(eq("EMPRESA_CORRECTION_STRATEGY_PROPOSED"), eq("M-9"), isNull(), eq("engineering"), anyMap());
+        verify(development).execute(argThat(c -> c.round() == 3 && c.plan().workTasks().stream()
+                .allMatch(t -> t.objective().contains("ESTRATEGIA NUEVA"))), any());
+    }
+
+    // Review Focus 3: retomar una corrección cuya estrategia ya quedó guardada no vuelve a buscar.
+    @Test
+    void resumingACorrectionWithASavedStrategyDoesNotSearchAgain() throws Exception {
+        var strategist = mock(com.aicompany.core.recovery.CorrectionStrategist.class);
+        var recovery = strategyRecovery(strategist);
+        when(recovery.correctionRound("M-9", 3)).thenReturn(Optional.of(new com.aicompany.core.recovery.CorrectionRound(
+                3, 1, "ESTRATEGIA NUEVA (error persistente): X\n\nCORRECCIÓN AUTOMÁTICA (Java):\n- x", 1, false)));
+
+        executor.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
+                com.aicompany.core.recovery.ResumePoint.Stage.GENERATE, 3,
+                com.aicompany.core.recovery.ResumePoint.RoundKind.CORRECTION, null)).get();
+
+        verifyNoInteractions(strategist);
+        verify(development).execute(argThat(c -> c.round() == 3), any());
+    }
+
+    // Review Focus 1: sin estrategia, la ronda corre igual.
+    @Test
+    void withoutAStrategyTheRoundRunsAnyway() throws Exception {
+        var strategist = mock(com.aicompany.core.recovery.CorrectionStrategist.class);
+        var recovery = strategyRecovery(strategist);
+        when(strategist.propose(any(), anyInt(), any(), anyList(), anyString())).thenReturn(Optional.empty());
+
+        executor.correctAsync("M-9", 3, "CORRECCIÓN AUTOMÁTICA (Java):\n- x", true).get();
+
+        verify(development).execute(argThat(c -> c.round() == 3), any());
+        verify(recovery, never()).addStrategy(any(), any());
+        verify(recovery, never()).updateCorrectionRequest(any(), anyInt(), any());
+    }
+
     // Spec misiones durables §1: discovery y otros equipos quedan INTERRUPTED.
     @Test
     void anInterruptPointLeavesTheMissionInterrupted() throws Exception {

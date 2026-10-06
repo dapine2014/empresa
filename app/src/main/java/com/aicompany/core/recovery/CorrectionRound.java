@@ -5,9 +5,19 @@ import java.util.List;
 /**
  * Spec misiones durables §3: una ronda de corrección (automática o con la indicación del fundador sobre una BLOCKED).
  * {@code failing}: cuántas cosas fallaban al lanzarla (freno "sin avance"); {@code request}: el pedido completo, para
- * retomarla tras un reinicio.
+ * retomarla tras un reinicio; {@code failures}: las fallas individuales del reporte (la estrategia compara las de las rondas
+ * previas; revisión 2026-10-06, las rondas viejas sin el campo leen vacío).
  */
-public record CorrectionRound(int round, int increment, String request, int failing, boolean byFounder) {
+public record CorrectionRound(int round, int increment, String request, int failing, boolean byFounder,
+                              List<String> failures) {
+
+    public CorrectionRound {
+        failures = failures == null ? List.of() : List.copyOf(failures);
+    }
+
+    public CorrectionRound(int round, int increment, String request, int failing, boolean byFounder) {
+        this(round, increment, request, failing, byFounder, List.of());
+    }
 
     /** Encabezado del pedido de una ronda con la indicación del fundador (antes del CorrectionReport). */
     public static final String FOUNDER_PREFIX = "INDICACIÓN DEL FUNDADOR: ";

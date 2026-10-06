@@ -47,7 +47,7 @@ public class RecoveryMemoryService {
         var rounds = new ArrayList<CorrectionRound>();
         for (var r : correctionRounds(missionId)) {
             rounds.add(r.round() == round
-                    ? new CorrectionRound(r.round(), r.increment(), request, r.failing(), r.byFounder()) : r);
+                    ? new CorrectionRound(r.round(), r.increment(), request, r.failing(), r.byFounder(), r.failures()) : r);
         }
         try (var session = driver.session()) {
             session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.correctionRounds = $json",
