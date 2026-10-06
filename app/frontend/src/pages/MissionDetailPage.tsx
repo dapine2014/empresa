@@ -44,14 +44,22 @@ function sandboxDot(step: SandboxStep): string {
 
 const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED', 'BLOCKED'])
 
+/** Spec misiones durables §4: una BLOCKED/INTERRUPTED muestra su motivo en su propia sección (no dos veces). */
+function showsRecovery(mission: MissionResponse) {
+  return mission.status === 'INTERRUPTED' || mission.status === 'BLOCKED'
+}
+
 /** Spec misiones durables §4: motivo de una BLOCKED/INTERRUPTED y "Reanudar" para las INTERRUPTED. */
 function MissionRecovery({ mission }: { mission: MissionResponse }) {
   const queryClient = useQueryClient()
   const resume = useMutation({
     mutationFn: () => api.resumeMission(mission.missionId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['missionDetails', mission.missionId] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['missionDetails', mission.missionId] })
+      void queryClient.invalidateQueries({ queryKey: ['missions'] })
+    },
   })
-  if (mission.status !== 'INTERRUPTED' && mission.status !== 'BLOCKED') return null
+  if (!showsRecovery(mission)) return null
   return (
     <section>
       <h2>{mission.status === 'BLOCKED' ? 'Bloqueada: espera tu indicación' : 'Interrumpida por un reinicio'}</h2>
@@ -279,7 +287,7 @@ export default function MissionDetailPage() {
         {mission.environment === 'PRODUCTION' ? '🏢 PRODUCTION' : '🧪 TEST'}
         {mission.teamId && <>{' — '}👥 {mission.teamId}</>}
       </p>
-      <p className="mission-message">{mission.message}</p>
+      {!showsRecovery(mission) && <p className="mission-message">{mission.message}</p>}
       <DeleteMissionButton
         missionId={mission.missionId}
         status={mission.status}
