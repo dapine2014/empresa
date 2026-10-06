@@ -163,7 +163,7 @@ class MissionServiceTest {
             new MissionService(roundMemory, roundExecutor, roundEvents, teamMemory, workspace, policies);
 
     {
-        when(roundMemory.claimNextRound(anyString(), anyInt())).thenReturn(true);
+        when(roundMemory.claimNextRound(anyString(), anyInt(), anySet())).thenReturn(true);
     }
 
     private static MissionResponse mission(String id, MissionStatus status) {
@@ -179,12 +179,12 @@ class MissionServiceTest {
         when(roundMemory.evidenceRound("MISSION-1")).thenReturn(5);
         when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(1.0);
         when(roundMemory.tasks("MISSION-1")).thenReturn(List.of());
-        when(roundMemory.claimNextRound("MISSION-1", 5)).thenReturn(true);
+        when(roundMemory.claimNextRound(eq("MISSION-1"), eq(5), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)))).thenReturn(true);
         when(roundExecutor.correctAsync(anyString(), anyInt(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
 
         roundService.recordDecision("MISSION-1", new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "usa otra librería"));
 
-        verify(roundMemory).claimNextRound("MISSION-1", 5);
+        verify(roundMemory).claimNextRound(eq("MISSION-1"), eq(5), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)));
         verify(recovery).addCorrectionRound(eq("MISSION-1"), argThat(r -> r.round() == 6 && r.byFounder()));
         verify(roundExecutor).correctAsync(eq("MISSION-1"), eq(6), argThat(s -> s.startsWith("INDICACIÓN DEL FUNDADOR: usa otra librería")));
         verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
@@ -211,7 +211,7 @@ class MissionServiceTest {
         assertEquals(1, response.evidenceRound());
         verify(roundMemory).recordDecision(eq("MISSION-1"), anyString(), eq(InvestorDecision.REQUEST_MORE_EVIDENCE),
                 eq("Quiero precios reales"));
-        verify(roundMemory).claimNextRound("MISSION-1", 0);
+        verify(roundMemory).claimNextRound(eq("MISSION-1"), eq(0), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)));
         verify(roundExecutor).reexecuteAsync("MISSION-1", "Buscar un servicio", 1, "Quiero precios reales");
     }
 
@@ -248,7 +248,7 @@ class MissionServiceTest {
         when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));
         when(roundMemory.evidenceRound("MISSION-1")).thenReturn(0);
         when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
-        when(roundMemory.claimNextRound("MISSION-1", 0)).thenReturn(false);
+        when(roundMemory.claimNextRound(eq("MISSION-1"), eq(0), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)))).thenReturn(false);
 
         assertThrows(IllegalStateException.class, () -> roundService.recordDecision("MISSION-1",
                 new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));

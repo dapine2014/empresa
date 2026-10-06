@@ -180,12 +180,16 @@ public class MissionMemoryService {
 
     /**
      * Revisión final Aria (12): CAS contra dos pedidos simultáneos (doble clic): solo uno pasa la ronda de {@code current}
-     * a {@code current + 1}; el otro recibe false y no escribe nada.
+     * a {@code current + 1}; el otro recibe false y no escribe nada. Spec misiones durables §5: además la misión tiene que
+     * seguir en uno de los estados {@code allowed}, así una ronda lanzada por otro camino (fundador, orquestador,
+     * corrección automática) entre la lectura y el CAS nunca arranca una segunda en paralelo.
      */
-    public boolean claimNextRound(String missionId, int current) {
+    public boolean claimNextRound(String missionId, int current, java.util.Set<MissionStatus> allowed) {
+        var statuses = allowed.stream().map(MissionStatus::name).toList();
         try (var session = driver.session()) {
             return session.executeWrite(tx -> !tx.run("MATCH (m:Mission {id:$id}) WHERE coalesce(m.evidenceRound, 0) = $current "
-                    + "SET m.evidenceRound = $current + 1 RETURN m.id", Map.of("id", missionId, "current", current)).list().isEmpty());
+                    + "AND m.status IN $allowed SET m.evidenceRound = $current + 1 RETURN m.id",
+                    Map.of("id", missionId, "current", current, "allowed", statuses)).list().isEmpty());
         }
     }
 

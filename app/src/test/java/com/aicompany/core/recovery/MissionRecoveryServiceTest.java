@@ -32,11 +32,24 @@ class MissionRecoveryServiceTest {
         when(cost.missionCost(anyString())).thenReturn(new ModelCostService.Summary(List.of()));
         when(executor.resumeAsync(anyString(), any())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
         when(executor.correctAsync(anyString(), anyInt(), anyString())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
-        when(missions.claimNextRound(anyString(), anyInt())).thenReturn(true);
+        when(missions.claimNextRound(anyString(), anyInt(), anySet())).thenReturn(true);
     }
 
     private static MissionResponse mission(String id, MissionStatus status, String team) {
         return new MissionResponse(id, status, "TEST", 0, "", "", Instant.now(), null, team);
+    }
+
+    /** Lo que devuelven el listado y la relectura de cada misión. */
+    private void listed(MissionResponse... all) {
+        when(missions.findAll(anyInt())).thenReturn(List.of(all));
+        for (var m : all) {
+            when(missions.find(m.missionId())).thenReturn(Optional.of(m));
+        }
+    }
+
+    private void approved(String missionId) {
+        when(requirements.approved(missionId)).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "APPROVED", "", null)));
+        when(requirements.currentIncrement(missionId)).thenReturn(1);
     }
 
     @Test void atStartupWorkingAgentsGoIdleAndADiscoveryOrphanIsInterrupted() {
@@ -105,13 +118,14 @@ class MissionRecoveryServiceTest {
     }
 
     @Test void aFailedValidationWithApprovedRequirementsStartsACorrection() {
-        when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-1", MissionStatus.AWAITING_INVESTOR, "TEAM-DEVELOPMENT")));
+        listed(mission("M-1", MissionStatus.AWAITING_INVESTOR, "TEAM-DEVELOPMENT"));
         when(missions.lastValidationStatus("M-1")).thenReturn(Optional.of("FAILED"));
         when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "APPROVED", "", null)));
         when(requirements.currentIncrement("M-1")).thenReturn(1);
         when(missions.evidenceRound("M-1")).thenReturn(0);
         service.recoverAll();
         verify(recovery).addCorrectionRound(eq("M-1"), argThat(r -> r.round() == 1 && r.increment() == 1 && !r.byFounder()));
+        verify(missions).claimNextRound("M-1", 0, MissionRecoveryService.CORRECTABLE);
         verify(executor).correctAsync(eq("M-1"), eq(1), startsWith(CorrectionReport.HEADER));
     }
 
@@ -167,7 +181,7 @@ class MissionRecoveryServiceTest {
     }
 
     @Test void aBrakeLeavesTheMissionBlocked() {
-        when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT")));
+        listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
         when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "APPROVED", "", null)));
         when(requirements.currentIncrement("M-1")).thenReturn(1);
         when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 5, false),
@@ -178,11 +192,101 @@ class MissionRecoveryServiceTest {
     }
 
     @Test void aLostRoundClaimDoesNotStartACorrection() {
-        when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT")));
+        listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
         when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "APPROVED", "", null)));
         when(requirements.currentIncrement("M-1")).thenReturn(1);
-        when(missions.claimNextRound("M-1", 0)).thenReturn(false);
+        when(missions.claimNextRound("M-1", 0, MissionRecoveryService.CORRECTABLE)).thenReturn(false);
         service.recoverAll();
         verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+    }
+
+    // Revisión final (1b): entre el listado y el CAS el fundador lanzó otra ronda; la recuperación no lanza ni bloquea.
+    @Test void aMissionRelaunchedSinceTheListingIsNeitherCorrectedNorBlocked() {
+        listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
+        when(missions.find("M-1")).thenReturn(Optional.of(mission("M-1", MissionStatus.DELEGATING, "TEAM-DEVELOPMENT")));
+        approved("M-1");
+        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 5, false),
+                new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "c", 3, false)));
+        service.recoverAll();
+        verify(missions, never()).claimNextRound(anyString(), anyInt(), anySet());
+        verify(executor, never()).block(anyString(), anyString());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+    }
+
+    @Test void aMissionThatBecameLiveIsNeverBlocked() {
+        listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
+        approved("M-1");
+        when(executor.isLive("M-1")).thenReturn(false, true);
+        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 5, false),
+                new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "c", 3, false)));
+        service.recoverAll();
+        verify(executor, never()).block(anyString(), anyString());
+    }
+
+    // Revisión final (2): "reanuda" respeta los agentes encendidos en todos los equipos.
+    @Test void resumingWithAgentsOffIsRejected() {
+        var missionService = mock(MissionService.class);
+        service.setMissionService(missionService);
+        doThrow(new IllegalStateException("está apagado Sofía")).when(missionService).requireAgentsOn(isNull(), anyString());
+        when(missions.find("M-D")).thenReturn(Optional.of(mission("M-D", MissionStatus.INTERRUPTED, null)));
+        assertThrows(IllegalStateException.class, () -> service.resume("M-D"));
+        verify(executor, never()).executeAsync(anyString(), anyString());
+    }
+
+    @Test void automaticResumeAndCorrectionSkipMissionsWithAgentsOff() {
+        var missionService = mock(MissionService.class);
+        service.setMissionService(missionService);
+        doThrow(new IllegalStateException("está apagada Aria")).when(missionService)
+                .requireAgentsOn(eq("TEAM-DEVELOPMENT"), anyString());
+        listed(mission("M-I", MissionStatus.INTERRUPTED, "TEAM-DEVELOPMENT"),
+                mission("M-F", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
+        approved("M-F");
+        service.recoverAll();
+        verify(executor, never()).resumeAsync(anyString(), any());
+        verify(missions, never()).claimNextRound(anyString(), anyInt(), anySet());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString());
+        verify(executor, never()).block(anyString(), anyString());
+    }
+
+    // Revisión final (3): el orquestador pregunta si la corrección automática se ocupa de la misión.
+    @Test void willCorrectAFailedMissionWithApprovedRequirementsAndNoBrake() {
+        listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
+        approved("M-1");
+        when(executor.isLive("M-1")).thenReturn(true); // el orquestador se entera mientras el hilo termina
+        assertTrue(service.willCorrect("M-1"));
+    }
+
+    @Test void willNotCorrectWhenABrakeFiresOrWithoutRequirements() {
+        listed(mission("M-1", MissionStatus.FAILED, "TEAM-DEVELOPMENT"), mission("M-2", MissionStatus.FAILED, "TEAM-DEVELOPMENT"));
+        approved("M-1");
+        when(recovery.correctionRounds("M-1")).thenReturn(List.of(new CorrectionRound(1, 1, "a", 5, false),
+                new CorrectionRound(2, 1, "b", 4, false), new CorrectionRound(3, 1, "c", 3, false)));
+        when(requirements.approved("M-2")).thenReturn(Optional.empty());
+        assertFalse(service.willCorrect("M-1"));
+        assertFalse(service.willCorrect("M-2"));
+        assertFalse(service.willCorrect("M-X"));
+    }
+
+    // Revisión final (6a): si la detección de huérfanas falló al arrancar, el pase siguiente la reintenta.
+    @Test void aFailedOrphanCollectionIsRetriedByTheNextPass() {
+        when(missions.findAll(anyInt())).thenThrow(new RuntimeException("neo4j caído")).thenThrow(new RuntimeException("neo4j caído"))
+                .thenReturn(List.of(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT")));
+        service.onStartup();
+        verify(executor, never()).resumeAsync(anyString(), any());
+        service.recoverAll();
+        verify(executor).resumeAsync(eq("M-1"), any());
+    }
+
+    // Revisión final (6b): una huérfana que no se puede retomar queda INTERRUPTED al tercer intento (con su evento).
+    @Test void anOrphanThatCannotBeResumedIsInterruptedAfterThreeAttempts() {
+        when(missions.findAll(anyInt())).thenReturn(List.of(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT")));
+        when(executor.resumeAsync(eq("M-1"), any())).thenThrow(new IllegalStateException("plan ilegible"));
+        service.onStartup();
+        service.recoverAll();
+        verify(executor, never()).interrupt(anyString());
+        service.recoverAll();
+        verify(executor).interrupt("M-1");
+        service.recoverAll();
+        verify(executor, times(3)).resumeAsync(eq("M-1"), any());
     }
 }

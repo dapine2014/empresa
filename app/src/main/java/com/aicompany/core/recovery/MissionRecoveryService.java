@@ -45,6 +45,14 @@ public class MissionRecoveryService {
     private final Executor dispatcher;
     private final List<String> resumed = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> pendingOrphans = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Revisión final (6a): mientras la detección de huérfanas no haya corrido entera, cada pase la reintenta. */
+    private volatile boolean orphansCollected;
+    /** Revisión final (6b): intentos fallidos de retomar cada huérfana; a los {@link #MAX_ORPHAN_ATTEMPTS} queda INTERRUPTED. */
+    private final Map<String, Integer> orphanFailures = new java.util.concurrent.ConcurrentHashMap<>();
+    static final int MAX_ORPHAN_ATTEMPTS = 3;
+    /** Spec misiones durables §3: estados desde los que la corrección automática puede reclamar la ronda siguiente. */
+    static final Set<MissionStatus> CORRECTABLE = EnumSet.of(MissionStatus.FAILED, MissionStatus.AWAITING_INVESTOR);
+    private MissionService missionService;
 
     @org.springframework.beans.factory.annotation.Autowired
     public MissionRecoveryService(MissionMemoryService missions, RequirementsMemoryService requirements,
@@ -68,6 +76,15 @@ public class MissionRecoveryService {
         this.policies = policies;
         this.cost = cost;
         this.dispatcher = dispatcher;
+    }
+
+    /**
+     * Spec misiones durables §2: el chequeo de agentes encendidos de MissionService. {@code @Lazy}: MissionService depende
+     * de MissionExecutor, que depende de este servicio (ciclo de beans). Opcional en tests.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMissionService(@org.springframework.context.annotation.Lazy MissionService missionService) {
+        this.missionService = missionService;
     }
 
     /** Spec §1: después de CompanyMemoryInitializer (@Order(0)), en un hilo propio para no demorar el arranque. */
@@ -99,8 +116,9 @@ public class MissionRecoveryService {
                             new ResumePoint(ResumePoint.Stage.INTERRUPT, 0, ResumePoint.RoundKind.ORIGINAL, null)));
                 }
             }
+            orphansCollected = true;
         } catch (Exception ex) {
-            log.warn("RECOVERY - could not collect orphans: {}", ex.getMessage());
+            log.warn("RECOVERY - could not collect orphans (se reintenta en el próximo pase): {}", ex.getMessage());
         }
     }
 
@@ -123,6 +141,9 @@ public class MissionRecoveryService {
 
     /** Recorre las misiones en el orden del spec §1; lanza como máximo una de desarrollo. */
     public synchronized void recoverAll() {
+        if (!orphansCollected) {
+            collectOrphans();
+        }
         List<MissionResponse> all;
         try {
             all = missions.findAll(200);
@@ -134,6 +155,7 @@ public class MissionRecoveryService {
         var stillWorking = new HashSet<String>();
         all.stream().filter(m -> WORKING.contains(m.status())).forEach(m -> stillWorking.add(m.missionId()));
         pendingOrphans.retainAll(stillWorking);
+        orphanFailures.keySet().retainAll(pendingOrphans);
         var orphans = all.stream().filter(m -> pendingOrphans.contains(m.missionId()) && !executor.isLive(m.missionId()))
                 .sorted(byAge).toList();
         var developmentBusy = all.stream().anyMatch(m -> DEVELOPMENT_TEAM.equals(m.teamId()) && executor.isLive(m.missionId()));
@@ -142,7 +164,7 @@ public class MissionRecoveryService {
             return;
         }
         for (var m : orphans) {
-            if (dispatchResume(m)) {
+            if (agentsOn(m, "retomar " + m.missionId()) && dispatchResume(m)) {
                 return;
             }
         }
@@ -150,7 +172,7 @@ public class MissionRecoveryService {
         var interrupted = all.stream().filter(m -> m.status() == MissionStatus.INTERRUPTED
                 && DEVELOPMENT_TEAM.equals(m.teamId()) && !executor.isLive(m.missionId())).sorted(byAge).toList();
         for (var m : interrupted) {
-            if (dispatchResume(m)) {
+            if (agentsOn(m, "retomar " + m.missionId()) && dispatchResume(m)) {
                 return;
             }
         }
@@ -173,6 +195,10 @@ public class MissionRecoveryService {
         }
         if (executor.isLive(missionId)) {
             throw new IllegalStateException("MISSION " + missionId + " ya se está ejecutando.");
+        }
+        // Spec misiones durables §2: "con los chequeos de agentes encendidos de siempre" (todos los equipos).
+        if (missionService != null) {
+            missionService.requireAgentsOn(mission.teamId(), "reanudar " + missionId);
         }
         if (DEVELOPMENT_TEAM.equals(mission.teamId())) {
             if (!dispatchResume(mission)) {
@@ -202,13 +228,41 @@ public class MissionRecoveryService {
             resumed.add(mission.missionId());
             return true;
         } catch (Exception ex) {
-            log.warn("RECOVERY - could not resume {}: {}", mission.missionId(), ex.getMessage());
+            var missionId = mission.missionId();
+            log.warn("RECOVERY - could not resume {}: {}", missionId, ex.getMessage());
+            if (pendingOrphans.contains(missionId)
+                    && orphanFailures.merge(missionId, 1, Integer::sum) >= MAX_ORPHAN_ATTEMPTS) {
+                // Revisión final (6b): una huérfana que no se puede retomar no se reintenta para siempre en silencio.
+                log.warn("RECOVERY - {} could not be resumed after {} attempts -> INTERRUPTED", missionId, MAX_ORPHAN_ATTEMPTS);
+                pendingOrphans.remove(missionId);
+                orphanFailures.remove(missionId);
+                safely(missionId, () -> executor.interrupt(missionId));
+            }
+            return false;
+        }
+    }
+
+    /** Spec misiones durables §2: nunca se llama al modelo de un agente apagado; la misión queda como está y se reintenta. */
+    private boolean agentsOn(MissionResponse m, String what) {
+        if (missionService == null) {
+            return true;
+        }
+        try {
+            missionService.requireAgentsOn(m.teamId(), what);
+            return true;
+        } catch (Exception ex) {
+            log.info("RECOVERY - {} skipped: {}", m.missionId(), ex.getMessage());
             return false;
         }
     }
 
     boolean failedAndCorrectable(MissionResponse m) {
-        if (!DEVELOPMENT_TEAM.equals(m.teamId()) || executor.isLive(m.missionId())) {
+        return !executor.isLive(m.missionId()) && failedWithApprovedRequirements(m);
+    }
+
+    /** Development Group, FAILED (o AWAITING_INVESTOR con la validación FAILED) y requisitos aprobados; sin mirar el hilo. */
+    private boolean failedWithApprovedRequirements(MissionResponse m) {
+        if (!DEVELOPMENT_TEAM.equals(m.teamId())) {
             return false;
         }
         var failed = m.status() == MissionStatus.FAILED || (m.status() == MissionStatus.AWAITING_INVESTOR
@@ -216,18 +270,49 @@ public class MissionRecoveryService {
         return failed && requirements.approved(m.missionId()).isPresent();
     }
 
-    private boolean dispatchCorrection(MissionResponse m) {
-        var missionId = m.missionId();
+    /**
+     * Revisión final (3): true si la corrección automática se va a ocupar de esta misión (falló, tiene requisitos aprobados
+     * y ningún freno salta), para que el orquestador no pida su propia ronda en paralelo. No mira si el hilo sigue vivo
+     * (el orquestador se entera mientras la misión termina) ni los agentes encendidos (si están apagados la corrección
+     * espera a que vuelvan). Nunca lanza.
+     */
+    public boolean willCorrect(String missionId) {
         try {
+            var mission = missions.find(missionId).orElse(null);
+            if (mission == null || !failedWithApprovedRequirements(mission)) {
+                return false;
+            }
+            var report = CorrectionReport.from(lastValidation(missionId), mission.message());
+            return brake(missionId, Math.max(1, requirements.currentIncrement(missionId)), report.failing()).isEmpty();
+        } catch (Exception ex) {
+            log.warn("RECOVERY - could not evaluate the correction of {}: {}", missionId, ex.getMessage());
+            return false;
+        }
+    }
+
+    private boolean dispatchCorrection(MissionResponse listed) {
+        var missionId = listed.missionId();
+        try {
+            // Revisión final (1b): se relee justo antes del freno y del CAS; entre el listado y acá el fundador o el
+            // orquestador pudieron lanzar otra ronda. Nunca se bloquea una misión viva.
+            var m = missions.find(missionId).orElse(null);
+            if (m == null || !failedAndCorrectable(m)) {
+                return false;
+            }
+            var current = missions.evidenceRound(missionId);
             var increment = Math.max(1, requirements.currentIncrement(missionId));
             var report = CorrectionReport.from(lastValidation(missionId), m.message());
             var brake = brake(missionId, increment, report.failing());
             if (brake.isPresent()) {
-                executor.block(missionId, brake.get() + "\n\nSigue fallando:\n" + report.text());
+                if (!executor.isLive(missionId)) {
+                    executor.block(missionId, brake.get() + "\n\nSigue fallando:\n" + report.text());
+                }
                 return false;
             }
-            var current = missions.evidenceRound(missionId);
-            if (!missions.claimNextRound(missionId, current)) {
+            if (!agentsOn(m, "corregir " + missionId)) {
+                return false;
+            }
+            if (!missions.claimNextRound(missionId, current, CORRECTABLE)) {
                 return false;
             }
             var round = current + 1;

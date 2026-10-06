@@ -69,8 +69,12 @@ public class MissionService {
         this.agentAvailability = agentAvailability;
     }
 
-    /** Agentes sin los cuales la misión no puede correr: discovery, los 6; un equipo, Alex y su líder. */
-    private void requireAgentsOn(String teamId, String what) {
+    /**
+     * Agentes sin los cuales la misión no puede correr: discovery, los 6; un equipo, Alex y su líder (y Aria en el
+     * Development Group). Público para la recuperación (spec misiones durables §2): retomar o corregir nunca llama al
+     * modelo de un agente apagado.
+     */
+    public void requireAgentsOn(String teamId, String what) {
         requireAgentsOn(teamId, what, true);
     }
 
@@ -255,7 +259,7 @@ public class MissionService {
         }
         requireAgentsOn(mission.teamId(), "construir el incremento " + increment + " de " + missionId);
         var lastRound = memory.evidenceRound(missionId);
-        if (!memory.claimNextRound(missionId, lastRound)) {
+        if (!memory.claimNextRound(missionId, lastRound, STOPPED)) {
             // Revisión final Aria (12): doble clic; el primer pedido ya lanzó la ronda.
             throw new IllegalStateException("MISSION " + missionId + " ya arrancó otra ronda; espera a que termine.");
         }
@@ -349,7 +353,7 @@ public class MissionService {
             // Revisión final Aria (16): una misión anterior a Aria reutiliza el plan de Neo y no la necesita.
             requireAgentsOn(memory.teamId(missionId).orElse(null), "pedir más evidencia sobre " + missionId,
                     requirementsMemory == null || !requirementsMemory.predatesRequirements(missionId));
-            if (!memory.claimNextRound(missionId, lastRound)) {
+            if (!memory.claimNextRound(missionId, lastRound, DECIDABLE_STATUSES)) {
                 // Revisión final Aria (12): doble clic; el primer pedido ya lanzó la ronda y este no escribe nada.
                 throw new IllegalStateException("MISSION " + missionId + " ya arrancó otra ronda; espera a que termine.");
             }

@@ -35,7 +35,7 @@ class MissionServiceRequirementsTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(memory.instructionOf("M-9")).thenReturn(Optional.of("Un CRM"));
         when(requirements.claimDecision(anyString(), anyInt(), any())).thenReturn(true);
-        when(memory.claimNextRound(anyString(), anyInt())).thenReturn(true);
+        when(memory.claimNextRound(anyString(), anyInt(), anySet())).thenReturn(true);
     }
 
     private static MissionResponse missionIn(MissionStatus status) {
@@ -111,7 +111,7 @@ class MissionServiceRequirementsTest {
                 "{\"increments\":[{\"number\":1},{\"number\":2}]}", "APPROVED", "", null)));
         when(requirements.builtIncrement("M-9")).thenReturn(1);
         when(memory.evidenceRound("M-9")).thenReturn(1);
-        when(memory.claimNextRound("M-9", 1)).thenReturn(false);
+        when(memory.claimNextRound(eq("M-9"), eq(1), anySet())).thenReturn(false);
 
         assertThrows(IllegalStateException.class, () -> service.buildIncrement("M-9", 2));
         verifyNoInteractions(executor);
@@ -132,7 +132,7 @@ class MissionServiceRequirementsTest {
 
         when(memory.evidenceRound("M-9")).thenReturn(3);
         service.buildIncrement("M-9", 2);
-        verify(memory).claimNextRound("M-9", 3);
+        verify(memory).claimNextRound(eq("M-9"), eq(3), argThat(s -> s.equals(java.util.Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.COMPLETED, MissionStatus.FAILED))));
         verify(executor).buildIncrementAsync("M-9", 2, 4);
     }
 
@@ -158,7 +158,7 @@ class MissionServiceRequirementsTest {
 
         service.recordDecision("M-9", new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más"));
 
-        verify(memory).claimNextRound("M-9", 1);
+        verify(memory).claimNextRound(eq("M-9"), eq(1), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)));
         verify(executor).reexecuteAsync("M-9", "Un CRM", 2, "más");
     }
 
