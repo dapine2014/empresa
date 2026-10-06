@@ -1037,5 +1037,7 @@ Rama `misiones-durables`. Cambios acordados con el fundador:
 - `BLOCKED` se acepta como `FAILED` para construir el siguiente incremento y aplicar el esquema. Una ronda > 0 sin repositorio queda `BLOCKED` solo si la misión ya tenía commits; si falló antes del código, se vuelve a escribir el scaffold.
 - Manos humanas: "verifica MISSION-X" / `POST /missions/{id}/verify` / botón en Missions verifican el HEAD sin modelos (tarea `<misión>-HUMAN-VERIFY-<n>`), ponen en cero el contador (`correctionCounterResets`) y se retoman tras un reinicio (`HUMAN_VERIFY`).
 - `discardUncommitted` ahora aparta con `git stash push -u` en vez de borrar: el trabajo sin commit nunca se pierde.
+- Revisión final: la verificación humana FAILED ya no se confunde con una a medias al retomar; sin validación del estado actual no se busca estrategia; el pedido de la ronda se guarda antes que la estrategia "intentada"; la estrategia lleva una guarda contra instrucciones de las páginas; las rondas del fundador guardan `failures`.
+- Políticas verificadas contra el Neo4j real (solo lectura, 2026-10-06): `MAX_AUTO_CORRECTIONS` y `MAX_MISSION_COST_USD` no estaban sembradas, así que rigen los defaults 20 y 10 en el primer despliegue; sin migración, los cambios posteriores van por Settings.
 
 Verificación en vivo: pendiente.
