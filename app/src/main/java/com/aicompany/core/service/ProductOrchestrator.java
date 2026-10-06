@@ -86,6 +86,17 @@ public class ProductOrchestrator {
         this.defaultCeoModel = defaultCeoModel;
     }
 
+    private com.aicompany.core.recovery.MissionRecoveryService recovery;
+
+    /**
+     * Revisión final misiones durables (3). {@code @Lazy}: la recuperación depende de MissionExecutor, que depende de este
+     * orquestador (ciclo de beans). Opcional en tests.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecovery(@org.springframework.context.annotation.Lazy com.aicompany.core.recovery.MissionRecoveryService recovery) {
+        this.recovery = recovery;
+    }
+
     public boolean enabled() {
         return policies.activeValue(PolicyKey.ORCHESTRATOR_ENABLED) >= 1;
     }
@@ -413,6 +424,12 @@ public class ProductOrchestrator {
             founderRejected(run, mission.missionId());
             return;
         }
+        // Revisión final misiones durables (3): si la corrección automática se ocupa de la misión, el ciclo espera; una
+        // ronda propia del orquestador correría en paralelo sobre el mismo repositorio.
+        if (recovery != null && recovery.willCorrect(mission.missionId())) {
+            autoCorrecting(run, mission.missionId());
+            return;
+        }
         var p = view.product();
         var broken = BROKEN.contains(mission.status());
         if (!broken) {
@@ -472,6 +489,15 @@ public class ProductOrchestrator {
             return;
         }
         fail(run, "No quedó listo para vender tras las rondas de corrección: " + String.join(" ", missing));
+    }
+
+    /** Revisión final misiones durables (3): la espera por la corrección automática se anota una vez en el historial. */
+    private void autoCorrecting(OrchestratorRun run, String missionId) {
+        var steps = runs.steps(run.id());
+        if (!steps.isEmpty() && "AUTO_CORRECTION".equals(steps.get(steps.size() - 1).step())) {
+            return;
+        }
+        step(run, "AUTO_CORRECTION", "En corrección automática: " + missionId + " falló y Forjai la está corrigiendo sola.");
     }
 
     /**
