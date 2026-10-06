@@ -552,6 +552,16 @@ public class MissionExecutor {
         }
     }
 
+    static final String NO_WORKSPACE = "No existe el repositorio de la misión: no se puede retomar ni corregir.";
+
+    private DevelopmentWorkspaceService workspace;
+
+    /** Spec misiones durables §2.1: para saber si una ronda > 0 tiene repositorio (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setWorkspace(DevelopmentWorkspaceService workspace) {
+        this.workspace = workspace;
+    }
+
     private com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -715,6 +725,14 @@ public class MissionExecutor {
     }
 
     private void runTeamPlan(String missionId, String instruction, TeamExecutionMode mode, TeamMissionContext context) {
+
+        // Spec misiones durables §2.1: una ronda > 0 del Development Group trabaja sobre el repositorio de la misión; sin
+        // él no hay nada que retomar ni corregir y la misión espera al fundador (sin gastar más llamadas).
+        if (mode == TeamExecutionMode.DEVELOPMENT && context.round() > 0 && workspace != null
+                && workspace.headIfAny(missionId).isEmpty()) {
+            block(missionId, NO_WORKSPACE);
+            return;
+        }
 
         var strategy = teamStrategies.stream()
                 .filter(s -> s.mode() == mode)
@@ -988,11 +1006,15 @@ public class MissionExecutor {
                 : ex.getMessage();
     }
 
+    /** El fundador está en Colombia (UTC-5): la hora del motivo va en su hora local. */
+    private static final java.time.format.DateTimeFormatter COLOMBIA_TIME = java.time.format.DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm").withZone(java.time.ZoneId.of("America/Bogota"));
+
     /** Spec misiones durables §1: una interrupción no es una falla (sin correo, el orquestador no la cuenta). */
     public void interrupt(String missionId) {
         advanceMission(missionId, MissionStatus.INTERRUPTED, 100, "Interrumpida",
-                "Interrumpida por un reinicio de company-core el " + java.time.Instant.now()
-                        + ". Reanúdala con \"reanuda " + missionId + "\".");
+                "Interrumpida por un reinicio de company-core el " + COLOMBIA_TIME.format(java.time.Instant.now())
+                        + " (hora de Colombia). Reanúdala con \"reanuda " + missionId + "\".");
         events.publish("EMPRESA_MISSION_INTERRUPTED", missionId, null, "system", Map.of());
     }
 

@@ -458,7 +458,8 @@ class MissionExecutorTeamTest {
         executor.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
                 com.aicompany.core.recovery.ResumePoint.Stage.INTERRUPT, 0,
                 com.aicompany.core.recovery.ResumePoint.RoundKind.ORIGINAL, null)).get();
-        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.INTERRUPTED), anyInt(), anyString(), anyString());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.INTERRUPTED), anyInt(), anyString(),
+                matches("(?s).*el \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} \\(hora de Colombia\\).*"));
     }
 
     // Spec misiones durables §3: la corrección es una ronda de equipo con el reporte como pedido.
@@ -474,6 +475,44 @@ class MissionExecutorTeamTest {
         executor.correctAsync("M-9", 2, "CORRECCIÓN AUTOMÁTICA (Java):\n- ESC-05").get();
 
         verify(events).publish(eq("EMPRESA_MISSION_CORRECTION_STARTED"), eq("M-9"), isNull(), eq("system"), anyMap());
+        verify(development).execute(argThat(c -> c.round() == 2), any());
+    }
+
+    // Spec misiones durables §2.1: sin repositorio, una ronda > 0 del Development Group queda BLOCKED con el motivo.
+    @Test
+    void aRoundAfterTheFirstWithoutRepositoryIsBlocked() throws Exception {
+        withAria();
+        var workspace = mock(DevelopmentWorkspaceService.class);
+        executor.setWorkspace(workspace);
+        when(workspace.headIfAny("M-9")).thenReturn(Optional.empty());
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+
+        executor.correctAsync("M-9", 2, "CORRECCIÓN AUTOMÁTICA (Java):\n- ESC-05").get();
+
+        verify(development, never()).execute(any(), any());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.BLOCKED), anyInt(), anyString(),
+                eq(MissionExecutor.NO_WORKSPACE));
+        verify(events).publish(eq("EMPRESA_MISSION_BLOCKED"), eq("M-9"), isNull(), eq("system"), anyMap());
+    }
+
+    @Test
+    void aRoundAfterTheFirstWithRepositoryRuns() throws Exception {
+        withAria();
+        var workspace = mock(DevelopmentWorkspaceService.class);
+        executor.setWorkspace(workspace);
+        when(workspace.headIfAny("M-9")).thenReturn(Optional.of("abc123"));
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+
+        executor.correctAsync("M-9", 2, "CORRECCIÓN AUTOMÁTICA (Java):\n- ESC-05").get();
+
         verify(development).execute(argThat(c -> c.round() == 2), any());
     }
 }
