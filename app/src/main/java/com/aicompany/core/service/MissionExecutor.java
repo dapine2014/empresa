@@ -115,6 +115,15 @@ public class MissionExecutor {
         this.productOrchestrator = productOrchestrator;
     }
 
+    private com.aicompany.core.recovery.MissionRecoveryService recoveryService;
+
+    /** {@code @Lazy}: el servicio de recuperación depende de este executor (ciclo de beans). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryService(@org.springframework.context.annotation.Lazy
+                                   com.aicompany.core.recovery.MissionRecoveryService recoveryService) {
+        this.recoveryService = recoveryService;
+    }
+
     /** El orquestador tampoco puede tumbar una misión: se avisa en otro hilo y un fallo solo se registra. */
     private void notifyOrchestrator(String missionId) {
         if (productOrchestrator == null) {
@@ -514,31 +523,31 @@ public class MissionExecutor {
         return product;
     }
 
-    /** Spec misiones durables §2: misiones con un hilo trabajando. Al arrancar está vacío: toda misión en curso es huérfana. */
-    private final java.util.Set<String> liveMissions = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Spec misiones durables §2: misiones con un hilo trabajando (contador por misión: el final de una ronda no desregistra la siguiente). Al arrancar está vacío: toda misión en curso es huérfana. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> liveMissions = new java.util.concurrent.ConcurrentHashMap<>();
 
     public boolean isLive(String missionId) {
-        return liveMissions.contains(missionId);
+        return liveMissions.containsKey(missionId);
     }
 
     public java.util.Set<String> liveMissionIds() {
-        return java.util.Set.copyOf(liveMissions);
+        return java.util.Set.copyOf(liveMissions.keySet());
     }
 
     /** Corre {@code work} en el pool de misiones con la misión registrada como viva mientras dure. */
     private CompletableFuture<Void> runLive(String missionId, Runnable work) {
-        liveMissions.add(missionId);
+        liveMissions.merge(missionId, 1, Integer::sum);
         try {
             return CompletableFuture.runAsync(() -> {
                 try {
                     // Costo real por misión (2026-10-04): las llamadas del hilo quedan atribuidas a la misión.
                     ModelCallContext.with(missionId, null, work);
                 } finally {
-                    liveMissions.remove(missionId);
+                    liveMissions.computeIfPresent(missionId, (k, n) -> n > 1 ? n - 1 : null);
                 }
             }, orchestratorExecutor);
         } catch (RuntimeException ex) {
-            liveMissions.remove(missionId);
+            liveMissions.computeIfPresent(missionId, (k, n) -> n > 1 ? n - 1 : null);
             throw ex;
         }
     }
@@ -1110,6 +1119,14 @@ public class MissionExecutor {
 
         if (status == MissionStatus.AWAITING_INVESTOR || status == MissionStatus.FAILED) {
             notifyOrchestrator(missionId);
+        }
+        if ((status == MissionStatus.AWAITING_INVESTOR || status == MissionStatus.FAILED || status == MissionStatus.BLOCKED)
+                && recoveryService != null) {
+            try {
+                recoveryService.onMissionFinished(missionId);
+            } catch (Exception ex) {
+                log.warn("MISSION {} - recovery notification failed: {}", missionId, ex.getMessage());
+            }
         }
     }
 }

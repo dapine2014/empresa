@@ -488,7 +488,7 @@ public class CeoService {
         return content + "\n\n" + UNBACKED_MEMORY_CLAIM_NOTE;
     }
 
-    static final String NO_INVESTOR_COMMENT = "(sin comentario del inversionista)";
+    public static final String NO_INVESTOR_COMMENT = "(sin comentario del inversionista)";
 
     /**
      * Spec evidence-rounds §5 (revisión 2026-09-27): el CEO reparte el pedido del inversionista entre los agentes de la

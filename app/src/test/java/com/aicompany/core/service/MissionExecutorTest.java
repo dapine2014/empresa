@@ -86,6 +86,19 @@ class MissionExecutorTest {
         assertFalse(held.isLive("M-1"));
     }
 
+    // Review Task 4: el final de una ronda no desregistra la siguiente ronda de la misma misión.
+    @Test
+    void overlappingRegistrationsOfTheSameMissionStayLiveUntilBothEnd() {
+        var pending = new java.util.ArrayList<Runnable>();
+        var held = executorWith(pending::add);
+        held.executeAsync("M-1", "x");
+        held.executeAsync("M-1", "x");
+        pending.get(0).run();
+        assertTrue(held.isLive("M-1"));
+        pending.get(1).run();
+        assertFalse(held.isLive("M-1"));
+    }
+
     @Test
     void reachesAwaitingInvestorWhenAllAgentsSucceed() throws Exception {
         stubAgent("sales");
