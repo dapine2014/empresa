@@ -20,10 +20,13 @@ public final class MigrationFilesGate {
     private static final Pattern TRANSACTION = Pattern.compile("(?i)^\\s*(BEGIN|COMMIT|ROLLBACK|START\\s+TRANSACTION)\\b.*");
 
     /**
-     * {@code existing}: migraciones ya commiteadas (ruta → contenido). Revisión final (I-5): una que ya existe no se
-     * edita, el cambio va en una nueva; (m-7) Forjai abre la transacción, la migración no la maneja.
+     * {@code existing}: migraciones ya commiteadas (ruta → contenido); {@code applied}: versiones aplicadas en algún
+     * ambiente de la misión (Spec Diego ambientes §2: solo esas son inmutables; una commiteada que no se aplicó en
+     * ninguno, p. ej. porque falló en el primer ambiente, se corrige en su mismo archivo). Revisión final (I-5): una
+     * aplicada no se edita, el cambio va en una nueva; (m-7) Forjai abre la transacción, la migración no la maneja.
      */
-    public static List<String> check(List<DevelopmentResult.GeneratedFile> files, java.util.Map<String, String> existing) {
+    public static List<String> check(List<DevelopmentResult.GeneratedFile> files, java.util.Map<String, String> existing,
+                                     java.util.Set<Integer> applied) {
         var errors = new ArrayList<String>(checkNames(files, new ArrayList<>(existing.keySet())));
         var next = existing.keySet().stream().map(MigrationFilesGate::version).flatMap(java.util.Optional::stream)
                 .max(Integer::compare).orElse(0) + 1;
@@ -32,9 +35,11 @@ public final class MigrationFilesGate {
                 continue;
             }
             var previous = existing.get(file.path());
-            if (previous != null && !previous.equals(file.content())) {
-                errors.add("La migración " + file.path() + " ya existe y no se edita (puede estar aplicada en la base del "
-                        + "fundador): devuélvela sin cambios y pon el cambio en una nueva, V" + next + "__<descripcion>.sql.");
+            var version = version(file.path()).orElse(null);
+            if (previous != null && !previous.equals(file.content()) && version != null
+                    && applied != null && applied.contains(version)) {
+                errors.add("La migración " + file.path() + " ya existe y no se edita (ya está aplicada en un ambiente de "
+                        + "la base del fundador): devuélvela sin cambios y pon el cambio en una nueva, V" + next + "__<descripcion>.sql.");
             }
             if (file.content() != null && file.content().lines().anyMatch(l -> TRANSACTION.matcher(l).matches())) {
                 errors.add("Migración \"" + file.path() + "\": sin BEGIN/COMMIT/ROLLBACK; Forjai aplica cada migración en "

@@ -914,6 +914,68 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains("aplicadas V1"), result.verifiableState());
     }
 
+    private TeamPlan databasePlan() {
+        var base = context().plan();
+        return new TeamPlan(base.summary(), null, null, base.tasksOrEmpty(), List.of(), base.stackProfile(),
+                base.boundedContexts(), base.ubiquitousLanguage(), new TeamPlan.DatabaseNeed("POSTGRESQL", "citas-dev-aws"));
+    }
+
+    // Spec Diego ambientes §2: todos los ambientes aplicados -> DATABASE_APPLIED PASS y se registra el commit verificado.
+    @Test
+    void allEnvironmentsAppliedAddsAPassingCheckAndRecordsTheVerifiedCommit() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), true, "todo aplicado"));
+        strategy.setDatabaseApply(apply);
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && !json.contains("\"FAIL\"")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+    }
+
+    // Spec Diego ambientes §2: un ambiente fallido es un chequeo FAIL, la validación FAILED y no hay commit verificado.
+    @Test
+    void aFailedEnvironmentFailsTheValidationWithoutRecordingTheVerifiedCommit() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        var failed = new com.aicompany.core.database.DatabaseApplyService.EnvironmentResult(
+                "citas-prod", "PRODUCTION", List.of(1), 2, "columna x no existe", false);
+        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(failed), false, "falló"));
+        strategy.setDatabaseApply(apply);
+
+        var result = (TeamExecutionResult.Development) strategy.execute(
+                new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"), argThat(json -> json.contains("DATABASE_APPLIED")
+                && json.contains("PRODUCTION") && json.contains("citas-prod") && json.contains("V2")
+                && json.contains("columna x no existe")));
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        assertTrue(result.verifiableState().contains("falló"), result.verifiableState());
+    }
+
+    // Sin base: ni cascada ni chequeo, como hoy.
+    @Test
+    void withoutADatabaseThereIsNoDatabaseCheck() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        strategy.setDatabaseApply(apply);
+
+        strategy.execute(context(), progress);
+
+        verify(apply, never()).apply(anyString(), anyString(), any());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+    }
+
     // Revisión final (I-6): un usuario corto como "app" no puede marcar todo el código.
     @Test
     void ordinaryCodeIsNotTakenForTheConnectionsHostOrUser() throws Exception {

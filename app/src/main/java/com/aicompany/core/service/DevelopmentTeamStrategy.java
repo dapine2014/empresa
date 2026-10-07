@@ -547,17 +547,24 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         var status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
                 : StaticValidationStatus.compute(checks, review, sandboxResult);
+        // Spec Diego ambientes §2: con el código VERIFIED, la cascada de ambientes corre ANTES de registrar el commit
+        // verificado; un ambiente fallido es un chequeo que falla y la corrección automática lo recoge.
+        var databaseText = "";
+        if (plan.databaseOrNull() != null) {
+            if (status == StaticValidationStatus.VERIFIED && databaseApply != null) {
+                var cascade = databaseApply.apply(missionId, headSha, plan);
+                databaseText = cascade.text();
+                checks = new ArrayList<>(checks);
+                checks.add(databaseAppliedCheck(cascade, headSha));
+                status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
+                        : StaticValidationStatus.compute(checks, review, sandboxResult);
+            } else {
+                databaseText = "no se aplicó (el código no está VERIFIED).";
+            }
+        }
         if (status == StaticValidationStatus.VERIFIED) {
             // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
             memory.recordVerifiedCommit(missionId, headSha);
-        }
-
-        // Spec 2026-10-02 §3: con el código VERIFIED, Java crea la base en el servidor del fundador.
-        var databaseText = "";
-        if (plan.databaseOrNull() != null) {
-            databaseText = status == StaticValidationStatus.VERIFIED && databaseApply != null
-                    ? databaseApply.apply(missionId, headSha, plan).text()
-                    : "no se aplicó (el código no está VERIFIED).";
         }
 
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
@@ -578,6 +585,29 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         repairRounds, autofixRounds, dependencyOutcome, triageNotes)
                         + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText)
                         + (stashNote.isEmpty() ? "" : "\n" + stashNote));
+    }
+
+    /** Spec Diego ambientes §2: PASS si todos los ambientes quedaron aplicados; si no, FAIL con ambiente, conexión y error. */
+    static StaticCheck databaseAppliedCheck(com.aicompany.core.database.DatabaseApplyService.CascadeResult cascade,
+                                            String sha) {
+        if (cascade.allApplied()) {
+            return StaticCheck.pass("DATABASE_APPLIED", "Migraciones aplicadas en todos los ambientes.", sha, List.of());
+        }
+        var detail = new StringBuilder("No se aplicaron las migraciones en todos los ambientes:");
+        for (var env : cascade.environments()) {
+            if (env.failedVersion() != null || env.error() != null) {
+                detail.append(" ambiente ").append(env.environment()).append(" (conexión ").append(env.connection())
+                        .append(")");
+                if (env.failedVersion() != null) {
+                    detail.append(" falló en V").append(env.failedVersion());
+                }
+                detail.append(": ").append(env.error() == null ? "sin detalle" : env.error()).append(".");
+            }
+        }
+        if (detail.indexOf("ambiente ") < 0) {
+            detail.append(" ").append(cascade.text());
+        }
+        return StaticCheck.fail("DATABASE_APPLIED", detail.toString(), sha, List.of());
     }
 
     static final String HUMAN_AGENT = "human";
@@ -1866,6 +1896,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // (un usuario "app" marcaba app.MapGet). Quedan los patrones de cadena de conexión con clave.
         List<String> forbidden = List.of();
         var existing = new java.util.LinkedHashMap<String, String>();
+        // Spec Diego ambientes §2: solo las migraciones aplicadas en algún ambiente son inmutables.
+        java.util.Set<Integer> applied;
+        try {
+            applied = memory.appliedAnywhere(context.missionId());
+        } catch (Exception ex) {
+            applied = java.util.Set.of();
+        }
+        final var appliedEverywhere = applied == null ? java.util.Set.<Integer>of() : applied;
         try {
             if (headSha != null) {
                 for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
@@ -1879,7 +1917,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         return result -> {
             var errors = new ArrayList<String>();
-            errors.addAll(com.aicompany.core.agent.validation.MigrationFilesGate.check(result.files(), existing));
+            errors.addAll(com.aicompany.core.agent.validation.MigrationFilesGate.check(result.files(), existing, appliedEverywhere));
             errors.addAll(com.aicompany.core.agent.validation.SecretLiteralGate.check(result.files(), forbidden));
             errors.addAll(com.aicompany.core.agent.validation.DatabaseContractGate.check(result.files(), hasDatabase, contract));
             return errors;
