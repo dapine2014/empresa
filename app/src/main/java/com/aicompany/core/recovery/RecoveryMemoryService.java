@@ -33,7 +33,8 @@ public class RecoveryMemoryService {
     public List<CorrectionRound> correctionRounds(String missionId) {
         try (var session = driver.session()) {
             var json = session.run("MATCH (m:Mission {id:$id}) RETURN m.correctionRounds AS r", Map.of("id", missionId))
-                    .list(r -> r.get("r").isNull() ? null : r.get("r").asString()).stream().findFirst().orElse(null);
+                    .list(r -> r.get("r").isNull() ? null : r.get("r").asString()).stream()
+                    .filter(java.util.Objects::nonNull).findFirst().orElse(null);
             return json == null ? List.of() : JSON.readValue(json, new TypeReference<List<CorrectionRound>>() { });
         }
     }
@@ -78,7 +79,8 @@ public class RecoveryMemoryService {
     private Map<Integer, Integer> counterResets(String missionId) {
         try (var session = driver.session()) {
             var json = session.run("MATCH (m:Mission {id:$id}) RETURN m.correctionCounterResets AS r", Map.of("id", missionId))
-                    .list(r -> r.get("r").isNull() ? null : r.get("r").asString()).stream().findFirst().orElse(null);
+                    .list(r -> r.get("r").isNull() ? null : r.get("r").asString()).stream()
+                    .filter(java.util.Objects::nonNull).findFirst().orElse(null);
             return json == null ? Map.of() : JSON.readValue(json, new TypeReference<Map<Integer, Integer>>() { });
         }
     }
@@ -96,7 +98,8 @@ public class RecoveryMemoryService {
     public List<CorrectionStrategy> strategies(String missionId) {
         try (var session = driver.session()) {
             var json = session.run("MATCH (m:Mission {id:$id}) RETURN m.correctionStrategies AS r", Map.of("id", missionId))
-                    .list(r -> r.get("r").isNull() ? null : r.get("r").asString()).stream().findFirst().orElse(null);
+                    .list(r -> r.get("r").isNull() ? null : r.get("r").asString()).stream()
+                    .filter(java.util.Objects::nonNull).findFirst().orElse(null);
             return json == null ? List.of() : JSON.readValue(json, new TypeReference<List<CorrectionStrategy>>() { });
         }
     }
