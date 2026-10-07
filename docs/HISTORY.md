@@ -1041,3 +1041,13 @@ Rama `misiones-durables`. Cambios acordados con el fundador:
 - Políticas verificadas contra el Neo4j real (solo lectura, 2026-10-06): `MAX_AUTO_CORRECTIONS` y `MAX_MISSION_COST_USD` no estaban sembradas, así que rigen los defaults 20 y 10 en el primer despliegue; sin migración, los cambios posteriores van por Settings.
 
 Verificación en vivo: pendiente.
+
+### Misiones durables: verificación en vivo (2026-10-07)
+
+`MISSION-DUR-1791333307` (TEST, Development Group, "API de clientes: crear con email único y listar", solo .NET; HU de Aria aprobadas por el fundador: 2 HU, 6 escenarios). Despliegue de la rama `misiones-durables` sin misiones vivas; Spring arranca sin ciclos de beans y el pase de arranque corre ("WORKING -> IDLE").
+- **Reinicio 1, durante la generación** (Iris commiteada, Diego a medias): la recuperación detectó la huérfana pero falló con `NullPointerException` (`RecoveryMemoryService`: `findFirst()` sobre una lista con `null` cuando la misión no tiene rondas de corrección; los tests mockean ese servicio). Arreglado (`filter(Objects::nonNull)`, como `instructionOf`) y redesplegado: la misión se retomó sola (`GENERATE`, ronda 0), **Iris no se regeneró** (mismo commit `453c63a`), Diego se repitió, Vera escribió los tests.
+- **Reinicio 2, durante la verificación**: Iris se regeneraba entera. Causa (instrumentada con un log nuevo de la decisión de retomar): las rondas de reparación y el diagnóstico 360 reusan el id de la tarea WORK y la dejan RUNNING con su commit original; además la regla de "commit no registrado" (por estado) podía retroceder el commit bueno. Arreglo: con `commitSha` la entrega está hecha (la verificación se repite entera) y solo se retrocede un HEAD cuyo SHA no coincide con el registrado. Redesplegado: **`VERIFY`, las 3 tareas saltadas**, directo al sandbox.
+- Resultado: reparación de Iris (errores de tipeo en `Program.cs` que Vera había reportado), ajuste de tests de Vera y **`VERIFIED`** con todos los chequeos en PASS y **6/6 escenarios**. Costo US$ 0,12 (2 llamadas a Bedrock: kimi-k3 de NVIDIA cayó a las 02:21 UTC y el respaldo pago respondió; 8 gratis). "dame un status" mostró "Retomadas tras el reinicio: MISSION-DUR-1791333307" y la cobertura 6/6.
+- **Manos humanas**: "verifica MISSION-DUR-1791333307" por chat → tarea `-HUMAN-VERIFY-1` **`VERIFIED`**, **cero llamadas a modelos** (contador de costo sin cambios, ningún `REMOTE_MODEL_METRICS` en la ventana).
+- No se ejercitó en vivo la corrección automática ni la estrategia con búsqueda web (la misión llegó a `VERIFIED`); quedan cubiertas por la suite (1273 tests).
+
