@@ -1051,3 +1051,13 @@ Verificación en vivo: pendiente.
 - **Manos humanas**: "verifica MISSION-DUR-1791333307" por chat → tarea `-HUMAN-VERIFY-1` **`VERIFIED`**, **cero llamadas a modelos** (contador de costo sin cambios, ningún `REMOTE_MODEL_METRICS` en la ventana).
 - No se ejercitó en vivo la corrección automática ni la estrategia con búsqueda web (la misión llegó a `VERIFIED`); quedan cubiertas por la suite (1273 tests).
 
+## Diego: migraciones en todos los ambientes y chequeo de SQL (2026-10-07)
+
+Rama `diego-ambientes` (sobre `misiones-durables`), spec `2026-10-07-diego-ambientes-design.md`. Decisión del fundador: él entrega los ambientes; el DBA crea las bases y aplica las migraciones en cada uno según lo requiere la aplicación; los tests no van a la base (se mockean), así que PostgreSQL en el sandbox queda descartado.
+- Cascada TEST -> PRODUCTION (`EnvironmentCascade`, `DatabaseApplyService.apply` -> `CascadeResult`): corte tras la primera falla, estado por conexión en `Mission.databaseApplies` con respaldo a las propiedades viejas, eventos de esquema con `environment`.
+- Chequeo `DATABASE_APPLIED`: una falla deja la validación en `FAILED` (corrección automática) y `verifiedCommit` solo se guarda con todo aplicado.
+- `MigrationFilesGate` falla cerrado ante un `databaseApplies` ilegible y solo prohíbe editar migraciones aplicadas en algún ambiente.
+- `MigrationSqlCheck` con JSqlParser 5.4: se acotó a `CREATE TABLE`/`CREATE INDEX` e `INSERT` (el parser no es fiable con el resto de PostgreSQL) más chequeos estructurales por sentencia.
+- Chat y Missions: una línea por ambiente ("TEST (x) V1-V3", "PRODUCTION (y) sin aplicar: falló TEST en V3", la fallida con su error redactado).
+
+Verificación en vivo: pendiente. El fundador tiene hoy una conexión TEST ("prueba") y va a agregar una PRODUCTION; falta una misión real con dos ambientes (y una migración rota en TEST para ver el corte).

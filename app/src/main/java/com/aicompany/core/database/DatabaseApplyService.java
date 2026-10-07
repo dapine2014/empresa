@@ -28,7 +28,7 @@ public class DatabaseApplyService {
 
     /** Estado de una conexión de la cascada: APPLIED, FAILED, SKIPPED o PENDING (Spec Diego ambientes §1). */
     public record EnvironmentStatus(String connection, String environment, List<Integer> applied,
-                                    Integer failedVersion, String state) {
+                                    Integer failedVersion, String state, String detail) {
     }
 
     public record MissionDatabaseStatus(List<EnvironmentStatus> environments, List<MigrationLine> migrations,
@@ -190,9 +190,9 @@ public class DatabaseApplyService {
         for (var c : ordered) {
             var a = applies.get(c.name());
             environments.add(a == null
-                    ? new EnvironmentStatus(c.name(), c.environment(), List.of(), null, "PENDING")
+                    ? new EnvironmentStatus(c.name(), c.environment(), List.of(), null, "PENDING", null)
                     : new EnvironmentStatus(c.name(), c.environment(), a.applied(), a.failedVersion(),
-                    a.state() == null ? "PENDING" : a.state()));
+                    a.state() == null ? "PENDING" : a.state(), a.text()));
             if (a != null && a.text() != null) {
                 texts.add(a.text());
             }
@@ -201,7 +201,7 @@ public class DatabaseApplyService {
         for (var a : applies.values()) {
             if (ordered.stream().noneMatch(c -> c.name().equals(a.connection()))) {
                 environments.add(new EnvironmentStatus(a.connection(), a.environment(), a.applied(),
-                        a.failedVersion(), a.state() == null ? "PENDING" : a.state()));
+                        a.failedVersion(), a.state() == null ? "PENDING" : a.state(), a.text()));
                 if (a.text() != null) {
                     texts.add(a.text());
                 }

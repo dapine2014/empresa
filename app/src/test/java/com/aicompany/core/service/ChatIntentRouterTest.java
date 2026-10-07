@@ -2194,6 +2194,41 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void databaseStatusListsOneLinePerEnvironment() {
+        router.setDatabaseApply(databaseApply);
+        var envs = List.of(
+                new com.aicompany.core.database.DatabaseApplyService.EnvironmentStatus("prueba", "TEST", List.of(1, 2),
+                        3, "FAILED", "Esquema no aplicado en prueba (TEST): V3 falló: sintaxis"),
+                new com.aicompany.core.database.DatabaseApplyService.EnvironmentStatus("prod", "PRODUCTION", List.of(),
+                        null, "SKIPPED", null));
+        when(databaseApply.status("MISSION-12")).thenReturn(java.util.Optional.of(
+                new com.aicompany.core.database.DatabaseApplyService.MissionDatabaseStatus(envs, List.of(), null)));
+
+        var response = router.route("¿cómo va la base de MISSION-12?");
+
+        assertTrue(response.contains("TEST (prueba) ❌ aplicadas V1–V2, falló V3: Esquema no aplicado en prueba (TEST): V3 falló: sintaxis"), response);
+        assertTrue(response.contains("PRODUCTION (prod) — sin aplicar: falló TEST en V3"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void databaseStatusShowsAppliedRangeAndPendingEnvironments() {
+        router.setDatabaseApply(databaseApply);
+        var envs = List.of(
+                new com.aicompany.core.database.DatabaseApplyService.EnvironmentStatus("prueba", "TEST", List.of(1, 2, 3),
+                        null, "APPLIED", null),
+                new com.aicompany.core.database.DatabaseApplyService.EnvironmentStatus("prod", "PRODUCTION", List.of(),
+                        null, "PENDING", null));
+        when(databaseApply.status("MISSION-12")).thenReturn(java.util.Optional.of(
+                new com.aicompany.core.database.DatabaseApplyService.MissionDatabaseStatus(envs, List.of(), null)));
+
+        var response = router.route("¿cómo va la base de MISSION-12?");
+
+        assertTrue(response.contains("TEST (prueba) ✅ V1–V3"), response);
+        assertTrue(response.contains("PRODUCTION (prod) ⏸ sin aplicar"), response);
+    }
+
+    @Test
     void aMissionStartCanNameItsDatabase() {
         router.setDatabaseConnections(databaseConnections);
         var message = "CEO, inicia una misión para TEAM-DEVELOPMENT para crear una API de citas, usa la base citas-dev-aws";

@@ -123,12 +123,29 @@ function MissionDatabase({ missionId }: { missionId: string }) {
   return (
     <div className="decision-form">
       <h2>Base de datos</h2>
-      <p>
-        Conexión:{' '}
-        {query.data.environments.length > 0
-          ? query.data.environments.map((e) => `${e.connection} (${e.environment ?? '?'}) ${e.state}`).join(', ')
-          : 'sin cargar (cárgala en Settings → Bases de datos)'}
-      </p>
+      {query.data.environments.length === 0 ? (
+        <p>Sin conexión cargada (cárgala en Settings → Bases de datos)</p>
+      ) : (
+        <ul>
+          {query.data.environments.map((e) => {
+            const failed = query.data.environments.find((x) => x.state === 'FAILED')
+            const versions = e.applied.length > 0 ? e.applied.map((v) => `V${v}`).join(', ') : 'sin migraciones nuevas'
+            const text =
+              e.state === 'APPLIED'
+                ? `✅ ${versions}`
+                : e.state === 'FAILED'
+                  ? `❌ ${e.applied.length > 0 ? `aplicadas ${versions}, ` : ''}falló V${e.failedVersion}${e.detail ? `: ${e.detail}` : ''}`
+                  : e.state === 'SKIPPED'
+                    ? `— sin aplicar${failed ? `: falló ${failed.environment} en V${failed.failedVersion}` : ''}`
+                    : '⏸ sin aplicar'
+            return (
+              <li key={e.connection}>
+                {e.environment ?? '?'} ({e.connection}) {text}
+              </li>
+            )
+          })}
+        </ul>
+      )}
       <ul>
         {query.data.migrations.map((m) => (
           <li key={m.version}>

@@ -15,7 +15,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [x] | **Escenarios BDD trazables** | Hecho (2026-10-05, QA casos de uso): cada `ESC-NN` aprobado con un test con su id que pasó; `VERIFIED` exige 100 %; la suite solo crece | Bloques 5 y 6 |
 | [ ] | **Sandbox con 6 pasos** (tests con nombre: hecho 2026-10-05) | El arranque está mezclado con el smoke | Bloque 2 |
 | [x] | **Varios stacks en una misión** (B1, rama `apps-completas-b1`) | Una misión usa un solo perfil: Flutter + .NET + PostgreSQL juntos no existe (Neo eligió solo Flutter en el intento de psicología) | Fase 2 |
-| [ ] | **PostgreSQL en el sandbox** | Un producto con base de datos no tiene dónde probarse | Fase 2 |
+| [x] | **PostgreSQL en el sandbox** | Descartado por decisión del fundador (2026-10-07): los tests se mockean y el DBA aplica las migraciones en los ambientes que el fundador entrega (cascada TEST → PRODUCTION hecha, rama `diego-ambientes`) | Spec `2026-10-07-diego-ambientes-design.md` |
 | [ ] | **Entrega y DevOps (Andrea)** | No hay Dockerfile ni CI del producto generado | Fase 2 |
 | [x] | **Diego como DBA: conexiones y PostgreSQL** (incluido AWS RDS) | Diego no puede crear bases reales ni hay dónde cargar credenciales | Spec `2026-10-02-diego-dba-postgresql-design.md` |
 | [ ] | **Diego con MongoDB** (incluido AWS DocumentDB) | Colecciones, validación e índices aplicados con las credenciales del fundador | Spec propio, después de PostgreSQL |

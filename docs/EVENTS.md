@@ -57,7 +57,7 @@ EMPRESA_AGENT_ENABLED_CHANGED (`AgentEnabledController`, `agentId="human"`): el 
 
 EMPRESA_DATABASE_CONNECTION_SAVED, EMPRESA_DATABASE_CONNECTION_DELETED (`DatabaseConnectionService`, `agentId="human"`): el fundador guardó (tras probarla) o borró una conexión de base de datos. `data: {connectionId, name, engine}` / `{connectionId}`. Nunca lleva host, usuario ni clave.
 
-EMPRESA_DATABASE_SCHEMA_APPLIED, EMPRESA_DATABASE_SCHEMA_FAILED (`DatabaseApplyService`, `agentId="forjai"`, `taskId=<missionId>-DATABASE`): Java aplicó las migraciones de Diego en el servidor del fundador, o falló. `data: {connectionName, applied, failedVersion?, error?}`; el error nunca incluye la clave.
+EMPRESA_DATABASE_SCHEMA_APPLIED, EMPRESA_DATABASE_SCHEMA_FAILED (`DatabaseApplyService`, `agentId="forjai"`, `taskId=<missionId>-DATABASE`): Java aplicó las migraciones de Diego en el servidor del fundador, o falló. `data: {connectionName, environment, applied, failedVersion?, error?}` (uno por conexión de la cascada TEST → PRODUCTION; las posteriores a una falla no publican nada); el error nunca incluye la clave.
 
 EMPRESA_MISSION_DELETED (`MissionService.delete`, `agentId="human"` siempre): se publica cuando el fundador borra una misión terminada (`AWAITING_INVESTOR`/`FAILED`/`COMPLETED`/`CANCELLED`) vía `DELETE /api/company/missions/{missionId}` — limpieza de misiones de prueba. `data: {previousStatus}`. Nunca se publica para `MISSION-001` (protegida), una misión en curso, ni una con clientes/ventas reales (esas se rechazan antes de borrar). Es el último evento de ese `missionId`: su historial previo en Kafka queda, pero ya no existe en Neo4j.
 

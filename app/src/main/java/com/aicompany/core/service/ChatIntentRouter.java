@@ -993,6 +993,45 @@ public class ChatIntentRouter {
         return names;
     }
 
+    /** Una línea por ambiente (Spec Diego ambientes §4): versiones aplicadas, y el motivo si no se aplicó. */
+    static String databaseStatusText(String id, com.aicompany.core.database.DatabaseApplyService.MissionDatabaseStatus s) {
+        var failed = s.environments().stream().filter(e -> "FAILED".equals(e.state())).findFirst().orElse(null);
+        var lines = new java.util.ArrayList<String>();
+        for (var e : s.environments()) {
+            var head = e.environment() + " (" + e.connection() + ")";
+            switch (e.state()) {
+                case "APPLIED" -> lines.add(head + " ✅ " + (e.applied().isEmpty() ? "sin migraciones nuevas" : versionRange(e.applied())));
+                case "FAILED" -> lines.add(head + " ❌ " + (e.applied().isEmpty() ? "" : "aplicadas " + versionRange(e.applied()) + ", ")
+                        + "falló V" + e.failedVersion() + (e.detail() == null ? "" : ": " + e.detail()));
+                case "SKIPPED" -> lines.add(head + " — sin aplicar" + (failed == null ? ""
+                        : ": falló " + failed.environment() + " en V" + failed.failedVersion()));
+                default -> lines.add(head + " ⏸ sin aplicar");
+            }
+        }
+        if (lines.isEmpty()) {
+            lines.add("sin conexión cargada (se carga en Settings → Bases de datos)");
+        }
+        return "Base de " + id + ":\n" + String.join("\n", lines)
+                + (s.migrations().isEmpty() ? "" : "\nMigraciones: " + s.migrations().stream()
+                .map(m -> "V" + m.version() + " " + m.description()).collect(java.util.stream.Collectors.joining("; ")));
+    }
+
+    /** [1,2,3] -> "V1–V3"; [1,3] -> "V1, V3". */
+    private static String versionRange(List<Integer> versions) {
+        var sorted = versions.stream().sorted().toList();
+        var parts = new java.util.ArrayList<String>();
+        int i = 0;
+        while (i < sorted.size()) {
+            int j = i;
+            while (j + 1 < sorted.size() && sorted.get(j + 1) == sorted.get(j) + 1) {
+                j++;
+            }
+            parts.add(j > i ? "V" + sorted.get(i) + "–V" + sorted.get(j) : "V" + sorted.get(i));
+            i = j + 1;
+        }
+        return String.join(", ", parts);
+    }
+
     /** Comandos y consultas de bases de datos; null si el mensaje no es de este tema. */
     private String databaseReply(String message) {
         var apply = DATABASE_APPLY.matcher(message);
@@ -1006,13 +1045,7 @@ public class ChatIntentRouter {
         var status = DATABASE_STATUS.matcher(message);
         if (status.find() && databaseApply != null) {
             var id = status.group(1).toUpperCase(java.util.Locale.ROOT);
-            return databaseApply.status(id).map(s -> "Base de " + id + " (" + s.environments().stream()
-                    .map(e -> e.connection() + " " + e.environment() + " " + e.state())
-                    .collect(java.util.stream.Collectors.joining(", ")) + "): "
-                    + (s.migrations().isEmpty() ? "sin migraciones" : s.migrations().stream()
-                    .map(m -> "V" + m.version() + " " + m.description() + " — " + m.state())
-                    .collect(java.util.stream.Collectors.joining("; ")))
-                    + (s.lastResult() == null ? "" : ". Último resultado: " + s.lastResult()))
+            return databaseApply.status(id).map(s -> databaseStatusText(id, s))
                     .orElse(id + " no declara base de datos.");
         }
         var normalized = normalize(message);

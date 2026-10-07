@@ -591,6 +591,7 @@ export interface MissionDatabaseStatus {
     applied: number[]
     failedVersion: number | null
     state: 'APPLIED' | 'FAILED' | 'SKIPPED' | 'PENDING'
+    detail: string | null
   }[]
   migrations: { version: number; description: string; state: 'APPLIED' | 'PENDING' | 'FAILED' }[]
   lastResult: string | null
