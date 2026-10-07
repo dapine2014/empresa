@@ -87,7 +87,39 @@ class MigrationSqlCheckTest {
         assertValid("WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x;");
         assertValid("INSERT INTO t (a) VALUES (E'it\\'s; ok');");
         assertValid("CREATE TABLE t (a numeric(10,2) DEFAULT 0 NOT NULL, b timestamp without time zone, c double precision);");
+        assertValid("ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES b(id) NOT VALID;");
+        assertValid("ALTER TABLE t ALTER COLUMN a SET DATA TYPE bigint;");
+        assertValid("ALTER TABLE t ADD CONSTRAINT x EXCLUDE USING gist (a WITH &&);");
+        assertValid("UPDATE ONLY t SET a = 1;");
+        assertValid("DELETE FROM ONLY t WHERE a = 1;");
+        assertValid("DROP INDEX CONCURRENTLY IF EXISTS ix;");
+        assertValid("ALTER TABLE t ADD CONSTRAINT c CHECK (a > 0) NO INHERIT;");
+        assertValid("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ix ON t (a, b DESC);");
         assertValid("CREATE TEMP TABLE t (a int) ON COMMIT DROP;");
+    }
+
+    @Test
+    void structuralErrorsAreCaughtInEveryStatementKind() {
+        var alter = check("ALTER TABLE t\n  ADD CONSTRAINT c CHECK (a > 0;");
+        assertEquals(1, alter.size(), alter.toString());
+        assertTrue(alter.get(0).contains("sentencia 1") && alter.get(0).contains("'(' sin cerrar (abre en la línea 2)"),
+                alter.get(0));
+        var update = check("SELECT 1;\nUPDATE t SET n = 'abc WHERE a = 1;\n");
+        assertEquals(1, update.size(), update.toString());
+        assertTrue(update.get(0).contains("comillas simples sin cerrar (abre en la línea 2)"), update.get(0));
+        var extra = check("DELETE FROM t WHERE (a = 1));");
+        assertTrue(extra.get(0).contains("')' sobrante en la línea 1"), extra.toString());
+        assertTrue(check("CREATE FUNCTION f() RETURNS int AS $$ SELECT 1;").get(0).contains("sin cerrar"));
+        assertValid("DO $$ BEGIN PERFORM (1; END $$;");
+        assertValid("-- ( comentario con ' y (\nUPDATE t SET n = ')' WHERE (a = 1);");
+    }
+
+    @Test
+    void parserMessageIsReducedToTokenAndPosition() {
+        var errors = check("CREATE TABLE a (id int);\n\nCREATE TABLE c (id int,, n text);");
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("Encountered \",\" en la línea 3, columna "), errors.get(0));
+        assertTrue(!errors.get(0).contains("expansion") && !errors.get(0).contains("lexical"), errors.get(0));
     }
 
     @Test

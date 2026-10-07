@@ -18,10 +18,13 @@ import java.util.regex.Pattern;
  */
 public final class MigrationSqlCheck {
 
+    /** Solo lo que JSqlParser entiende sin falsos positivos; ALTER/DROP/UPDATE/DELETE y lo demás pasan sin parsear. */
     private static final Pattern SUPPORTED = Pattern.compile(
-            "(?is)^(CREATE\\s+(UNIQUE\\s+)?INDEX\\b"
-                    + "|CREATE\\s+((GLOBAL\\s+|LOCAL\\s+)?(TEMP|TEMPORARY)\\s+|UNLOGGED\\s+)?TABLE\\b"
-                    + "|ALTER\\s+TABLE\\b|INSERT\\s+INTO\\b|UPDATE\\b|DELETE\\s+FROM\\b|DROP\\s+(TABLE|INDEX)\\b).*");
+            "(?is)^(CREATE\\s+(UNIQUE\\s+)?INDEX\\s+(?!CONCURRENTLY\\b).*"
+                    + "|CREATE\\s+((GLOBAL\\s+|LOCAL\\s+)?(TEMP|TEMPORARY)\\s+|UNLOGGED\\s+)?TABLE\\b.*"
+                    + "|INSERT\\s+INTO\\b.*)");
+    private static final Pattern ENCOUNTERED = Pattern.compile(
+            "Encountered:? (?:<[^>]*> / )?(\"[^\"]*\"|\\S+),? at line (\\d+), column (\\d+)");
 
     private MigrationSqlCheck() {
     }
@@ -37,45 +40,57 @@ public final class MigrationSqlCheck {
             var statements = split(file.content());
             for (int i = 0; i < statements.size(); i++) {
                 var statement = statements.get(i);
-                // Cadenas $tag$ y E'…\\…' dentro de una sentencia son válidas en PostgreSQL y JSqlParser no las conoce: no se analiza.
+                var prefix = file.path() + ", sentencia " + (i + 1) + " (línea " + statement.line() + "): ";
+                // Chequeos estructurales: siempre seguros, valen para toda sentencia (también las que no se parsean).
+                if (statement.structural() != null) {
+                    errors.add(prefix + statement.structural() + ". Corrige el SQL de PostgreSQL.");
+                    continue;
+                }
+                // Cadenas $tag$ y E'…\\…' dentro de una sentencia son válidas en PostgreSQL y JSqlParser no las conoce.
                 if (statement.unknownLiteral() || !SUPPORTED.matcher(statement.code()).matches()) {
                     continue;
                 }
-                var problem = syntaxProblem(statement.text());
+                var problem = syntaxProblem(statement.text(), statement.textLine());
                 if (problem != null) {
-                    errors.add(file.path() + ", sentencia " + (i + 1) + " (línea " + statement.line() + "): " + problem
-                            + ". Corrige el SQL de PostgreSQL.");
+                    errors.add(prefix + problem + ". Corrige el SQL de PostgreSQL.");
                 }
             }
         }
         return errors;
     }
 
-    private static String syntaxProblem(String sql) {
+    private static String syntaxProblem(String sql, int textLine) {
         try {
             CCJSqlParserUtil.parse(sql);
             return null;
         } catch (net.sf.jsqlparser.JSQLParserException ex) {
-            var cause = ex.getCause() != null ? ex.getCause() : ex;
-            var message = cause.getMessage() == null ? "error de sintaxis" : cause.getMessage();
-            message = message.replaceFirst("^[\\w.$]+Exception: ", "").replaceAll("\\s+", " ").trim();
-            return message.length() > 300 ? message.substring(0, 300) + "…" : message;
+            // Sin los internos de JavaCC: solo el token y la posición.
+            var raw = String.valueOf(ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage());
+            var m = ENCOUNTERED.matcher(raw);
+            if (m.find()) {
+                return "Encountered " + m.group(1) + " en la línea " + (textLine + Integer.parseInt(m.group(2)) - 1)
+                        + ", columna " + m.group(3);
+            }
+            return "error de sintaxis";
         } catch (RuntimeException | StackOverflowError ex) {
             return null; // el parser se rompió, no la migración: nunca bloquear
         }
     }
 
     /** {@code text}: la sentencia tal cual; {@code code}: sin comentarios iniciales; {@code line}: donde empieza el código. */
-    record Statement(String text, String code, int line, boolean unknownLiteral) {
+    record Statement(String text, String code, int line, int textLine, boolean unknownLiteral, String structural) {
     }
 
     static List<Statement> split(String sql) {
         var out = new ArrayList<Statement>();
         var text = new StringBuilder();
         var code = new StringBuilder();
+        var open = new java.util.ArrayDeque<Integer>(); // líneas de los '(' sin cerrar
         int line = 1;
         int codeLine = -1;
+        int textLine = -1;
         boolean unknown = false;
+        String structural = null;
         int n = sql.length();
         int i = 0;
         while (i < n) {
@@ -107,6 +122,7 @@ public final class MigrationSqlCheck {
                         && (i < 2 || !isIdentChar(sql.charAt(i - 2)));
                 unknown |= escapes;
                 i++;
+                boolean closed = false;
                 while (i < n) {
                     char d = sql.charAt(i);
                     if (escapes && d == '\\') {
@@ -116,35 +132,61 @@ public final class MigrationSqlCheck {
                             i += 2;
                         } else {
                             i++;
+                            closed = true;
                             break;
                         }
                     } else {
                         i++;
                     }
                 }
+                if (!closed && structural == null) {
+                    structural = (c == '"' ? "identificador entre comillas dobles" : "cadena entre comillas simples")
+                            + " sin cerrar (abre en la línea " + line + ")";
+                    i = Math.min(i, n);
+                }
             } else if (c == '$' && (i == 0 || !isIdentChar(sql.charAt(i - 1))) && dollarTagEnd(sql, i) > 0) {
                 int tagEnd = dollarTagEnd(sql, i);
                 var tag = sql.substring(i, tagEnd);
                 int close = sql.indexOf(tag, tagEnd);
+                if (close < 0 && structural == null) {
+                    structural = "bloque " + tag + " sin cerrar (abre en la línea " + line + ")";
+                }
                 i = close < 0 ? n : close + tag.length();
                 unknown = true;
             } else if (c == ';') {
                 i++;
                 if (!code.toString().isBlank()) {
-                    out.add(new Statement(text.toString().strip(), code.toString().strip(), codeLine, unknown));
+                    out.add(finish(text, code, codeLine, textLine, unknown, structural, open));
                 }
                 text.setLength(0);
                 code.setLength(0);
+                open.clear();
                 codeLine = -1;
+                textLine = -1;
                 unknown = false;
+                structural = null;
                 continue;
             } else {
                 i++;
                 isCode = !Character.isWhitespace(c);
+                if (c == '(') {
+                    open.push(line);
+                } else if (c == ')') {
+                    if (open.isEmpty()) {
+                        if (structural == null) {
+                            structural = "paréntesis ')' sobrante en la línea " + line;
+                        }
+                    } else {
+                        open.pop();
+                    }
+                }
             }
             var piece = sql.substring(start, i);
             if (isCode && codeLine < 0) {
                 codeLine = line;
+            }
+            if (textLine < 0 && !piece.isBlank()) {
+                textLine = line;
             }
             text.append(piece);
             if (isCode || (!code.isEmpty() && !isComment(piece))) {
@@ -155,9 +197,17 @@ public final class MigrationSqlCheck {
             line += (int) piece.chars().filter(ch -> ch == '\n').count();
         }
         if (!code.toString().isBlank()) {
-            out.add(new Statement(text.toString().strip(), code.toString().strip(), codeLine, unknown));
+            out.add(finish(text, code, codeLine, textLine, unknown, structural, open));
         }
         return out;
+    }
+
+    private static Statement finish(StringBuilder text, StringBuilder code, int codeLine, int textLine,
+                                    boolean unknown, String structural, java.util.Deque<Integer> open) {
+        if (structural == null && !open.isEmpty()) {
+            structural = "paréntesis '(' sin cerrar (abre en la línea " + open.peekLast() + ")";
+        }
+        return new Statement(text.toString().strip(), code.toString().strip(), codeLine, textLine, unknown, structural);
     }
 
     private static boolean isComment(String piece) {
