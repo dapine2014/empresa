@@ -900,7 +900,7 @@ class DevelopmentTeamStrategyTest {
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
         var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
-        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn("Base de datos citas-dev-aws: aplicadas V1.");
+        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), true, "Base de datos citas-dev-aws: aplicadas V1."));
         strategy.setDatabaseApply(apply);
         var base = context();
         var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),

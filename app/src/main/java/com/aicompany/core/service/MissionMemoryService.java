@@ -220,49 +220,78 @@ public class MissionMemoryService {
         }
     }
 
-    /** Spec 2026-10-02 §3: resultado del último intento de crear la base (para el estado en chat y Missions). */
-    public void recordDatabaseApply(String missionId, String connectionName, List<Integer> applied,
+    /** Spec Diego ambientes §1: resultado de una conexión (ambiente) de la cascada. */
+    public record DatabaseApply(String connection, String environment, List<Integer> applied, Integer failedVersion,
+                                String text, String state) {
+    }
+
+    private static final tools.jackson.databind.json.JsonMapper APPLIES_JSON =
+            tools.jackson.databind.json.JsonMapper.builder().build();
+
+    /**
+     * Spec 2026-10-02 §3 + Spec Diego ambientes §1: resultado del último intento por conexión, en JSON en
+     * {@code Mission.databaseApplies} (clave = nombre de la conexión). Las migraciones aplicadas se acumulan.
+     */
+    public void recordDatabaseApply(String missionId, String connection, String environment, List<Integer> applied,
                                     Integer failedVersion, String text) {
+        recordDatabaseApply(missionId, connection, environment, applied, failedVersion, text,
+                failedVersion == null ? "APPLIED" : "FAILED");
+    }
+
+    /** {@code state}: APPLIED, FAILED (también sin versión: la conexión no respondió) o SKIPPED (falló un ambiente previo). */
+    public void recordDatabaseApply(String missionId, String connection, String environment, List<Integer> applied,
+                                    Integer failedVersion, String text, String state) {
+        var all = new java.util.LinkedHashMap<>(databaseApplies(missionId));
+        var previous = all.get(connection);
+        var merged = new java.util.TreeSet<Integer>(previous == null ? List.of() : previous.applied());
+        merged.addAll(applied);
+        all.put(connection, new DatabaseApply(connection, environment, List.copyOf(merged), failedVersion, text, state));
         try (var session = driver.session()) {
-            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.databaseConnection=$name, "
-                            + "m.databaseApplied = [v IN coalesce(m.databaseApplied, []) WHERE NOT v IN $applied] + $applied, "
-                            + "m.databaseFailedVersion=$failed, m.databaseLastResult=$text",
-                    databaseApplyParams(missionId, connectionName, applied, failedVersion, text)).consume());
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.databaseApplies=$json",
+                    Map.of("id", missionId, "json", APPLIES_JSON.writeValueAsString(all))).consume());
         }
     }
 
-    private static Map<String, Object> databaseApplyParams(String missionId, String connectionName,
-                                                           List<Integer> applied, Integer failedVersion, String text) {
-        var params = new java.util.HashMap<String, Object>();
-        params.put("id", missionId);
-        params.put("name", connectionName);
-        params.put("applied", applied);
-        params.put("failed", failedVersion);
-        params.put("text", text);
-        return params;
-    }
-
-    public List<Integer> databaseApplied(String missionId) {
+    /**
+     * Resultado por conexión. Misiones anteriores a la cascada: una sola entrada armada con las propiedades viejas
+     * ({@code databaseConnection}, {@code databaseApplied}, {@code databaseFailedVersion}, {@code databaseLastResult}).
+     */
+    public Map<String, DatabaseApply> databaseApplies(String missionId) {
         try (var session = driver.session()) {
-            return session.run("MATCH (m:Mission {id:$id}) RETURN coalesce(m.databaseApplied, []) AS a", Map.of("id", missionId))
-                    .list(r -> r.get("a").asList(v -> v.asInt())).stream().findFirst().orElse(List.of());
+            var row = session.run("MATCH (m:Mission {id:$id}) RETURN m.databaseApplies AS j, "
+                            + "m.databaseConnection AS c, coalesce(m.databaseApplied, []) AS a, "
+                            + "m.databaseFailedVersion AS f, m.databaseLastResult AS r", Map.of("id", missionId))
+                    .list().stream().findFirst().orElse(null);
+            var result = new java.util.LinkedHashMap<String, DatabaseApply>();
+            if (row == null) {
+                return result;
+            }
+            if (!row.get("j").isNull()) {
+                try {
+                    APPLIES_JSON.readValue(row.get("j").asString(),
+                            new tools.jackson.core.type.TypeReference<java.util.LinkedHashMap<String, DatabaseApply>>() {
+                            }).forEach(result::put);
+                    return result;
+                } catch (Exception ex) {
+                    // JSON ilegible: se cae al respaldo de las propiedades viejas.
+                }
+            }
+            if (!row.get("c").isNull()) {
+                var name = row.get("c").asString();
+                result.put(name, new DatabaseApply(name, null, row.get("a").asList(v -> v.asInt()),
+                        row.get("f").isNull() ? null : row.get("f").asInt(),
+                        row.get("r").isNull() ? null : row.get("r").asString(),
+                        row.get("f").isNull() ? "APPLIED" : "FAILED"));
+            }
+            return result;
         }
     }
 
-    public Optional<Integer> databaseFailedVersion(String missionId) {
-        try (var session = driver.session()) {
-            return session.run("MATCH (m:Mission {id:$id}) WHERE m.databaseFailedVersion IS NOT NULL "
-                    + "RETURN m.databaseFailedVersion AS v", Map.of("id", missionId))
-                    .list(r -> r.get("v").asInt()).stream().findFirst();
-        }
-    }
-
-    public Optional<String> databaseLastResult(String missionId) {
-        try (var session = driver.session()) {
-            return session.run("MATCH (m:Mission {id:$id}) WHERE m.databaseLastResult IS NOT NULL "
-                    + "RETURN m.databaseLastResult AS r", Map.of("id", missionId))
-                    .list(r -> r.get("r").asString()).stream().findFirst();
-        }
+    /** Versiones aplicadas en alguna conexión de la misión (Spec Diego ambientes §2, inmutabilidad). */
+    public java.util.Set<Integer> appliedAnywhere(String missionId) {
+        var all = new java.util.TreeSet<Integer>();
+        databaseApplies(missionId).values().forEach(d -> all.addAll(d.applied()));
+        return all;
     }
 
     /** Revisión final (I-4): el commit que quedó VERIFIED (el que se puede aplicar a pedido). */

@@ -66,4 +66,35 @@ class DatabaseSchemaApplierIntegrationTest {
         assertNotNull(result.error());
         assertFalse(result.error().contains("clave-incorrecta-123"), result.error());
     }
+
+    // Spec Diego ambientes §1: si el primer ambiente falla, el siguiente no se toca (ni siquiera se crea su base).
+    @Test
+    void aBrokenFirstEnvironmentLeavesTheSecondUntouched() throws Exception {
+        var test = new DatabaseConnection("C1", "casc-test", "POSTGRESQL", PG.getHost(), PG.getMappedPort(5432),
+                "casc_test_it", PG.getUsername(), "DISABLE", null, "TEST", "****", null, null);
+        var prod = new DatabaseConnection("C2", "casc-prod", "POSTGRESQL", PG.getHost(), PG.getMappedPort(5432),
+                "casc_prod_it", PG.getUsername(), "DISABLE", null, "PRODUCTION", "****", null, null);
+        var connections = org.mockito.Mockito.mock(DatabaseConnectionService.class);
+        var workspace = org.mockito.Mockito.mock(com.aicompany.core.service.DevelopmentWorkspaceService.class);
+        org.mockito.Mockito.when(connections.connectionsOf("M-4")).thenReturn(List.of(prod, test));
+        org.mockito.Mockito.when(connections.password(org.mockito.ArgumentMatchers.any())).thenReturn(PG.getPassword());
+        org.mockito.Mockito.when(workspace.filesAtCommit("M-4", "abc")).thenReturn(List.of("db/postgres/migrations/V1__mal.sql"));
+        org.mockito.Mockito.when(workspace.readFileAtCommit("M-4", "abc", "db/postgres/migrations/V1__mal.sql"))
+                .thenReturn("CREATE TABL a (id int);");
+        var service = new DatabaseApplyService(connections, applier, workspace,
+                org.mockito.Mockito.mock(com.aicompany.core.service.MissionMemoryService.class),
+                org.mockito.Mockito.mock(com.aicompany.core.event.CompanyEventPublisher.class));
+        var plan = new com.aicompany.core.agent.model.TeamPlan("x", null, null, List.of(), List.of(), "DOTNET_APP",
+                List.of(), List.of(), new com.aicompany.core.agent.model.TeamPlan.DatabaseNeed("POSTGRESQL", ""));
+
+        var result = service.apply("M-4", "abc", plan);
+
+        assertFalse(result.allApplied());
+        assertEquals(1, result.environments().get(0).failedVersion());
+        assertTrue(result.environments().get(1).skipped());
+        try (var c = java.sql.DriverManager.getConnection(PG.getJdbcUrl(), PG.getUsername(), PG.getPassword());
+             var rs = c.createStatement().executeQuery("SELECT 1 FROM pg_database WHERE datname='casc_prod_it'")) {
+            assertFalse(rs.next());
+        }
+    }
 }

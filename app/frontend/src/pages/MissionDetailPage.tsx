@@ -123,7 +123,12 @@ function MissionDatabase({ missionId }: { missionId: string }) {
   return (
     <div className="decision-form">
       <h2>Base de datos</h2>
-      <p>Conexión: {query.data.connectionName || 'sin cargar (cárgala en Settings → Bases de datos)'}</p>
+      <p>
+        Conexión:{' '}
+        {query.data.environments.length > 0
+          ? query.data.environments.map((e) => `${e.connection} (${e.environment ?? '?'}) ${e.state}`).join(', ')
+          : 'sin cargar (cárgala en Settings → Bases de datos)'}
+      </p>
       <ul>
         {query.data.migrations.map((m) => (
           <li key={m.version}>

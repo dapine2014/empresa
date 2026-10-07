@@ -585,7 +585,13 @@ export interface DatabaseConnectionForm {
 }
 
 export interface MissionDatabaseStatus {
-  connectionName: string | null
+  environments: {
+    connection: string
+    environment: 'TEST' | 'PRODUCTION' | null
+    applied: number[]
+    failedVersion: number | null
+    state: 'APPLIED' | 'FAILED' | 'SKIPPED' | 'PENDING'
+  }[]
   migrations: { version: number; description: string; state: 'APPLIED' | 'PENDING' | 'FAILED' }[]
   lastResult: string | null
 }

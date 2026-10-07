@@ -1006,7 +1006,9 @@ public class ChatIntentRouter {
         var status = DATABASE_STATUS.matcher(message);
         if (status.find() && databaseApply != null) {
             var id = status.group(1).toUpperCase(java.util.Locale.ROOT);
-            return databaseApply.status(id).map(s -> "Base de " + id + " (" + s.connectionName() + "): "
+            return databaseApply.status(id).map(s -> "Base de " + id + " (" + s.environments().stream()
+                    .map(e -> e.connection() + " " + e.environment() + " " + e.state())
+                    .collect(java.util.stream.Collectors.joining(", ")) + "): "
                     + (s.migrations().isEmpty() ? "sin migraciones" : s.migrations().stream()
                     .map(m -> "V" + m.version() + " " + m.description() + " — " + m.state())
                     .collect(java.util.stream.Collectors.joining("; ")))

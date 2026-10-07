@@ -556,7 +556,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var databaseText = "";
         if (plan.databaseOrNull() != null) {
             databaseText = status == StaticValidationStatus.VERIFIED && databaseApply != null
-                    ? databaseApply.apply(missionId, headSha, plan)
+                    ? databaseApply.apply(missionId, headSha, plan).text()
                     : "no se aplicó (el código no está VERIFIED).";
         }
 
