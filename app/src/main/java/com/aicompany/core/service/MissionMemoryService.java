@@ -228,20 +228,31 @@ public class MissionMemoryService {
     private static final tools.jackson.databind.json.JsonMapper APPLIES_JSON =
             tools.jackson.databind.json.JsonMapper.builder().build();
 
+    private static final org.slf4j.Logger APPLIES_LOG = org.slf4j.LoggerFactory.getLogger(MissionMemoryService.class);
+
+    /** El JSON de {@code Mission.databaseApplies} existe pero no se puede leer. */
+    static final class UnreadableAppliesException extends RuntimeException {
+        UnreadableAppliesException(Throwable cause) {
+            super("databaseApplies ilegible", cause);
+        }
+    }
+
     /**
      * Spec 2026-10-02 §3 + Spec Diego ambientes §1: resultado del último intento por conexión, en JSON en
      * {@code Mission.databaseApplies} (clave = nombre de la conexión). Las migraciones aplicadas se acumulan.
+     * {@code state}: APPLIED, FAILED (también sin versión: la conexión no respondió) o SKIPPED (falló un ambiente previo).
+     * Si el JSON guardado no se puede leer no se escribe nada: sobrescribirlo perdería el historial de los demás ambientes.
      */
     public void recordDatabaseApply(String missionId, String connection, String environment, List<Integer> applied,
-                                    Integer failedVersion, String text) {
-        recordDatabaseApply(missionId, connection, environment, applied, failedVersion, text,
-                failedVersion == null ? "APPLIED" : "FAILED");
-    }
-
-    /** {@code state}: APPLIED, FAILED (también sin versión: la conexión no respondió) o SKIPPED (falló un ambiente previo). */
-    public void recordDatabaseApply(String missionId, String connection, String environment, List<Integer> applied,
                                     Integer failedVersion, String text, String state) {
-        var all = new java.util.LinkedHashMap<>(databaseApplies(missionId));
+        Map<String, DatabaseApply> stored;
+        try {
+            stored = loadApplies(missionId, true);
+        } catch (UnreadableAppliesException ex) {
+            APPLIES_LOG.warn("No se registra el resultado de la base de {}: databaseApplies guardado es ilegible.", missionId);
+            return;
+        }
+        var all = new java.util.LinkedHashMap<>(stored);
         var previous = all.get(connection);
         var merged = new java.util.TreeSet<Integer>(previous == null ? List.of() : previous.applied());
         merged.addAll(applied);
@@ -257,34 +268,59 @@ public class MissionMemoryService {
      * ({@code databaseConnection}, {@code databaseApplied}, {@code databaseFailedVersion}, {@code databaseLastResult}).
      */
     public Map<String, DatabaseApply> databaseApplies(String missionId) {
+        return loadApplies(missionId, false);
+    }
+
+    private Map<String, DatabaseApply> loadApplies(String missionId, boolean strict) {
         try (var session = driver.session()) {
             var row = session.run("MATCH (m:Mission {id:$id}) RETURN m.databaseApplies AS j, "
                             + "m.databaseConnection AS c, coalesce(m.databaseApplied, []) AS a, "
                             + "m.databaseFailedVersion AS f, m.databaseLastResult AS r", Map.of("id", missionId))
                     .list().stream().findFirst().orElse(null);
-            var result = new java.util.LinkedHashMap<String, DatabaseApply>();
             if (row == null) {
-                return result;
+                return new java.util.LinkedHashMap<>();
             }
-            if (!row.get("j").isNull()) {
-                try {
-                    APPLIES_JSON.readValue(row.get("j").asString(),
-                            new tools.jackson.core.type.TypeReference<java.util.LinkedHashMap<String, DatabaseApply>>() {
-                            }).forEach(result::put);
-                    return result;
-                } catch (Exception ex) {
-                    // JSON ilegible: se cae al respaldo de las propiedades viejas.
+            var json = row.get("j").isNull() ? null : row.get("j").asString();
+            var legacyConnection = row.get("c").isNull() ? null : row.get("c").asString();
+            var legacyApplied = row.get("a").asList(v -> v.asInt());
+            var legacyFailed = row.get("f").isNull() ? null : row.get("f").asInt();
+            var legacyResult = row.get("r").isNull() ? null : row.get("r").asString();
+            try {
+                return parseApplies(json, legacyConnection, legacyApplied, legacyFailed, legacyResult);
+            } catch (UnreadableAppliesException ex) {
+                if (strict) {
+                    throw ex;
                 }
+                APPLIES_LOG.warn("databaseApplies de {} es ilegible: se usan las propiedades viejas.", missionId);
+                return parseApplies(null, legacyConnection, legacyApplied, legacyFailed, legacyResult);
             }
-            if (!row.get("c").isNull()) {
-                var name = row.get("c").asString();
-                result.put(name, new DatabaseApply(name, null, row.get("a").asList(v -> v.asInt()),
-                        row.get("f").isNull() ? null : row.get("f").asInt(),
-                        row.get("r").isNull() ? null : row.get("r").asString(),
-                        row.get("f").isNull() ? "APPLIED" : "FAILED"));
-            }
-            return result;
         }
+    }
+
+    /** Pura: el JSON si existe (ilegible = excepción); si no, una entrada con las propiedades viejas; si no, vacío. */
+    static Map<String, DatabaseApply> parseApplies(String json, String legacyConnection, List<Integer> legacyApplied,
+                                                   Integer legacyFailed, String legacyResult) {
+        var result = new java.util.LinkedHashMap<String, DatabaseApply>();
+        if (json != null) {
+            try {
+                var parsed = APPLIES_JSON.readValue(json,
+                        new tools.jackson.core.type.TypeReference<java.util.LinkedHashMap<String, DatabaseApply>>() {
+                        });
+                if (parsed == null) {
+                    throw new IllegalStateException("vacío");
+                }
+                result.putAll(parsed);
+                return result;
+            } catch (Exception ex) {
+                throw new UnreadableAppliesException(ex);
+            }
+        }
+        if (legacyConnection != null) {
+            result.put(legacyConnection, new DatabaseApply(legacyConnection, null,
+                    legacyApplied == null ? List.of() : legacyApplied, legacyFailed, legacyResult,
+                    legacyFailed == null ? "APPLIED" : "FAILED"));
+        }
+        return result;
     }
 
     /** Versiones aplicadas en alguna conexión de la misión (Spec Diego ambientes §2, inmutabilidad). */

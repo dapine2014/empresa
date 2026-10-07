@@ -206,4 +206,27 @@ class DatabaseApplyServiceTest {
                 argThat(t -> !t.contains("S3cret-9876")), eq("FAILED"));
         verify(events).publish(eq("EMPRESA_DATABASE_SCHEMA_FAILED"), eq("M-1"), eq("M-1-DATABASE"), eq("forjai"), anyMap());
     }
+
+    // Review Focus 3: el estado junta lo registrado (también una conexión ya no asociada, p. ej. misión vieja).
+    @Test
+    void statusMergesRecordedEntriesWithTheCurrentConnectionsAndLegacyOnes() {
+        when(memory.lastTeamPlanJson("M-1")).thenReturn(java.util.Optional.of(
+                "{\"summary\":\"Citas\",\"stackProfile\":\"DOTNET_APP\",\"tasks\":[],"
+                        + "\"database\":{\"engine\":\"POSTGRESQL\",\"connectionName\":\"\"}}"));
+        var prod = prod();
+        when(connections.connectionsOf("M-1")).thenReturn(List.of(prod, CITAS));
+        var applies = new java.util.LinkedHashMap<String, com.aicompany.core.service.MissionMemoryService.DatabaseApply>();
+        applies.put("citas-dev-aws", new com.aicompany.core.service.MissionMemoryService.DatabaseApply(
+                "citas-dev-aws", "TEST", List.of(1), 2, "falló", "FAILED"));
+        applies.put("vieja", new com.aicompany.core.service.MissionMemoryService.DatabaseApply(
+                "vieja", null, List.of(1), null, "creada", "APPLIED"));
+        when(memory.databaseApplies("M-1")).thenReturn(applies);
+        when(memory.appliedAnywhere("M-1")).thenReturn(java.util.Set.of(1));
+
+        var status = service.status("M-1").orElseThrow();
+
+        assertEquals(List.of("citas-dev-aws:FAILED", "citas-prod:PENDING", "vieja:APPLIED"),
+                status.environments().stream().map(e -> e.connection() + ":" + e.state()).toList());
+        assertEquals("falló · creada", status.lastResult());
+    }
 }
