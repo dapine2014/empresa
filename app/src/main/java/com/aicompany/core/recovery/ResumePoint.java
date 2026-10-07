@@ -37,7 +37,7 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
             return new ResumePoint(Stage.PLAN, s.round(), kind, increment);
         }
         var allCommitted = !s.workTasks().isEmpty() && s.workTasks().stream()
-                .allMatch(t -> "COMPLETED".equals(t.status()) && t.commitSha() != null);
+                .allMatch(t -> t.commitSha() != null); // con commit ya entregó (una reparación cortada la deja RUNNING)
         return new ResumePoint(allCommitted ? Stage.VERIFY : Stage.GENERATE, s.round(), kind, increment);
     }
 }

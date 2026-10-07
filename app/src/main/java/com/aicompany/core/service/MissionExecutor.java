@@ -574,6 +574,7 @@ public class MissionExecutor {
      * otros equipos quedan INTERRUPTED.
      */
     public CompletableFuture<Void> resumeAsync(String missionId, com.aicompany.core.recovery.ResumePoint point) {
+        log.info("MISSION {} - resuming from {}", missionId, point);
         if (point.stage() == com.aicompany.core.recovery.ResumePoint.Stage.INTERRUPT) {
             interrupt(missionId);
             return CompletableFuture.completedFuture(null);

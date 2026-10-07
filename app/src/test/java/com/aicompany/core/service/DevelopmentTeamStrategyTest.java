@@ -1567,6 +1567,29 @@ class DevelopmentTeamStrategyTest {
         verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
     }
 
+    // Verificado en vivo (MISSION-DUR-1791333307): un reinicio durante una ronda de reparación deja la tarea WORK en
+    // RUNNING con su commit original; esa entrega no se regenera ni se retrocede (la verificación se repite entera).
+    @Test
+    void aTaskInterruptedDuringARepairKeepsItsCommittedDelivery() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("b".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("b".repeat(40));
+        when(workspace.headHasParent("M-1")).thenReturn(true);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "RUNNING", "{\"summary\":\"api\",\"files\":[]}", java.time.Instant.now(), "WORK", "/w", "b".repeat(40),
+                List.of("src/Api/X.cs"), null, null)));
+
+        try {
+            strategy.execute(context, progress);
+        } catch (IllegalStateException ignored) {
+            // El resto del flujo (otras tareas, sandbox) no está armado en este test; lo que importa es lo de arriba.
+        }
+
+        verify(workspace, never()).dropHeadCommit("M-1");
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+    }
+
     // El commit raíz no se retrocede (la tarea se regenera encima).
     @Test
     void anUnrecordedRootCommitIsNotDropped() throws Exception {

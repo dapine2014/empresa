@@ -61,6 +61,12 @@ class ResumePointTest {
         assertEquals(ResumePoint.Stage.VERIFY, ResumePoint.of(dev(0, null, false, "APPROVED", true, null, true, List.of(
                 new MissionSnapshot.RoundTask("M-1-BACKEND", "COMPLETED", "abc")))).stage());
     }
+    // Verificado en vivo: una tarea RUNNING con su commit (reinicio durante una reparación) ya entregó; se verifica.
+    @Test void aRunningTaskWithItsCommitCountsAsDelivered() {
+        assertEquals(ResumePoint.Stage.VERIFY, ResumePoint.of(dev(0, null, false, "APPROVED", true, null, true, List.of(
+                new MissionSnapshot.RoundTask("M-1-BACKEND", "RUNNING", "abc"),
+                new MissionSnapshot.RoundTask("M-1-QA", "COMPLETED", "def")))).stage());
+    }
     // Review Focus 4: una ronda de corrección cortada se retoma como corrección (misma ronda, sin contar otra).
     @Test void aCorrectionRoundIsResumedAsCorrection() {
         var p = ResumePoint.of(dev(3, null, true, "APPROVED", true, null, true, List.of()));

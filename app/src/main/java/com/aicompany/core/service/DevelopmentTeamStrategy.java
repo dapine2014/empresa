@@ -130,9 +130,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 }
                 var headTask = workspace.headTask(missionId).orElse(null);
                 var headRecord = headTask == null ? null : byId.get(headTask);
-                // El commit raíz no se retrocede: la tarea se regenera encima.
+                // Un commit "no registrado" es el que la tarea no tiene anotado (el reinicio cayó entre el commit y el
+                // registro). Verificado en vivo: una reparación deja la tarea RUNNING con su commit original, y ese commit
+                // NO se retrocede. El commit raíz tampoco: la tarea se regenera encima.
                 if (headRecord != null && TeamPlan.KIND_WORK.equals(headRecord.kind())
-                        && !"COMPLETED".equals(headRecord.status()) && workspace.headHasParent(missionId)) {
+                        && !head.get().equals(headRecord.commitSha()) && workspace.headHasParent(missionId)) {
                     workspace.dropHeadCommit(missionId);
                 }
             } catch (Exception ex) {
@@ -141,10 +143,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
             for (var task : work) {
                 var record = byId.get(taskId(context, task.agentId()));
-                if (record != null && "COMPLETED".equals(record.status()) && record.commitSha() != null) {
+                // Con commit, la entrega ya está hecha aunque una reparación cortada la haya dejado RUNNING: la
+                // verificación (con sus reparaciones) se repite entera.
+                if (record != null && record.commitSha() != null) {
                     done.put(record.taskId(), record);
                 }
             }
+            // Spec misiones durables §2: la decisión de retomar queda en el log (qué se salta y por qué).
+            log.info("MISSION {} - round {} with repository (HEAD {}): work {} -> skipped {}", missionId, context.round(),
+                    head.get(), work.stream().map(t -> {
+                        var r = byId.get(taskId(context, t.agentId()));
+                        return taskId(context, t.agentId()) + "=" + (r == null ? "missing" : r.status()
+                                + (r.commitSha() == null ? "" : "@" + r.commitSha().substring(0, Math.min(7, r.commitSha().length()))));
+                    }).toList(), done.keySet());
         }
 
         for (var task : work) {
