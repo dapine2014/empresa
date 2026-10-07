@@ -1901,9 +1901,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         try {
             applied = memory.appliedAnywhere(context.missionId());
         } catch (Exception ex) {
-            applied = java.util.Set.of();
+            // Falla cerrado: sin saber qué se aplicó, toda migración commiteada es inmutable.
+            log.warn("MISSION {} - could not read the applied migrations; every committed migration stays immutable",
+                    context.missionId());
+            applied = null;
         }
-        final var appliedEverywhere = applied == null ? java.util.Set.<Integer>of() : applied;
+        final var appliedEverywhere = applied;
         try {
             if (headSha != null) {
                 for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {

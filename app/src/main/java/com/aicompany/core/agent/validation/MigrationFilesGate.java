@@ -23,7 +23,7 @@ public final class MigrationFilesGate {
      * {@code existing}: migraciones ya commiteadas (ruta → contenido); {@code applied}: versiones aplicadas en algún
      * ambiente de la misión (Spec Diego ambientes §2: solo esas son inmutables; una commiteada que no se aplicó en
      * ninguno, p. ej. porque falló en el primer ambiente, se corrige en su mismo archivo). Revisión final (I-5): una
-     * aplicada no se edita, el cambio va en una nueva; (m-7) Forjai abre la transacción, la migración no la maneja.
+     * aplicada no se edita ({@code applied == null}: no se sabe, falla cerrado y toda commiteada es inmutable), el cambio va en una nueva; (m-7) Forjai abre la transacción, la migración no la maneja.
      */
     public static List<String> check(List<DevelopmentResult.GeneratedFile> files, java.util.Map<String, String> existing,
                                      java.util.Set<Integer> applied) {
@@ -37,7 +37,7 @@ public final class MigrationFilesGate {
             var previous = existing.get(file.path());
             var version = version(file.path()).orElse(null);
             if (previous != null && !previous.equals(file.content()) && version != null
-                    && applied != null && applied.contains(version)) {
+                    && (applied == null || applied.contains(version))) {
                 errors.add("La migración " + file.path() + " ya existe y no se edita (ya está aplicada en un ambiente de "
                         + "la base del fundador): devuélvela sin cambios y pon el cambio en una nueva, V" + next + "__<descripcion>.sql.");
             }

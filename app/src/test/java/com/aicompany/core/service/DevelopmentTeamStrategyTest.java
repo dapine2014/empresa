@@ -976,6 +976,30 @@ class DevelopmentTeamStrategyTest {
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
     }
 
+    // Falla cerrado: si no se puede leer qué se aplicó, editar una migración commiteada se rechaza.
+    @Test
+    void whenAppliedMigrationsCannotBeReadCommittedMigrationsStayImmutable() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenAnswer(inv -> CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        when(memory.appliedAnywhere("M-1")).thenThrow(new IllegalStateException("neo4j caído"));
+        var path = "db/postgres/migrations/V1__a.sql";
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of(path));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq(path))).thenReturn("CREATE TABLE a (id int);");
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        @SuppressWarnings("unchecked")
+        var checks = (org.mockito.ArgumentCaptor<java.util.function.Function<DevelopmentResult, List<String>>>)
+                (org.mockito.ArgumentCaptor<?>) org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime, atLeastOnce()).generate(anyString(), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), checks.capture());
+        var edit = new DevelopmentResult("r", List.of(new GeneratedFile(path, "CREATE TABLE a (id int, x int);")));
+        assertTrue(checks.getValue().apply(edit).stream().anyMatch(e -> e.contains("V1__a.sql")));
+    }
+
     // Revisión final (I-6): un usuario corto como "app" no puede marcar todo el código.
     @Test
     void ordinaryCodeIsNotTakenForTheConnectionsHostOrUser() throws Exception {

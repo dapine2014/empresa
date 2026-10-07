@@ -69,4 +69,20 @@ class MigrationFilesGateTest {
         assertFalse(MigrationFilesGate.check(List.of(f("db/postgres/migrations/V1__a.sql",
                 "BEGIN;\nCREATE TABLE a (id int);\nCOMMIT;")), java.util.Map.of(), java.util.Set.of()).isEmpty());
     }
+
+    // Falla cerrado: applied == null (no se pudo leer) => toda commiteada es inmutable.
+    @Test
+    void unknownAppliedSetMakesEveryCommittedMigrationImmutable() {
+        var edit = List.of(f("db/postgres/migrations/V1__a.sql", "CREATE TABLE a (id int, x int);"));
+        var errors = MigrationFilesGate.check(edit,
+                java.util.Map.of("db/postgres/migrations/V1__a.sql", "CREATE TABLE a (id int);"), null);
+        assertTrue(errors.stream().anyMatch(e -> e.contains("V1__a.sql")), errors.toString());
+    }
+
+    @Test
+    void withNothingAppliedAnExistingMigrationCanBeEdited() {
+        var edit = List.of(f("db/postgres/migrations/V1__a.sql", "CREATE TABLE a (id int, x int);"));
+        assertEquals(List.of(), MigrationFilesGate.check(edit,
+                java.util.Map.of("db/postgres/migrations/V1__a.sql", "CREATE TABLE a (id int);"), java.util.Set.of()));
+    }
 }
