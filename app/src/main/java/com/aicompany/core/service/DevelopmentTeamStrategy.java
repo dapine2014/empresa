@@ -1921,6 +1921,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return result -> {
             var errors = new ArrayList<String>();
             errors.addAll(com.aicompany.core.agent.validation.MigrationFilesGate.check(result.files(), existing, appliedEverywhere));
+            // Spec Diego ambientes §3: sintaxis SQL sin base; el error vuelve al dueño con sentencia y línea.
+            errors.addAll(com.aicompany.core.agent.validation.MigrationSqlCheck.errors(result.files()));
             errors.addAll(com.aicompany.core.agent.validation.SecretLiteralGate.check(result.files(), forbidden));
             errors.addAll(com.aicompany.core.agent.validation.DatabaseContractGate.check(result.files(), hasDatabase, contract));
             return errors;
