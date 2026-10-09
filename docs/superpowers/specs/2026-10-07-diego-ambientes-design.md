@@ -63,7 +63,16 @@ SQL inválido se corrige antes del `VERIFIED`.
   (`Mission.databaseApplies`, que Missions y el chat ya muestran como `FAILED`).
 - Los errores de PostgreSQL que llegan a la corrección (modelos remotos), a las búsquedas de la estrategia y a Kafka
   no traen valores de filas: `logServerErrorDetail=false` en la conexión y el aplicador quita las líneas
-  `Detail:`/`Where:`/`Hint:`.
+  `Detail:`/`Where:`/`Hint:`. Además (seguimiento 2026-10-08, `DatabaseErrorScrubber`) el mensaje principal puede
+  traer valores (`invalid input syntax for type integer: "x@y.com"`, `Key (email)=(…)`): el contenido entre comillas
+  que no sea un identificador simple en minúscula (`[a-z_][a-z0-9_]*`) pasa a `<valor>` y `Key (cols)=(<valor>)`;
+  `relation "clientes" does not exist` queda legible.
+- **Clasificación por SQLState** (seguimiento 2026-10-08; `ApplyResult.sqlState`, `SqlStateClassifier`): aunque la
+  versión no esté aplicada en ningún ambiente, estos errores son del ambiente y nunca van a la corrección: clases `08`
+  (conexión), `28` (autenticación), `53` (recursos), `57` (intervención/timeout: 57014, 57P01), `58` (sistema) y los
+  códigos `55P03` (lock_timeout), `42501` (privilegios), `40001`/`40P01` (serialización/deadlock); sin SQLState
+  (E/S, timeout del driver) también. Siguen siendo corregibles solo los errores del SQL (42601, 42P01, 42703, 42P07,
+  `23*`, `22*`). "verifica" (`verifyHead`) no manda el correo del problema del ambiente.
 - **Migraciones editables**: `MigrationFilesGate` hoy rechaza editar una migración ya commiteada. Pasa a rechazar solo
   las que están **aplicadas en algún ambiente** de la misión (según `Mission.databaseApplies`); una migración que falló
   y no quedó aplicada en ninguno se puede corregir (el historial con checksum de cada base protege igual a las aplicadas).
