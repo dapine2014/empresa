@@ -2360,6 +2360,30 @@ class ChatIntentRouterTest {
         assertTrue(router.route("apruebo las HU de MISSION-9").contains("no está esperando"));
     }
 
+    // Revisión final Diego ambientes (I1): el status anuncia la base pendiente por un problema del ambiente (código
+    // VERIFIED con un ambiente FAILED); una misión con la validación FAILED está en corrección y no aparece.
+    @Test
+    void theStatusAnnouncesADatabasePendingOnAnEnvironmentProblem() {
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-DB", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 8, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-SQL", MissionStatus.AWAITING_INVESTOR, "PRODUCTION", 8, "x", "x", Instant.now(), null)));
+        var failedProd = new MissionMemoryService.DatabaseApply("citas-prod", "PRODUCTION", List.of(1, 2), 3, "falló", "FAILED");
+        when(missionMemory.databaseApplies("MISSION-DB")).thenReturn(Map.of("citas-prod", failedProd));
+        when(missionMemory.databaseApplies("MISSION-SQL")).thenReturn(Map.of("citas-prod", failedProd));
+        when(missionMemory.lastValidationStatus("MISSION-DB")).thenReturn(Optional.of("VERIFIED"));
+        when(missionMemory.lastValidationStatus("MISSION-SQL")).thenReturn(Optional.of("FAILED"));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("Base pendiente por un problema del ambiente: MISSION-DB (PRODUCTION citas-prod: falló V3)"),
+                response);
+        assertFalse(response.contains("MISSION-SQL ("), response);
+        assertTrue(response.contains("aplica el esquema de <misión>"), response);
+    }
+
     // Spec 2026-10-03 Aria §2: el status anuncia los requisitos que esperan al fundador (también en TEST) y no los
     // cuenta como misiones activas.
     @Test

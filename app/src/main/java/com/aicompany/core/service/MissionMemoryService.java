@@ -323,10 +323,13 @@ public class MissionMemoryService {
         return result;
     }
 
-    /** Versiones aplicadas en alguna conexión de la misión (Spec Diego ambientes §2, inmutabilidad). */
+    /**
+     * Versiones aplicadas en alguna conexión de la misión (Spec Diego ambientes §2, inmutabilidad). Lectura estricta
+     * (revisión final): con {@code databaseApplies} ilegible lanza, y quien llama falla cerrado (todo inmutable).
+     */
     public java.util.Set<Integer> appliedAnywhere(String missionId) {
         var all = new java.util.TreeSet<Integer>();
-        databaseApplies(missionId).values().forEach(d -> all.addAll(d.applied()));
+        loadApplies(missionId, true).values().forEach(d -> all.addAll(d.applied()));
         return all;
     }
 

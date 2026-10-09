@@ -2164,7 +2164,36 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + specLine + coverageLine + recoveryLine + orchestratorLine() + downModelsLine();
+        ) + specLine + coverageLine + recoveryLine + databasePendingLine(all) + orchestratorLine() + downModelsLine();
+    }
+
+    /**
+     * Revisión final Diego ambientes (I1): misiones detenidas con el código VERIFIED y un ambiente de base fallido. Una
+     * falla que un agente corrige deja la validación FAILED, así que lo que queda acá es un problema del ambiente que
+     * resuelve el fundador. Nunca lanza.
+     */
+    String databasePendingLine(List<MissionResponse> all) {
+        var pending = new ArrayList<String>();
+        for (var m : all) {
+            if (m.status() != MissionStatus.AWAITING_INVESTOR && m.status() != MissionStatus.COMPLETED
+                    && m.status() != MissionStatus.FAILED && m.status() != MissionStatus.BLOCKED) {
+                continue;
+            }
+            try {
+                var failed = missionMemory.databaseApplies(m.missionId()).values().stream()
+                        .filter(a -> "FAILED".equals(a.state())).toList();
+                if (failed.isEmpty() || !"VERIFIED".equals(missionMemory.lastValidationStatus(m.missionId()).orElse(null))) {
+                    continue;
+                }
+                pending.add(m.missionId() + " (" + failed.stream().map(a -> a.environment() + " " + a.connection()
+                        + (a.failedVersion() == null ? ": no se pudo aplicar" : ": falló V" + a.failedVersion()))
+                        .collect(Collectors.joining(", ")) + ")");
+            } catch (RuntimeException ex) {
+                log.warn("CHAT_STATUS could not read the database of {}: {}", m.missionId(), ex.getMessage());
+            }
+        }
+        return pending.isEmpty() ? "" : " Base pendiente por un problema del ambiente: " + String.join(", ", pending)
+                + " (resuélvelo y escribe \"aplica el esquema de <misión>\").";
     }
 
     /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */

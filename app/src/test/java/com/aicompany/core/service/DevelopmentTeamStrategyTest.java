@@ -900,7 +900,7 @@ class DevelopmentTeamStrategyTest {
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
         var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
-        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), true, "Base de datos citas-dev-aws: aplicadas V1."));
+        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), com.aicompany.core.database.DatabaseApplyService.Outcome.APPLIED, "Base de datos citas-dev-aws: aplicadas V1."));
         strategy.setDatabaseApply(apply);
         var base = context();
         var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),
@@ -928,7 +928,7 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
         var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
         when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(
-                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), true, "todo aplicado"));
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), com.aicompany.core.database.DatabaseApplyService.Outcome.APPLIED, "todo aplicado"));
         strategy.setDatabaseApply(apply);
 
         strategy.execute(new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
@@ -948,7 +948,7 @@ class DevelopmentTeamStrategyTest {
         var failed = new com.aicompany.core.database.DatabaseApplyService.EnvironmentResult(
                 "citas-prod", "PRODUCTION", List.of(1), 2, "columna x no existe", false);
         when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(
-                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(failed), false, "falló"));
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(failed), com.aicompany.core.database.DatabaseApplyService.Outcome.NEEDS_CORRECTION, "falló"));
         strategy.setDatabaseApply(apply);
 
         var result = (TeamExecutionResult.Development) strategy.execute(
@@ -998,6 +998,122 @@ class DevelopmentTeamStrategyTest {
                 anyList(), anyList(), checks.capture());
         var edit = new DevelopmentResult("r", List.of(new GeneratedFile(path, "CREATE TABLE a (id int, x int);")));
         assertTrue(checks.getValue().apply(edit).stream().anyMatch(e -> e.contains("V1__a.sql")));
+    }
+
+    // Revisión final Diego ambientes (C1, I1, I3): la cascada real (DatabaseApplyService con conexiones y aplicador
+    // simulados) y la clasificación de Java.
+    private final com.aicompany.core.database.DatabaseConnectionService dbConnections =
+            mock(com.aicompany.core.database.DatabaseConnectionService.class);
+    private final com.aicompany.core.database.DatabaseSchemaApplier dbApplier =
+            mock(com.aicompany.core.database.DatabaseSchemaApplier.class);
+    private final AlertMailService dbMail = mock(AlertMailService.class);
+    private static final com.aicompany.core.database.DatabaseConnection DB_TEST = new com.aicompany.core.database.DatabaseConnection(
+            "C1", "citas-test", "POSTGRESQL", "test.secreto.example", 5432, "citas", "admin", "REQUIRE", null, "TEST",
+            "****1111", null, null);
+    private static final com.aicompany.core.database.DatabaseConnection DB_PROD = new com.aicompany.core.database.DatabaseConnection(
+            "C2", "citas-prod", "POSTGRESQL", "prod.secreto.example", 5432, "citas", "admin", "REQUIRE", null,
+            "PRODUCTION", "****2222", null, null);
+
+    private void realDatabaseApply(com.aicompany.core.database.DatabaseConnection... connections) throws Exception {
+        when(dbConnections.connectionsOf("M-1")).thenReturn(List.of(connections));
+        when(dbConnections.password(any())).thenReturn("S3cret");
+        var service = new com.aicompany.core.database.DatabaseApplyService(dbConnections, dbApplier, workspace, memory, events);
+        service.setAlertMail(dbMail);
+        strategy.setDatabaseApply(service);
+    }
+
+    private static com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult applied(Integer... versions) {
+        return new com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult(List.of(versions), null, null, false);
+    }
+
+    private static com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult failedAt(int version, String error) {
+        return new com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult(List.of(), version, error, false);
+    }
+
+    private TeamExecutionResult.Development executeWithDatabase() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        return (TeamExecutionResult.Development) strategy.execute(
+                new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+    }
+
+    // C1: sin conexión no hay cascada ni falla: VERIFIED, commit verificado y la nota para cargarla.
+    @Test
+    void withoutAConnectionTheCodeStaysVerifiedWithAPendingNote() throws Exception {
+        realDatabaseApply();
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        assertTrue(result.verifiableState().contains("aplica el esquema de M-1"), result.verifiableState());
+        verifyNoInteractions(dbApplier, dbMail);
+    }
+
+    // I1 (a): el SQL de una migración no aplicada en ningún ambiente va a la corrección.
+    @Test
+    void aSqlErrorInAnUnappliedMigrationFailsTheValidation() throws Exception {
+        realDatabaseApply(DB_TEST, DB_PROD);
+        when(memory.appliedAnywhere("M-1")).thenReturn(java.util.Set.of(1, 2));
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any())).thenReturn(failedAt(3, "V3 falló: syntax error"));
+
+        executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && json.contains("syntax error")));
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        verify(dbApplier, never()).apply(eq(DB_PROD), any(), anyList(), any(), any());
+        verifyNoInteractions(dbMail);
+    }
+
+    // I1 (b): una conexión que no responde no la arregla un modelo: VERIFIED, commit verificado y aviso al fundador.
+    @Test
+    void aConnectionErrorKeepsTheCodeVerifiedAndNotifiesTheFounder() throws Exception {
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any()))
+                .thenThrow(new IllegalStateException("Connection to test.secreto.example refused"));
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        assertTrue(result.verifiableState().contains("problema del ambiente")
+                && result.verifiableState().contains("aplica el esquema de M-1"), result.verifiableState());
+        assertFalse(result.verifiableState().contains("test.secreto.example"), result.verifiableState());
+        verify(dbMail).send(contains("M-1"), contains("problema del ambiente"), eq(true));
+        verify(events).publish(eq("EMPRESA_DATABASE_SCHEMA_FAILED"), eq("M-1"), eq("M-1-DATABASE"), eq("forjai"), anyMap());
+    }
+
+    // I1 (b): V3 aplicada en TEST que falla en PRODUCTION es un problema de datos del ambiente, no una corrección.
+    @Test
+    void aProductionFailureOfAVersionAppliedInTestIsAnEnvironmentProblem() throws Exception {
+        realDatabaseApply(DB_TEST, DB_PROD);
+        when(memory.appliedAnywhere("M-1")).thenReturn(java.util.Set.of(1, 2));
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any())).thenReturn(applied(3));
+        when(dbApplier.apply(eq(DB_PROD), any(), anyList(), any(), any()))
+                .thenReturn(failedAt(3, "V3 falló: duplicate key value"));
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
+        verify(dbMail).send(contains("M-1"), anyString(), eq(true));
+    }
+
+    // Menor: un error de memoria dentro de la cascada no escapa antes de registrar la validación.
+    @Test
+    void aMemoryErrorInsideTheCascadeIsAnEnvironmentProblem() throws Exception {
+        realDatabaseApply(DB_TEST);
+        doThrow(new IllegalStateException("neo4j caído")).when(memory)
+                .createTask(eq("M-1-DATABASE"), anyString(), anyString(), anyString());
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        assertTrue(result.verifiableState().contains("neo4j caído"), result.verifiableState());
     }
 
     // Revisión final (I-6): un usuario corto como "app" no puede marcar todo el código.
@@ -1502,6 +1618,55 @@ class DevelopmentTeamStrategyTest {
                 argThat(json -> json.contains("SCENARIO_COVERAGE") && json.contains("TEST_SUITE_GROWTH")));
         verify(memory).recordVerifiedCommit("M-1", head);
         assertTrue(result.verifiableState().contains(head), result.verifiableState());
+    }
+
+    private TeamMissionContext withQaWorkAndDatabase() throws Exception {
+        var base = withQaWork();
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, p.tasksOrEmpty(), List.of(), p.stackProfile(),
+                p.boundedContexts(), p.ubiquitousLanguage(), new TeamPlan.DatabaseNeed("POSTGRESQL", ""), p.components());
+        return new TeamMissionContext("M-1", base.instruction(), base.team(), plan);
+    }
+
+    // Revisión final Diego ambientes (I3): "verifica" corre la misma cascada; un SQL roto sin aplicar deja FAILED.
+    @Test
+    void verifyHeadRunsTheCascadeAndASqlErrorFailsIt() throws Exception {
+        stubFullstack();
+        var context = withQaWorkAndDatabase();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head))).thenReturn(failedAt(1, "V1 falló: syntax error"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verifyNoInteractions(runtime);
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && json.contains("syntax error")));
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        assertTrue(result.verifiableState().contains("Base de datos:"), result.verifiableState());
+    }
+
+    @Test
+    void verifyHeadAppliesTheSchemaBeforeRecordingTheVerifiedCommit() throws Exception {
+        stubFullstack();
+        var context = withQaWorkAndDatabase();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head))).thenReturn(applied(1));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        var order = inOrder(dbApplier, memory);
+        order.verify(dbApplier).apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head));
+        order.verify(memory).recordVerifiedCommit("M-1", head);
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("VERIFIED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && !json.contains("\"FAIL\"")));
     }
 
     // Review Focus 5: lo no commiteado no se borra ni se verifica, y se avisa.

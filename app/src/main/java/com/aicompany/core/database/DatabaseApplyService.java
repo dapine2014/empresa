@@ -39,7 +39,26 @@ public class DatabaseApplyService {
                                     Integer failedVersion, String error, boolean skipped) {
     }
 
-    public record CascadeResult(List<EnvironmentResult> environments, boolean allApplied, String text) {
+    /**
+     * Revisión final Diego ambientes (C1, I1): Java clasifica el resultado de la cascada.
+     * <ul>
+     * <li>{@code APPLIED}: todos los ambientes aplicados (o el plan no declara base).</li>
+     * <li>{@code NO_CONNECTION}: la misión no tiene conexiones del motor: no hay cascada ni falla.</li>
+     * <li>{@code NEEDS_CORRECTION}: el SQL de una migración que no está aplicada en ningún ambiente falló: la
+     * corrección automática la arregla (Diego puede editarla).</li>
+     * <li>{@code ENVIRONMENT_PROBLEM}: falla de infraestructura (sin respuesta, autenticación, timeout, crear la base,
+     * git, memoria; toda falla sin versión) o de una migración ya aplicada en otro ambiente (diferencias de datos
+     * entre ambientes): ningún modelo lo arregla; lo resuelve el fundador y reintenta con "aplica el esquema".</li>
+     * </ul>
+     */
+    public enum Outcome {
+        APPLIED, NO_CONNECTION, NEEDS_CORRECTION, ENVIRONMENT_PROBLEM
+    }
+
+    public record CascadeResult(List<EnvironmentResult> environments, Outcome outcome, String text) {
+        public boolean allApplied() {
+            return outcome == Outcome.APPLIED;
+        }
     }
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -53,6 +72,8 @@ public class DatabaseApplyService {
     private final DevelopmentWorkspaceService workspace;
     private final MissionMemoryService memory;
     private final CompanyEventPublisher events;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DatabaseApplyService.class);
+    private com.aicompany.core.service.AlertMailService mail;
 
     public DatabaseApplyService(DatabaseConnectionService connections, DatabaseSchemaApplier applier,
                                 DevelopmentWorkspaceService workspace, MissionMemoryService memory,
@@ -67,18 +88,60 @@ public class DatabaseApplyService {
     /**
      * Cascada por ambiente (Spec Diego ambientes §1): TEST antes que PRODUCTION; el primer ambiente que falla
      * detiene a los siguientes, que quedan {@code skipped}. Cada conexión se registra, también la que no responde.
+     * Nunca lanza: una falla de memoria, git o Kafka es un {@link Outcome#ENVIRONMENT_PROBLEM}. Este es el llamado
+     * automático (tras VERIFIED): un problema del ambiente se avisa al fundador por correo.
      */
     public CascadeResult apply(String missionId, String commitSha, TeamPlan plan) {
+        return cascade(missionId, commitSha, plan, true);
+    }
+
+    private CascadeResult cascade(String missionId, String commitSha, TeamPlan plan, boolean notifyFounder) {
         var db = plan == null ? null : plan.databaseOrNull();
         if (db == null) {
-            return new CascadeResult(List.of(), true, "");
-        }
-        var ordered = EnvironmentCascade.order(connections.connectionsOf(missionId), db.engine(), db.connectionName());
-        if (ordered.isEmpty()) {
-            return new CascadeResult(List.of(), false, "Falta la conexión PostgreSQL para crear la base: cárgala en "
-                    + "Bases de datos y escribe 'aplica el esquema de " + missionId + "'.");
+            return new CascadeResult(List.of(), Outcome.APPLIED, "");
         }
         var taskId = missionId + "-DATABASE";
+        CascadeResult result;
+        try {
+            result = runCascade(missionId, commitSha, db, taskId);
+        } catch (Exception ex) {
+            // Revisión final (menor): un error de memoria o de eventos no escapa antes de registrar la validación.
+            var reason = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+            log.warn("MISSION {} - database cascade did not complete: {}", missionId, reason);
+            var text = "No se pudo completar la aplicación del esquema (" + shorten(reason) + ")."
+                    + retryNote(missionId);
+            try {
+                memory.updateTask(taskId, "FAILED", text);
+            } catch (Exception ignored) {
+                // la memoria puede ser justo lo que falló; el texto vuelve igual al estado verificable
+            }
+            result = new CascadeResult(List.of(), Outcome.ENVIRONMENT_PROBLEM, text);
+        }
+        if (notifyFounder && result.outcome() == Outcome.ENVIRONMENT_PROBLEM && mail != null) {
+            mail.send("Misión " + missionId + ": base pendiente por un problema del ambiente",
+                    "El código de " + missionId + " quedó VERIFIED, pero las migraciones no se pudieron aplicar en "
+                            + "todos los ambientes por un problema que ningún agente puede corregir (conexión, permisos "
+                            + "o datos distintos entre ambientes).\n\n" + result.text(), true);
+        }
+        return result;
+    }
+
+    private CascadeResult runCascade(String missionId, String commitSha, TeamPlan.DatabaseNeed db, String taskId) {
+        var ordered = EnvironmentCascade.order(connections.connectionsOf(missionId), db.engine(), db.connectionName());
+        if (ordered.isEmpty()) {
+            // Revisión final (C1): sin conexiones no hay cascada ni falla; el fundador carga la conexión y la aplica.
+            return new CascadeResult(List.of(), Outcome.NO_CONNECTION, "Falta la conexión PostgreSQL para crear la "
+                    + "base: cárgala en Bases de datos y escribe 'aplica el esquema de " + missionId + "'.");
+        }
+        // Revisión final (I1): qué versiones ya están aplicadas en algún ambiente; sin saberlo, falla cerrado (todo se
+        // trata como aplicado: Diego no podría editar la migración, así que ninguna falla va a la corrección).
+        java.util.Set<Integer> appliedSomewhere;
+        try {
+            appliedSomewhere = new java.util.TreeSet<>(memory.appliedAnywhere(missionId));
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the applied migrations; a failure is an environment problem", missionId);
+            appliedSomewhere = null;
+        }
         // Revisión final (I-3): createTask exige un Agent existente; la base es trabajo de Diego (devops), el DBA.
         memory.createTask(taskId, missionId, DBA, "DATABASE_APPLY");
         memory.updateTask(taskId, "RUNNING", "Aplicando migraciones en " + ordered.size() + " ambiente(s).");
@@ -86,6 +149,7 @@ public class DatabaseApplyService {
         var results = new ArrayList<EnvironmentResult>();
         var texts = new ArrayList<String>();
         EnvironmentResult failedEnv = null;
+        var outcome = Outcome.APPLIED;
         for (var c : ordered) {
             if (failedEnv != null) {
                 var text = "Base de datos " + c.name() + " (" + c.environment() + "): sin aplicar, falló "
@@ -100,13 +164,39 @@ public class DatabaseApplyService {
             results.add(r);
             if (r.error() != null) {
                 failedEnv = r;
+                outcome = classify(r, appliedSomewhere);
+            } else if (appliedSomewhere != null) {
+                appliedSomewhere.addAll(r.applied());
             }
             texts.add(describe(c, r));
         }
-        var allApplied = failedEnv == null;
-        var text = String.join(" · ", texts);
-        memory.updateTask(taskId, allApplied ? "COMPLETED" : "FAILED", text);
-        return new CascadeResult(List.copyOf(results), allApplied, text);
+        var text = String.join(" · ", texts)
+                + (outcome == Outcome.ENVIRONMENT_PROBLEM ? " · " + ENVIRONMENT_NOTE + retryNote(missionId) : "");
+        memory.updateTask(taskId, outcome == Outcome.APPLIED ? "COMPLETED" : "FAILED", text);
+        return new CascadeResult(List.copyOf(results), outcome, text);
+    }
+
+    static final String ENVIRONMENT_NOTE = "Base pendiente por un problema del ambiente (no lo corrige un agente: "
+            + "conexión, permisos o datos distintos entre ambientes).";
+
+    /**
+     * Revisión final (I1): solo el SQL de una migración que no está aplicada en ningún ambiente (antes de esta
+     * cascada o en un ambiente anterior de esta misma) va a la corrección; lo demás es un problema del ambiente.
+     */
+    static Outcome classify(EnvironmentResult failed, java.util.Set<Integer> appliedSomewhere) {
+        if (failed.failedVersion() == null || appliedSomewhere == null
+                || appliedSomewhere.contains(failed.failedVersion())) {
+            return Outcome.ENVIRONMENT_PROBLEM;
+        }
+        return Outcome.NEEDS_CORRECTION;
+    }
+
+    private static String retryNote(String missionId) {
+        return " Resuélvelo y escribe 'aplica el esquema de " + missionId + "'.";
+    }
+
+    private static String shorten(String text) {
+        return text.length() <= 300 ? text : text.substring(0, 300) + "…";
     }
 
     private EnvironmentResult applyOne(String missionId, String commitSha, String taskId, DatabaseConnection c) {
@@ -156,6 +246,12 @@ public class DatabaseApplyService {
                 : "aplicadas " + r.applied().stream().map(v -> "V" + v).collect(Collectors.joining(", "))) + ".";
     }
 
+    /** Revisión final Diego ambientes (I1): aviso al fundador de un problema del ambiente (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAlertMail(com.aicompany.core.service.AlertMailService mail) {
+        this.mail = mail;
+    }
+
     /** A pedido del fundador (chat o botón): exige el código VERIFIED y usa el último plan y el HEAD del workspace. */
     public String applyLatest(String missionId) {
         var status = memory.lastValidationStatus(missionId).orElse(null);
@@ -175,7 +271,7 @@ public class DatabaseApplyService {
         }
         var commit = memory.verifiedCommit(missionId).orElseThrow(() -> new IllegalStateException(
                 missionId + " no tiene un commit verificado registrado."));
-        return apply(missionId, commit, plan).text();
+        return cascade(missionId, commit, plan, false).text();
     }
 
     public Optional<MissionDatabaseStatus> status(String missionId) {
@@ -208,7 +304,9 @@ public class DatabaseApplyService {
                 }
             }
         }
-        var appliedAnywhere = memory.appliedAnywhere(missionId);
+        // Solo para mostrar: lectura tolerante (la estricta es para decidir qué se puede editar).
+        var appliedAnywhere = new java.util.TreeSet<Integer>();
+        applies.values().forEach(a -> appliedAnywhere.addAll(a.applied()));
         var failed = applies.values().stream().map(MissionMemoryService.DatabaseApply::failedVersion)
                 .filter(java.util.Objects::nonNull).findFirst().orElse(null);
         List<MigrationSet.Migration> all;

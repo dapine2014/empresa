@@ -52,8 +52,10 @@ class DatabaseApplyServiceTest {
     @Test
     void withoutAConnectionTheMissionGetsAPendingNote() {
         when(connections.connectionsOf("M-1")).thenReturn(List.of());
-        var text = service.apply("M-1", "abc", plan("")).text();
-        assertTrue(text.contains("Falta la conexión PostgreSQL") && text.contains("aplica el esquema de M-1"), text);
+        var result = service.apply("M-1", "abc", plan(""));
+        assertTrue(result.text().contains("Falta la conexión PostgreSQL") && result.text().contains("aplica el esquema de M-1"),
+                result.text());
+        assertEquals(DatabaseApplyService.Outcome.NO_CONNECTION, result.outcome());
         verifyNoInteractions(applier);
     }
 
@@ -228,5 +230,71 @@ class DatabaseApplyServiceTest {
         assertEquals(List.of("citas-dev-aws:FAILED", "citas-prod:PENDING", "vieja:APPLIED"),
                 status.environments().stream().map(e -> e.connection() + ":" + e.state()).toList());
         assertEquals("falló · creada", status.lastResult());
+    }
+
+    private static DatabaseApplyService.EnvironmentResult failed(Integer version) {
+        return new DatabaseApplyService.EnvironmentResult("c", "TEST", List.of(), version, "error", false);
+    }
+
+    // Revisión final Diego ambientes (I1): Java decide qué falla va a la corrección y cuál es del ambiente.
+    @Test
+    void onlyASqlFailureOfAnUnappliedMigrationNeedsCorrection() {
+        assertEquals(DatabaseApplyService.Outcome.NEEDS_CORRECTION, DatabaseApplyService.classify(failed(3), java.util.Set.of(1, 2)));
+        assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM, DatabaseApplyService.classify(failed(2), java.util.Set.of(1, 2)));
+        assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM, DatabaseApplyService.classify(failed(null), java.util.Set.of()));
+        // Sin saber qué se aplicó: falla cerrado (Diego no podría editarla).
+        assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM, DatabaseApplyService.classify(failed(3), null));
+    }
+
+    @Test
+    void unreadableAppliedMigrationsMakeASqlFailureAnEnvironmentProblem() throws Exception {
+        when(connections.connectionsOf("M-1")).thenReturn(List.of(CITAS));
+        when(connections.password(CITAS)).thenReturn("S3cret-9876");
+        stubFiles();
+        when(memory.appliedAnywhere("M-1")).thenThrow(new IllegalStateException("databaseApplies ilegible"));
+        when(applier.apply(any(), any(), anyList(), any(), any()))
+                .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(), 1, "V1 falló: syntax error", false));
+
+        var result = service.apply("M-1", "abc", plan(""));
+
+        assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM, result.outcome());
+        assertTrue(result.text().contains("problema del ambiente"), result.text());
+    }
+
+    @Test
+    void anEventFailureNeverEscapesTheCascade() throws Exception {
+        when(connections.connectionsOf("M-1")).thenReturn(List.of(CITAS));
+        when(connections.password(CITAS)).thenReturn("S3cret-9876");
+        stubFiles();
+        when(applier.apply(any(), any(), anyList(), any(), any()))
+                .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(1), null, null, false));
+        doThrow(new IllegalStateException("kafka caído")).when(events).publish(anyString(), any(), any(), any(), anyMap());
+
+        var result = assertDoesNotThrow(() -> service.apply("M-1", "abc", plan("")));
+
+        assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM, result.outcome());
+        verify(memory).updateTask(eq("M-1-DATABASE"), eq("FAILED"), contains("kafka caído"));
+    }
+
+    // El aviso por correo es del llamado automático; a pedido el fundador ya ve el resultado.
+    @Test
+    void onDemandAnEnvironmentProblemIsNotEmailed() throws Exception {
+        var mail = mock(com.aicompany.core.service.AlertMailService.class);
+        service.setAlertMail(mail);
+        when(memory.lastValidationStatus("M-1")).thenReturn(java.util.Optional.of("VERIFIED"));
+        when(memory.find("M-1")).thenReturn(java.util.Optional.of(mission(com.aicompany.core.model.MissionStatus.AWAITING_INVESTOR)));
+        when(memory.verifiedCommit("M-1")).thenReturn(java.util.Optional.of("abc"));
+        when(memory.lastTeamPlanJson("M-1")).thenReturn(java.util.Optional.of(
+                "{\"summary\":\"Citas\",\"stackProfile\":\"DOTNET_APP\",\"tasks\":[],"
+                        + "\"database\":{\"engine\":\"POSTGRESQL\",\"connectionName\":\"\"}}"));
+        when(connections.connectionsOf("M-1")).thenReturn(List.of(CITAS));
+        when(connections.password(CITAS)).thenReturn("S3cret-9876");
+        stubFiles();
+        when(applier.apply(any(), any(), anyList(), any(), any())).thenThrow(new IllegalStateException("timeout"));
+
+        var text = service.applyLatest("M-1");
+
+        assertTrue(text.contains("problema del ambiente"), text);
+        verifyNoInteractions(mail);
     }
 }

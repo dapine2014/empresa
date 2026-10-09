@@ -548,18 +548,16 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
                 : StaticValidationStatus.compute(checks, review, sandboxResult);
         // Spec Diego ambientes §2: con el código VERIFIED, la cascada de ambientes corre ANTES de registrar el commit
-        // verificado; un ambiente fallido es un chequeo que falla y la corrección automática lo recoge.
+        // verificado; solo una falla que un agente puede corregir es un chequeo que falla (revisión final, I1).
         var databaseText = "";
-        if (plan.databaseOrNull() != null) {
-            if (status == StaticValidationStatus.VERIFIED && databaseApply != null) {
-                var cascade = databaseApply.apply(missionId, headSha, plan);
-                databaseText = cascade.text();
+        var databaseStep = databaseStep(missionId, headSha, plan, status);
+        if (databaseStep != null) {
+            databaseText = databaseStep.text();
+            if (databaseStep.check() != null) {
                 checks = new ArrayList<>(checks);
-                checks.add(databaseAppliedCheck(cascade, headSha));
+                checks.add(databaseStep.check());
                 status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
                         : StaticValidationStatus.compute(checks, review, sandboxResult);
-            } else {
-                databaseText = "no se aplicó (el código no está VERIFIED).";
             }
         }
         if (status == StaticValidationStatus.VERIFIED) {
@@ -585,6 +583,37 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         repairRounds, autofixRounds, dependencyOutcome, triageNotes)
                         + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText)
                         + (stashNote.isEmpty() ? "" : "\n" + stashNote));
+    }
+
+    /** Resultado de la base para el estado verificable; {@code check} null = no suma chequeo (no cambia la validación). */
+    record DatabaseStep(StaticCheck check, String text) {
+    }
+
+    /**
+     * Spec Diego ambientes §2 + revisión final (C1, I1, I3), igual en {@link #execute} y en {@link #verifyHead}: con el
+     * código VERIFIED corre la cascada y Java clasifica. Aplicado → DATABASE_APPLIED PASS; SQL de una migración no
+     * aplicada en ningún ambiente → DATABASE_APPLIED FAIL (la corrección automática la arregla); sin conexión o
+     * problema del ambiente → sin chequeo: la validación queda VERIFIED, se registra el commit verificado y el texto
+     * dice qué falta (el fundador lo resuelve y escribe "aplica el esquema"). Null si el plan no declara base.
+     */
+    private DatabaseStep databaseStep(String missionId, String headSha, TeamPlan plan, StaticValidationStatus status) {
+        if (plan.databaseOrNull() == null) {
+            return null;
+        }
+        if (status != StaticValidationStatus.VERIFIED || databaseApply == null) {
+            return new DatabaseStep(null, "no se aplicó (el código no está VERIFIED).");
+        }
+        com.aicompany.core.database.DatabaseApplyService.CascadeResult cascade;
+        try {
+            cascade = databaseApply.apply(missionId, headSha, plan);
+        } catch (Exception ex) {
+            // apply no lanza; si igual pasa, es un problema del ambiente, nunca una corrección pagada.
+            return new DatabaseStep(null, "no se pudo aplicar el esquema (" + safeMessage(ex, "error") + ").");
+        }
+        return switch (cascade.outcome()) {
+            case APPLIED, NEEDS_CORRECTION -> new DatabaseStep(databaseAppliedCheck(cascade, headSha), cascade.text());
+            case NO_CONNECTION, ENVIRONMENT_PROBLEM -> new DatabaseStep(null, cascade.text());
+        };
     }
 
     /** Spec Diego ambientes §2: PASS si todos los ambientes quedaron aplicados; si no, FAIL con ambiente, conexión y error. */
@@ -687,6 +716,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
 
         var status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
+        // Revisión final (I3): la misma cascada y clasificación que execute, antes de registrar el commit verificado.
+        var databaseStep = databaseStep(missionId, headSha, plan, status);
+        if (databaseStep != null && databaseStep.check() != null) {
+            checks = new ArrayList<>(checks);
+            checks.add(databaseStep.check());
+            status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
+        }
         var summary = "Verificación humana del commit " + headSha + " (sin modelos: sin correcciones, sin diagnóstico de "
                 + "tests ni revisión de un agente).\n"
                 + (uncommitted.isEmpty() ? "" : uncommitted + "\n")
@@ -708,7 +744,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 "",
                 (uncommitted.isEmpty() ? "" : uncommitted + "\n")
                         + verifiableState(context, null, committed, checks, status, List.of(), sandboxResult, sandboxError,
-                                0, 0, dependencyOutcome, List.of()));
+                                0, 0, dependencyOutcome, List.of())
+                        + (databaseStep == null ? "" : "\nBase de datos: " + databaseStep.text()));
     }
 
     /** Aviso de lo no commiteado (vacío si no hay); nunca lanza. */
