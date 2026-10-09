@@ -34,7 +34,7 @@ public class DatabaseSchemaApplier {
             created = ensureDatabase(c, password);
         } catch (SQLException ex) {
             return new ApplyResult(applied, null, "No se pudo crear o abrir la base " + c.database() + ": "
-                    + DatabaseConnectionService.redact(ex.getMessage(), c, password), false);
+                    + DatabaseConnectionService.redact(withoutServerDetail(ex.getMessage()), c, password), false);
         }
         try (var connection = connector.open(c, password, null)) {
             connection.setAutoCommit(true);
@@ -65,13 +65,45 @@ public class DatabaseSchemaApplier {
                     applied.add(migration.version());
                 } catch (SQLException ex) {
                     return new ApplyResult(applied, migration.version(), "V" + migration.version() + " falló: "
-                            + DatabaseConnectionService.redact(ex.getMessage(), c, password), created);
+                            + DatabaseConnectionService.redact(withoutServerDetail(ex.getMessage()), c, password), created);
                 }
             }
             return new ApplyResult(applied, null, null, created);
         } catch (SQLException ex) {
-            return new ApplyResult(applied, null, DatabaseConnectionService.redact(ex.getMessage(), c, password), created);
+            return new ApplyResult(applied, null,
+                    DatabaseConnectionService.redact(withoutServerDetail(ex.getMessage()), c, password), created);
         }
+    }
+
+    private static final java.util.regex.Pattern SENSITIVE_LINE = java.util.regex.Pattern.compile(
+            "^\\s*(Detail|Where|Hint|Detalle|D[oó]nde|Contexto|Sugerencia|Pista)\\s*:.*", java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern SAFE_LINE = java.util.regex.Pattern.compile(
+            "^\\s*(Position|Posici[oó]n|Location|Ubicaci[oó]n|Server SQLState|SQLState)\\s*:.*",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Revisión final Diego ambientes (I2), defensa en profundidad además de {@code logServerErrorDetail=false}: quita
+     * las líneas "Detail:", "Where:" y "Hint:" del error de PostgreSQL (y sus continuaciones), que pueden traer
+     * valores de las filas de la base del fundador. Se conservan el mensaje y la posición.
+     */
+    static String withoutServerDetail(String message) {
+        if (message == null) {
+            return null;
+        }
+        var kept = new ArrayList<String>();
+        var skipping = false;
+        for (var line : message.split("\\R", -1)) {
+            if (SENSITIVE_LINE.matcher(line).matches()) {
+                skipping = true;
+                continue;
+            }
+            if (skipping && !SAFE_LINE.matcher(line).matches()) {
+                continue;
+            }
+            skipping = false;
+            kept.add(line);
+        }
+        return String.join("\n", kept).strip();
     }
 
     private boolean ensureDatabase(DatabaseConnection c, String password) throws SQLException {

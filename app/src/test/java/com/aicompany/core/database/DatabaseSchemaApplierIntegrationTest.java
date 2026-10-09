@@ -97,4 +97,19 @@ class DatabaseSchemaApplierIntegrationTest {
             assertFalse(rs.next());
         }
     }
+
+    // Revisión final Diego ambientes (I2): un error del servidor no trae los valores de las filas del fundador.
+    @Test
+    void aServerErrorNeverCarriesRowValues() {
+        var files = Map.of(
+                "db/postgres/migrations/V1__clientes.sql", "CREATE TABLE cliente (email text unique);"
+                        + " INSERT INTO cliente VALUES ('ana@cliente.com');",
+                "db/postgres/migrations/V2__duplicado.sql", "INSERT INTO cliente VALUES ('ana@cliente.com');");
+
+        var result = applier.apply(conn("detalle_it"), PG.getPassword(), migrations(files), "M-5", "abc");
+
+        assertEquals(2, result.failedVersion());
+        assertTrue(result.error().contains("duplicate key"), result.error());
+        assertFalse(result.error().contains("ana@cliente.com"), result.error());
+    }
 }

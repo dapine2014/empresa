@@ -24,6 +24,9 @@ public class JdbcPostgresConnector implements PostgresConnector {
         props.setProperty("loginTimeout", "15");
         props.setProperty("socketTimeout", "330");
         props.setProperty("ApplicationName", "forjai");
+        // Revisión final Diego ambientes (I2): sin "Detail:"/"Where:" del servidor (traen valores de filas reales,
+        // p. ej. "Key (email)=(x@y.com) already exists"); el error llega a modelos remotos, búsquedas y Kafka.
+        props.setProperty("logServerErrorDetail", "false");
         switch (c.tls()) {
             case "DISABLE" -> props.setProperty("sslmode", "disable");
             case "REQUIRE" -> props.setProperty("sslmode", "require");

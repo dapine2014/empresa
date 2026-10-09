@@ -118,7 +118,8 @@ public class DatabaseApplyService {
         } catch (Exception ex) {
             // Review Focus 2: una conexión que no responde es la falla de ese ambiente, con el error redactado.
             result = new DatabaseSchemaApplier.ApplyResult(List.of(), null, DatabaseConnectionService.redact(
-                    ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage(), c, password), false);
+                    ex.getMessage() == null ? ex.getClass().getSimpleName()
+                            : DatabaseSchemaApplier.withoutServerDetail(ex.getMessage()), c, password), false);
         }
         var r = new EnvironmentResult(c.name(), c.environment(), result.applied(), result.failedVersion(),
                 result.error(), false);
