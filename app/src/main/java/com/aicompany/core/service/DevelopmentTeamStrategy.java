@@ -550,7 +550,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Spec Diego ambientes §2: con el código VERIFIED, la cascada de ambientes corre ANTES de registrar el commit
         // verificado; solo una falla que un agente puede corregir es un chequeo que falla (revisión final, I1).
         var databaseText = "";
-        var databaseStep = databaseStep(missionId, headSha, plan, status);
+        var databaseStep = databaseStep(missionId, headSha, plan, status, true);
         if (databaseStep != null) {
             databaseText = databaseStep.text();
             if (databaseStep.check() != null) {
@@ -596,7 +596,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * problema del ambiente → sin chequeo: la validación queda VERIFIED, se registra el commit verificado y el texto
      * dice qué falta (el fundador lo resuelve y escribe "aplica el esquema"). Null si el plan no declara base.
      */
-    private DatabaseStep databaseStep(String missionId, String headSha, TeamPlan plan, StaticValidationStatus status) {
+    private DatabaseStep databaseStep(String missionId, String headSha, TeamPlan plan, StaticValidationStatus status,
+                                      boolean notifyFounder) {
         if (plan.databaseOrNull() == null) {
             return null;
         }
@@ -605,7 +606,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         com.aicompany.core.database.DatabaseApplyService.CascadeResult cascade;
         try {
-            cascade = databaseApply.apply(missionId, headSha, plan);
+            cascade = notifyFounder ? databaseApply.apply(missionId, headSha, plan)
+                    : databaseApply.apply(missionId, headSha, plan, false);
         } catch (Exception ex) {
             // apply no lanza; si igual pasa, es un problema del ambiente, nunca una corrección pagada.
             return new DatabaseStep(null, "no se pudo aplicar el esquema (" + safeMessage(ex, "error") + ").");
@@ -717,7 +719,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         var status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
         // Revisión final (I3): la misma cascada y clasificación que execute, antes de registrar el commit verificado.
-        var databaseStep = databaseStep(missionId, headSha, plan, status);
+        // Seguimiento: la verificación la pidió el fundador, el chat ya le muestra el problema: sin correo.
+        var databaseStep = databaseStep(missionId, headSha, plan, status, false);
         if (databaseStep != null && databaseStep.check() != null) {
             checks = new ArrayList<>(checks);
             checks.add(databaseStep.check());

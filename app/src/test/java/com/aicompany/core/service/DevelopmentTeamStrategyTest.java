@@ -1027,7 +1027,12 @@ class DevelopmentTeamStrategyTest {
     }
 
     private static com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult failedAt(int version, String error) {
-        return new com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult(List.of(), version, error, false);
+        return failedAt(version, error, "42601");
+    }
+
+    private static com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult failedAt(int version, String error,
+                                                                                         String sqlState) {
+        return new com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult(List.of(), version, error, false, sqlState);
     }
 
     private TeamExecutionResult.Development executeWithDatabase() throws Exception {
@@ -1098,6 +1103,20 @@ class DevelopmentTeamStrategyTest {
 
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
         verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
+        verify(dbMail).send(contains("M-1"), anyString(), eq(true));
+    }
+
+    // Seguimiento: un timeout (57014) en una migración sin aplicar es del ambiente: VERIFIED y aviso, sin corrección pagada.
+    @Test
+    void aQueryTimeoutDuringAnUnappliedMigrationIsAnEnvironmentProblem() throws Exception {
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any()))
+                .thenReturn(failedAt(1, "V1 falló: canceling statement due to statement timeout", "57014"));
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
         assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
         verify(dbMail).send(contains("M-1"), anyString(), eq(true));
     }
@@ -1647,6 +1666,25 @@ class DevelopmentTeamStrategyTest {
                 argThat(json -> json.contains("DATABASE_APPLIED") && json.contains("syntax error")));
         verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
         assertTrue(result.verifiableState().contains("Base de datos:"), result.verifiableState());
+    }
+
+    // Seguimiento: "verifica" lo pidió el fundador y el chat ya muestra el problema: no se le manda correo.
+    @Test
+    void verifyHeadDoesNotEmailAnEnvironmentProblem() throws Exception {
+        stubFullstack();
+        var context = withQaWorkAndDatabase();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head)))
+                .thenReturn(failedAt(1, "V1 falló: connection reset", "08006"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
+        verifyNoInteractions(dbMail);
     }
 
     @Test

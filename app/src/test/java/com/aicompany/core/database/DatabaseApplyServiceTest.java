@@ -233,7 +233,24 @@ class DatabaseApplyServiceTest {
     }
 
     private static DatabaseApplyService.EnvironmentResult failed(Integer version) {
-        return new DatabaseApplyService.EnvironmentResult("c", "TEST", List.of(), version, "error", false);
+        return failed(version, "42601");
+    }
+
+    private static DatabaseApplyService.EnvironmentResult failed(Integer version, String sqlState) {
+        return new DatabaseApplyService.EnvironmentResult("c", "TEST", List.of(), version, "error", false, sqlState);
+    }
+
+    // Seguimiento: un error de infraestructura DURANTE una migración sin aplicar es del ambiente, no una corrección.
+    @Test
+    void infrastructureSqlStatesOfAnUnappliedMigrationAreEnvironmentProblems() {
+        for (var state : new String[]{"08006", "28P01", "53300", "57014", "57P01", "58030", "55P03", "42501", "40001", "40P01", null}) {
+            assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM,
+                    DatabaseApplyService.classify(failed(3, state), java.util.Set.of(1, 2)), String.valueOf(state));
+        }
+        for (var state : new String[]{"42601", "42P01", "42703", "42P07", "23505", "22P02"}) {
+            assertEquals(DatabaseApplyService.Outcome.NEEDS_CORRECTION,
+                    DatabaseApplyService.classify(failed(3, state), java.util.Set.of(1, 2)), state);
+        }
     }
 
     // Revisión final Diego ambientes (I1): Java decide qué falla va a la corrección y cuál es del ambiente.

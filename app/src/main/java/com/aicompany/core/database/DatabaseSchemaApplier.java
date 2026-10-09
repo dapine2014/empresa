@@ -15,7 +15,15 @@ import java.util.List;
 @Component
 public class DatabaseSchemaApplier {
 
-    public record ApplyResult(List<Integer> applied, Integer failedVersion, String error, boolean createdDatabase) {
+    /**
+     * {@code sqlState}: el SQLState del error de PostgreSQL (null si no lo hubo, p. ej. una excepción de E/S); Java lo
+     * usa para distinguir un error del SQL de la migración de un problema del ambiente (Spec Diego ambientes §2).
+     */
+    public record ApplyResult(List<Integer> applied, Integer failedVersion, String error, boolean createdDatabase,
+                              String sqlState) {
+        public ApplyResult(List<Integer> applied, Integer failedVersion, String error, boolean createdDatabase) {
+            this(applied, failedVersion, error, createdDatabase, null);
+        }
     }
 
     private static final int STATEMENT_TIMEOUT_SECONDS = 300;
@@ -34,7 +42,7 @@ public class DatabaseSchemaApplier {
             created = ensureDatabase(c, password);
         } catch (SQLException ex) {
             return new ApplyResult(applied, null, "No se pudo crear o abrir la base " + c.database() + ": "
-                    + DatabaseConnectionService.redact(withoutServerDetail(ex.getMessage()), c, password), false);
+                    + sanitize(ex.getMessage(), c, password), false, ex.getSQLState());
         }
         try (var connection = connector.open(c, password, null)) {
             connection.setAutoCommit(true);
@@ -65,14 +73,21 @@ public class DatabaseSchemaApplier {
                     applied.add(migration.version());
                 } catch (SQLException ex) {
                     return new ApplyResult(applied, migration.version(), "V" + migration.version() + " falló: "
-                            + DatabaseConnectionService.redact(withoutServerDetail(ex.getMessage()), c, password), created);
+                            + sanitize(ex.getMessage(), c, password), created, ex.getSQLState());
                 }
             }
             return new ApplyResult(applied, null, null, created);
         } catch (SQLException ex) {
-            return new ApplyResult(applied, null,
-                    DatabaseConnectionService.redact(withoutServerDetail(ex.getMessage()), c, password), created);
+            return new ApplyResult(applied, null, sanitize(ex.getMessage(), c, password), created, ex.getSQLState());
         }
+    }
+
+    /**
+     * Todo texto de un error de la base que sale del aplicador: sin Detail/Where/Hint, sin valores de filas entre
+     * comillas (Seguimiento Diego ambientes, privacidad) y sin clave, host ni usuario.
+     */
+    static String sanitize(String message, DatabaseConnection c, String password) {
+        return DatabaseConnectionService.redact(DatabaseErrorScrubber.scrub(withoutServerDetail(message)), c, password);
     }
 
     private static final java.util.regex.Pattern SENSITIVE_LINE = java.util.regex.Pattern.compile(

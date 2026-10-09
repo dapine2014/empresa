@@ -36,7 +36,12 @@ public class DatabaseApplyService {
     }
 
     public record EnvironmentResult(String connection, String environment, List<Integer> applied,
-                                    Integer failedVersion, String error, boolean skipped) {
+                                    Integer failedVersion, String error, boolean skipped,
+                                    String sqlState) {
+        public EnvironmentResult(String connection, String environment, List<Integer> applied,
+                                 Integer failedVersion, String error, boolean skipped) {
+            this(connection, environment, applied, failedVersion, error, skipped, null);
+        }
     }
 
     /**
@@ -93,6 +98,11 @@ public class DatabaseApplyService {
      */
     public CascadeResult apply(String missionId, String commitSha, TeamPlan plan) {
         return cascade(missionId, commitSha, plan, true);
+    }
+
+    /** Igual, pero {@code notifyFounder=false} para una verificación que el fundador pidió (el chat ya se lo dice). */
+    public CascadeResult apply(String missionId, String commitSha, TeamPlan plan, boolean notifyFounder) {
+        return cascade(missionId, commitSha, plan, notifyFounder);
     }
 
     private CascadeResult cascade(String missionId, String commitSha, TeamPlan plan, boolean notifyFounder) {
@@ -181,11 +191,14 @@ public class DatabaseApplyService {
 
     /**
      * Revisión final (I1): solo el SQL de una migración que no está aplicada en ningún ambiente (antes de esta
-     * cascada o en un ambiente anterior de esta misma) va a la corrección; lo demás es un problema del ambiente.
+     * cascada o en un ambiente anterior de esta misma) va a la corrección; lo demás es un problema del ambiente. Aun
+     * así, un SQLState de infraestructura (conexión, permisos, recursos, timeouts, deadlock; ver
+     * {@link SqlStateClassifier}) es del ambiente: ningún modelo lo corrige.
      */
     static Outcome classify(EnvironmentResult failed, java.util.Set<Integer> appliedSomewhere) {
         if (failed.failedVersion() == null || appliedSomewhere == null
-                || appliedSomewhere.contains(failed.failedVersion())) {
+                || appliedSomewhere.contains(failed.failedVersion())
+                || SqlStateClassifier.isEnvironmentProblem(failed.sqlState())) {
             return Outcome.ENVIRONMENT_PROBLEM;
         }
         return Outcome.NEEDS_CORRECTION;
@@ -209,10 +222,11 @@ public class DatabaseApplyService {
             // Review Focus 2: una conexión que no responde es la falla de ese ambiente, con el error redactado.
             result = new DatabaseSchemaApplier.ApplyResult(List.of(), null, DatabaseConnectionService.redact(
                     ex.getMessage() == null ? ex.getClass().getSimpleName()
-                            : DatabaseSchemaApplier.withoutServerDetail(ex.getMessage()), c, password), false);
+                            : DatabaseErrorScrubber.scrub(DatabaseSchemaApplier.withoutServerDetail(ex.getMessage())),
+                    c, password), false);
         }
         var r = new EnvironmentResult(c.name(), c.environment(), result.applied(), result.failedVersion(),
-                result.error(), false);
+                result.error(), false, result.sqlState());
         var ok = r.error() == null;
         memory.recordDatabaseApply(missionId, c.name(), c.environment(), r.applied(), r.failedVersion(),
                 describe(c, r), ok ? "APPLIED" : "FAILED");

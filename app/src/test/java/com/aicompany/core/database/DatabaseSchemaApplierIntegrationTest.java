@@ -56,6 +56,26 @@ class DatabaseSchemaApplierIntegrationTest {
         assertEquals(List.of(1), result.applied());
         assertEquals(2, result.failedVersion());
         assertTrue(result.error().contains("syntax"), result.error());
+        assertEquals("42601", result.sqlState());
+    }
+
+    // Seguimiento: un timeout de la sentencia es 57014 (ambiente); un valor que el SQL inserta sale enmascarado.
+    @Test
+    void exposesTheSqlStateAndMasksRowValuesInTheError() {
+        var timeout = Map.of("db/postgres/migrations/V1__lento.sql",
+                "SET LOCAL statement_timeout = '50ms'; SELECT pg_sleep(2);");
+        var slow = applier.apply(conn("estado_it"), PG.getPassword(), migrations(timeout), "M-6", "abc");
+        assertEquals(1, slow.failedVersion());
+        assertEquals("57014", slow.sqlState());
+        assertTrue(SqlStateClassifier.isEnvironmentProblem(slow.sqlState()));
+
+        var bad = Map.of("db/postgres/migrations/V1__valor.sql",
+                "CREATE TABLE t (n int); INSERT INTO t VALUES ('ana@correo.com');");
+        var result = applier.apply(conn("valor_it"), PG.getPassword(), migrations(bad), "M-7", "abc");
+        assertEquals("22P02", result.sqlState());
+        assertFalse(SqlStateClassifier.isEnvironmentProblem(result.sqlState()));
+        assertFalse(result.error().contains("ana@correo.com"), result.error());
+        assertTrue(result.error().contains("<valor>"), result.error());
     }
 
     @Test
