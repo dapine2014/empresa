@@ -167,4 +167,19 @@ class MigrationSqlCheckTest {
                 new GeneratedFile(MigrationFilesGate.ROOT + "V2__ok.sql", "CREATE TABLE a (id int);")));
         assertEquals(List.of(), errors);
     }
+
+    // Revisión final Diego ambientes: CREATE TABLE … AS (también WITH NO DATA) es válido y no se parsea.
+    @Test
+    void createTableAsIsNotParsed() {
+        assertValid("CREATE TABLE resumen AS SELECT id, nombre FROM clientes WITH NO DATA;");
+        assertValid("CREATE TABLE copia (id, nombre) AS TABLE clientes WITH NO DATA;");
+        assertValid("CREATE UNLOGGED TABLE t AS SELECT 1 AS uno;");
+    }
+
+    @Test
+    void aGeneratedColumnIsStillParsedAsAPlainCreateTable() {
+        assertTrue(!MigrationSqlCheck.createTableAs(
+                "CREATE TABLE a (id int GENERATED ALWAYS AS IDENTITY, b int GENERATED ALWAYS AS (id * 2) STORED)"));
+        assertTrue(MigrationSqlCheck.createTableAs("CREATE TABLE r AS SELECT 1"));
+    }
 }

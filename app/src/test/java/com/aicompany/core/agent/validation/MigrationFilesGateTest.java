@@ -76,7 +76,8 @@ class MigrationFilesGateTest {
         var edit = List.of(f("db/postgres/migrations/V1__a.sql", "CREATE TABLE a (id int, x int);"));
         var errors = MigrationFilesGate.check(edit,
                 java.util.Map.of("db/postgres/migrations/V1__a.sql", "CREATE TABLE a (id int);"), null);
-        assertTrue(errors.stream().anyMatch(e -> e.contains("V1__a.sql")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("V1__a.sql")
+                && e.contains("no se pudo saber qué migraciones están aplicadas")), errors.toString());
     }
 
     @Test

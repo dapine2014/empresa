@@ -47,7 +47,8 @@ public final class MigrationSqlCheck {
                     continue;
                 }
                 // Cadenas $tag$ y E'…\\…' dentro de una sentencia son válidas en PostgreSQL y JSqlParser no las conoce.
-                if (statement.unknownLiteral() || !SUPPORTED.matcher(statement.code()).matches()) {
+                if (statement.unknownLiteral() || !SUPPORTED.matcher(statement.code()).matches()
+                        || createTableAs(statement.code())) {
                     continue;
                 }
                 var problem = syntaxProblem(statement.text(), statement.textLine());
@@ -75,6 +76,38 @@ public final class MigrationSqlCheck {
         } catch (RuntimeException | StackOverflowError ex) {
             return null; // el parser se rompió, no la migración: nunca bloquear
         }
+    }
+
+    private static final Pattern CREATE_TABLE = Pattern.compile("(?is)^CREATE\\s+[^(]*?\\bTABLE\\b.*");
+
+    /**
+     * Revisión final Diego ambientes: {@code CREATE TABLE … AS <consulta>} (también con {@code WITH NO DATA}) no se
+     * parsea: JSqlParser lo rechaza siendo válido. Se reconoce por un {@code AS} fuera de paréntesis y de comillas
+     * (un {@code GENERATED ALWAYS AS (…)} de una columna queda dentro de los paréntesis de la tabla).
+     */
+    static boolean createTableAs(String code) {
+        if (!CREATE_TABLE.matcher(code).matches()) {
+            return false;
+        }
+        int depth = 0;
+        int n = code.length();
+        for (int i = 0; i < n; i++) {
+            char c = code.charAt(i);
+            if (c == '\'' || c == '"') {
+                int close = code.indexOf(c, i + 1);
+                i = close < 0 ? n : close;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth = Math.max(0, depth - 1);
+            } else if (depth == 0 && (c == 'A' || c == 'a') && i + 1 < n
+                    && (code.charAt(i + 1) == 'S' || code.charAt(i + 1) == 's')
+                    && (i == 0 || !isIdentChar(code.charAt(i - 1)))
+                    && (i + 2 >= n || !isIdentChar(code.charAt(i + 2)))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** {@code text}: la sentencia tal cual; {@code code}: sin comentarios iniciales; {@code line}: donde empieza el código. */

@@ -38,8 +38,13 @@ public final class MigrationFilesGate {
             var version = version(file.path()).orElse(null);
             if (previous != null && !previous.equals(file.content()) && version != null
                     && (applied == null || applied.contains(version))) {
-                errors.add("La migración " + file.path() + " ya existe y no se edita (ya está aplicada en un ambiente de "
-                        + "la base del fundador): devuélvela sin cambios y pon el cambio en una nueva, V" + next + "__<descripcion>.sql.");
+                // Revisión final Diego ambientes: con applied == null el motivo es otro (no se pudo saber qué se aplicó).
+                var reason = applied == null
+                        ? "no se pudo saber qué migraciones están aplicadas en los ambientes del fundador, así que "
+                        + "ninguna migración commiteada se edita"
+                        : "ya está aplicada en un ambiente de la base del fundador";
+                errors.add("La migración " + file.path() + " ya existe y no se edita (" + reason + "): devuélvela sin "
+                        + "cambios y pon el cambio en una nueva, V" + next + "__<descripcion>.sql.");
             }
             if (file.content() != null && file.content().lines().anyMatch(l -> TRANSACTION.matcher(l).matches())) {
                 errors.add("Migración \"" + file.path() + "\": sin BEGIN/COMMIT/ROLLBACK; Forjai aplica cada migración en "
