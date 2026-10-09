@@ -35,20 +35,41 @@ SQL inválido se corrige antes del `VERIFIED`.
   (`database:<conexión>@<sha>/V<n>`, como hoy); eventos `EMPRESA_DATABASE_SCHEMA_APPLIED|FAILED` por conexión con
   `environment`.
 
-## 2. Si un ambiente falla, la corrección automática se encarga
+## 2. Si un ambiente falla, Java decide si lo corrige un agente o el fundador
 
-- En `DevelopmentTeamStrategy`, la cascada corre cuando el código queda `VERIFIED` y **antes** de registrar el
-  `verifiedCommit`. Si algún ambiente falla: se agrega el chequeo `DATABASE_APPLIED` en `FAIL` (detalle: ambiente,
-  conexión, `V<n>` y el error redactado), el `validationStatus` pasa a `FAILED` y no se registra `verifiedCommit`. Con
-  la validación `FAILED` la misión entra en la corrección automática ya existente (20 rondas, estrategia, `BLOCKED`):
-  el `CorrectionReport` lleva ese chequeo fallido, así que Diego recibe el error real.
-- Si todos los ambientes aplican: chequeo `DATABASE_APPLIED` en `PASS` ("TEST: V1–V3; PRODUCTION: V1–V3") y
-  `verifiedCommit` como hoy.
+- En `DevelopmentTeamStrategy` (la misión y "verifica MISSION-X", `verifyHead`, sin modelos), la cascada corre cuando
+  el código queda `VERIFIED` y **antes** de registrar el `verifiedCommit`. Java clasifica el resultado
+  (`DatabaseApplyService.Outcome`, revisión final 2026-10-08):
+  - **Todo aplicado**: chequeo `DATABASE_APPLIED` en `PASS` y `verifiedCommit` como hoy.
+  - **SQL de una migración no aplicada en ningún ambiente** (la versión que falla no estaba aplicada antes de la
+    cascada ni en un ambiente anterior de la misma): `DATABASE_APPLIED` en `FAIL` (detalle: ambiente, conexión, `V<n>`
+    y el error redactado), `validationStatus` `FAILED` y sin `verifiedCommit`. La misión entra en la corrección
+    automática ya existente (20 rondas, estrategia, `BLOCKED`): el `CorrectionReport` lleva ese chequeo, así que Diego
+    recibe el error real y puede editar la migración (no está aplicada en ninguna parte).
+  - **Problema del ambiente** (ningún modelo lo arregla): infraestructura (sin respuesta, autenticación, timeout,
+    crear la base, git, memoria o eventos; toda falla sin versión), no saber qué se aplicó (falla cerrado) o una
+    versión ya aplicada en un ambiente anterior que falla en el siguiente. Review Focus 1, corregido: una V3 aplicada
+    en TEST que falla en PRODUCTION es una diferencia de datos entre ambientes, un problema del fundador y no una
+    corrección (Diego tampoco podría editarla, está aplicada en TEST). Sin chequeo `DATABASE_APPLIED`: la validación
+    queda `VERIFIED`, se registra el `verifiedCommit`, el estado verificable lo explica, se avisa al fundador por correo
+    (además de `EMPRESA_DATABASE_SCHEMA_FAILED`) y el status del chat lo lista ("Base pendiente por un problema del
+    ambiente: …"). Cuando lo resuelve, "aplica el esquema de MISSION-X" reintenta. Costo aceptado: PRODUCTION puede
+    quedar atrás de TEST mientras tanto.
+  - **Sin conexiones del motor asociadas**: no hay cascada ni falla; `VERIFIED` y `verifiedCommit` como antes, con la
+    nota "carga la conexión en Bases de datos y escribe 'aplica el esquema de MISSION-X'".
+- Por qué no un `WARN`: `StaticCheck` solo conoce `PASS`/`FAIL` y todos sus consumidores (`StaticValidationStatus`,
+  conteo de fallidos, `CorrectionReport`, Missions) leen `passed()`; un tercer estado tocaría a todos. El problema del
+  ambiente se representa sin chequeo, con el texto del estado verificable y el estado por conexión
+  (`Mission.databaseApplies`, que Missions y el chat ya muestran como `FAILED`).
+- Los errores de PostgreSQL que llegan a la corrección (modelos remotos), a las búsquedas de la estrategia y a Kafka
+  no traen valores de filas: `logServerErrorDetail=false` en la conexión y el aplicador quita las líneas
+  `Detail:`/`Where:`/`Hint:`.
 - **Migraciones editables**: `MigrationFilesGate` hoy rechaza editar una migración ya commiteada. Pasa a rechazar solo
   las que están **aplicadas en algún ambiente** de la misión (según `Mission.databaseApplies`); una migración que falló
   y no quedó aplicada en ninguno se puede corregir (el historial con checksum de cada base protege igual a las aplicadas).
 - "aplica el esquema de MISSION-X" (chat, botón, `POST …/database/apply`) corre la misma cascada sobre el
-  `verifiedCommit`, con la misión detenida, como hoy; su resultado se muestra pero no cambia el `validationStatus`.
+  `verifiedCommit`, con la misión detenida (`AWAITING_INVESTOR`, `COMPLETED`, `FAILED` o `BLOCKED`), como hoy; su
+  resultado se muestra pero no cambia el `validationStatus` ni manda correo (el fundador ya lo está viendo).
 
 ## 3. Chequeo de sintaxis SQL sin base
 
