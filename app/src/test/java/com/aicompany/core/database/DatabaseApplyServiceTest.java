@@ -38,7 +38,7 @@ class DatabaseApplyServiceTest {
         when(applier.apply(eq(CITAS), eq("S3cret-9876"), anyList(), eq("M-1"), eq("abc")))
                 .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(1), null, null, true));
 
-        var text = service.apply("M-1", "abc", plan("citas-dev-aws")).text();
+        var text = service.apply("M-1", "abc", plan("citas-dev-aws"), true).text();
 
         assertTrue(text.contains("V1") && text.contains("citas-dev-aws"), text);
         assertFalse(text.contains("S3cret-9876") || text.contains("rds.amazonaws.com"), text);
@@ -52,7 +52,7 @@ class DatabaseApplyServiceTest {
     @Test
     void withoutAConnectionTheMissionGetsAPendingNote() {
         when(connections.connectionsOf("M-1")).thenReturn(List.of());
-        var result = service.apply("M-1", "abc", plan(""));
+        var result = service.apply("M-1", "abc", plan(""), true);
         assertTrue(result.text().contains("Falta la conexión PostgreSQL") && result.text().contains("aplica el esquema de M-1"),
                 result.text());
         assertEquals(DatabaseApplyService.Outcome.NO_CONNECTION, result.outcome());
@@ -67,7 +67,7 @@ class DatabaseApplyServiceTest {
         when(applier.apply(any(), any(), anyList(), any(), any()))
                 .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(), 1, "V1 falló: permission denied", false));
 
-        var text = service.apply("M-1", "abc", plan("citas-dev-aws")).text();
+        var text = service.apply("M-1", "abc", plan("citas-dev-aws"), true).text();
 
         assertTrue(text.contains("Esquema no aplicado") && text.contains("permission denied"), text);
         verify(memory).updateTask(eq("M-1-DATABASE"), eq("FAILED"), contains("permission denied"));
@@ -153,7 +153,7 @@ class DatabaseApplyServiceTest {
         when(applier.apply(any(), any(), anyList(), any(), any()))
                 .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(1), null, null, true));
 
-        var result = service.apply("M-1", "abc", plan(""));
+        var result = service.apply("M-1", "abc", plan(""), true);
 
         assertTrue(result.allApplied());
         assertEquals(List.of("TEST", "PRODUCTION"), result.environments().stream().map(DatabaseApplyService.EnvironmentResult::environment).toList());
@@ -177,7 +177,7 @@ class DatabaseApplyServiceTest {
         when(applier.apply(eq(CITAS), any(), anyList(), any(), any()))
                 .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(), 3, "V3 falló: boom", false));
 
-        var result = service.apply("M-1", "abc", plan(""));
+        var result = service.apply("M-1", "abc", plan(""), true);
 
         assertFalse(result.allApplied());
         assertTrue(result.environments().get(1).skipped());
@@ -199,7 +199,7 @@ class DatabaseApplyServiceTest {
         when(applier.apply(eq(prod), any(), anyList(), any(), any()))
                 .thenThrow(new IllegalStateException("no route to prod.secreto.rds.amazonaws.com with S3cret-9876"));
 
-        var result = service.apply("M-1", "abc", plan(""));
+        var result = service.apply("M-1", "abc", plan(""), true);
 
         assertFalse(result.allApplied());
         var err = result.environments().get(1).error();
@@ -272,7 +272,7 @@ class DatabaseApplyServiceTest {
         when(applier.apply(any(), any(), anyList(), any(), any()))
                 .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(), 1, "V1 falló: syntax error", false));
 
-        var result = service.apply("M-1", "abc", plan(""));
+        var result = service.apply("M-1", "abc", plan(""), true);
 
         assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM, result.outcome());
         assertTrue(result.text().contains("problema del ambiente"), result.text());
@@ -287,7 +287,7 @@ class DatabaseApplyServiceTest {
                 .thenReturn(new DatabaseSchemaApplier.ApplyResult(List.of(1), null, null, false));
         doThrow(new IllegalStateException("kafka caído")).when(events).publish(anyString(), any(), any(), any(), anyMap());
 
-        var result = assertDoesNotThrow(() -> service.apply("M-1", "abc", plan("")));
+        var result = assertDoesNotThrow(() -> service.apply("M-1", "abc", plan(""), true));
 
         assertEquals(DatabaseApplyService.Outcome.ENVIRONMENT_PROBLEM, result.outcome());
         verify(memory).updateTask(eq("M-1-DATABASE"), eq("FAILED"), contains("kafka caído"));

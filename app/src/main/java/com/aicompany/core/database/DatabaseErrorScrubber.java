@@ -19,9 +19,17 @@ final class DatabaseErrorScrubber {
     private DatabaseErrorScrubber() {
     }
 
-    static String scrub(String message) {
+    /**
+     * Los errores de clase 42 (sintaxis o regla de acceso: 42601, 42P01, 42703, 42P07…) hablan del texto del SQL y de
+     * identificadores, no de filas: conservan sus comillas (p. ej. {@code syntax error at or near "TABL"}, la pista
+     * de la corrección). Los demás, y un SQLState desconocido, enmascaran.
+     */
+    static String scrub(String message, String sqlState) {
         if (message == null) {
             return null;
+        }
+        if (sqlState != null && sqlState.startsWith("42")) {
+            return message;
         }
         var text = KEY_VALUES.matcher(message).replaceAll(m -> java.util.regex.Matcher.quoteReplacement(m.group(1) + "(<valor>)"));
         text = mask(DOUBLE_QUOTED, text, '"');
@@ -31,8 +39,7 @@ final class DatabaseErrorScrubber {
     private static String mask(Pattern pattern, String text, char quote) {
         return pattern.matcher(text).replaceAll(m -> {
             var inner = m.group(1);
-            var keep = IDENTIFIER.matcher(inner).matches() || "<valor>".equals(inner) || "<host>".equals(inner)
-                    || "<usuario>".equals(inner);
+            var keep = IDENTIFIER.matcher(inner).matches() || "<valor>".equals(inner);
             return java.util.regex.Matcher.quoteReplacement(keep ? m.group() : quote + "<valor>" + quote);
         });
     }

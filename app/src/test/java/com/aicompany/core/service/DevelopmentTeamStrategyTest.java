@@ -900,7 +900,7 @@ class DevelopmentTeamStrategyTest {
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
         var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
-        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), com.aicompany.core.database.DatabaseApplyService.Outcome.APPLIED, "Base de datos citas-dev-aws: aplicadas V1."));
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), com.aicompany.core.database.DatabaseApplyService.Outcome.APPLIED, "Base de datos citas-dev-aws: aplicadas V1."));
         strategy.setDatabaseApply(apply);
         var base = context();
         var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),
@@ -910,7 +910,7 @@ class DevelopmentTeamStrategyTest {
         var result = (TeamExecutionResult.Development) strategy.execute(
                 new TeamMissionContext("M-1", "crear un juego", base.team(), plan), progress);
 
-        verify(apply).apply(eq("M-1"), anyString(), eq(plan));
+        verify(apply).apply(eq("M-1"), anyString(), eq(plan), anyBoolean());
         assertTrue(result.verifiableState().contains("aplicadas V1"), result.verifiableState());
     }
 
@@ -927,7 +927,7 @@ class DevelopmentTeamStrategyTest {
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
         var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
-        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(
                 new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), com.aicompany.core.database.DatabaseApplyService.Outcome.APPLIED, "todo aplicado"));
         strategy.setDatabaseApply(apply);
 
@@ -947,7 +947,7 @@ class DevelopmentTeamStrategyTest {
         var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
         var failed = new com.aicompany.core.database.DatabaseApplyService.EnvironmentResult(
                 "citas-prod", "PRODUCTION", List.of(1), 2, "columna x no existe", false);
-        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn(
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(
                 new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(failed), com.aicompany.core.database.DatabaseApplyService.Outcome.NEEDS_CORRECTION, "falló"));
         strategy.setDatabaseApply(apply);
 
@@ -972,7 +972,7 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context(), progress);
 
-        verify(apply, never()).apply(anyString(), anyString(), any());
+        verify(apply, never()).apply(anyString(), anyString(), any(), anyBoolean());
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
     }
 

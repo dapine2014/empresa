@@ -42,7 +42,7 @@ public class DatabaseSchemaApplier {
             created = ensureDatabase(c, password);
         } catch (SQLException ex) {
             return new ApplyResult(applied, null, "No se pudo crear o abrir la base " + c.database() + ": "
-                    + sanitize(ex.getMessage(), c, password), false, ex.getSQLState());
+                    + sanitize(ex.getMessage(), c, password, ex.getSQLState()), false, ex.getSQLState());
         }
         try (var connection = connector.open(c, password, null)) {
             connection.setAutoCommit(true);
@@ -73,12 +73,12 @@ public class DatabaseSchemaApplier {
                     applied.add(migration.version());
                 } catch (SQLException ex) {
                     return new ApplyResult(applied, migration.version(), "V" + migration.version() + " falló: "
-                            + sanitize(ex.getMessage(), c, password), created, ex.getSQLState());
+                            + sanitize(ex.getMessage(), c, password, ex.getSQLState()), created, ex.getSQLState());
                 }
             }
             return new ApplyResult(applied, null, null, created);
         } catch (SQLException ex) {
-            return new ApplyResult(applied, null, sanitize(ex.getMessage(), c, password), created, ex.getSQLState());
+            return new ApplyResult(applied, null, sanitize(ex.getMessage(), c, password, ex.getSQLState()), created, ex.getSQLState());
         }
     }
 
@@ -86,8 +86,9 @@ public class DatabaseSchemaApplier {
      * Todo texto de un error de la base que sale del aplicador: sin Detail/Where/Hint, sin valores de filas entre
      * comillas (Seguimiento Diego ambientes, privacidad) y sin clave, host ni usuario.
      */
-    static String sanitize(String message, DatabaseConnection c, String password) {
-        return DatabaseConnectionService.redact(DatabaseErrorScrubber.scrub(withoutServerDetail(message)), c, password);
+    static String sanitize(String message, DatabaseConnection c, String password, String sqlState) {
+        return DatabaseConnectionService.redact(DatabaseErrorScrubber.scrub(withoutServerDetail(message), sqlState),
+                c, password);
     }
 
     private static final java.util.regex.Pattern SENSITIVE_LINE = java.util.regex.Pattern.compile(

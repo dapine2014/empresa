@@ -57,6 +57,7 @@ class DatabaseSchemaApplierIntegrationTest {
         assertEquals(2, result.failedVersion());
         assertTrue(result.error().contains("syntax"), result.error());
         assertEquals("42601", result.sqlState());
+        assertTrue(result.error().contains("\"TABL\""), result.error());
     }
 
     // Seguimiento: un timeout de la sentencia es 57014 (ambiente); un valor que el SQL inserta sale enmascarado.
@@ -107,7 +108,7 @@ class DatabaseSchemaApplierIntegrationTest {
         var plan = new com.aicompany.core.agent.model.TeamPlan("x", null, null, List.of(), List.of(), "DOTNET_APP",
                 List.of(), List.of(), new com.aicompany.core.agent.model.TeamPlan.DatabaseNeed("POSTGRESQL", ""));
 
-        var result = service.apply("M-4", "abc", plan);
+        var result = service.apply("M-4", "abc", plan, true);
 
         assertFalse(result.allApplied());
         assertEquals(1, result.environments().get(0).failedVersion());

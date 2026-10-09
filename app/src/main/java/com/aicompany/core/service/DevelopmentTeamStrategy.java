@@ -606,8 +606,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         com.aicompany.core.database.DatabaseApplyService.CascadeResult cascade;
         try {
-            cascade = notifyFounder ? databaseApply.apply(missionId, headSha, plan)
-                    : databaseApply.apply(missionId, headSha, plan, false);
+            cascade = databaseApply.apply(missionId, headSha, plan, notifyFounder);
         } catch (Exception ex) {
             // apply no lanza; si igual pasa, es un problema del ambiente, nunca una corrección pagada.
             return new DatabaseStep(null, "no se pudo aplicar el esquema (" + safeMessage(ex, "error") + ").");

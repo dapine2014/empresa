@@ -93,14 +93,10 @@ public class DatabaseApplyService {
     /**
      * Cascada por ambiente (Spec Diego ambientes §1): TEST antes que PRODUCTION; el primer ambiente que falla
      * detiene a los siguientes, que quedan {@code skipped}. Cada conexión se registra, también la que no responde.
-     * Nunca lanza: una falla de memoria, git o Kafka es un {@link Outcome#ENVIRONMENT_PROBLEM}. Este es el llamado
-     * automático (tras VERIFIED): un problema del ambiente se avisa al fundador por correo.
+     * Nunca lanza: una falla de memoria, git o Kafka es un {@link Outcome#ENVIRONMENT_PROBLEM}. Con
+     * {@code notifyFounder} (llamado automático tras VERIFIED) un problema del ambiente se avisa por correo.
      */
-    public CascadeResult apply(String missionId, String commitSha, TeamPlan plan) {
-        return cascade(missionId, commitSha, plan, true);
-    }
-
-    /** Igual, pero {@code notifyFounder=false} para una verificación que el fundador pidió (el chat ya se lo dice). */
+    /** {@code notifyFounder=false} para una verificación que el fundador pidió (el chat ya se lo dice). */
     public CascadeResult apply(String missionId, String commitSha, TeamPlan plan, boolean notifyFounder) {
         return cascade(missionId, commitSha, plan, notifyFounder);
     }
@@ -222,7 +218,7 @@ public class DatabaseApplyService {
             // Review Focus 2: una conexión que no responde es la falla de ese ambiente, con el error redactado.
             result = new DatabaseSchemaApplier.ApplyResult(List.of(), null, DatabaseConnectionService.redact(
                     ex.getMessage() == null ? ex.getClass().getSimpleName()
-                            : DatabaseErrorScrubber.scrub(DatabaseSchemaApplier.withoutServerDetail(ex.getMessage())),
+                            : DatabaseErrorScrubber.scrub(DatabaseSchemaApplier.withoutServerDetail(ex.getMessage()), null),
                     c, password), false);
         }
         var r = new EnvironmentResult(c.name(), c.environment(), result.applied(), result.failedVersion(),
