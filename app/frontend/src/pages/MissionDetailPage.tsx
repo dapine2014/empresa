@@ -197,7 +197,8 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
     retry: false,
     refetchInterval: 10_000,
   })
-  const hasDesign = !!designQuery.data?.design
+  // Solo un diseño en DRAFT se ajusta: uno aprobado, rechazado o reemplazado ya no admite ajuste a Kael.
+  const hasDesign = !!designQuery.data?.design && designQuery.data.status === 'DRAFT'
   const effectiveTarget: AdjustTarget = hasDesign ? target : 'ARIA'
   const query = useQuery({
     queryKey: ['requirements', missionId],
