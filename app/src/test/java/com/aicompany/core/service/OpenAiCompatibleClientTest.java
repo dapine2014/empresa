@@ -154,6 +154,28 @@ class OpenAiCompatibleClientTest {
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-19): la API a veces responde 200 sin choices (intermitente: el
     // intento siguiente funcionó). Se reintenta como un 5xx y el error final muestra qué devolvió.
+    // Verificado en vivo (2026-10-15): NVIDIA retiró kimi-k3 con HTTP 410 ("reached its end of life"); como error del pedido
+    // no pasaba al respaldo pago ni al local. Un modelo retirado o inexistente es un modelo caído, sin reintentos.
+    @Test
+    void aRetiredModelIsAnAvailabilityFailureWithoutRetries() {
+        for (var status : List.of(HttpStatus.GONE, HttpStatus.NOT_FOUND)) {
+            var builder = RestClient.builder().baseUrl("https://api.test/v1");
+            var server = MockRestServiceServer.bindTo(builder).build();
+            server.expect(times(1), requestTo("https://api.test/v1/chat/completions"))
+                    .andRespond(withStatus(status).contentType(MediaType.APPLICATION_JSON)
+                            .body("{\"status\":" + status.value() + ",\"detail\":\"The model 'moonshotai/kimi-k3' has "
+                                    + "reached its end of life on 2026-10-15T08:00:00Z and is no longer available.\"}"));
+            var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+            var ex = assertThrows(RemoteUnavailableException.class,
+                    () -> client.chat("moonshotai/kimi-k3", MESSAGES, true, 100));
+
+            assertTrue(ex.getMessage().contains(String.valueOf(status.value())) && ex.getMessage().contains("end of life"),
+                    ex.getMessage());
+            server.verify();
+        }
+    }
+
     @Test
     void aResponseWithoutChoicesIsRetriedAndReported() {
         var builder = RestClient.builder().baseUrl("https://api.test/v1");

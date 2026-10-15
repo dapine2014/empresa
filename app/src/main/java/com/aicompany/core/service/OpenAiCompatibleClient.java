@@ -267,6 +267,11 @@ public class OpenAiCompatibleClient {
                 var status = ex.getStatusCode().value();
                 var detail = "Modelo remoto " + model + " respondió HTTP " + status + ": "
                         + ex.getResponseBodyAsString().lines().findFirst().orElse("");
+                // Verificado en vivo (2026-10-15): NVIDIA retiró kimi-k3 con HTTP 410. Un modelo retirado o inexistente
+                // está caído: va al respaldo pago y al local, y no se reintenta.
+                if (status == 404 || status == 410) {
+                    throw new RemoteUnavailableException(detail, ex);
+                }
                 if (status != 429 && status < 500) {
                     throw new IllegalStateException(detail, ex);
                 }
