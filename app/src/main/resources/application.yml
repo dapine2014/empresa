@@ -89,6 +89,9 @@ sandbox:
 # cifran en Neo4j. Solo vive en .env; sin ella las keys solo salen del .env.
 forjai:
   secrets-key: ${FORJAI_SECRETS_KEY:}
+  # Cadena de modelos gratis (decisión del fundador 2026-10-15): si el gratis de un agente cae, se prueban estos en
+  # orden antes del respaldo pago (Bedrock) y del suplente local. Solo siembra: después manda Settings.
+  free-model-chain: ${FREE_MODEL_CHAIN:nvidia:moonshotai/kimi-k2.6,nvidia:z-ai/glm-5.3,nvidia:deepseek-ai/deepseek-v4.1-flash,nvidia:nvidia/nemotron-3-super-120b-a12b}
 
 remote-models:
   base-url: ${REMOTE_MODELS_BASE_URL:https://integrate.api.nvidia.com/v1}

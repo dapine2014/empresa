@@ -2424,6 +2424,7 @@ class ChatIntentRouterTest {
     void anAgentOnThePaidFallbackIsMarkedInTheAgentStatus() {
         kimiDown();
         when(modelHealth.effectiveModel("engineering", "nvidia:moonshotai/kimi-k3")).thenReturn("bedrock:global.moonshotai.kimi-k3");
+        when(modelHealth.paidFallbackFor("engineering")).thenReturn("bedrock:global.moonshotai.kimi-k3");
         when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(new AgentStatusResponse("engineering", "Neo",
                 "Architect", "x", "WORKING", "MISSION-1", "DELIVERY_FEASIBILITY", "RUNNING", Instant.now())));
         when(companyMemory.agentModel(eq("engineering"), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
@@ -2431,6 +2432,46 @@ class ChatIntentRouterTest {
         var response = router.route("¿Qué agentes están trabajando ahora?");
 
         assertTrue(response.contains("(caído: lo atiende su respaldo pago bedrock:global.moonshotai.kimi-k3)"), response);
+    }
+
+    // Cadena de modelos gratis (2026-10-15): con el gratis caído el estado nombra el gratis que lo atiende.
+    @Test
+    void anAgentOnTheNextFreeModelIsMarkedInTheAgentStatus() {
+        kimiDown();
+        when(modelHealth.effectiveModel("engineering", "nvidia:moonshotai/kimi-k3")).thenReturn("nvidia:z-ai/glm-5.3");
+        when(modelHealth.paidFallbackFor("engineering")).thenReturn("bedrock:global.moonshotai.kimi-k3");
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(new AgentStatusResponse("engineering", "Neo",
+                "Architect", "x", "WORKING", "MISSION-1", "DELIVERY_FEASIBILITY", "RUNNING", Instant.now())));
+        when(companyMemory.agentModel(eq("engineering"), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
+
+        var response = router.route("¿Qué agentes están trabajando ahora?");
+
+        assertTrue(response.contains("(caído: lo atiende el siguiente modelo gratis nvidia:z-ai/glm-5.3)"), response);
+    }
+
+    @Test
+    void theFreeChainIsAnsweredInOrderWithItsStatusWithoutCallingAModel() {
+        when(modelHealth.freeChainSnapshot()).thenReturn(List.of(
+                new com.aicompany.core.model.ModelHealth("nvidia:moonshotai/kimi-k2.6", "DOWN",
+                        Instant.parse("2026-10-15T15:00:00Z"), "HTTP 404", List.of("backend", "qa")),
+                new com.aicompany.core.model.ModelHealth("nvidia:z-ai/glm-5.3", "UP", null, null, List.of())));
+
+        var response = router.route("¿qué modelos gratis están activos?");
+
+        assertTrue(response.contains("1. ⚠ nvidia:moonshotai/kimi-k2.6 caído desde 2026-10-15 15:00 UTC (HTTP 404) — principal de backend, qa"), response);
+        assertTrue(response.contains("2. ✅ nvidia:z-ai/glm-5.3"), response);
+        assertTrue(response.contains("Bedrock"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void anEmptyFreeChainSaysWhereToConfigureIt() {
+        when(modelHealth.freeChainSnapshot()).thenReturn(List.of());
+
+        var response = router.route("muéstrame la cadena de modelos");
+
+        assertTrue(response.contains("Settings → Modelos gratis"), response);
+        verifyNoInteractions(ceoService);
     }
 
     // Costo real por misión (2026-10-04): el chat responde el costo de modelos en Java, sin llamar a un modelo.

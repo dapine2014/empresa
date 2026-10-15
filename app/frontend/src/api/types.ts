@@ -376,6 +376,13 @@ export interface ModelHealth {
   affectedAgents: string[]
 }
 
+// Cadena de modelos gratis (2026-10-15): FreeModelChainController.FreeModelChainView.
+export interface FreeModelChain {
+  models: ModelHealth[]
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
 export interface DependencyInfo {
   id: string
   ecosystem: string

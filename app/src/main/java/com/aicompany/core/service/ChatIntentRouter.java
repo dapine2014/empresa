@@ -1803,6 +1803,7 @@ public class ChatIntentRouter {
         COMPANY_STATUS,
         DEPENDENCIES,
         MODELS,
+        FREE_CHAIN,
         OUTREACH_DRAFTS,
         OUTREACH_STATUS,
         PROSPECTS,
@@ -1888,6 +1889,11 @@ public class ChatIntentRouter {
         // Spec orquestador (2026-09-28).
         if (normalized.contains("orquestador")) {
             return new QueryMatch(QueryIntent.ORCHESTRATOR, null);
+        }
+
+        // Cadena de modelos gratis (2026-10-15): antes que la regla general de modelos.
+        if (normalized.matches(".*\\bmodelos? (gratis|gratuitos?)\\b.*") || normalized.contains("cadena de modelos")) {
+            return new QueryMatch(QueryIntent.FREE_CHAIN, null);
         }
 
         // Spec salud de modelos (2026-09-28).
@@ -2050,6 +2056,7 @@ public class ChatIntentRouter {
             case "DEPENDENCIES" -> formatPendingDependencies();
             case "PRODUCTS" -> formatCatalog();
             case "MODELS" -> formatModelsHealth();
+            case "FREE_CHAIN" -> formatFreeChain();
             case "OUTREACH_DRAFTS" -> formatDrafts();
             case "OUTREACH_STATUS" -> formatOutreachStatus();
             case "PROSPECTS" -> formatProspects();
@@ -2542,8 +2549,11 @@ public class ChatIntentRouter {
     /** Decisión del fundador (2026-10-04): con el gratis caído lo atiende el respaldo pago o, si no, el suplente local. */
     private String downSuffix(String agentId, String model) {
         var effective = modelHealth.effectiveModel(agentId, model);
-        if (effective != null && CeoService.remoteModel(effective).isPresent()) {
+        if (effective != null && effective.equals(modelHealth.paidFallbackFor(agentId))) {
             return " (caído: lo atiende su respaldo pago " + effective + ")";
+        }
+        if (effective != null && CeoService.remoteModel(effective).isPresent()) {
+            return " (caído: lo atiende el siguiente modelo gratis " + effective + ")";
         }
         return " (caído: usa su suplente " + modelHealth.fallbackFor(agentId) + ")";
     }
@@ -2738,6 +2748,26 @@ public class ChatIntentRouter {
                         + ")"
                         : "✅ " + ModelHealthService.shortName(h.model()) + " (" + String.join(", ", h.affectedAgents()) + ")")
                 .collect(Collectors.joining("; ")) + "." + fallbacksLine();
+    }
+
+    /** Cadena de modelos gratis (2026-10-15): el orden en que se prueban antes del respaldo pago, con su estado. */
+    private String formatFreeChain() {
+        var chain = modelHealth.freeChainSnapshot();
+        if (chain.isEmpty()) {
+            return "No hay cadena de modelos gratis: si el modelo de un agente cae, pasa directo a su respaldo pago "
+                    + "(Bedrock) y luego al suplente local. Se configura en Settings → Modelos gratis.";
+        }
+        var lines = new ArrayList<String>();
+        for (int i = 0; i < chain.size(); i++) {
+            var h = chain.get(i);
+            var who = h.affectedAgents().isEmpty() ? "" : " — principal de " + String.join(", ", h.affectedAgents());
+            lines.add((i + 1) + ". " + ("DOWN".equals(h.status())
+                    ? "⚠ " + h.model() + " caído desde " + SINCE.format(h.since()) + " (" + h.lastError() + ")"
+                    : "✅ " + h.model()) + who);
+        }
+        return "Cadena de modelos gratis (si el modelo de un agente de la cadena cae, se prueban los demás en este orden, "
+                + "saltando los caídos; si fallan todos, el respaldo pago en Bedrock y después el suplente local):\n"
+                + String.join("\n", lines);
     }
 
     /** Decisión del fundador (2026-10-03): si el suplente local no está disponible, los agentes no tienen respaldo. */

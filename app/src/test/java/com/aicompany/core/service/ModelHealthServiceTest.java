@@ -167,4 +167,69 @@ class ModelHealthServiceTest {
         health.recordFailure(bedrock, "timeout");
         assertEquals("qwen3-coder:30b", health.effectiveModel("engineering", KIMI));
     }
+    // Cadena de modelos gratis (2026-10-15): validar antes con un ping corto, y el gratis siguiente atiende antes del pago.
+    private static final String K26 = "nvidia:moonshotai/kimi-k2.6";
+    private static final String GLM = "nvidia:z-ai/glm-5.3";
+
+    private FreeModelChainService chainOf(String... models) {
+        var chain = mock(FreeModelChainService.class);
+        when(chain.models()).thenReturn(List.of(models));
+        when(chain.alternativesFor(anyString())).thenAnswer(inv -> List.of(models).contains(inv.<String>getArgument(0))
+                ? List.of(models).stream().filter(m -> !m.equals(inv.getArgument(0))).toList() : List.of());
+        health.setFreeModelChain(chain);
+        return chain;
+    }
+
+    @Test
+    void theQuickCheckMarksAFreeModelThatDoesNotAnswerDownAfterTwoRounds() {
+        chainOf(K26, GLM);
+        when(nvidia.ping("moonshotai/kimi-k2.6")).thenReturn(true);
+        when(nvidia.ping("z-ai/glm-5.3")).thenReturn(false);
+
+        health.probeFreeChain();
+        assertFalse(health.isDown(GLM));
+        health.probeFreeChain();
+
+        assertTrue(health.isDown(GLM));
+        assertFalse(health.isDown(K26));
+    }
+
+    @Test
+    void theQuickCheckDoesNotPingAModelAlreadyDown() {
+        chainOf(K26);
+        health.recordFailure(K26, "x");
+        health.recordFailure(K26, "x");
+
+        health.probeFreeChain();
+
+        verify(nvidia, never()).ping(anyString());
+    }
+
+    @Test
+    void withTheAgentsModelDownTheNextFreeModelServesItBeforeThePaidOne() {
+        chainOf(K26, GLM);
+        when(memory.agentPaidFallbackModel("engineering")).thenReturn("bedrock:global.moonshotai.kimi-k3");
+        health.recordFailure(K26, "x");
+        health.recordFailure(K26, "x");
+
+        assertEquals(GLM, health.effectiveModel("engineering", K26));
+
+        health.recordFailure(GLM, "x");
+        health.recordFailure(GLM, "x");
+        assertEquals("bedrock:global.moonshotai.kimi-k3", health.effectiveModel("engineering", K26));
+    }
+
+    @Test
+    void theChainSnapshotKeepsItsOrderWithStatusAndAgents() {
+        chainOf(GLM, K26);
+        when(memory.agentIdsUsingModel(K26)).thenReturn(List.of("backend"));
+        health.recordFailure(GLM, "timeout");
+        health.recordFailure(GLM, "timeout");
+
+        var snapshot = health.freeChainSnapshot();
+
+        assertEquals(List.of(GLM, K26), snapshot.stream().map(h -> h.model()).toList());
+        assertEquals("DOWN", snapshot.get(0).status());
+        assertEquals(List.of("backend"), snapshot.get(1).affectedAgents());
+    }
 }

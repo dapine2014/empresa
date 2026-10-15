@@ -51,6 +51,8 @@ EMPRESA_FALLBACK_DOWN, EMPRESA_FALLBACK_UP (`ModelHealthService.probeFallbacks`,
 
 EMPRESA_ORCHESTRATOR_STARTED, EMPRESA_ORCHESTRATOR_CHOSE, EMPRESA_ORCHESTRATOR_BUILDING, EMPRESA_ORCHESTRATOR_READY, EMPRESA_ORCHESTRATOR_FAILED, EMPRESA_ORCHESTRATOR_STOPPED (`ProductOrchestrator`, `agentId="orchestrator"`, sin `missionId`; spec `2026-09-28-orquestador-de-producto-design.md`): pasos del ciclo de producto autónomo. `data`: `{runId}`, `{runId, productId, reason}`, `{runId, productId, missionId, teamId}` y `{runId, detail}` para los tres finales (`STOPPED` = el fundador pausó o retiró el producto). EMPRESA_ORCHESTRATOR_PAUSED: el orquestador se pausó solo tras 2 ciclos seguidos en `FAILED` (contados desde la última vez que se encendió); `data` `{reason}`.
 
+EMPRESA_FREE_MODEL_CHAIN_UPDATED (`FreeModelChainService`, `agentId="human"`): el fundador guardó la cadena de modelos gratis desde Settings. `data: {models}` (la lista en orden).
+
 EMPRESA_API_KEY_UPDATED (`ApiKeyService`, `agentId="human"`): el fundador cambió la key de un proveedor de modelos desde Settings, después de que NVIDIA la aceptara. `data: {provider}`. Nunca lleva la key ni parte de ella.
 
 EMPRESA_AGENT_ENABLED_CHANGED (`AgentEnabledController`, `agentId="human"`): el fundador encendió o apagó un agente desde Agents. `data: {agentId, enabled}`. Un agente apagado nunca recibe una llamada al modelo.

@@ -158,10 +158,65 @@ public class ModelHealthService {
         return companyMemory.agentPaidFallbackModel(agentId);
     }
 
-    /** El modelo que de verdad atiende al agente: el suyo; si cayó, el respaldo pago disponible; si no, el suplente. */
+    // ---- Cadena de modelos gratis (decisión del fundador 2026-10-15). ----
+
+    private FreeModelChainService freeChain;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setFreeModelChain(FreeModelChainService freeChain) {
+        this.freeChain = freeChain;
+    }
+
+    /**
+     * "Validar primero": cada 60 s un ping corto (20 s) a cada modelo de la cadena que no esté caído. Así un gratis
+     * saturado queda DOWN (2 fallos) antes de que una misión lo espere minutos; la vuelta la detecta probeDownModels.
+     */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 45_000)
+    public void probeFreeChain() {
+        if (freeChain == null) {
+            return;
+        }
+        for (var model : freeChain.models()) {
+            if (isDown(model)) {
+                continue;
+            }
+            var remote = CeoService.remoteModel(model).orElse(null);
+            var client = remote == null ? null : remotes.get(remote.provider());
+            if (client == null) {
+                continue;
+            }
+            if (client.ping(remote.model())) {
+                recordSuccess(model);
+            } else {
+                recordFailure(model, "no respondió el chequeo rápido (20 s)");
+            }
+        }
+    }
+
+    /** Los modelos de la cadena, en orden, con su estado y los agentes que los tienen como principal. */
+    public List<ModelHealth> freeChainSnapshot() {
+        if (freeChain == null) {
+            return List.of();
+        }
+        return freeChain.models().stream().map(m -> {
+            var s = states.getOrDefault(m, State.UP);
+            return new ModelHealth(m, s.down() ? "DOWN" : "UP", s.since(), s.lastError(), companyMemory.agentIdsUsingModel(m));
+        }).toList();
+    }
+
+    /**
+     * El modelo que de verdad atiende al agente: el suyo; si cayó, el siguiente gratis disponible de la cadena; si no,
+     * el respaldo pago disponible; si no, el suplente.
+     */
     public String effectiveModel(String agentId, String model) {
         if (!isDown(model)) {
             return model;
+        }
+        if (freeChain != null) {
+            var free = freeChain.alternativesFor(model).stream().filter(m -> !isDown(m)).findFirst();
+            if (free.isPresent()) {
+                return free.get();
+            }
         }
         var paid = paidFallbackFor(agentId);
         return paid != null && !paid.isBlank() && !paid.equals(model) && !isDown(paid) ? paid : fallbackFor(agentId);
@@ -229,8 +284,11 @@ public class ModelHealthService {
         events.publish("EMPRESA_MODEL_DOWN", null, null, "system",
                 Map.of("model", model, "error", error == null ? "" : error, "affectedAgents", agents));
         mail.send("⚠ Forjai: " + shortName(model) + " no responde en NVIDIA",
-                "El modelo " + model + " dejó de responder (" + error + ").\n\nMientras tanto, estos agentes trabajan con "
-                        + "su suplente local:\n" + substitutes + "\n\nForjai lo prueba cada 30 segundos y te avisa cuando vuelva.",
+                "El modelo " + model + " dejó de responder (" + error + ").\n\n" + (agents.isEmpty()
+                        ? "Ningún agente lo tiene como principal; queda fuera de la cadena de modelos gratis hasta que vuelva."
+                        : "Mientras tanto, estos agentes pasan al siguiente modelo gratis de la cadena (si lo tienen), a "
+                        + "su respaldo pago o a su suplente local:\n" + substitutes)
+                        + "\n\nForjai lo prueba cada 30 segundos y te avisa cuando vuelva.",
                 true);
     }
 

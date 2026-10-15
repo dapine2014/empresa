@@ -1,4 +1,5 @@
 import type {
+  FreeModelChain,
   AdjustTarget,
   InteractionDesignView,
   DatabaseConnectionForm,
@@ -82,6 +83,9 @@ export const api = {
       body: JSON.stringify({ enabled }),
     }),
   modelsHealth: () => request<ModelHealth[]>('/api/company/models/health'),
+  freeModelChain: () => request<FreeModelChain>('/api/company/models/free-chain'),
+  updateFreeModelChain: (models: string[]) =>
+    request<FreeModelChain>('/api/company/models/free-chain', { method: 'PUT', body: JSON.stringify({ models }) }),
   updateAgentFallbackModel: (agentId: string, model: string) =>
     request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/fallback-model`, {
       method: 'PUT',

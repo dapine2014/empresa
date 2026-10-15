@@ -1785,6 +1785,14 @@ public class CeoService {
         this.modelCost = modelCost;
     }
 
+    private FreeModelChainService freeChain;
+
+    /** Cadena de modelos gratis (2026-10-15). Setter opcional: los tests que no lo usan no cambian. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setFreeModelChain(FreeModelChainService freeChain) {
+        this.freeChain = freeChain;
+    }
+
     /** Spec salud de modelos (2026-09-28). Setter opcional: los tests que no lo usan no cambian. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setModelHealth(ModelHealthService modelHealth) {
@@ -1794,6 +1802,26 @@ public class CeoService {
     /** La llamada del agente va a su suplente local; nunca en silencio (log, y el aviso lo da ModelHealthService). */
     private ModelMessage viaFallback(String operation, String actor, String model, List<Map<String, Object>> messages,
                                      Object format, List<Map<String, Object>> tools, Boolean think, Exception cause) {
+        // Decisión del fundador (2026-10-15): antes de pagar, los demás modelos gratis de la cadena, en orden; los
+        // caídos se saltan y uno que falla por disponibilidad suma su fallo y deja pasar al siguiente.
+        if (freeChain != null) {
+            for (var free : freeChain.alternativesFor(model)) {
+                if (modelHealth.isDown(free) || remoteModel(free).isEmpty()) {
+                    continue;
+                }
+                log.warn("MODEL_FREE_FALLBACK operation={} actor={} model={} free={}", operation, actor, model, free);
+                try {
+                    return callRemote(operation, actor, free, messages, format, tools, System.nanoTime());
+                } catch (RemoteUnavailableException ex) {
+                    modelHealth.recordFailure(free, ex.getMessage());
+                    log.warn("MODEL_FREE_FALLBACK_FAILED operation={} actor={} free={} error={}", operation, actor, free,
+                            ex.getMessage());
+                } catch (RuntimeException ex) {
+                    log.warn("MODEL_FREE_FALLBACK_FAILED operation={} actor={} free={} error={}", operation, actor, free,
+                            ex.getMessage());
+                }
+            }
+        }
         // Decisión del fundador (2026-10-04): primero el respaldo pago (kimi en Bedrock), solo porque el gratis cayó;
         // si también falla, el suplente local. El respaldo pago caído se salta (no se espera de nuevo).
         var paid = modelHealth.paidFallbackFor(actor);
@@ -1821,6 +1849,34 @@ public class CeoService {
             throw new IllegalStateException("El modelo " + model + " no responde en NVIDIA y el suplente " + fallback
                     + " de " + actor + " también falló: " + ex.getMessage(), ex);
         }
+    }
+
+    /** Una llamada a un modelo remoto, sin respaldo: un fallo de disponibilidad sale como RemoteUnavailableException. */
+    private ModelMessage callRemote(String operation, String actor, String model, List<Map<String, Object>> messages,
+                                    Object format, List<Map<String, Object>> tools, long startedAt) {
+        var remoteRef = remoteModel(model).orElseThrow();
+        var remote = remotes.get(remoteRef.provider());
+        if (remote == null) {
+            throw new IllegalStateException("No hay proveedor remoto configurado para \"" + remoteRef.provider()
+                    + "\" (modelo " + model + ").");
+        }
+        var remoteModel = remoteRef.model();
+        var maxTokens = TEAM_STRUCTURED_OPERATIONS.contains(operation)
+                ? REMOTE_TEAM_MAX_OUTPUT_TOKENS : REMOTE_MAX_OUTPUT_TOKENS;
+        // Spec 2026-09-27 §2: herramientas traducidas por el cliente; el guard format+tools ya corrió arriba.
+        var reply = remote.complete(remoteModel, messages, tools, format != null, maxTokens);
+        if (modelHealth != null) {
+            modelHealth.recordSuccess(model);
+        }
+        var usage = reply.usage() == null ? com.aicompany.core.model.TokenUsage.ZERO : reply.usage();
+        if (modelCost != null) {
+            modelCost.record(remoteRef.provider(), remoteModel, actor, operation, usage);
+        }
+        log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={} "
+                        + "inputTokens={} cachedTokens={} outputTokens={}",
+                operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
+                reply.content().length(), reply.toolCalls().size(), usage.input(), usage.cached(), usage.output());
+        return new ModelMessage(reply.content(), reply.toolCalls(), "length".equals(reply.finishReason()));
     }
 
     /**
@@ -1888,17 +1944,12 @@ public class CeoService {
                 throw new IllegalStateException("No hay proveedor remoto configurado para \"" + remoteRef.get().provider()
                         + "\" (modelo " + model + ").");
             }
-            var remoteModel = remoteRef.get().model();
-            var maxTokens = TEAM_STRUCTURED_OPERATIONS.contains(operation)
-                    ? REMOTE_TEAM_MAX_OUTPUT_TOKENS : REMOTE_MAX_OUTPUT_TOKENS;
             // Spec salud de modelos (2026-09-28): un modelo caído no se vuelve a esperar; va al suplente del agente.
             if (modelHealth != null && modelHealth.isDown(model)) {
                 return viaFallback(operation, actor, model, messages, format, tools, think, null);
             }
-            OpenAiCompatibleClient.RemoteReply reply;
             try {
-                // Spec 2026-09-27 §2: herramientas traducidas por el cliente; el guard format+tools ya corrió arriba.
-                reply = remote.complete(remoteModel, messages, tools, format != null, maxTokens);
+                return callRemote(operation, actor, model, messages, format, tools, startedAt);
             } catch (RemoteUnavailableException ex) {
                 if (modelHealth == null) {
                     throw ex;
@@ -1908,18 +1959,6 @@ public class CeoService {
                 modelHealth.recordFailure(model, ex.getMessage());
                 return viaFallback(operation, actor, model, messages, format, tools, think, ex);
             }
-            if (modelHealth != null) {
-                modelHealth.recordSuccess(model);
-            }
-            var usage = reply.usage() == null ? com.aicompany.core.model.TokenUsage.ZERO : reply.usage();
-            if (modelCost != null) {
-                modelCost.record(remoteRef.get().provider(), remoteModel, actor, operation, usage);
-            }
-            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={} "
-                            + "inputTokens={} cachedTokens={} outputTokens={}",
-                    operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
-                    reply.content().length(), reply.toolCalls().size(), usage.input(), usage.cached(), usage.output());
-            return new ModelMessage(reply.content(), reply.toolCalls(), "length".equals(reply.finishReason()));
         }
 
         var body = new java.util.LinkedHashMap<String, Object>();
