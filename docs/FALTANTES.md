@@ -20,7 +20,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [x] | **Diego como DBA: conexiones y PostgreSQL** (incluido AWS RDS) | Diego no puede crear bases reales ni hay dónde cargar credenciales | Spec `2026-10-02-diego-dba-postgresql-design.md` |
 | [ ] | **Diego con MongoDB** (incluido AWS DocumentDB) | Colecciones, validación e índices aplicados con las credenciales del fundador | Spec propio, después de PostgreSQL |
 | [ ] | **Diego con Firebase/Firestore** | Colecciones, índices y reglas con la cuenta de servicio del fundador | Spec propio |
-| [ ] | **Habilitar a Kael (juegos 2D con Godot)** | El equipo es híbrido (decisión del fundador 2026-10-02): Kael está encendido pero su rol está bloqueado por "fase 3" | Siguiente rol a corregir |
+| [x] | **Habilitar a Kael (juegos 2D con Godot)** | Hecho (2026-10-14, rama `kael-hibrido`): Kael diseña apps y juegos (aprobado junto con las HU de Aria) y programa juegos 2D en Godot con partidas simuladas de Vera. Pendiente: despliegue (imagen `godot-dotnet-game:2`, prompt v3 y modelo) y las pruebas en vivo (CRM `APP`, Pong `GAME`), que esperan el OK del fundador | Spec `2026-10-14-kael-hibrido-design.md` |
 | [ ] | **Juegos (Kael, Orion, Luna)** | Godot, Blender y proveedores de arte y audio no están habilitados | Fase 3 |
 | [ ] | **Entrega, chat y pantalla del Development Group** | `DeliveryResult`, consultas de rondas y backlog en el chat, detalle en Missions | Bloque 8 |
 | [ ] | **Prueba de aceptación en vivo** | Hello World Flutter en `VERIFIED` por chat, incluido un reinicio a mitad de misión | Bloque 9 |
@@ -45,6 +45,16 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | Ventanas de reinicio entre `claimNextRound`, `addCorrectionRound` y `correctAsync` | Misiones durables (revisión final) | Un reinicio justo ahí deja la ronda reclamada sin pedido guardado o sin lanzar |
 | [ ] | Se pierden los `packages` de una tarea saltada si su resultado guardado no se puede leer | Misiones durables (revisión final) | La tarea se salta igual; el `.csproj` puede quedar sin el paquete |
 | [ ] | La lista "Retomadas tras el reinicio" del status crece sin límite mientras no se reinicie | Misiones durables (revisión final) | Recortar a las recientes o a las que siguen en curso |
+| [ ] | Assets (sprites, sonido) con Orion y Luna | Kael híbrido (fuera de alcance) | Hoy los juegos se dibujan con nodos; `GameAssetGate` rechaza assets externos |
+| [ ] | Game UI de Mila (HUD y menús en Godot) | Kael híbrido (fuera de alcance) | Mila solo programa Flutter |
+| [ ] | Exportar el juego para que el fundador lo juegue | Kael híbrido (fuera de alcance) | La evidencia es la partida simulada en el sandbox |
+| [ ] | Juegos 3D | Kael híbrido (fuera de alcance) | Orion (`SPECIALIST_3D`) sigue sin habilitar |
+| [ ] | Juego + backend en una misión | Kael híbrido (fuera de alcance) | Un juego usa solo `GODOT_DOTNET_GAME` |
+| [ ] | Verificar balance y engagement con datos reales (Gael, telemetría) | Kael híbrido (fuera de alcance) | Hoy quedan como hipótesis en el reporte |
+| [ ] | Prompts activos vacíos de Aria, Orion y Andrea (v1, 2026-10-01) | Kael híbrido (fuera de alcance) | Hay que escribirlos |
+| [ ] | El prompt de Mila dice React/Vue y genera Flutter | Kael híbrido (fuera de alcance) | Actualizar el prompt |
+| [ ] | Ruteo determinista por dueño de la corrección de `DESIGN_CONFORMANCE` | Kael híbrido (ruling de la tarea 12) | El spec decía «al dueño del archivo» (Mila o Kael); hoy usa la corrección genérica (Neo reparte con el detalle exacto), igual que `SCENARIO_COVERAGE`. Mirar en las pruebas en vivo si Neo asigna mal |
+| [ ] | Pruebas en vivo de Kael: CRM `APP` (`VERIFIED` con `DESIGN_CONFORMANCE` en PASS) y Pong `GAME` (`SCENARIO_COVERAGE` 100 %) | Kael híbrido (spec §6) | Esperan el OK del fundador y el despliegue |
 
 ## 3. Fuera del código
 

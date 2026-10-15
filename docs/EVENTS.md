@@ -87,6 +87,12 @@ EMPRESA_REQUIREMENTS_APPROVED, EMPRESA_REQUIREMENTS_REJECTED (`MissionService.de
 
 EMPRESA_REQUIREMENTS_ADJUSTED (`MissionExecutor`, `agentId="human"`): Aria rehízo los requisitos con el ajuste del fundador (versión nueva, vuelve a esperar aprobación). `data: {version, instruction}`.
 
+EMPRESA_INTERACTION_DESIGN_READY (`MissionExecutor`, `agentId="interaction-design"`; spec `2026-10-14-kael-hibrido-design.md`): Kael diseñó la interacción (apps) o el juego sobre las HU de Aria, con un diseño válido. Solo en misiones con `experience` `APP`/`GAME`. `data: {version, specVersion}` (`specVersion` = la versión de HU sobre la que se hizo). Orden en el flujo: `EMPRESA_REQUIREMENTS_READY` primero, después este.
+
+EMPRESA_INTERACTION_DESIGN_ADJUSTED (`MissionExecutor`, `agentId="human"`): Kael rehizo el diseño por un ajuste del fundador dirigido a él (`target: KAEL`, chat «para MISSION-X, Kael: …»); la misión vuelve a esperar aprobación. `data: {version, instruction}`. Un ajuste a Aria publica `EMPRESA_REQUIREMENTS_ADJUSTED` y, al rediseñar Kael sobre las HU nuevas, `EMPRESA_INTERACTION_DESIGN_READY`.
+
+`EMPRESA_REQUIREMENTS_APPROVED` y `EMPRESA_REQUIREMENTS_REJECTED` siguen siendo la decisión conjunta de HU y diseño; en misiones con diseño, `EMPRESA_REQUIREMENTS_APPROVED` agrega `interactionDesignVersion` a `data` (opcional: ausente en misiones sin diseño, `NONE` o anteriores a Kael).
+
 EMPRESA_INCREMENT_STARTED (`MissionExecutor.buildIncrementAsync`, `agentId="human"`): arrancó el incremento N sobre el mismo repositorio, como ronda de la misión que no consume `MAX_EVIDENCE_ROUNDS`. `data: {increment, round}`.
 
 EMPRESA_MISSION_RESUMED (`MissionExecutor.resumeAsync`, `agentId="system"`; spec misiones durables): una misión del Development Group se retomó tras un reinicio (o con "reanuda MISSION-X" / `POST /missions/{id}/resume`). `data: {stage, round, kind}` — `stage` = `ResumePoint.Stage` (dónde sigue), `round` = ronda en curso, `kind` = `ResumePoint.Kind`.
