@@ -498,6 +498,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             checks = new ArrayList<>(checks);
             checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
             checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId), tests));
+            designConformance(missionId, headSha,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult)).ifPresent(checks::add);
             var report = com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
             reviewError = COVERAGE_REPORT + report;
             memory.updateTask(validationTaskId, "COMPLETED", COVERAGE_REPORT + report);
@@ -713,6 +715,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
             checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId),
                     sandboxResult.allTests()));
+            designConformance(missionId, headSha,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult)).ifPresent(checks::add);
             coverageReport = COVERAGE_REPORT + com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
         }
 
@@ -1565,6 +1569,45 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setRequirements(RequirementsMemoryService requirementsMemory) {
         this.requirementsMemory = requirementsMemory;
+    }
+
+    private InteractionDesignMemoryService designs;
+
+    /** Spec 2026-10-14 Kael §1.4: el diseño aprobado de Kael para DESIGN_CONFORMANCE. Opcional: sin él, no se chequea. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setInteractionDesign(InteractionDesignMemoryService designs) {
+        this.designs = designs;
+    }
+
+    /** Spec 2026-10-14 Kael §1.4: con diseño aprobado, el chequeo DESIGN_CONFORMANCE junto a la cobertura. */
+    private java.util.Optional<StaticCheck> designConformance(String missionId, String headSha,
+                                                              List<SandboxResult.TestCase> tests) {
+        if (designs == null || requirementsMemory == null || headSha == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var approved = designs.approved(missionId);
+            var spec = requirementsMemory.approved(missionId);
+            if (approved == null || spec == null || approved.isEmpty() || spec.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            var design = jsonMapper.readValue(approved.get().designJson(),
+                    com.aicompany.core.agent.model.InteractionDesign.class);
+            var requirements = jsonMapper.readValue(spec.get().specJson(),
+                    com.aicompany.core.agent.model.RequirementsSpec.class);
+            var files = new LinkedHashMap<String, String>();
+            for (var path : workspace.filesAtCommit(missionId, headSha)) {
+                if (path.endsWith(".dart") || path.endsWith("project.godot") || path.contains("game/playthroughs/")) {
+                    files.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+                }
+            }
+            return java.util.Optional.of(com.aicompany.core.agent.validation.DesignConformance.check(design, requirements,
+                    Math.max(1, requirementsMemory.currentIncrement(missionId)), files, tests));
+        } catch (Exception ex) {
+            // Como scenarios(): un diseño o un commit ilegible no es un error que un agente pueda corregir.
+            log.warn("MISSION {} - could not check the design conformance: {}", missionId, ex.getMessage());
+            return java.util.Optional.empty();
+        }
     }
 
     /** Escenarios de los incrementos 1..N (N = el que se construye o el último construido); vacío sin requisitos. */

@@ -1669,6 +1669,89 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains(head), result.verifiableState());
     }
 
+    // ---- Spec 2026-10-14 Kael §1.4: DESIGN_CONFORMANCE ----
+
+    private static final com.aicompany.core.agent.model.InteractionDesign APP_DESIGN =
+            new com.aicompany.core.agent.model.InteractionDesign("APP",
+                    new com.aicompany.core.agent.model.InteractionDesign.AppDesign(
+                            List.of(new com.aicompany.core.agent.model.InteractionDesign.Screen("PANT-01", "Lista", "ver",
+                                    "vendedor", List.of())),
+                            List.of(new com.aicompany.core.agent.model.InteractionDesign.Flow("HU-01", List.of("PANT-01"),
+                                    List.of())),
+                            List.of(new com.aicompany.core.agent.model.InteractionDesign.ScenarioScreen("ESC-01", "PANT-01")),
+                            List.of("r")), null);
+
+    private void withApprovedDesign() throws Exception {
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(APP_DESIGN), "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+    }
+
+    // Con diseño aprobado, una pantalla sin su Key deja la validación FAILED aunque la cobertura esté completa.
+    @Test
+    void withAnApprovedDesignAScreenWithoutItsKeyFailsTheValidation() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("PANT-01")
+                        && json.contains("SCENARIO_COVERAGE")));
+    }
+
+    @Test
+    void withAnApprovedDesignFollowedTheValidationIsVerified() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("app/lib/main.dart")))
+                .thenReturn("Widget build(c) => Scaffold(key: const Key('PANT-01'));");
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("VERIFIED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE")));
+    }
+
+    // Sin diseño aprobado (misión NONE o anterior a Kael): el chequeo no existe.
+    @Test
+    void withoutAnApprovedDesignThereIsNoDesignConformance() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.empty());
+        strategy.setInteractionDesign(designs);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("VERIFIED"),
+                argThat(json -> !json.contains("DESIGN_CONFORMANCE")));
+    }
+
+    @Test
+    void verifyHeadAlsoChecksTheDesignConformance() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("PANT-01")));
+    }
+
     private TeamMissionContext withQaWorkAndDatabase() throws Exception {
         var base = withQaWork();
         var p = base.plan();
