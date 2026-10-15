@@ -73,4 +73,29 @@ class InteractionDesignWriterTest {
                 anyString(), anyString());
         verify(missions).createTask("M-1-INTERACTION-V2", "M-1", "interaction-design", "INTERACTION_DESIGN", "DESIGN");
     }
+
+    @Test void theCorrectionAndThePreviousDesignShowTheFlatDesignNotTheWrapper() {
+        when(designs.latest("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1, "{}", "DRAFT", 1, "")));
+        when(ceo.writeAppDesign(anyString(), anyString(), anyString(), anyString())).thenReturn(INVALID, VALID);
+        writer.write("M-1", SPEC, 1, Optional.of(new InteractionDesign("APP", VALID, null)), "lista con buscador");
+        var prompts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(ceo, times(2)).writeAppDesign(anyString(), prompts.capture(), anyString(), anyString());
+        var first = prompts.getAllValues().get(0);
+        var second = prompts.getAllValues().get(1);
+        assertTrue(first.contains("DISEÑO ANTERIOR") && first.contains("\"screens\""), first);
+        assertTrue(second.contains("Así entendió Java"), second);
+        for (var p : List.of(first, second)) {
+            assertFalse(p.contains("\"experience\"") || p.contains("\"app\":"), p);
+        }
+    }
+
+    @Test void aPreviousDesignOfAnotherExperienceIsIgnored() {
+        when(designs.latest("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1, "{}", "DRAFT", 1, "")));
+        when(ceo.writeAppDesign(anyString(), anyString(), anyString(), anyString())).thenReturn(VALID);
+        var game = new GameDesign(List.of("PLAYING"), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of());
+        writer.write("M-1", SPEC, 2, Optional.of(new InteractionDesign("GAME", null, game)), "más simple");
+        verify(ceo).writeAppDesign(anyString(), argThat(p -> !p.contains("DISEÑO ANTERIOR") && !p.contains("PLAYING")
+                && p.contains("más simple")), anyString(), anyString());
+    }
 }

@@ -75,7 +75,9 @@ public class InteractionDesignWriter {
         try {
             var model = company.agentModel(KAEL, defaultModel);
             var agentPrompt = prompts.activePrompt(KAEL);
-            var base = prompt(spec, experience, previous, adjustment);
+            // Si Aria cambió la experiencia (APP→GAME), el diseño anterior no sirve de base.
+            var sameExperience = previous.filter(p -> experience.name().equals(p.experience()));
+            var base = prompt(spec, experience, sameExperience, adjustment);
             String feedback = null;
             String understood = null;
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -112,7 +114,7 @@ public class InteractionDesignWriter {
                     return new Written(version, design);
                 }
                 feedback = "- " + String.join("\n- ", errors);
-                understood = json.writeValueAsString(design);
+                understood = flat(design);
                 log.warn("MISSION {} - interaction design rejected attempt={} errors={} understood={}", missionId,
                         attempt, feedback, understood.length() > 4000 ? understood.substring(0, 4000) + "…" : understood);
             }
@@ -157,10 +159,15 @@ public class InteractionDesignWriter {
         var base = "Eres Kael, Interactive Logic & Product Designer del Development Group de Forjai.\n\n"
                 + "HISTORIAS DE USUARIO DE ARIA (todas las del producto):\n" + allStories + "\n" + rules;
         if (previous.isEmpty()) {
-            return base;
+            return adjustment == null || adjustment.isBlank() ? base : base + "\nAJUSTE DEL FUNDADOR:\n" + adjustment;
         }
         return base + "\nDISEÑO ANTERIOR (conserva lo que no contradiga el ajuste ni las HU actuales):\n"
-                + json.writeValueAsString(previous.get()) + "\n\nAJUSTE DEL FUNDADOR:\n"
+                + flat(previous.get()) + "\n\nAJUSTE DEL FUNDADOR:\n"
                 + (adjustment == null ? "" : adjustment);
+    }
+
+    /** El diseño en el mismo formato plano que se le pide a Kael (sin el envoltorio experience/app/game). */
+    private String flat(InteractionDesign design) {
+        return json.writeValueAsString(design.app() != null ? design.app() : design.game());
     }
 }
