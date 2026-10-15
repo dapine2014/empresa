@@ -474,6 +474,7 @@ public class ChatIntentRouter {
         var normalized = normalize(message);
         return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
                 || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
+                || SHOW_DESIGN.matcher(normalized).find() || ADJUST_KAEL.matcher(message).find()
                 || requirementsAdjustment(message) != null;
     }
 
@@ -932,19 +933,29 @@ public class ChatIntentRouter {
 
     /** La cobertura de escenarios de la última validación de la misión (QA casos de uso), si la tiene. */
     private Optional<Coverage> latestCoverage(String missionId) {
+        return latestCheck(missionId, "SCENARIO_COVERAGE").map(c -> c.coverage());
+    }
+
+    private record CheckResult(String status, String detail, Coverage coverage) {
+    }
+
+    /** El chequeo estático {@code check} de la última validación de la misión, si lo tiene. */
+    private Optional<CheckResult> latestCheck(String missionId, String check) {
         var latest = missionMemory.tasks(missionId).stream()
                 .filter(t -> "VALIDATION".equals(t.kind()) && t.staticChecks() != null
-                        && t.staticChecks().contains("SCENARIO_COVERAGE"))
+                        && t.staticChecks().contains(check))
                 .max(java.util.Comparator.comparing(AgentTask::updatedAt, java.util.Comparator.nullsFirst(
                         java.util.Comparator.naturalOrder())));
         if (latest.isEmpty()) {
             return Optional.empty();
         }
         var detail = "";
+        var status = "";
         try {
             for (var node : CHECKS_JSON.readTree(latest.get().staticChecks())) {
-                if ("SCENARIO_COVERAGE".equals(node.path("check").asString())) {
+                if (check.equals(node.path("check").asString())) {
                     detail = node.path("detail").asString();
+                    status = node.path("status").asString();
                 }
             }
         } catch (Exception ex) {
@@ -952,7 +963,7 @@ public class ChatIntentRouter {
         }
         var report = latest.get().result() == null ? "" : latest.get().result()
                 .replace(DevelopmentTeamStrategy.COVERAGE_REPORT, "");
-        return Optional.of(new Coverage(latest.get().validationStatus(), detail, report));
+        return Optional.of(new CheckResult(status, detail, new Coverage(latest.get().validationStatus(), detail, report)));
     }
 
     /** Costo real por misión (2026-10-04): respuesta armada en Java desde (:ModelUsage). */
@@ -1121,6 +1132,11 @@ public class ChatIntentRouter {
     /** Spec 2026-10-03 Aria §2: comandos de requisitos; van antes que la decisión del inversionista. */
     private static final Pattern SHOW_STORIES = Pattern.compile(
             "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
+    /** Spec 2026-10-14 Kael: ver el diseño de interacción y ajustarlo solo con Kael ("para MISSION-X, Kael: …"). */
+    private static final Pattern SHOW_DESIGN = Pattern.compile(
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:\\S+\\s+){0,2}?dise(?:n|ñ)o\\b.*?(" + MISSION_REF + ")");
+    private static final Pattern ADJUST_KAEL = Pattern.compile(
+            "(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*,\\s*kael\\s*:\\s*(.+)$", Pattern.DOTALL);
     private static final Pattern APPROVE_STORIES = Pattern.compile(
             "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern REJECT_STORIES = Pattern.compile(
@@ -1141,6 +1157,22 @@ public class ChatIntentRouter {
                 return "Arrancó el incremento " + build.group(1) + " de " + missionId
                         + " sobre el mismo repositorio. Te aviso cuando termine.";
             }
+            var showDesign = SHOW_DESIGN.matcher(normalized);
+            if (showDesign.find()) {
+                var missionId = showDesign.group(1).toUpperCase(Locale.ROOT);
+                return missionService.interactionDesign(missionId)
+                        .map(v -> "Diseño de Kael de " + missionId + " (versión " + v.version() + ", " + v.status() + "): "
+                                + v.summary())
+                        .orElse(missionId + " no tiene diseño de Kael.");
+            }
+            var adjustKael = ADJUST_KAEL.matcher(message);
+            if (adjustKael.find()) {
+                var missionId = adjustKael.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjustKael.group(2).strip(),
+                        RequirementsDecisionCommand.Target.KAEL));
+                return "Le pasé el ajuste a Kael; te aviso cuando el diseño de " + missionId + " esté listo.";
+            }
             var show = SHOW_STORIES.matcher(normalized);
             if (show.find()) {
                 var missionId = show.group(1).toUpperCase(Locale.ROOT);
@@ -1153,9 +1185,13 @@ public class ChatIntentRouter {
             var approve = APPROVE_STORIES.matcher(normalized);
             if (approve.find()) {
                 var missionId = approve.group(1).toUpperCase(Locale.ROOT);
+                // Se consulta antes de decidir, para saber si había diseño de Kael que aprobar junto con las HU.
+                var withDesign = missionService.interactionDesign(missionId)
+                        .map(v -> "DRAFT".equals(v.status()) || "APPROVED".equals(v.status())).orElse(false);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
-                return "Requisitos de " + missionId + " aprobados: Neo planifica el incremento 1.";
+                return "Requisitos" + (withDesign ? " y diseño" : "") + " de " + missionId
+                        + " aprobados: Neo planifica el incremento 1.";
             }
             var reject = REJECT_STORIES.matcher(normalized);
             if (reject.find()) {
@@ -2093,8 +2129,9 @@ public class ChatIntentRouter {
         var awaitingSpec = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_SPEC_APPROVAL)
                 .map(MissionResponse::missionId).toList();
         var specLine = awaitingSpec.isEmpty() ? ""
-                : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec)
-                        + " (\"muéstrame las HU de <misión>\").";
+                : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec.stream()
+                        .map(id -> missionService.interactionDesign(id).isPresent() ? id + " (HU + diseño)" : id).toList())
+                        + " (\"muéstrame las HU de <misión>\"; \"muéstrame el diseño de <misión>\").";
         // Revisión final QA (M6): cobertura N/M de las misiones que esperan tu decisión (cualquier entorno).
         var coverage = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
                 .flatMap(m -> latestCoverage(m.missionId()).map(c -> m.missionId() + " " + c.ratio()).stream())
@@ -2102,6 +2139,14 @@ public class ChatIntentRouter {
         var coverageLine = coverage.isEmpty() ? ""
                 : " Cobertura de escenarios: " + String.join(", ", coverage)
                         + " (\"¿qué escenarios cubre <misión>?\").";
+
+        // Spec 2026-10-14 Kael: la conformidad con el diseño, donde se lista la cobertura.
+        var conformance = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
+                .flatMap(m -> latestCheck(m.missionId(), com.aicompany.core.agent.validation.DesignConformance.CHECK)
+                        .map(c -> m.missionId() + " " + c.status() + " (" + c.detail() + ")").stream())
+                .toList();
+        var conformanceLine = conformance.isEmpty() ? ""
+                : " Conformidad con el diseño: " + String.join(", ", conformance) + ".";
 
         var recoveryLine = recoveryLine(all);
 
@@ -2164,7 +2209,7 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + specLine + coverageLine + recoveryLine + databasePendingLine(all) + orchestratorLine() + downModelsLine();
+        ) + specLine + coverageLine + conformanceLine + recoveryLine + databasePendingLine(all) + orchestratorLine() + downModelsLine();
     }
 
     /**

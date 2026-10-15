@@ -2,6 +2,7 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.RequirementsView;
+import com.aicompany.core.model.InteractionDesignView;
 import com.aicompany.core.model.FinanceEntry;
 
 import com.aicompany.core.model.FinanceSummary;
@@ -2550,6 +2551,59 @@ class ChatIntentRouterTest {
         var response = router.route("dame un status");
 
         assertTrue(response.contains("Cobertura de escenarios: MISSION-CRM 17/19"), response);
+    }
+
+    // Spec 2026-10-14 Kael §chat: ver el diseño, ajustarlo solo con Kael y verlo en el status (todo en Java).
+    @Test
+    void showsTheDesignWithoutCallingAModel() {
+        when(missionService.interactionDesign("MISSION-7")).thenReturn(Optional.of(new InteractionDesignView("MISSION-7", 2,
+                "DRAFT", 1, null, null, "Loop: START→PLAYING")));
+        var reply = router.route("muéstrame el diseño de MISSION-7");
+        assertTrue(reply.contains("Loop: START→PLAYING") && reply.contains("versión 2"), reply);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void anAdjustmentForKaelIsRoutedToKael() {
+        router.route("para MISSION-7, Kael: la paleta más grande");
+        verify(missionService).decideRequirements("MISSION-7", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "la paleta más grande",
+                RequirementsDecisionCommand.Target.KAEL));
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void anAdjustmentWithoutKaelStillGoesToAria() {
+        when(missionService.requirements("MISSION-7")).thenReturn(Optional.of(new RequirementsView("MISSION-7",
+                "AWAITING_SPEC_APPROVAL", 1, "DRAFT", null, 0, 2, null, "x")));
+        router.route("para MISSION-7: sin reportes");
+        verify(missionService).decideRequirements("MISSION-7", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "sin reportes"));
+    }
+
+    @Test
+    void approvingMentionsTheDesignWhenThereIsOne() {
+        when(missionService.interactionDesign("MISSION-9")).thenReturn(Optional.of(new InteractionDesignView("MISSION-9", 1,
+                "DRAFT", 1, null, null, "x")));
+        var reply = router.route("apruebo las HU de MISSION-9");
+        assertTrue(reply.contains("Requisitos y diseño de MISSION-9 aprobados"), reply);
+    }
+
+    @Test
+    void theStatusShowsTheDesignConformanceWhereTheCoverageIsListed() {
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-G", MissionStatus.AWAITING_INVESTOR, "TEST", 100, "x", "x", Instant.now(), null)));
+        when(missionMemory.tasks("MISSION-G")).thenReturn(List.of(new AgentTask("MISSION-G-QA-REVIEW", "MISSION-G",
+                "qa", "CODE_REVIEW", "COMPLETED", "", Instant.now(), "VALIDATION", null, null, List.of(), "VERIFIED",
+                "[{\"check\":\"SCENARIO_COVERAGE\",\"status\":\"PASS\",\"detail\":\"3/3 escenarios\"},"
+                        + "{\"check\":\"DESIGN_CONFORMANCE\",\"status\":\"PASS\",\"detail\":\"5/5 pantallas\"}]", null)));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("Conformidad con el diseño: MISSION-G PASS (5/5 pantallas)"), response);
     }
 
     // Revisión final (I2): la gobernanza va primero; la pregunta de cobertura no se roba una decisión.
