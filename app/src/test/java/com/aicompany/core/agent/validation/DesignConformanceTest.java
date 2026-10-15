@@ -28,6 +28,17 @@ class DesignConformanceTest {
         assertTrue(pass.passed(), pass.detail());
     }
 
+    // Revisión Task 12: ValueKey y comillas dobles valen; PANT-010 no satisface PANT-01.
+    @Test void keyVariantsAndExactIds() {
+        var spec = InteractionDesignTextTest.SPEC;
+        assertTrue(DesignConformance.check(APP, spec, 1,
+                Map.of("lib/a.dart", "Scaffold(key: const ValueKey('PANT-01'))"), List.of()).passed());
+        assertTrue(DesignConformance.check(APP, spec, 1,
+                Map.of("lib/a.dart", "Scaffold(key: const Key(\"PANT-01\"))"), List.of()).passed());
+        assertFalse(DesignConformance.check(APP, spec, 1,
+                Map.of("lib/a.dart", "Scaffold(key: const Key('PANT-010'))"), List.of()).passed());
+    }
+
     // Una Key fuera de lib/ (p. ej. en un test) no cuenta.
     @Test void aKeyOutsideLibDoesNotCount() {
         var check = DesignConformance.check(APP, InteractionDesignTextTest.SPEC, 1,

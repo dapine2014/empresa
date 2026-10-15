@@ -1585,10 +1585,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (designs == null || requirementsMemory == null || headSha == null) {
             return java.util.Optional.empty();
         }
+        // Revisión Task 12: con diseño aprobado el chequeo falla cerrado; solo "sin diseño aprobado" lo omite.
         try {
             var approved = designs.approved(missionId);
+            if (approved == null || approved.isEmpty()) {
+                return java.util.Optional.empty();
+            }
             var spec = requirementsMemory.approved(missionId);
-            if (approved == null || spec == null || approved.isEmpty() || spec.isEmpty()) {
+            if (spec == null || spec.isEmpty()) {
                 return java.util.Optional.empty();
             }
             var design = jsonMapper.readValue(approved.get().designJson(),
@@ -1604,9 +1608,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return java.util.Optional.of(com.aicompany.core.agent.validation.DesignConformance.check(design, requirements,
                     Math.max(1, requirementsMemory.currentIncrement(missionId)), files, tests));
         } catch (Exception ex) {
-            // Como scenarios(): un diseño o un commit ilegible no es un error que un agente pueda corregir.
-            log.warn("MISSION {} - could not check the design conformance: {}", missionId, ex.getMessage());
-            return java.util.Optional.empty();
+            var message = safeMessage(ex, "sin detalle");
+            log.warn("MISSION {} - could not check the design conformance: {}", missionId, message);
+            return java.util.Optional.of(StaticCheck.fail(com.aicompany.core.agent.validation.DesignConformance.CHECK,
+                    "No se pudo verificar la conformidad con el diseño (problema de lectura, no del código): " + message,
+                    headSha, List.of()));
         }
     }
 

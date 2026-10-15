@@ -1737,6 +1737,88 @@ class DevelopmentTeamStrategyTest {
                 argThat(json -> !json.contains("DESIGN_CONFORMANCE")));
     }
 
+    // Revisión Task 12: con diseño aprobado, un problema de lectura falla cerrado (nunca VERIFIED sin conformidad).
+    @Test
+    void aReadingProblemWithAnApprovedDesignFailsClosed() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("app/lib/main.dart")))
+                .thenThrow(new java.io.IOException("git show falló"));
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE")
+                        && json.contains("No se pudo verificar la conformidad con el diseño (problema de lectura, no del código)")
+                        && json.contains("git show falló")));
+    }
+
+    @Test
+    void aFailingDesignServiceFailsClosed() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenThrow(new IllegalStateException("Neo4j caído"));
+        strategy.setInteractionDesign(designs);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("problema de lectura")
+                        && json.contains("Neo4j caído")));
+    }
+
+    @Test
+    void aCorruptDesignFailsClosed() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(
+                new InteractionDesignMemoryService.Version(1, "{no es json", "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("problema de lectura")));
+    }
+
+    // Con un diseño GAME aprobado, una acción de control sin declarar en project.godot deja la validación FAILED.
+    @Test
+    void withAnApprovedGameDesignAnUndeclaredActionFailsTheValidation() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var game = new com.aicompany.core.agent.model.InteractionDesign("GAME", null,
+                new com.aicompany.core.agent.model.InteractionDesign.GameDesign(List.of("PLAYING"), List.of(), List.of(),
+                        List.of(new com.aicompany.core.agent.model.InteractionDesign.Control("move_right", "Right", "x")),
+                        List.of(new com.aicompany.core.agent.model.InteractionDesign.Rule("REGLA-01", "move_right", "avanza")),
+                        List.of(), List.of("REGLA-01"), List.of(),
+                        List.of(new com.aicompany.core.agent.model.InteractionDesign.ScenarioRule("ESC-01", "move_right")),
+                        List.of("h")));
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(game), "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("backend/src/Clientes.Api/Program.cs",
+                "app/lib/main.dart", "game/project.godot"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/project.godot"))).thenReturn("[input]\n");
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("move_right")));
+    }
+
     @Test
     void verifyHeadAlsoChecksTheDesignConformance() throws Exception {
         stubFullstack();
