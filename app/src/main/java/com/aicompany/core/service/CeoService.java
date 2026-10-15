@@ -1260,6 +1260,22 @@ public class CeoService {
                 com.aicompany.core.agent.model.RequirementsSpec.class);
     }
 
+    /** Spec 2026-10-14 Kael §1.3: diseño de interacción de una app. format sin tools. */
+    public com.aicompany.core.agent.model.InteractionDesign.AppDesign writeAppDesign(String agentId, String prompt,
+                                                                                    String agentPrompt, String model) {
+        return callStructured("APP_DESIGN", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.InteractionDesign.AppDesign.SCHEMA,
+                com.aicompany.core.agent.model.InteractionDesign.AppDesign.class);
+    }
+
+    /** Spec 2026-10-14 Kael §1.3: diseño de un juego. format sin tools. */
+    public com.aicompany.core.agent.model.InteractionDesign.GameDesign writeGameDesign(String agentId, String prompt,
+                                                                                      String agentPrompt, String model) {
+        return callStructured("GAME_DESIGN", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.InteractionDesign.GameDesign.SCHEMA,
+                com.aicompany.core.agent.model.InteractionDesign.GameDesign.class);
+    }
+
     /** Código real de una tarea WORK (spec §6): format DevelopmentResultSchema, sin tools. */
     public DevelopmentResult generateDevelopmentArtifact(String agentId, String prompt, String agentPrompt, String model) {
         return callStructured("DEVELOPMENT_TASK", agentId, prompt, agentPrompt, model,
