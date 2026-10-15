@@ -2582,6 +2582,37 @@ class ChatIntentRouterTest {
     }
 
     @Test
+    void otherDesignQueriesDoNotReachTheKaelDesign() {
+        for (var msg : List.of("dame el diseño de la base de MISSION-7", "ver el diseño del plan de Neo de MISSION-7",
+                "@neo dame el diseño de MISSION-7")) {
+            try {
+                router.route(msg);
+            } catch (RuntimeException ignored) {
+                // el resto del ruteo no está armado en este test; solo importa que no entre al diseño de Kael
+            }
+        }
+        verify(missionService, never()).interactionDesign(anyString());
+    }
+
+    @Test
+    void showsTheDesignOfKaelAndRepliesWhenThereIsNone() {
+        when(missionService.interactionDesign("MISSION-7")).thenReturn(Optional.empty());
+        assertTrue(router.route("muéstrame el diseño de Kael de MISSION-7").contains("no tiene diseño de Kael"));
+    }
+
+    @Test
+    void theStatusListsHuPlusDesignForMissionsAwaitingApproval() {
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-H", MissionStatus.AWAITING_SPEC_APPROVAL, "TEST", 10, "x", "x", Instant.now(), null)));
+        when(missionService.interactionDesign("MISSION-H")).thenReturn(Optional.of(new InteractionDesignView("MISSION-H", 1,
+                "DRAFT", 1, null, null, "x")));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+        assertTrue(router.route("dame un status").contains("MISSION-H (HU + diseño)"));
+    }
+
+    @Test
     void approvingMentionsTheDesignWhenThereIsOne() {
         when(missionService.interactionDesign("MISSION-9")).thenReturn(Optional.of(new InteractionDesignView("MISSION-9", 1,
                 "DRAFT", 1, null, null, "x")));

@@ -1134,7 +1134,8 @@ public class ChatIntentRouter {
             "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
     /** Spec 2026-10-14 Kael: ver el diseño de interacción y ajustarlo solo con Kael ("para MISSION-X, Kael: …"). */
     private static final Pattern SHOW_DESIGN = Pattern.compile(
-            "(?i)\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:\\S+\\s+){0,2}?dise(?:n|ñ)o\\b.*?(" + MISSION_REF + ")");
+            "(?i)^\\s*(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:el\\s+)?dise(?:n|ñ)o"
+                    + "(?:\\s+(?:de\\s+kael|de\\s+interaccion|del\\s+juego|de\\s+pantallas))?\\s+de\\s+(" + MISSION_REF + ")");
     private static final Pattern ADJUST_KAEL = Pattern.compile(
             "(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*,\\s*kael\\s*:\\s*(.+)$", Pattern.DOTALL);
     private static final Pattern APPROVE_STORIES = Pattern.compile(
@@ -1157,14 +1158,6 @@ public class ChatIntentRouter {
                 return "Arrancó el incremento " + build.group(1) + " de " + missionId
                         + " sobre el mismo repositorio. Te aviso cuando termine.";
             }
-            var showDesign = SHOW_DESIGN.matcher(normalized);
-            if (showDesign.find()) {
-                var missionId = showDesign.group(1).toUpperCase(Locale.ROOT);
-                return missionService.interactionDesign(missionId)
-                        .map(v -> "Diseño de Kael de " + missionId + " (versión " + v.version() + ", " + v.status() + "): "
-                                + v.summary())
-                        .orElse(missionId + " no tiene diseño de Kael.");
-            }
             var adjustKael = ADJUST_KAEL.matcher(message);
             if (adjustKael.find()) {
                 var missionId = adjustKael.group(1).toUpperCase(Locale.ROOT);
@@ -1172,6 +1165,14 @@ public class ChatIntentRouter {
                         RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjustKael.group(2).strip(),
                         RequirementsDecisionCommand.Target.KAEL));
                 return "Le pasé el ajuste a Kael; te aviso cuando el diseño de " + missionId + " esté listo.";
+            }
+            var showDesign = SHOW_DESIGN.matcher(normalized);
+            if (showDesign.find()) {
+                var missionId = showDesign.group(1).toUpperCase(Locale.ROOT);
+                return missionService.interactionDesign(missionId)
+                        .map(v -> "Diseño de Kael de " + missionId + " (versión " + v.version() + ", " + v.status() + "): "
+                                + v.summary())
+                        .orElse(missionId + " no tiene diseño de Kael.");
             }
             var show = SHOW_STORIES.matcher(normalized);
             if (show.find()) {
