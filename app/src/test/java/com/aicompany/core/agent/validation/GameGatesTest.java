@@ -62,4 +62,26 @@ class GameGatesTest {
         assertFalse(ReservedGamePathsGate.check(List.of(new GeneratedFile("game-client/game/playthroughs/E.cs", "x")), false).isEmpty());
         assertEquals(List.of(), ReservedGamePathsGate.check(List.of(new GeneratedFile("game-client/game/playthroughs/E.cs", "x")), true));
     }
+
+    @Test void commentsAreIgnored() {
+        assertEquals(List.of(), GameAssetGate.check(List.of(new GeneratedFile("game/Ball.cs",
+                "// sprite.png\n/* pong.wav */ var x = 1;"))));
+        assertFalse(GameAssetGate.check(List.of(new GeneratedFile("game/Ball.cs",
+                "var s = GD.Load<Texture2D>(\"res://sprite.png\"); // carga"))).isEmpty());
+        var roots = List.of("src/Pong.Domain");
+        assertEquals(List.of(), InjectableRandomGate.check(List.of(new GeneratedFile("src/Pong.Domain/Ball.cs",
+                "// no usar new Random()\n/* GD.Randf() */ var a = 1;")), roots));
+    }
+
+    @Test void godotRandomTypesAreRejectedAndThePrefixIsHonored() {
+        var roots = List.of("game-client/src/Pong.Domain");
+        assertFalse(InjectableRandomGate.check(List.of(new GeneratedFile("game-client/src/Pong.Domain/Ball.cs",
+                "var r = new RandomNumberGenerator();")), roots).isEmpty());
+        assertFalse(InjectableRandomGate.check(List.of(new GeneratedFile("game-client/src/Pong.Domain/Ball.cs",
+                "var r = GD.Randfn(0, 1);")), roots).isEmpty());
+        assertFalse(InjectableRandomGate.check(List.of(new GeneratedFile("game-client/src/Pong.Domain/Ball.cs",
+                "var r = new Random();")), roots).isEmpty());
+        assertEquals(List.of(), InjectableRandomGate.check(List.of(new GeneratedFile("src/Pong.Domain/Ball.cs",
+                "var r = new Random();")), roots));
+    }
 }

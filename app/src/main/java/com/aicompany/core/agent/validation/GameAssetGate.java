@@ -25,7 +25,8 @@ public final class GameAssetGate {
             if (!inGame || !(path.endsWith(".tscn") || path.endsWith(".tres") || path.endsWith(".cs"))) {
                 continue;
             }
-            var m = ASSET.matcher(f.content() == null ? "" : f.content());
+            var content = path.endsWith(".cs") ? CSharpComments.strip(f.content()) : (f.content() == null ? "" : f.content());
+            var m = ASSET.matcher(content);
             if (m.find()) {
                 errors.add(path + " usa el asset externo \"" + m.group() + "\": no hay arte ni audio; dibuja con nodos "
                         + "(ColorRect, Polygon2D, Label) o en _Draw().");

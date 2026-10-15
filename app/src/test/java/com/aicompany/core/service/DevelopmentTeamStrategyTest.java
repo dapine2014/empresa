@@ -34,43 +34,6 @@ class DevelopmentTeamStrategyTest {
 
     private final MissionMemoryService memory = mock(MissionMemoryService.class);
     private final DevelopmentRuntime runtime = mock(DevelopmentRuntime.class);
-
-    private final java.util.Map<String, Integer> gameCalls = new java.util.HashMap<>();
-
-    {
-        // Un plan con juego añade los gates de juego: la generación pasa por la variante con chequeos. Por defecto
-        // se reenvía a las variantes sin chequeos que los tests ya stubean: la primera llamada de una tarea a la de 6
-        // args (si está stubbeada para ella) y las siguientes (correcciones) a la de 7; sin stub, a la otra.
-        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
-                .thenAnswer(inv -> {
-                    var a = inv.getArguments();
-                    var id = (String) a[0];
-                    @SuppressWarnings("unchecked")
-                    var owned = (List<String>) a[4];
-                    @SuppressWarnings("unchecked")
-                    var projects = (List<String>) a[5];
-                    @SuppressWarnings("unchecked")
-                    var required = (List<String>) a[6];
-                    var nth = gameCalls.merge(id, 1, Integer::sum);
-                    var has6 = stubbedFor(id, 6);
-                    var has7 = stubbedFor(id, 7);
-                    var use6 = has6 && (nth == 1 || !has7);
-                    return use6 ? runtime.generate(id, (String) a[1], (String) a[2], (String) a[3], owned, projects)
-                            : runtime.generate(id, (String) a[1], (String) a[2], (String) a[3], owned, projects, required);
-                });
-    }
-
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private boolean stubbedFor(String id, int args) {
-        return org.mockito.Mockito.mockingDetails(runtime).getStubbings().stream().anyMatch(st -> {
-            var inv = st.getInvocation();
-            if (!inv.getMethod().getName().equals("generate") || inv.getMethod().getParameterCount() != args
-                    || !(st instanceof org.mockito.internal.invocation.InvocationMatcher matcher)) {
-                return false;
-            }
-            return ((org.mockito.ArgumentMatcher) matcher.getMatchers().get(0)).matches(id);
-        });
-    }
     private final DevelopmentWorkspaceService workspace = mock(DevelopmentWorkspaceService.class);
     private final StaticWorkspaceValidator validator = mock(StaticWorkspaceValidator.class);
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
@@ -114,9 +77,9 @@ class DevelopmentTeamStrategyTest {
     }
 
     private void stubHappyPath() throws Exception {
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any()))
@@ -161,7 +124,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void qaWithATestsTaskReviewsUnderItsOwnTaskId() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("tests/Combate.Tests/CombateTests.cs")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
@@ -255,7 +218,7 @@ class DevelopmentTeamStrategyTest {
     void workAndReviewPromptsCarryTheProfileContextsAndGlossary() throws Exception {
         stubHappyPath();
         var workPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/Atacar.cs")));
         var reviewPrompt = ArgumentCaptor.forClass(String.class);
         when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
@@ -277,7 +240,7 @@ class DevelopmentTeamStrategyTest {
     void theOwnerOfAnEntryFilesFolderIsToldToCreateIt() throws Exception {
         stubHappyPath();
         var neoPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("game/project.godot")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -368,9 +331,9 @@ class DevelopmentTeamStrategyTest {
         when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
         when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
-        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
@@ -394,7 +357,7 @@ class DevelopmentTeamStrategyTest {
         // Verificado en vivo (MISSION-E2E-ENG ronda 1): exigir un archivo en cada ruta obligaba a Iris a reenviar todo
         // su código; la API terminó fallando. En una ronda lo no devuelto queda como está en el repositorio.
         verify(runtime).generate(eq("M-1-FRONTEND-UI-R1"), eq("M-1"), eq("frontend-ui"),
-                argThat(p -> p.contains("devuelve solo los archivos que cambias")), anyList(), anyList(), eq(List.of()));
+                argThat(p -> p.contains("devuelve solo los archivos que cambias")), anyList(), anyList(), eq(List.of()), any());
     }
 
     // Verificado en vivo (MISSION-ARIA-CRM-1791093806, incremento 2): un contexto nuevo en una ronda no tenía sus .csproj
@@ -410,7 +373,7 @@ class DevelopmentTeamStrategyTest {
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Game.csproj"))).thenThrow(new java.io.IOException("no existe"));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD-R2"), eq("forjai"), eq("Forjai"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord("b".repeat(40), List.of("game/Game.csproj")));
-        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
         when(workspace.commitAgentWork(eq("M-1"), endsWith("-R2"), argThat(a -> !"forjai".equals(a)), anyString(), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
@@ -441,9 +404,9 @@ class DevelopmentTeamStrategyTest {
         var roundOne = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
-        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
 
         when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
@@ -459,11 +422,38 @@ class DevelopmentTeamStrategyTest {
         verify(workspace, never()).headSha("M-1");
     }
 
+    // Spec 2026-10-14 Kael §2.2: un plan con juego pasa los gates de juego como chequeos de la generación.
+    @Test
+    @SuppressWarnings("unchecked")
+    void aGamePlanAppliesTheGameGatesToEveryGeneration() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var checks = ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(),
+                anyList(), checks.capture());
+        var gate = (java.util.function.Function<DevelopmentResult, List<String>>) checks.getValue();
+        assertEquals(List.of(), gate.apply(dev("src/Combate.Application/Ok.cs")));
+        var asset = gate.apply(new DevelopmentResult("r", List.of(new GeneratedFile("game/Main.tscn",
+                "[ext_resource type=\"Texture2D\" path=\"res://paleta.png\" id=\"2\"]"))));
+        assertTrue(asset.stream().anyMatch(e -> e.contains("asset externo")), asset.toString());
+        var random = gate.apply(new DevelopmentResult("r", List.of(new GeneratedFile("src/Combate.Domain/Dado.cs",
+                "var r = new Random();"))));
+        assertTrue(random.stream().anyMatch(e -> e.contains("azar")), random.toString());
+        // Mila no es QA: las partidas de Vera y el runner de Forjai le están vedados.
+        var reserved = gate.apply(new DevelopmentResult("r", List.of(
+                new GeneratedFile("game/playthroughs/ESC_01.cs", "x"), new GeneratedFile("game/forjai/Runner.cs", "x"))));
+        assertEquals(2, reserved.size(), reserved.toString());
+    }
+
     @Test
     void forjaiCommitsTheProjectScaffoldBeforeTheAgentsWork() throws Exception {
         stubHappyPath();
         var milaPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -473,7 +463,7 @@ class DevelopmentTeamStrategyTest {
         var inOrder = inOrder(workspace, runtime);
         inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"),
                 argThat(r -> r.files().stream().anyMatch(f -> f.path().equals("game/Game.csproj"))));
-        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
         assertTrue(milaPrompt.getValue().contains("los genera Forjai"), milaPrompt.getValue());
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-6): la regla vieja "nadie va a ejecutar este código" era falsa
         // con el sandbox y se filtró textual dentro de Tarea.cs.
@@ -495,7 +485,7 @@ class DevelopmentTeamStrategyTest {
 
         verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
                 argThat(list -> list.contains("src/Combate.Domain/Combate.Domain.csproj")
-                        && list.contains("game/Game.csproj")));
+                        && list.contains("game/Game.csproj")), anyList(), any());
     }
 
     // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
@@ -506,9 +496,9 @@ class DevelopmentTeamStrategyTest {
         stubHappyPath();
         var milaPrompt = ArgumentCaptor.forClass(String.class);
         var neoPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -516,9 +506,9 @@ class DevelopmentTeamStrategyTest {
         strategy.execute(context(), progress);
 
         var inOrder = inOrder(runtime, workspace);
-        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
         inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), anyString(), anyString(), any());
-        inOrder.verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
         assertFalse(milaPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), milaPrompt.getValue());
         assertTrue(neoPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), neoPrompt.getValue());
         assertTrue(neoPrompt.getValue().contains("### web/ui/hud.js"), neoPrompt.getValue());
@@ -577,9 +567,9 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")))
                 .thenReturn(pass);
         var milaPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -603,7 +593,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void theCorrectionCycleStopsAfterTheMaximumRounds() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
@@ -637,9 +627,8 @@ class DevelopmentTeamStrategyTest {
         stubHappyPath();
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
-                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")))
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("reintentos agotados")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -650,7 +639,7 @@ class DevelopmentTeamStrategyTest {
         inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), anyString());
         inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), contains("se conserva el commit"));
         verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(),
-                contains("propias rutas o usa los tipos que sí existen"), anyList(), anyList(), eq(List.of("src/Combate.Application")));
+                contains("propias rutas o usa los tipos que sí existen"), anyList(), anyList(), eq(List.of("src/Combate.Application")), any());
     }
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): CS0246 por un "using" faltante de un tipo que existe en
@@ -681,7 +670,8 @@ class DevelopmentTeamStrategyTest {
         verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-AUTOFIX"), eq("forjai"), eq("Forjai"),
                 argThat(r -> r.files().get(0).content().contains("using System;\nusing Combate.Domain;\n")));
         verify(sandbox).verify("M-1", "6".repeat(40), "GODOT_DOTNET_GAME");
-        verify(runtime, never()).generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList());
+        verify(runtime, never()).generate(anyString(), anyString(), anyString(), contains("CORRECCIÓN DEL SANDBOX"),
+                anyList(), anyList(), anyList(), any());
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
         assertTrue(result.verifiableState().contains("Correcciones automáticas de Forjai: 1"), result.verifiableState());
     }
@@ -697,7 +687,8 @@ class DevelopmentTeamStrategyTest {
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
         var repairPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
                         new DevelopmentResult.GeneratedFile("src/Combate.Application/X.cs",
                                 "linea1\nlinea2\n    var t = lista._tareas;\n")))))
@@ -708,9 +699,9 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context(), progress);
 
-        var first = repairPrompts.getAllValues().get(0);
+        var first = repairPrompts.getAllValues().get(1);
         assertTrue(first.contains("línea 3: var t = lista._tareas;"), first);
-        var second = repairPrompts.getAllValues().get(1);
+        var second = repairPrompts.getAllValues().get(2);
         assertTrue(second.contains("devolviste tus archivos SIN CAMBIOS"), second);
     }
 
@@ -727,14 +718,15 @@ class DevelopmentTeamStrategyTest {
                         + "for 'Estado' [/work/x.csproj]", 0, 0)));
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(fail));
         var repairPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")))
                 .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
         strategy.execute(context(), progress);
 
-        var prompt = repairPrompts.getAllValues().get(0);
+        var prompt = repairPrompts.getAllValues().get(1);
         assertTrue(prompt.contains("otras definiciones de 'Estado'"), prompt);
         assertTrue(prompt.contains("línea 4: public enum Estado { A }"), prompt);
     }
@@ -751,7 +743,8 @@ class DevelopmentTeamStrategyTest {
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
         var repairPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
                         new GeneratedFile("src/Combate.Application/X.cs", "x\n"),
                         new GeneratedFile("src/Combate.Application/Y.cs", "y\n")))));
@@ -760,14 +753,14 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context(), progress);
 
-        assertTrue(repairPrompts.getAllValues().get(1).contains("SIN CAMBIOS"), repairPrompts.getAllValues().get(1));
+        assertTrue(repairPrompts.getAllValues().get(2).contains("SIN CAMBIOS"), repairPrompts.getAllValues().get(2));
     }
 
     // Parte 3: los paquetes pedidos por un agente .NET entran al .csproj de su capa (commit de Forjai) antes de verificar.
     @Test
     void requestedNugetPackagesAreAddedToTheScaffoldBeforeVerifying() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("r",
                         List.of(new GeneratedFile("src/Combate.Application/X.cs", "x")),
                         List.of(new DevelopmentResult.PackageRequest("Newtonsoft.Json", "13.0.3")))));
@@ -790,7 +783,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void pendingDependenciesSkipTheSandboxAndLeaveItUnvalidated() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("r",
                         List.of(new GeneratedFile("src/Combate.Application/X.cs", "x")),
                         List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")))));
@@ -1239,7 +1232,7 @@ class DevelopmentTeamStrategyTest {
         for (var id : List.of("M-1-BACKEND", "M-1-FRONTEND-UI")) {
             var result = CompletableFuture.completedFuture(id.endsWith("BACKEND")
                     ? dev("backend/src/Clientes.Api/Program.cs") : dev("app/lib/main.dart"));
-            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList())).thenReturn(result);
+            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any())).thenReturn(result);
             when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                     .thenReturn(result);
         }
@@ -1464,7 +1457,7 @@ class DevelopmentTeamStrategyTest {
         var plan = new TeamPlan(p.summary(), null, null, tasks, List.of(), p.stackProfile(), p.boundedContexts(),
                 p.ubiquitousLanguage(), null, p.components());
         var context = new TeamMissionContext("M-1", base.instruction(), base.team(), plan);
-        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
         when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
@@ -1825,11 +1818,11 @@ class DevelopmentTeamStrategyTest {
 
         verify(workspace).discardUncommitted("M-1");
         verify(workspace, never()).dropHeadCommit("M-1");
-        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any());
-        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), any());
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), anyList(), any());
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), any(), any());
         verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), any(), any());
         // La otra tarea sí se genera; los paquetes de la ya hecha llegan al commit de dependencias.
-        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
         verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), any(), any(), any());
     }
 
@@ -1890,7 +1883,7 @@ class DevelopmentTeamStrategyTest {
         strategy.execute(context, progress);
 
         verify(workspace).dropHeadCommit("M-1");
-        verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+        verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
     }
 
     // Verificado en vivo (MISSION-DUR-1791333307): un reinicio durante una ronda de reparación deja la tarea WORK en
@@ -1913,7 +1906,7 @@ class DevelopmentTeamStrategyTest {
         }
 
         verify(workspace, never()).dropHeadCommit("M-1");
-        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
     }
 
     // El commit raíz no se retrocede (la tarea se regenera encima).
