@@ -170,6 +170,12 @@ public class RequirementsMemoryService {
         }
     }
 
+    /** Spec 2026-10-14 Kael (Review Focus 2): tras un ajuste a Kael, la versión de HU vuelve a poder decidirse. */
+    public void releaseDecision(String missionId, int version) {
+        write("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
+                + "REMOVE r.decisionClaimedAt, r.pendingAdjustment", Map.of("id", missionId, "v", version));
+    }
+
     private void write(String cypher, Map<String, Object> params) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
