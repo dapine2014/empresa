@@ -30,7 +30,8 @@ public class ExperienceRuleTest {
         var ins = "TIPO DE EXPERIENCIA: GAME\nPEDIDO: un pong";
         assertEquals(List.of(), ExperienceRule.errors(ins, plan("GODOT_DOTNET_GAME", "interaction-design", "qa"), TEAM));
         var errors = String.join("\n", ExperienceRule.errors(ins, plan("FLUTTER_WEB_APP", "frontend-ui"), TEAM));
-        assertTrue(errors.contains("GODOT_DOTNET_GAME") && errors.contains("interaction-design") && errors.contains("qa"), errors);
+        assertTrue(errors.contains("incluye GODOT_DOTNET_GAME en components") && errors.contains("Falta interaction-design (GAME_DEV)")
+                && errors.contains("Falta qa (QA)"), errors);
     }
 
     @Test void anAppNeedsFlutterAndMila() {
@@ -46,5 +47,39 @@ public class ExperienceRuleTest {
     @Test void withoutTheLineNothingIsRequired() {
         assertEquals(List.of(), ExperienceRule.errors("PEDIDO: un CRM", plan("DOTNET_APP", "backend"), TEAM));
         assertTrue(ExperienceRule.declared("PEDIDO: un CRM").isEmpty());
+    }
+
+    private static TeamSnapshot teamWithout(String role) {
+        return new TeamSnapshot("TEAM-DEVELOPMENT", "DG", "ACTIVE", "engineering",
+                TEAM.members().stream().filter(m -> !role.equals(m.roleCode())).toList());
+    }
+
+    @Test void aGameWithoutAnActiveGameDevIsAnError() {
+        var errors = String.join("\n", ExperienceRule.errors("TIPO DE EXPERIENCIA: GAME",
+                plan("GODOT_DOTNET_GAME", "qa"), teamWithout("GAME_DEV")));
+        assertTrue(errors.contains("GAME_DEV") && errors.contains("activo"), errors);
+    }
+
+    @Test void anAppWithFlutterButWithoutMilaInThePlanIsAnError() {
+        var errors = String.join("\n", ExperienceRule.errors("TIPO DE EXPERIENCIA: APP",
+                plan("FLUTTER_WEB_APP", "backend"), TEAM));
+        assertTrue(errors.contains("Falta frontend-ui (UI_UX)"), errors);
+    }
+
+    @Test void anAppWithoutAnActiveUiUxIsAnError() {
+        var errors = String.join("\n", ExperienceRule.errors("TIPO DE EXPERIENCIA: APP",
+                plan("FLUTTER_WEB_APP", "backend"), teamWithout("UI_UX")));
+        assertTrue(errors.contains("UI_UX") && errors.contains("activo"), errors);
+    }
+
+    @Test void noneWithoutInterfacesPasses() {
+        assertEquals(List.of(), ExperienceRule.errors("TIPO DE EXPERIENCIA: NONE", plan("DOTNET_APP", "backend"), TEAM));
+    }
+
+    @Test void declaredToleratesCrlfAndLongerText() {
+        assertEquals(java.util.Optional.of(com.aicompany.core.agent.model.RequirementsSpec.Experience.GAME),
+                ExperienceRule.declared("TIPO DE EXPERIENCIA: GAME\r\nPEDIDO: x"));
+        assertEquals(java.util.Optional.of(com.aicompany.core.agent.model.RequirementsSpec.Experience.APP),
+                ExperienceRule.declared("intro\nmás texto\nTIPO DE EXPERIENCIA: APP\nPEDIDO: y\notro"));
     }
 }

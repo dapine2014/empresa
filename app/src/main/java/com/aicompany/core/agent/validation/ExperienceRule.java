@@ -39,13 +39,13 @@ public final class ExperienceRule {
         var hasApp = plan.hasComponent(StackProfile.FLUTTER_WEB_APP);
         switch (experience.get()) {
             case GAME -> {
-                if (!hasGame) errors.add("El fundador aprobó un JUEGO: usa stackProfile GODOT_DOTNET_GAME.");
-                requireRole(team, agents, "GAME_DEV", "el juego lo programa", errors);
-                requireRole(team, agents, "QA", "las partidas y los tests los escribe", errors);
+                if (!hasGame) errors.add("El fundador aprobó un JUEGO: incluye GODOT_DOTNET_GAME en components.");
+                requireRole(team, agents, "GAME_DEV", "Kael", "el juego lo programa", "un JUEGO", errors);
+                requireRole(team, agents, "QA", "Vera", "las partidas y los tests los escribe", "un JUEGO", errors);
             }
             case APP -> {
                 if (!hasApp) errors.add("El fundador aprobó una APP con pantallas: incluye FLUTTER_WEB_APP en components.");
-                requireRole(team, agents, "UI_UX", "las pantallas las programa", errors);
+                requireRole(team, agents, "UI_UX", "Mila", "las pantallas las programa", "una APP con pantallas", errors);
             }
             case NONE -> {
                 if (hasApp || hasGame) errors.add("El fundador aprobó un producto SIN interfaz (solo API o servicio): "
@@ -55,9 +55,13 @@ public final class ExperienceRule {
         return errors;
     }
 
-    private static void requireRole(TeamSnapshot team, List<String> agents, String role, String why, List<String> errors) {
+    private static void requireRole(TeamSnapshot team, List<String> agents, String role, String name, String why,
+                                    String approved, List<String> errors) {
         var member = team.members().stream().filter(m -> role.equals(m.roleCode())).findFirst();
-        if (member.isPresent() && !agents.contains(member.get().agentId())) {
+        if (member.isEmpty()) {
+            errors.add("El equipo no tiene un miembro " + role + " activo (" + name + "): enciéndelo en el Command Center; "
+                    + "el fundador aprobó " + approved + ".");
+        } else if (!agents.contains(member.get().agentId())) {
             errors.add("Falta " + member.get().agentId() + " (" + role + "): " + why + " " + member.get().agentId() + ".");
         }
     }
