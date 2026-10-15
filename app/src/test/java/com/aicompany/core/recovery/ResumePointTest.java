@@ -77,4 +77,25 @@ class ResumePointTest {
         assertEquals(ResumePoint.RoundKind.EVIDENCE, ResumePoint.of(dev(1, null, false, "APPROVED", true, null, true,
                 List.of())).kind());
     }
+    // Spec 2026-10-14 Kael §1.2: un reinicio con el spec en DRAFT y sin diseño para esa versión retoma en Kael.
+    @Test void aDraftThatNeedsADesignWithoutOneGoesToKael() {
+        var s = new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 0, null, false, "DRAFT", false, null, false, List.of(), null,
+                true, false, null);
+        assertEquals(ResumePoint.Stage.DESIGN, ResumePoint.of(s).stage());
+    }
+    @Test void aClaimedDesignAdjustmentIsRepeated() {
+        var s = new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 0, null, false, "DRAFT", false, null, false, List.of(), null,
+                true, true, "más grande la paleta");
+        assertEquals(ResumePoint.Stage.DESIGN_ADJUSTMENT, ResumePoint.of(s).stage());
+    }
+    @Test void aDraftWithItsDesignAwaitsApproval() {
+        var s = new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 0, null, false, "DRAFT", false, null, false, List.of(), null,
+                true, true, null);
+        assertEquals(ResumePoint.Stage.AWAIT_APPROVAL, ResumePoint.of(s).stage());
+    }
+    // Review Focus 3: un spec sin experience (o NONE) no necesita a Kael.
+    @Test void aLegacyDraftAwaitsApprovalWithoutKael() {
+        assertEquals(ResumePoint.Stage.AWAIT_APPROVAL, ResumePoint.of(dev(0, null, false, "DRAFT", false, null, false,
+                List.of())).stage());
+    }
 }

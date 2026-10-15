@@ -5,8 +5,13 @@ package com.aicompany.core.recovery;
  */
 public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increment) {
 
-    /** HUMAN_VERIFY (revisión 2026-10-06 §5): una verificación humana cortada se repite como verificación, sin modelos. */
-    public enum Stage { REQUIREMENTS, ADJUSTMENT, AWAIT_APPROVAL, PLAN, GENERATE, VERIFY, INTERRUPT, HUMAN_VERIFY }
+    /**
+     * HUMAN_VERIFY (revisión 2026-10-06 §5): una verificación humana cortada se repite como verificación, sin modelos.
+     * DESIGN / DESIGN_ADJUSTMENT (spec 2026-10-14 Kael §1.2): Kael diseña (o ajusta) sobre el borrador de Aria, sin
+     * repetir a Aria.
+     */
+    public enum Stage { REQUIREMENTS, ADJUSTMENT, AWAIT_APPROVAL, PLAN, GENERATE, VERIFY, INTERRUPT, HUMAN_VERIFY, DESIGN,
+        DESIGN_ADJUSTMENT }
 
     public enum RoundKind { ORIGINAL, INCREMENT, EVIDENCE, CORRECTION }
 
@@ -27,6 +32,14 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
         if (!s.requirementsApproved()) {
             if (s.pendingAdjustment() != null) {
                 return new ResumePoint(Stage.ADJUSTMENT, s.round(), kind, increment);
+            }
+            if ("DRAFT".equals(s.latestRequirementsStatus()) && s.designNeeded()) {
+                if (s.pendingDesignAdjustment() != null) {
+                    return new ResumePoint(Stage.DESIGN_ADJUSTMENT, s.round(), kind, increment);
+                }
+                if (!s.designForLatestSpec()) {
+                    return new ResumePoint(Stage.DESIGN, s.round(), kind, increment);
+                }
             }
             if ("DRAFT".equals(s.latestRequirementsStatus())) {
                 return new ResumePoint(Stage.AWAIT_APPROVAL, s.round(), kind, increment);

@@ -250,6 +250,21 @@ public class MissionRecoveryService {
         executor.verifyAsync(missionId);
     }
 
+    private InteractionDesignMemoryService designs;
+    private tools.jackson.databind.json.JsonMapper json = tools.jackson.databind.json.JsonMapper.builder().build();
+
+    /** Spec 2026-10-14 Kael §1.2: para retomar en la etapa de Kael (opcional en tests: sin él, nunca se retoma en Kael). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setInteractionDesigns(InteractionDesignMemoryService designs) {
+        this.designs = designs;
+    }
+
+    /** El JsonMapper de la aplicación (opcional en tests: uno por defecto lee el spec igual). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setJsonMapper(tools.jackson.databind.json.JsonMapper json) {
+        this.json = json;
+    }
+
     private DevelopmentWorkspaceService workspace;
 
     /** Revisión 2026-10-06 §5: para saber si la misión tiene repositorio (opcional en tests). */
@@ -423,10 +438,26 @@ public class MissionRecoveryService {
                         // Revisión final (1): una verificación ya FAILED (verifyHead lanzó) no es una verificación a medias.
                         && !"FAILED".equals(t.status()))
                 .map(AgentTask::taskId).orElse(null);
+        // Spec 2026-10-14 Kael §1.2: un spec APP/GAME en DRAFT sin diseño para su versión retoma en Kael.
+        var designNeeded = false;
+        var designForLatest = false;
+        String pendingDesign = null;
+        // Solo con el spec en DRAFT (ResumePoint no mira estos campos en otro caso): un spec ya aprobado no se relee.
+        if (designs != null && latest.filter(v -> "DRAFT".equals(v.status())).isPresent()) {
+            var latestSpec = latest.map(v -> json.readValue(v.specJson(),
+                    com.aicompany.core.agent.model.RequirementsSpec.class)).orElse(null);
+            var experience = latestSpec == null ? null : latestSpec.experienceOrNull();
+            designNeeded = experience == com.aicompany.core.agent.model.RequirementsSpec.Experience.APP
+                    || experience == com.aicompany.core.agent.model.RequirementsSpec.Experience.GAME;
+            var latestDesign = designs.latest(missionId);
+            designForLatest = latestDesign.filter(d -> "DRAFT".equals(d.status())
+                    && latest.map(v -> v.version() == d.specVersion()).orElse(false)).isPresent();
+            pendingDesign = designs.pendingAdjustment(missionId).orElse(null);
+        }
         return new MissionSnapshot(missionId, mission.teamId(), round, increment, correction,
                 latest.map(RequirementsMemoryService.Version::status).orElse(null),
                 requirements.approved(missionId).isPresent(), requirements.pendingAdjustment(missionId).orElse(null),
-                planTask || !tasks.isEmpty(), tasks, humanVerify);
+                planTask || !tasks.isEmpty(), tasks, humanVerify, designNeeded, designForLatest, pendingDesign);
     }
 
     private Optional<AgentTask> lastValidation(String missionId) {

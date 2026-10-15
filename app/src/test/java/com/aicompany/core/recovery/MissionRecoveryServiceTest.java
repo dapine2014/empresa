@@ -232,6 +232,26 @@ class MissionRecoveryServiceTest {
         assertTrue(snapshot.correctionRound());
     }
 
+    // Spec 2026-10-14 Kael §1.2: un spec GAME en DRAFT cuyo diseño es de una versión anterior retoma en Kael.
+    @Test void aGameDraftWithAnOutdatedDesignNeedsKael() throws Exception {
+        var designs = mock(InteractionDesignMemoryService.class);
+        service.setInteractionDesigns(designs);
+        var spec = new com.aicompany.core.agent.model.RequirementsSpec("Juego", List.of(), List.of(), List.of(), List.of(),
+                List.of(), "GAME");
+        when(missions.tasks("M-1")).thenReturn(List.of());
+        when(requirements.latest("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(2,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(spec), "DRAFT", "", null)));
+        when(designs.latest("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1, "{}", "DRAFT", 1, "")));
+        var snapshot = service.snapshot(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT"));
+        assertTrue(snapshot.designNeeded());
+        assertFalse(snapshot.designForLatestSpec());
+        assertEquals(ResumePoint.Stage.DESIGN, ResumePoint.of(snapshot).stage());
+        when(designs.latest("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(2, "{}", "DRAFT", 2, "")));
+        when(designs.pendingAdjustment("M-1")).thenReturn(Optional.of("paleta"));
+        assertEquals(ResumePoint.Stage.DESIGN_ADJUSTMENT,
+                ResumePoint.of(service.snapshot(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT"))).stage());
+    }
+
     @Test void aFinishedHumanVerificationIsNotPending() {
         var now = Instant.now();
         when(missions.evidenceRound("M-1")).thenReturn(0);

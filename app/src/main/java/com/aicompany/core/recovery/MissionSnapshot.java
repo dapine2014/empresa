@@ -8,11 +8,23 @@ import java.util.List;
  * incremento ({@code incrementRoundsByNumber}), o {@code buildingIncrement} en la ronda 0; {@code correctionRound}:
  * la ronda está en {@code correctionRounds}; {@code humanVerifyTask}: la verificación humana cortada (la última tarea de la
  * misión es una {@code -HUMAN-VERIFY-} sin validationStatus; revisión 2026-10-06 §5), o null.
+ * <p>
+ * Spec 2026-10-14 Kael §1.2: {@code designNeeded}: el último spec de Aria es APP o GAME (y Kael está disponible);
+ * {@code designForLatestSpec}: hay un diseño DRAFT de Kael para esa versión del spec; {@code pendingDesignAdjustment}: el
+ * ajuste a Kael reclamado y sin terminar, o null.
  */
 public record MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
                               String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,
-                              boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask) {
+                              boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask,
+                              boolean designNeeded, boolean designForLatestSpec, String pendingDesignAdjustment) {
     public record RoundTask(String taskId, String status, String commitSha) { }
+
+    public MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
+                           String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,
+                           boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask) {
+        this(missionId, teamId, round, incrementOfRound, correctionRound, latestRequirementsStatus, requirementsApproved,
+                pendingAdjustment, planForRound, workTasks, humanVerifyTask, false, false, null);
+    }
 
     public MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
                            String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,

@@ -233,6 +233,58 @@ public class MissionExecutor {
         return mode == TeamExecutionMode.DEVELOPMENT && requirementsWriter != null && requirementsMemory != null;
     }
 
+    private InteractionDesignWriter designWriter;
+    private InteractionDesignMemoryService designMemory;
+
+    /** Spec 2026-10-14 Kael: opcional (sin él, las misiones siguen solo con Aria). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setInteractionDesign(InteractionDesignWriter designWriter, InteractionDesignMemoryService designMemory) {
+        this.designWriter = designWriter;
+        this.designMemory = designMemory;
+    }
+
+    private boolean needsDesign(com.aicompany.core.agent.model.RequirementsSpec spec) {
+        var e = spec.experienceOrNull();
+        return designWriter != null && designMemory != null
+                && (e == com.aicompany.core.agent.model.RequirementsSpec.Experience.APP
+                || e == com.aicompany.core.agent.model.RequirementsSpec.Experience.GAME);
+    }
+
+    /**
+     * Spec 2026-10-14 Kael §1.2: Kael diseña sobre el borrador de Aria; null si la misión no lo necesita. Con Kael apagado
+     * {@code InteractionDesignWriter.write} lanza IllegalStateException y el hilo de la misión la deja FAILED.
+     */
+    private InteractionDesignWriter.Written design(String missionId, RequirementsWriter.Written written,
+                                                   java.util.Optional<com.aicompany.core.agent.model.InteractionDesign> previous,
+                                                   String adjustment) {
+        if (!needsDesign(written.spec())) {
+            return null;
+        }
+        advanceMission(missionId, MissionStatus.PLANNING, 6, "Diseño (Kael)",
+                "Kael está diseñando " + (written.spec().experienceOrNull()
+                        == com.aicompany.core.agent.model.RequirementsSpec.Experience.GAME
+                        ? "la mecánica del juego." : "la interacción."));
+        var designed = designWriter.write(missionId, written.spec(), written.version(), previous, adjustment);
+        events.publish("EMPRESA_INTERACTION_DESIGN_READY", missionId, null, InteractionDesignWriter.KAEL,
+                Map.of("version", designed.version(), "specVersion", written.version()));
+        return designed;
+    }
+
+    /**
+     * Spec 2026-10-14 Kael §1.2: Aria reescribió las HU, así que el diseño anterior queda SUPERSEDED y Kael rediseña sobre
+     * las HU nuevas (si la misión lo necesita) antes de volver a esperar al fundador.
+     */
+    private void awaitApprovalAfterAria(String missionId, RequirementsWriter.Written written) {
+        java.util.Optional<com.aicompany.core.agent.model.InteractionDesign> previousDesign = java.util.Optional.empty();
+        if (designMemory != null) {
+            previousDesign = designMemory.latest(missionId).map(v -> jsonMapper.readValue(v.designJson(),
+                    com.aicompany.core.agent.model.InteractionDesign.class));
+            designMemory.supersedeDraft(missionId);
+        }
+        awaitApproval(missionId, written, design(missionId, written, previousDesign,
+                "Aria cambió las historias de usuario: rehaz el diseño sobre las HU actuales."));
+    }
+
     static String investorBlock(String routedRequest) {
         return "SOLICITUD DEL INVERSIONISTA (ronda de evidencia):\n" + routedRequest;
     }
@@ -286,13 +338,13 @@ public class MissionExecutor {
             if (approved.isEmpty()) {
                 // Revisión final Aria (2c): sin requisitos aprobados Neo nunca planifica; el pedido vuelve a Aria.
                 var written = rewriteRequirements(missionId, instruction, investorRequest);
-                awaitApproval(missionId, written);
+                awaitApprovalAfterAria(missionId, written);
                 return;
             }
             var current = requirementsMemory.currentIncrement(missionId);
             if (current > 0) {
                 // Revisión final Aria (2a/b): la ronda corrige el incremento en curso, con su bloque.
-                instruction = withIncrement(jsonMapper.readValue(approved.get().specJson(),
+                instruction = withIncrement(missionId, jsonMapper.readValue(approved.get().specJson(),
                         com.aicompany.core.agent.model.RequirementsSpec.class), current, instruction);
             }
         }
@@ -434,15 +486,21 @@ public class MissionExecutor {
             advanceMission(missionId, MissionStatus.PLANNING, 3, "Requisitos (Aria)",
                     "Aria está convirtiendo el pedido en historias de usuario.");
             var written = requirementsWriter.write(missionId, instruction, java.util.Optional.empty(), null);
+            var designed = design(missionId, written, java.util.Optional.empty(), null);
             if (companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED) >= 1.0) {
-                awaitApproval(missionId, written);
+                awaitApproval(missionId, written, designed);
                 return;
             }
             publishReady(missionId, written);
             requirementsMemory.approve(missionId, written.version(), "policy");
+            if (designed != null) {
+                designMemory.approve(missionId, designed.version(), "policy");
+            }
             // Revisión final Aria (14): aprobado por la policy, no por el fundador (agentId "policy").
             events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "policy",
-                    Map.of("version", written.version(), "approvedBy", "policy"));
+                    designed == null ? Map.of("version", written.version(), "approvedBy", "policy")
+                            : Map.of("version", written.version(), "approvedBy", "policy",
+                            "interactionDesignVersion", designed.version()));
             planAndRunIncrement(missionId, instruction, teamId, mode, written.spec(), 1, 0);
             return;
         }
@@ -475,17 +533,43 @@ public class MissionExecutor {
                 Map.of("version", written.version(), "stories", written.spec().userStoriesOrEmpty().size()));
     }
 
-    private void awaitApproval(String missionId, RequirementsWriter.Written written) {
+    /** Spec 2026-10-14 Kael §1.2: {@code designed} (nullable) es el diseño de Kael que el fundador aprueba junto a las HU. */
+    private void awaitApproval(String missionId, RequirementsWriter.Written written, InteractionDesignWriter.Written designed) {
         publishReady(missionId, written);
-        advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos listos (Aria)",
-                "Aria escribió " + written.spec().userStoriesOrEmpty().size() + " historias en "
-                        + written.spec().incrementNumbers().size() + " incremento(s). Esperan tu aprobación: "
-                        + com.aicompany.core.agent.validation.RequirementsText.summary(written.spec()));
+        var text = "Aria escribió " + written.spec().userStoriesOrEmpty().size() + " historias en "
+                + written.spec().incrementNumbers().size() + " incremento(s). Esperan tu aprobación: "
+                + com.aicompany.core.agent.validation.RequirementsText.summary(written.spec());
+        if (designed == null) {
+            advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos listos (Aria)", text);
+            return;
+        }
+        advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos y diseño listos (Aria + Kael)",
+                text + " Kael diseñó " + ("GAME".equals(designed.design().experience()) ? "el juego" : "la interacción")
+                        + " (versión " + designed.version() + "): "
+                        + com.aicompany.core.agent.validation.InteractionDesignText.summary(designed.design()));
     }
 
     static String withIncrement(com.aicompany.core.agent.model.RequirementsSpec spec, int increment, String instruction) {
         return com.aicompany.core.agent.validation.RequirementsText.incrementBlock(spec, increment)
                 + "\nPEDIDO ORIGINAL DEL FUNDADOR: " + instruction;
+    }
+
+    /** Spec 2026-10-14 Kael §1.4: con un diseño aprobado, Neo y el equipo reciben además su bloque del incremento. */
+    private String withIncrement(String missionId, com.aicompany.core.agent.model.RequirementsSpec spec, int increment,
+                                 String instruction) {
+        var design = approvedDesign(missionId);
+        return design == null ? withIncrement(spec, increment, instruction)
+                : com.aicompany.core.agent.validation.RequirementsText.incrementBlock(spec, increment)
+                  + com.aicompany.core.agent.validation.InteractionDesignText.incrementBlock(design, spec, increment)
+                  + "\nPEDIDO ORIGINAL DEL FUNDADOR: " + instruction;
+    }
+
+    private com.aicompany.core.agent.model.InteractionDesign approvedDesign(String missionId) {
+        if (designMemory == null) {
+            return null;
+        }
+        return designMemory.approved(missionId).map(v -> jsonMapper.readValue(v.designJson(),
+                com.aicompany.core.agent.model.InteractionDesign.class)).orElse(null);
     }
 
     /**
@@ -494,7 +578,7 @@ public class MissionExecutor {
      */
     private void planAndRunIncrement(String missionId, String instruction, String teamId, TeamExecutionMode mode,
                                      com.aicompany.core.agent.model.RequirementsSpec spec, int increment, int round) {
-        var withIncrement = withIncrement(spec, increment, instruction);
+        var withIncrement = withIncrement(missionId, spec, increment, instruction);
         requirementsMemory.setBuildingIncrement(missionId, increment);
         advanceMission(missionId, MissionStatus.PLANNING, 5, "Planificación del equipo",
                 "Neo planifica el incremento " + increment + ".");
@@ -612,13 +696,18 @@ public class MissionExecutor {
                 var written = rewriteRequirements(missionId, instruction, adjustment);
                 events.publish("EMPRESA_REQUIREMENTS_ADJUSTED", missionId, null, "human",
                         Map.of("version", written.version(), "instruction", adjustment));
-                awaitApproval(missionId, written);
+                awaitApprovalAfterAria(missionId, written);
             }
             case AWAIT_APPROVAL -> {
-                var latest = requirementsMemory.latest(missionId).orElseThrow();
-                awaitApproval(missionId, new RequirementsWriter.Written(latest.version(), jsonMapper.readValue(
-                        latest.specJson(), com.aicompany.core.agent.model.RequirementsSpec.class)));
+                var written = latestRequirements(missionId);
+                awaitApproval(missionId, written, draftDesignFor(missionId, written.version()));
             }
+            // Spec 2026-10-14 Kael §1.2: el retome en Kael nunca repite a Aria.
+            case DESIGN -> {
+                var written = latestRequirements(missionId);
+                awaitApproval(missionId, written, design(missionId, written, java.util.Optional.empty(), null));
+            }
+            case DESIGN_ADJUSTMENT -> redesign(missionId, designMemory.pendingAdjustment(missionId).orElseThrow());
             case PLAN, GENERATE, VERIFY -> resumeRound(missionId, instruction, teamId, mode, point);
             case INTERRUPT -> interrupt(missionId);
         }
@@ -637,7 +726,7 @@ public class MissionExecutor {
                     planAndRunIncrement(missionId, instruction, teamId, mode, spec, increment, round);
                     return;
                 }
-                var withIncrement = withIncrement(spec, increment, instruction);
+                var withIncrement = withIncrement(missionId, spec, increment, instruction);
                 requirementsMemory.setBuildingIncrement(missionId, increment);
                 advanceMission(missionId, MissionStatus.DELEGATING, 10, "Retomada",
                         "Retomando el incremento " + increment + " tras un reinicio.");
@@ -845,8 +934,46 @@ public class MissionExecutor {
             var written = rewriteRequirements(missionId, memory.instructionOf(missionId).orElse(""), adjustment);
             events.publish("EMPRESA_REQUIREMENTS_ADJUSTED", missionId, null, "human",
                     Map.of("version", written.version(), "instruction", adjustment));
-            awaitApproval(missionId, written);
+            awaitApprovalAfterAria(missionId, written);
         });
+    }
+
+    /** Spec 2026-10-14 Kael §1.2: Kael rehace solo el diseño (mismas HU) y vuelve a esperar. */
+    public CompletableFuture<Void> adjustDesignAsync(String missionId, String adjustment) {
+        advanceMission(missionId, MissionStatus.PLANNING, 6, "Diseño (Kael)", "Kael ajusta el diseño: " + adjustment);
+        return submit(missionId, "design adjustment", () -> redesign(missionId, adjustment));
+    }
+
+    private void redesign(String missionId, String adjustment) {
+        if (designWriter == null || designMemory == null) {
+            throw new IllegalStateException("MISSION " + missionId + ": Kael no está disponible para ajustar el diseño.");
+        }
+        var written = latestRequirements(missionId);
+        var previous = designMemory.latest(missionId).map(v -> jsonMapper.readValue(v.designJson(),
+                com.aicompany.core.agent.model.InteractionDesign.class));
+        var designed = designWriter.write(missionId, written.spec(), written.version(), previous, adjustment);
+        requirementsMemory.releaseDecision(missionId, written.version());
+        events.publish("EMPRESA_INTERACTION_DESIGN_ADJUSTED", missionId, null, "human",
+                Map.of("version", designed.version(), "instruction", adjustment));
+        awaitApproval(missionId, written, designed);
+    }
+
+    private RequirementsWriter.Written latestRequirements(String missionId) {
+        var latest = requirementsMemory.latest(missionId).orElseThrow();
+        return new RequirementsWriter.Written(latest.version(), jsonMapper.readValue(latest.specJson(),
+                com.aicompany.core.agent.model.RequirementsSpec.class));
+    }
+
+    /** El diseño DRAFT de Kael para esa versión del spec (lo que el fundador tiene que aprobar), o null. */
+    private InteractionDesignWriter.Written draftDesignFor(String missionId, int specVersion) {
+        if (designMemory == null) {
+            return null;
+        }
+        return designMemory.latest(missionId)
+                .filter(d -> "DRAFT".equals(d.status()) && d.specVersion() == specVersion)
+                .map(d -> new InteractionDesignWriter.Written(d.version(), jsonMapper.readValue(d.designJson(),
+                        com.aicompany.core.agent.model.InteractionDesign.class)))
+                .orElse(null);
     }
 
     private RequirementsWriter.Written rewriteRequirements(String missionId, String instruction, String adjustment) {

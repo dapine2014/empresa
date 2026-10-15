@@ -715,4 +715,91 @@ class MissionExecutorTeamTest {
         verifyNoInteractions(ceoService, runtime);
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(), anyString());
     }
+    private final InteractionDesignWriter designWriter = mock(InteractionDesignWriter.class);
+    private final InteractionDesignMemoryService designMemory = mock(InteractionDesignMemoryService.class);
+
+    static final com.aicompany.core.agent.model.RequirementsSpec GAME_SPEC = new com.aicompany.core.agent.model.RequirementsSpec(
+            SPEC.summary(), SPEC.assumptions(), SPEC.outOfScope(), SPEC.roles(), SPEC.userStories(), SPEC.increments(), "GAME");
+    static final com.aicompany.core.agent.model.InteractionDesign DESIGN = new com.aicompany.core.agent.model.InteractionDesign(
+            "GAME", null, new com.aicompany.core.agent.model.InteractionDesign.GameDesign(List.of("PLAYING"), List.of(),
+            List.of(), List.of(new com.aicompany.core.agent.model.InteractionDesign.Control("move_right", "Right", "x")),
+            List.of(new com.aicompany.core.agent.model.InteractionDesign.Rule("REGLA-01", "move_right", "y")),
+            List.of(), List.of("REGLA-01"), List.of(), List.of(), List.of("h")));
+
+    private void withKael() throws Exception {
+        withAria();
+        executor.setInteractionDesign(designWriter, designMemory);
+        when(writer.write(eq("M-9"), eq("Un CRM"), eq(Optional.empty()), isNull()))
+                .thenReturn(new RequirementsWriter.Written(1, GAME_SPEC));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(1), eq(Optional.empty()), isNull()))
+                .thenReturn(new InteractionDesignWriter.Written(1, DESIGN));
+    }
+
+    // Spec 2026-10-14 Kael §1.2: tras Aria diseña Kael y el fundador aprueba ambos juntos; Neo no corre.
+    @Test
+    void aGameMissionStopsAfterAriaAndKaelWaitingForBoth() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        executor.executeAsync("M-9", "Un CRM").get();
+        var order = inOrder(writer, designWriter, memory);
+        order.verify(writer).write(any(), any(), any(), any());
+        order.verify(designWriter).write(eq("M-9"), eq(GAME_SPEC), eq(1), eq(Optional.empty()), isNull());
+        order.verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael")));
+        verify(planner, never()).plan(any(), any(), any(), any());
+    }
+
+    // Spec 2026-10-14 Kael §1.2: con la policy en 0 ambos quedan aprobados por la policy y Neo recibe el diseño.
+    @Test
+    void withThePolicyOffBothAreApprovedAndNeoGetsTheDesign() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(0.0);
+        when(designMemory.approved("M-9")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(DESIGN), "APPROVED", 1, "")));
+        when(requirements.approved("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(GAME_SPEC), "APPROVED", "", null)));
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+        executor.executeAsync("M-9", "Un CRM").get();
+        verify(designMemory).approve("M-9", 1, "policy");
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("DISEÑO DE JUEGO APROBADO")
+                && i.contains("TIPO DE EXPERIENCIA: GAME")), any());
+    }
+
+    // Review Focus 3: un spec APP/GAME no existe en misiones viejas; sin experience, Kael no corre.
+    @Test
+    void aSpecWithoutExperienceNeverCallsKael() throws Exception {
+        withAria();
+        executor.setInteractionDesign(designWriter, designMemory);
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        executor.executeAsync("M-9", "Un CRM").get();
+        verifyNoInteractions(designWriter);
+    }
+
+    // Spec 2026-10-14 Kael §1.2: ajustar a Kael rehace solo el diseño (mismas HU) y libera la decisión del spec.
+    @Test
+    void adjustingKaelKeepsTheStoriesAndReleasesTheDecision() throws Exception {
+        withKael();
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(GAME_SPEC), "DRAFT", "", null)));
+        when(designMemory.latest("M-9")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(DESIGN), "DRAFT", 1, "")));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(1), any(), eq("paleta más grande")))
+                .thenReturn(new InteractionDesignWriter.Written(2, DESIGN));
+        executor.adjustDesignAsync("M-9", "paleta más grande").get();
+        verify(writer, never()).write(any(), any(), any(), any());
+        verify(requirements).releaseDecision("M-9", 1);
+        verify(memory, atLeastOnce()).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(), anyString());
+    }
+    // Spec 2026-10-14 Kael §1.2: con Kael apagado la misión APP/GAME no sigue tras Aria: queda FAILED y nunca espera.
+    @Test
+    void withKaelOffAGameMissionFails() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        when(designWriter.write(any(), any(), anyInt(), any(), any())).thenThrow(new IllegalStateException("Kael está apagado"));
+        executor.executeAsync("M-9", "Un CRM").get();
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael está apagado")));
+        verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                anyString());
+    }
 }
