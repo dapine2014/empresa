@@ -1585,12 +1585,21 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (designs == null || requirementsMemory == null || headSha == null) {
             return java.util.Optional.empty();
         }
-        // Revisión Task 12: con diseño aprobado el chequeo falla cerrado; solo "sin diseño aprobado" lo omite.
+        // Revisión final (M-5): si ni siquiera se puede saber si hay diseño aprobado (Neo4j), no se chequea: una misión
+        // sin diseño no puede quedar FAILED por eso.
+        java.util.Optional<InteractionDesignMemoryService.Version> approved;
         try {
-            var approved = designs.approved(missionId);
-            if (approved == null || approved.isEmpty()) {
-                return java.util.Optional.empty();
-            }
+            approved = designs.approved(missionId);
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the approved design, skipping the conformance check: {}", missionId,
+                    safeMessage(ex, "sin detalle"));
+            return java.util.Optional.empty();
+        }
+        if (approved == null || approved.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        // Revisión Task 12: con diseño aprobado el chequeo falla cerrado.
+        try {
             var spec = requirementsMemory.approved(missionId);
             if (spec == null || spec.isEmpty()) {
                 return java.util.Optional.empty();

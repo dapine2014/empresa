@@ -1758,7 +1758,9 @@ class DevelopmentTeamStrategyTest {
     }
 
     @Test
-    void aFailingDesignServiceFailsClosed() throws Exception {
+    // Revisión final (M-5): si leer el diseño aprobado falla (Neo4j), no se sabe si hay diseño: una misión vieja sin
+    // diseño no puede quedar FAILED por eso. Falla cerrado solo cuando el diseño aprobado sí llegó.
+    void aFailingDesignLookupSkipsTheConformanceCheck() throws Exception {
         stubFullstack();
         var context = withQaWork();
         var designs = mock(InteractionDesignMemoryService.class);
@@ -1769,9 +1771,9 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context, progress);
 
-        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
-                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("problema de lectura")
-                        && json.contains("Neo4j caído")));
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), anyString(), anyString());
+        verify(memory, never()).recordStaticValidation(anyString(), anyString(),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE")));
     }
 
     @Test
