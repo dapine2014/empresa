@@ -99,7 +99,7 @@ public final class ScenarioCoverage {
         var missing = known.stream().filter(id -> !named.contains(id)).toList();
         if (!missing.isEmpty()) {
             errors.add("Faltan tests para " + String.join(", ", missing) + ": escribe al menos un test por escenario con "
-                    + "el id en el nombre del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 …')).");
+                    + "el id en el nombre del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 …'); Godot: clase ESC_03_descripcion : Playthrough en game/playthroughs/).");
         }
         var unknown = returned.stream().filter(id -> !known.contains(id)).sorted().toList();
         if (!unknown.isEmpty()) {

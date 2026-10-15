@@ -25,6 +25,9 @@ class ProjectScaffoldTest {
             if (profile.ecosystem() == StackProfile.Ecosystem.NUGET) {
                 expected.add("Solution.sln");
             }
+            if (profile == StackProfile.GODOT_DOTNET_GAME) {
+                GameRunnerFiles.files().forEach(f -> expected.add(f.path()));
+            }
             assertEquals(expected.stream().sorted().toList(),
                     byPath(profile, contexts).keySet().stream().sorted().toList(), profile.name());
         }
@@ -100,5 +103,29 @@ class ProjectScaffoldTest {
         var tests = ProjectScaffold.generate(StackProfile.DOTNET_APP, java.util.List.of("Crm")).stream()
                 .filter(f -> f.path().equals("tests/Crm.Tests/Crm.Tests.csproj")).findFirst().orElseThrow();
         assertTrue(tests.content().contains("<Using Include=\"Xunit\" />"), tests.content());
+    }
+
+    @Test
+    void aGameScaffoldIncludesTheForjaiRunner() {
+        var paths = ProjectScaffold.generate(StackProfile.GODOT_DOTNET_GAME, List.of("Pong")).stream()
+                .map(GeneratedFile::path).toList();
+        assertTrue(paths.containsAll(List.of("game/forjai/Playthrough.cs", "game/forjai/PlaythroughRunner.cs",
+                "game/forjai/Runner.tscn")), paths.toString());
+        assertFalse(ProjectScaffold.generate(StackProfile.DOTNET_APP, List.of("Clientes")).stream()
+                .anyMatch(f -> f.path().startsWith("game/forjai")));
+    }
+
+    @Test
+    void theGameProjectEnablesNullableForTheRunner() {
+        var csproj = ProjectScaffold.generate(StackProfile.GODOT_DOTNET_GAME, List.of("Pong")).stream()
+                .filter(f -> f.path().equals("game/Game.csproj")).findFirst().orElseThrow();
+        assertTrue(csproj.content().contains("<Nullable>enable</Nullable>"));
+    }
+
+    @Test
+    void theSolutionOnlyListsProjects() {
+        var sln = ProjectScaffold.generate(StackProfile.GODOT_DOTNET_GAME, List.of("Pong")).stream()
+                .filter(f -> f.path().endsWith(".sln")).findFirst().orElseThrow();
+        assertFalse(sln.content().contains("Playthrough"), sln.content());
     }
 }

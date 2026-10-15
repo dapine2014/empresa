@@ -1938,4 +1938,18 @@ class DevelopmentTeamStrategyTest {
 
         verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), any(), any(), any());
     }
+
+    @Test
+    void inAGameVeraAlsoWritesPlaythroughs() {
+        var rule = DevelopmentTeamStrategy.qaScenarioRule(
+                List.of(new com.aicompany.core.agent.validation.ScenarioCoverage.Scenario("ESC-01", "mueve", 1)), true);
+        assertTrue(rule.contains("game/playthroughs/") && rule.contains(": Playthrough") && rule.contains("Press("), rule);
+    }
+
+    @Test
+    void outsideAGameVeraGetsNoPlaythroughRule() {
+        var rule = DevelopmentTeamStrategy.qaScenarioRule(
+                List.of(new com.aicompany.core.agent.validation.ScenarioCoverage.Scenario("ESC-01", "mueve", 1)), false);
+        assertFalse(rule.contains("Playthrough"), rule);
+    }
 }

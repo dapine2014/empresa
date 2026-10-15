@@ -1652,16 +1652,33 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     /** Spec QA §1: la regla de trazabilidad que recibe Vera. */
-    static String qaScenarioRule(List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios) {
+    static String qaScenarioRule(List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios,
+                                 boolean game) {
         if (scenarios.isEmpty()) {
             return "";
         }
-        return "\n\nESCENARIOS A CUBRIR (QA, obligatorio): escribe al menos un test automatizado por escenario, con el id "
+        var base = "\n\nESCENARIOS A CUBRIR (QA, obligatorio): escribe al menos un test automatizado por escenario, con el id "
                 + "en el NOMBRE del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 descripción') o "
                 + "testWidgets('ESC-03 …')); un Trait o un comentario no cuentan. Cada test verifica el dado/cuando/entonces del "
                 + "escenario. No borres, renombres ni saltes tests que ya existen: la suite solo crece.\n"
                 + scenarios.stream().map(sc -> "- " + sc.id() + " " + sc.title() + " (incremento " + sc.increment() + ")")
                 .collect(Collectors.joining("\n")) + "\n";
+        if (!game) {
+            return base;
+        }
+        return base + """
+                PARTIDAS SIMULADAS (juego): además de los tests xUnit de las reglas, escribe en game/playthroughs/ una clase
+                por escenario de interacción (los asignados a un control en el diseño de Kael), con el id en el NOMBRE:
+                  using System.Collections.Generic; using Godot; using Forjai.Playthroughs;
+                  public sealed class ESC_03_descripcion : Playthrough {
+                      public override IEnumerable<Step> Steps(Node main) {
+                          yield return Press("move_right", frames: 30);   // solo acciones del diseño de Kael
+                          yield return Wait(frames: 10);
+                          yield return Assert(() => ((Main)main).Score == 1, "el puntaje es 1");
+                      }
+                  }
+                main es la escena principal real recién cargada (60 fps fijos, semilla 0). No escribas en game/forjai/.
+                """;
     }
 
     /**
@@ -2032,7 +2049,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
         return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task)
-                + (isQa(context, task.agentId()) ? qaScenarioRule(scenarios(context.missionId())) : "");
+                + (isQa(context, task.agentId()) ? qaScenarioRule(scenarios(context.missionId()),
+                context.plan().hasComponent(StackProfile.GODOT_DOTNET_GAME)) : "");
     }
 
     private String buildWorkPromptBase(TeamMissionContext context, PlannedTask task) {

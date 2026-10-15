@@ -95,9 +95,10 @@ public final class ProjectScaffold {
             files.add(project("game/Game.csproj", "Godot.NET.Sdk/4.3.0",
                     "    <EnableDynamicLoading>true</EnableDynamicLoading>\n", references,
                     requestedPackages(packagesByProject.getOrDefault("game/Game.csproj", List.of()))));
+            files.addAll(GameRunnerFiles.files());
         }
 
-        files.add(solution(files));
+        files.add(solution(files.stream().filter(f -> f.path().endsWith(".csproj")).toList()));
         return files;
     }
 
