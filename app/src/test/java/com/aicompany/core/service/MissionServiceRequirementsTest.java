@@ -29,7 +29,10 @@ class MissionServiceRequirementsTest {
     private final MissionService service = new MissionService(memory, executor, events,
             teamMemory, mock(DevelopmentWorkspaceService.class), policies);
 
+    private final InteractionDesignMemoryService designs = mock(InteractionDesignMemoryService.class);
+
     {
+        service.setInteractionDesign(designs);
         service.setRequirements(requirements);
         when(executor.reexecuteAsync(anyString(), anyString(), anyInt(), anyString()))
                 .thenReturn(CompletableFuture.completedFuture(null));
@@ -242,5 +245,72 @@ class MissionServiceRequirementsTest {
                 new com.aicompany.core.recovery.CorrectionRound(2, 1, "x", 3, false),
                 new com.aicompany.core.recovery.CorrectionRound(3, 1, "y", 2, false)));
         assertEquals(1, service.evidenceRoundsUsed("M-9"));
+    }
+
+    private void awaitingWithDesign(int specVersion, int designSpecVersion) {
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(specVersion, "{}", "DRAFT", "", null)));
+        when(designs.latest("M-9")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(4, "{}", "DRAFT", designSpecVersion, "")));
+    }
+
+    @Test
+    void approvingApprovesTheStoriesAndTheDesignTogether() {
+        awaitingWithDesign(2, 2);
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(requirements).approve("M-9", 2, "founder");
+        verify(designs).approve("M-9", 4, "founder");
+        verify(events).publish(eq("EMPRESA_REQUIREMENTS_APPROVED"), eq("M-9"), isNull(), eq("human"),
+                argThat(m -> Integer.valueOf(4).equals(m.get("interactionDesignVersion"))));
+    }
+
+    // Review Focus 4: un diseño hecho sobre otra versión de HU no se aprueba.
+    @Test
+    void aDesignForOtherStoriesCannotBeApproved() {
+        awaitingWithDesign(3, 2);
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null)));
+        verify(requirements, never()).approve(anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void anAdjustmentForKaelGoesOnlyToKael() {
+        awaitingWithDesign(2, 2);
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "paleta más grande",
+                RequirementsDecisionCommand.Target.KAEL));
+        verify(requirements).claimDecision("M-9", 2, null);
+        verify(designs).setPendingAdjustment("M-9", 4, "paleta más grande");
+        verify(executor).adjustDesignAsync("M-9", "paleta más grande");
+        verify(executor, never()).adjustRequirementsAsync(anyString(), anyString());
+    }
+
+    @Test
+    void kaelCannotBeAdjustedWithoutADesign() {
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "DRAFT", "", null)));
+        when(designs.latest("M-9")).thenReturn(Optional.empty());
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "x", RequirementsDecisionCommand.Target.KAEL)));
+    }
+
+    @Test
+    void rejectingRejectsTheDesignToo() {
+        awaitingWithDesign(2, 2);
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+        verify(designs).reject("M-9", 4);
+    }
+
+    // Review Focus 3: una misión sin diseño (spec viejo o NONE) se aprueba como siempre.
+    @Test
+    void approvingWithoutDesignWorksAsBefore() {
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(2, "{}", "DRAFT", "", null)));
+        when(designs.latest("M-9")).thenReturn(Optional.empty());
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(requirements).approve("M-9", 2, "founder");
+        verify(designs, never()).approve(anyString(), anyInt(), anyString());
     }
 }

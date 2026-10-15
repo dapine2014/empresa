@@ -1,5 +1,6 @@
 package com.aicompany.core.controller;
 
+import com.aicompany.core.model.InteractionDesignView;
 import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.DecisionCommand;
@@ -102,6 +103,13 @@ public class MissionController {
     @GetMapping("/{missionId}/requirements")
     public ResponseEntity<RequirementsView> requirements(@PathVariable String missionId) {
         return missionService.requirements(missionId).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Spec 2026-10-14 Kael §3: diseño de Kael de la misión (404 = sin diseño). */
+    @GetMapping("/{missionId}/interaction-design")
+    public ResponseEntity<InteractionDesignView> interactionDesign(@PathVariable String missionId) {
+        return missionService.interactionDesign(missionId).map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 

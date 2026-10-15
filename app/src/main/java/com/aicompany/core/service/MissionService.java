@@ -11,6 +11,9 @@ import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.MissionStatusResponse;
 import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.RequirementsView;
+import com.aicompany.core.model.InteractionDesignView;
+import com.aicompany.core.agent.model.InteractionDesign;
+import com.aicompany.core.agent.validation.InteractionDesignText;
 import com.aicompany.core.agent.model.RequirementsSpec;
 import com.aicompany.core.agent.validation.RequirementsText;
 import org.slf4j.Logger;
@@ -75,10 +78,14 @@ public class MissionService {
      * modelo de un agente apagado.
      */
     public void requireAgentsOn(String teamId, String what) {
-        requireAgentsOn(teamId, what, true);
+        requireAgentsOn(teamId, what, true, false);
     }
 
     private void requireAgentsOn(String teamId, String what, boolean needsAria) {
+        requireAgentsOn(teamId, what, needsAria, false);
+    }
+
+    private void requireAgentsOn(String teamId, String what, boolean needsAria, boolean needsKael) {
         if (agentAvailability == null) {
             return;
         }
@@ -90,6 +97,9 @@ public class MissionService {
         var required = new java.util.ArrayList<>(java.util.List.of(AgentAvailability.CEO, team.leaderAgentId()));
         if (needsAria && TeamMemoryService.teamType(teamId).map("DEVELOPMENT"::equals).orElse(false)) {
             required.add(AgentAvailability.PRODUCT_OWNER);
+        }
+        if (needsKael) {
+            required.add(AgentAvailability.INTERACTION_DESIGN);
         }
         agentAvailability.requireEnabled(required, what);
 
@@ -169,6 +179,26 @@ public class MissionService {
         this.requirementsMemory = requirementsMemory;
     }
 
+    private InteractionDesignMemoryService designs;
+
+    /** Spec 2026-10-14 Kael: diseño de interacción de Kael (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setInteractionDesign(InteractionDesignMemoryService designs) {
+        this.designs = designs;
+    }
+
+    public Optional<InteractionDesignView> interactionDesign(String missionId) {
+        if (designs == null) {
+            return Optional.empty();
+        }
+        return designs.latest(missionId).map(v -> {
+            var design = JSON.readValue(v.designJson(), InteractionDesign.class);
+            return new InteractionDesignView(missionId, v.version(), v.status(), v.specVersion(),
+                    designs.approved(missionId).map(InteractionDesignMemoryService.Version::version).orElse(null),
+                    design, InteractionDesignText.summary(design));
+        });
+    }
+
     public Optional<RequirementsView> requirements(String missionId) {
         if (requirementsMemory == null) {
             return Optional.empty();
@@ -202,16 +232,32 @@ public class MissionService {
             throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
                     + " ya está " + version.status() + ".");
         }
+        // Spec 2026-10-14 Kael §1.3: el diseño DRAFT vigente, solo si se hizo sobre esta versión de HU.
+        var draftDesign = designs == null ? Optional.<InteractionDesignMemoryService.Version>empty()
+                : designs.latest(missionId).filter(d -> "DRAFT".equals(d.status()));
+        if (draftDesign.isPresent() && draftDesign.get().specVersion() != version.version()) {
+            throw new IllegalStateException("El diseño de Kael de " + missionId + " es de la versión "
+                    + draftDesign.get().specVersion() + " de las HU y la vigente es la " + version.version()
+                    + ": espera a que Kael termine el diseño nuevo.");
+        }
+        var toKael = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && command.targetOrAria() == RequirementsDecisionCommand.Target.KAEL;
+        if (toKael && draftDesign.isEmpty()) {
+            throw new IllegalStateException(missionId + " no tiene un diseño de Kael para ajustar.");
+        }
         if (command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
             // Revisión final Aria (8): aprobar llama a Neo y ajustar a Aria; ninguno puede estar apagado.
-            requireAgentsOn(mission.teamId(), "decidir sobre los requisitos de " + missionId);
+            requireAgentsOn(mission.teamId(), "decidir sobre los requisitos de " + missionId, true,
+                    draftDesign.isPresent());
         }
         if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
                 && (command.instruction() == null || command.instruction().isBlank())) {
             throw new IllegalArgumentException("Para ajustar los requisitos escribe la instrucción para Aria.");
         }
-        if (!requirementsMemory.claimDecision(missionId, version.version(),
-                command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST ? command.instruction().strip() : null)) {
+        var adjustment = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                ? command.instruction().strip() : null;
+        // El ajuste se guarda en la versión de HU solo si va a Aria; si va a Kael, en la versión del diseño.
+        if (!requirementsMemory.claimDecision(missionId, version.version(), toKael ? null : adjustment)) {
             // Revisión final Aria (12): doble clic; la primera decisión ya está en curso.
             throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
                     + " ya tiene una decisión en curso.");
@@ -219,12 +265,24 @@ public class MissionService {
         switch (command.decision()) {
             case APPROVE -> {
                 requirementsMemory.approve(missionId, version.version(), "founder");
-                events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", Map.of("version", version.version()));
+                draftDesign.ifPresent(d -> designs.approve(missionId, d.version(), "founder"));
+                events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", draftDesign
+                        .<Map<String, Object>>map(d -> Map.of("version", version.version(),
+                                "interactionDesignVersion", d.version()))
+                        .orElse(Map.of("version", version.version())));
                 executor.continueAfterApprovalAsync(missionId);
             }
-            case ADJUST -> executor.adjustRequirementsAsync(missionId, command.instruction().strip());
+            case ADJUST -> {
+                if (toKael) {
+                    designs.setPendingAdjustment(missionId, draftDesign.get().version(), adjustment);
+                    executor.adjustDesignAsync(missionId, adjustment);
+                } else {
+                    executor.adjustRequirementsAsync(missionId, adjustment);
+                }
+            }
             case REJECT -> {
                 requirementsMemory.reject(missionId, version.version());
+                draftDesign.ifPresent(d -> designs.reject(missionId, d.version()));
                 memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Requisitos rechazados",
                         "El fundador rechazó los requisitos de Aria.");
                 // Revisión final Aria (14): mismo aviso que el REJECT del inversionista.
