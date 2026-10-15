@@ -55,6 +55,9 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | El prompt de Mila dice React/Vue y genera Flutter | Kael híbrido (fuera de alcance) | Actualizar el prompt |
 | [ ] | Ruteo determinista por dueño de la corrección de `DESIGN_CONFORMANCE` | Kael híbrido (ruling de la tarea 12) | El spec decía «al dueño del archivo» (Mila o Kael); hoy usa la corrección genérica (Neo reparte con el detalle exacto), igual que `SCENARIO_COVERAGE`. Mirar en las pruebas en vivo si Neo asigna mal |
 | [ ] | Pruebas en vivo de Kael: CRM `APP` (`VERIFIED` con `DESIGN_CONFORMANCE` en PASS) y Pong `GAME` (`SCENARIO_COVERAGE` 100 %) | Kael híbrido (spec §6) | Esperan el OK del fundador y el despliegue |
+| [ ] | El respaldo `DOMAIN`/`APPLICATION` de Kael (`GAME_DEV`) no está atado al perfil Godot: vale en cualquier perfil NuGet | Kael híbrido (revisión final, menor 4) | Riesgo bajo: Neo no incluye a Kael en una API y `ExperienceRule` exige los roles; atarlo a `GODOT_DOTNET_GAME` |
+| [ ] | `ExperienceRule` con `APP`/`GAME` no prohíbe componentes extra (p. ej. un backend junto a la app o al juego) | Kael híbrido (revisión final, menor 4) | Solo exige el stack y los roles requeridos |
+| [ ] | Al retomar tras un reinicio con `SPEC_APPROVAL_REQUIRED = 0`, la misión espera la aprobación del fundador | Kael híbrido (revisión final, menor 2) | Falla hacia el fundador, coherente con el `AWAIT_APPROVAL` del retome; aplicar la policy al retomar |
 
 ## 3. Fuera del código
 
