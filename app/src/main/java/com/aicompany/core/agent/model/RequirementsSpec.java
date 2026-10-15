@@ -14,7 +14,23 @@ import java.util.Objects;
  * Verificado en vivo (2026-10-04): el modelo puede escribir un texto suelto donde va una lista; vale como un elemento.
  */
 public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> assumptions, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> outOfScope, List<Role> roles,
-                               List<UserStory> userStories, List<Increment> increments) {
+                               List<UserStory> userStories, List<Increment> increments, String experience) {
+
+    /** Specs guardados antes de Spec 2026-10-14 Kael §1: sin tipo de experiencia (null). */
+    public RequirementsSpec(String summary, List<String> assumptions, List<String> outOfScope, List<Role> roles,
+                            List<UserStory> userStories, List<Increment> increments) {
+        this(summary, assumptions, outOfScope, roles, userStories, increments, null);
+    }
+
+    /** Spec 2026-10-14 Kael §1: APP (pantallas), GAME (juego) o NONE (solo API o servicio, sin interfaz). */
+    public enum Experience {
+        APP, GAME, NONE;
+
+        public static java.util.Optional<Experience> of(String value) {
+            return value == null ? java.util.Optional.empty()
+                    : java.util.Arrays.stream(values()).filter(e -> e.name().equals(value.strip())).findFirst();
+        }
+    }
 
     public record Role(String name, String description) {
     }
@@ -74,6 +90,10 @@ public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Fea
         return list == null ? List.of() : list;
     }
 
+    public Experience experienceOrNull() {
+        return Experience.of(experience).orElse(null);
+    }
+
     public List<String> assumptionsOrEmpty() {
         return assumptions == null ? List.of() : assumptions;
     }
@@ -126,6 +146,7 @@ public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Fea
             "type", "object",
             "properties", Map.of(
                     "summary", Map.of("type", "string"),
+                    "experience", Map.of("type", "string", "enum", List.of("APP", "GAME", "NONE")),
                     "assumptions", stringArray(),
                     "outOfScope", stringArray(),
                     "roles", Map.of("type", "array", "items", Map.of("type", "object",
@@ -142,5 +163,5 @@ public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Fea
                             "properties", Map.of("number", Map.of("type", "integer"), "goal", Map.of("type", "string"),
                                     "userStoryIds", stringArray()),
                             "required", List.of("number", "goal", "userStoryIds")))),
-            "required", List.of("summary", "assumptions", "outOfScope", "roles", "userStories", "increments"));
+            "required", List.of("summary", "experience", "assumptions", "outOfScope", "roles", "userStories", "increments"));
 }

@@ -35,7 +35,7 @@ class RequirementsWriterTest {
             List.of(new Role("vendedor", "x")),
             List.of(new UserStory("HU-01", "vendedor", "q", "p", List.of("c"), List.of(),
                     List.of(new Scenario("ESC-01", "t", List.of("d"), List.of("c"), List.of("e"))))),
-            List.of(new Increment(1, "MVP", List.of("HU-01"))));
+            List.of(new Increment(1, "MVP", List.of("HU-01"))), "APP");
 
     private static final RequirementsSpec INVALID = new RequirementsSpec("CRM", List.of(), List.of(), List.of(),
             List.of(), List.of());
@@ -79,7 +79,7 @@ class RequirementsWriterTest {
     @Test
     void theCorrectionShowsWhatJavaUnderstood() {
         var empty = new RequirementsSpec("CRM", List.of(), List.of(), List.of(new Role("vendedor", "x")),
-                VALID.userStories(), List.of(new Increment(1, "MVP", List.of())));
+                VALID.userStories(), List.of(new Increment(1, "MVP", List.of())), "APP");
         when(ceo.writeRequirements(eq("product-owner"), anyString(), anyString(), anyString())).thenReturn(empty, VALID);
 
         writer.write("M-1", "Un CRM simple", Optional.empty(), null);

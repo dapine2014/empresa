@@ -40,4 +40,13 @@ class RequirementsTextTest {
         assertTrue(summary.contains("Supuestos: Un cliente tiene varias oportunidades"), summary);
         assertTrue(summary.contains("Fuera de alcance: Reportes"), summary);
     }
+
+    @Test
+    void theIncrementBlockCarriesTheExperienceLine() {
+        var game = new RequirementsSpec(SPEC.summary(), SPEC.assumptions(), SPEC.outOfScope(), SPEC.roles(),
+                SPEC.userStories(), SPEC.increments(), "GAME");
+        assertTrue(RequirementsText.incrementBlock(game, 1).contains("TIPO DE EXPERIENCIA: GAME"));
+        assertTrue(RequirementsText.summary(game).contains("Tipo: GAME"));
+        assertFalse(RequirementsText.incrementBlock(SPEC, 1).contains("TIPO DE EXPERIENCIA"));
+    }
 }

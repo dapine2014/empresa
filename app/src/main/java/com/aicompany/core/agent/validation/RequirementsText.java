@@ -7,6 +7,8 @@ import java.util.stream.Collectors;
 /** Spec 2026-10-03 Aria §2-§3: el spec aprobado como texto (armado por Java) para los prompts y el chat. */
 public final class RequirementsText {
 
+    public static final String EXPERIENCE_LINE = "TIPO DE EXPERIENCIA: ";
+
     private RequirementsText() {
     }
 
@@ -25,14 +27,15 @@ public final class RequirementsText {
         var later = spec.userStoriesOrEmpty().stream()
                 .filter(s -> spec.storiesOf(increment).stream().noneMatch(i -> i.id().equals(s.id())))
                 .map(RequirementsSpec.UserStory::id).collect(Collectors.joining(", "));
+        var experience = spec.experienceOrNull() == null ? "" : EXPERIENCE_LINE + spec.experienceOrNull().name() + "\n";
         return """
                 REQUISITOS APROBADOS POR EL FUNDADOR (Aria, Product Owner): INCREMENTO %d de %d — %s
-                Roles: %s
+                %sRoles: %s
                 Construye SOLO estas historias, con estos escenarios (cada escenario debe poder probarse):
                 %s
                 NO construyas en este incremento: %s
                 Fuera de alcance del producto: %s
-                """.formatted(increment, total, goal,
+                """.formatted(increment, total, goal, experience,
                 spec.rolesOrEmpty().stream().map(RequirementsSpec.Role::name).collect(Collectors.joining(", ")),
                 stories, later.isEmpty() ? "(nada; es el último incremento)" : later,
                 spec.outOfScopeOrEmpty().isEmpty() ? "(nada declarado)" : String.join("; ", spec.outOfScopeOrEmpty()));
@@ -43,7 +46,7 @@ public final class RequirementsText {
                         + spec.storiesOf(i.number()).stream().map(s -> s.id() + " " + s.iWant())
                         .collect(Collectors.joining(", ")))
                 .collect(Collectors.joining(". "));
-        return "Roles: " + spec.rolesOrEmpty().stream().map(RequirementsSpec.Role::name).collect(Collectors.joining(", "))
+        return (spec.experienceOrNull() == null ? "" : "Tipo: " + spec.experienceOrNull().name() + ". ") + "Roles: " + spec.rolesOrEmpty().stream().map(RequirementsSpec.Role::name).collect(Collectors.joining(", "))
                 + ". " + increments + ". Supuestos: " + String.join("; ", spec.assumptionsOrEmpty())
                 + ". Fuera de alcance: " + String.join("; ", spec.outOfScopeOrEmpty()) + ".";
     }

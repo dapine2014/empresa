@@ -108,6 +108,7 @@ public class RequirementsWriter {
                 %s
 
                 REGLAS:
+                - experience: GAME si el pedido es un juego; APP si las personas usan el producto con pantallas; NONE solo si no tiene ninguna interfaz (API o servicio).
                 - roles: quién usa el producto (p. ej. comprador, administrador, paciente, jugador, sistema externo),
                   cada uno con name y description. Cada historia usa uno de esos roles en "role".
                 - userStories: HU-01, HU-02… con iWant, soThat, acceptanceCriteria (verificables) y scenarios ESC-01,
@@ -120,7 +121,7 @@ public class RequirementsWriter {
                 - Español, frases cortas.
 
                 Responde SOLO este JSON, con exactamente estos nombres de campos (las listas siempre como listas):
-                {"summary": "...", "assumptions": ["..."], "outOfScope": ["..."],
+                {"summary": "...", "experience": "APP|GAME|NONE", "assumptions": ["..."], "outOfScope": ["..."],
                  "roles": [{"name": "...", "description": "..."}],
                  "userStories": [{"id": "HU-01", "role": "<name de un rol>", "iWant": "...", "soThat": "...",
                    "acceptanceCriteria": ["..."], "dependsOn": ["HU-.."],

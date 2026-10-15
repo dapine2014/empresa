@@ -25,6 +25,10 @@ public final class RequirementsSpecValidator {
         if (spec == null) {
             return List.of("El spec está vacío.");
         }
+        if (RequirementsSpec.Experience.of(spec.experience()).isEmpty()) {
+            errors.add("experience debe ser APP (el producto tiene pantallas), GAME (es un juego) o NONE (solo API o "
+                    + "servicio, sin ninguna interfaz); recibido: \"" + spec.experience() + "\".");
+        }
 
         var roleNames = new HashSet<String>();
         if (spec.rolesOrEmpty().isEmpty()) {

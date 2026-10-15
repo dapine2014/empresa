@@ -21,11 +21,26 @@ class RequirementsSpecValidatorTest {
     }
 
     private static RequirementsSpec spec(List<Role> roles, List<UserStory> stories, List<Increment> increments) {
-        return new RequirementsSpec("CRM", List.of("supuesto"), List.of("fuera"), roles, stories, increments);
+        return new RequirementsSpec("CRM", List.of("supuesto"), List.of("fuera"), roles, stories, increments, "APP");
     }
 
     private static final List<Role> ROLES = List.of(new Role("vendedor", "registra clientes"),
             new Role("gerente", "mira el pipeline"));
+
+    @Test
+    void experienceIsRequiredAndMustBeKnown() {
+        var missing = withExperience(null);
+        assertTrue(RequirementsSpecValidator.validate(missing).stream().anyMatch(e -> e.contains("experience")));
+        assertTrue(RequirementsSpecValidator.validate(withExperience("WEB")).stream().anyMatch(e -> e.contains("experience")));
+        assertEquals(List.of(), RequirementsSpecValidator.validate(withExperience("GAME")));
+    }
+
+    private static RequirementsSpec withExperience(String experience) {
+        return new RequirementsSpec("Pong", List.of(), List.of(), List.of(new RequirementsSpec.Role("jugador", "x")),
+                List.of(new RequirementsSpec.UserStory("HU-01", "jugador", "mover", "jugar", List.of("c"), List.of(),
+                        List.of(new RequirementsSpec.Scenario("ESC-01", "t", List.of("d"), List.of("c"), List.of("e"))))),
+                List.of(new RequirementsSpec.Increment(1, "MVP", List.of("HU-01"))), experience);
+    }
 
     @Test
     void aWellFormedSpecPasses() {
