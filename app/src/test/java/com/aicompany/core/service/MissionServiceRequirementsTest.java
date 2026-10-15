@@ -38,6 +38,7 @@ class MissionServiceRequirementsTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(memory.instructionOf("M-9")).thenReturn(Optional.of("Un CRM"));
         when(requirements.claimDecision(anyString(), anyInt(), any())).thenReturn(true);
+        when(requirements.claimDecisionForKael(anyString(), anyInt(), anyInt(), anyString())).thenReturn(true);
         when(memory.claimNextRound(anyString(), anyInt(), anySet())).thenReturn(true);
     }
 
@@ -258,8 +259,9 @@ class MissionServiceRequirementsTest {
         awaitingWithDesign(2, 2);
         service.decideRequirements("M-9", new RequirementsDecisionCommand(
                 RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
-        verify(requirements).approve("M-9", 2, "founder");
-        verify(designs).approve("M-9", 4, "founder");
+        // Revisión final (M-1): HU y diseño se aprueban en una sola transacción.
+        verify(requirements).approveWithDesign("M-9", 2, 4, "founder");
+        verify(requirements, never()).approve(anyString(), anyInt(), anyString());
         verify(events).publish(eq("EMPRESA_REQUIREMENTS_APPROVED"), eq("M-9"), isNull(), eq("human"),
                 argThat(m -> Integer.valueOf(4).equals(m.get("interactionDesignVersion"))));
     }
@@ -279,8 +281,9 @@ class MissionServiceRequirementsTest {
         service.decideRequirements("M-9", new RequirementsDecisionCommand(
                 RequirementsDecisionCommand.RequirementsDecision.ADJUST, "paleta más grande",
                 RequirementsDecisionCommand.Target.KAEL));
-        verify(requirements).claimDecision("M-9", 2, null);
-        verify(designs).setPendingAdjustment("M-9", 4, "paleta más grande");
+        // Revisión final (M-1): reclamar la decisión y guardar el ajuste en el diseño, en una sola transacción.
+        verify(requirements).claimDecisionForKael("M-9", 2, 4, "paleta más grande");
+        verify(requirements, never()).claimDecision(anyString(), anyInt(), any());
         verify(executor).adjustDesignAsync("M-9", "paleta más grande");
         verify(executor, never()).adjustRequirementsAsync(anyString(), anyString());
     }
@@ -311,6 +314,45 @@ class MissionServiceRequirementsTest {
         service.decideRequirements("M-9", new RequirementsDecisionCommand(
                 RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
         verify(requirements).approve("M-9", 2, "founder");
-        verify(designs, never()).approve(anyString(), anyInt(), anyString());
+        verify(requirements, never()).approveWithDesign(anyString(), anyInt(), anyInt(), anyString());
+    }
+
+    @Test
+    void aSecondAdjustmentForKaelLoses() {
+        awaitingWithDesign(2, 2);
+        when(requirements.claimDecisionForKael("M-9", 2, 4, "x")).thenReturn(false);
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "x", RequirementsDecisionCommand.Target.KAEL)));
+        verify(executor, never()).adjustDesignAsync(anyString(), anyString());
+    }
+
+    private void awaitingAppSpecWithoutDesign() {
+        var spec = tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                new com.aicompany.core.agent.model.RequirementsSpec("CRM", java.util.List.of(), java.util.List.of(),
+                        java.util.List.of(), java.util.List.of(), java.util.List.of(), "APP"));
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(2, spec, "DRAFT", "", null)));
+        when(designs.latest("M-9")).thenReturn(Optional.empty());
+    }
+
+    // Revisión final (M-3): una app o un juego no se aprueba ni se ajusta antes de que Kael termine su diseño.
+    @Test
+    void anAppCannotBeDecidedBeforeKaelsDesign() {
+        awaitingAppSpecWithoutDesign();
+        var ex = assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9",
+                new RequirementsDecisionCommand(RequirementsDecisionCommand.RequirementsDecision.APPROVE, null)));
+        assertEquals("Kael todavía no terminó el diseño de M-9: espera a que esté listo.", ex.getMessage());
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9",
+                new RequirementsDecisionCommand(RequirementsDecisionCommand.RequirementsDecision.ADJUST, "más campos")));
+        verify(requirements, never()).claimDecision(anyString(), anyInt(), any());
+        verifyNoInteractions(executor);
+    }
+
+    @Test
+    void anAppCanStillBeRejectedBeforeKaelsDesign() {
+        awaitingAppSpecWithoutDesign();
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+        verify(requirements).reject("M-9", 2);
     }
 }

@@ -3,7 +3,6 @@ package com.aicompany.core.service;
 import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -56,11 +55,8 @@ public class InteractionDesignMemoryService {
         }
     }
 
-    public void approve(String missionId, int version, String by) {
-        write("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$v}) "
-                + "SET d.status='APPROVED', d.approvedBy=$by, d.approvedAt=datetime() REMOVE d.pendingAdjustment",
-                Map.of("id", missionId, "v", version, "by", by));
-    }
+    // Aprobar el diseño y reclamar un ajuste a Kael viven en RequirementsMemoryService (approveWithDesign,
+    // claimDecisionForKael): van en la misma transacción que la versión de HU (revisión final M-1).
 
     public void reject(String missionId, int version) {
         write("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$v}) "
@@ -71,15 +67,6 @@ public class InteractionDesignMemoryService {
     public void supersedeDraft(String missionId) {
         write("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {status:'DRAFT'}) "
                 + "SET d.status='SUPERSEDED'", Map.of("id", missionId));
-    }
-
-    public void setPendingAdjustment(String missionId, int version, String adjustment) {
-        var params = new HashMap<String, Object>();
-        params.put("id", missionId);
-        params.put("v", version);
-        params.put("a", adjustment);
-        write("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$v}) "
-                + "SET d.pendingAdjustment=$a", params);
     }
 
     public Optional<String> pendingAdjustment(String missionId) {

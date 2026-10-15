@@ -245,6 +245,15 @@ public class MissionService {
         if (toKael && draftDesign.isEmpty()) {
             throw new IllegalStateException(missionId + " no tiene un diseño de Kael para ajustar.");
         }
+        // Revisión final (M-3): una app o un juego se decide con el diseño de Kael; rechazar sigue permitido.
+        if (designs != null && draftDesign.isEmpty()
+                && command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
+            var experience = JSON.readValue(version.specJson(), RequirementsSpec.class).experienceOrNull();
+            if (experience == RequirementsSpec.Experience.APP || experience == RequirementsSpec.Experience.GAME) {
+                throw new IllegalStateException("Kael todavía no terminó el diseño de " + missionId
+                        + ": espera a que esté listo.");
+            }
+        }
         if (command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
             // Revisión final Aria (8): aprobar llama a Neo y ajustar a Aria; ninguno puede estar apagado.
             requireAgentsOn(mission.teamId(), "decidir sobre los requisitos de " + missionId, true,
@@ -256,16 +265,22 @@ public class MissionService {
         }
         var adjustment = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
                 ? command.instruction().strip() : null;
-        // El ajuste se guarda en la versión de HU solo si va a Aria; si va a Kael, en la versión del diseño.
-        if (!requirementsMemory.claimDecision(missionId, version.version(), toKael ? null : adjustment)) {
+        // El ajuste se guarda en la versión de HU solo si va a Aria; si va a Kael, en la versión del diseño (misma transacción).
+        var claimed = toKael
+                ? requirementsMemory.claimDecisionForKael(missionId, version.version(), draftDesign.get().version(), adjustment)
+                : requirementsMemory.claimDecision(missionId, version.version(), adjustment);
+        if (!claimed) {
             // Revisión final Aria (12): doble clic; la primera decisión ya está en curso.
             throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
                     + " ya tiene una decisión en curso.");
         }
         switch (command.decision()) {
             case APPROVE -> {
-                requirementsMemory.approve(missionId, version.version(), "founder");
-                draftDesign.ifPresent(d -> designs.approve(missionId, d.version(), "founder"));
+                if (draftDesign.isPresent()) {
+                    requirementsMemory.approveWithDesign(missionId, version.version(), draftDesign.get().version(), "founder");
+                } else {
+                    requirementsMemory.approve(missionId, version.version(), "founder");
+                }
                 events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", draftDesign
                         .<Map<String, Object>>map(d -> Map.of("version", version.version(),
                                 "interactionDesignVersion", d.version()))
@@ -274,7 +289,6 @@ public class MissionService {
             }
             case ADJUST -> {
                 if (toKael) {
-                    designs.setPendingAdjustment(missionId, draftDesign.get().version(), adjustment);
                     executor.adjustDesignAsync(missionId, adjustment);
                 } else {
                     executor.adjustRequirementsAsync(missionId, adjustment);

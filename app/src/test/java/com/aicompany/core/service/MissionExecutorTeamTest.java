@@ -767,7 +767,9 @@ class MissionExecutorTeamTest {
                 JsonMapper.builder().build().writeValueAsString(GAME_SPEC), "APPROVED", "", null)));
         when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
         executor.executeAsync("M-9", "Un CRM").get();
-        verify(designMemory).approve("M-9", 1, "policy");
+        // Revisión final (M-1): HU y diseño aprobados por la policy en una sola transacción.
+        verify(requirements).approveWithDesign("M-9", 1, 1, "policy");
+        verify(requirements, never()).approve(anyString(), anyInt(), anyString());
         verify(events, times(1)).publish(eq("EMPRESA_REQUIREMENTS_READY"), any(), any(), any(), anyMap());
         verify(events).publish(eq("EMPRESA_REQUIREMENTS_APPROVED"), eq("M-9"), isNull(), eq("policy"),
                 argThat(d -> Integer.valueOf(1).equals(d.get("interactionDesignVersion"))));

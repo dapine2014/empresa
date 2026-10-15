@@ -494,9 +494,10 @@ public class MissionExecutor {
                 awaitApproval(missionId, written, designed);
                 return;
             }
-            requirementsMemory.approve(missionId, written.version(), "policy");
             if (designed != null) {
-                designMemory.approve(missionId, designed.version(), "policy");
+                requirementsMemory.approveWithDesign(missionId, written.version(), designed.version(), "policy");
+            } else {
+                requirementsMemory.approve(missionId, written.version(), "policy");
             }
             // Revisión final Aria (14): aprobado por la policy, no por el fundador (agentId "policy").
             events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "policy",

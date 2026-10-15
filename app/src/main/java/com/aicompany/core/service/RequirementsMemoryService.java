@@ -90,6 +90,45 @@ public class RequirementsMemoryService {
                 Map.of("id", missionId, "v", version, "by", approvedBy));
     }
 
+    /**
+     * Spec 2026-10-14 Kael §1.2 (revisión final M-1): las HU y el diseño de Kael se aprueban juntos o ninguno, en una
+     * sola transacción (un corte a mitad no deja HU aprobadas con el diseño en DRAFT).
+     */
+    public void approveWithDesign(String missionId, int specVersion, int designVersion, String approvedBy) {
+        var params = Map.<String, Object>of("id", missionId, "v", specVersion, "d", designVersion, "by", approvedBy);
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (m:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
+                        + "SET r.status='APPROVED', r.approvedBy=$by, r.approvedAt=datetime(), m.approvedSpecVersion=$v",
+                        params);
+                tx.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$d}) "
+                        + "SET d.status='APPROVED', d.approvedBy=$by, d.approvedAt=datetime() REMOVE d.pendingAdjustment",
+                        params);
+                return null;
+            });
+        }
+    }
+
+    /**
+     * Revisión final M-1: el CAS de claimDecision (sin ajuste en las HU) y el ajuste pendiente en la versión del diseño,
+     * en una sola transacción; solo la primera decisión gana.
+     */
+    public boolean claimDecisionForKael(String missionId, int specVersion, int designVersion, String adjustment) {
+        var params = Map.<String, Object>of("id", missionId, "v", specVersion, "d", designVersion, "a", adjustment);
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+                var claimed = !tx.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
+                        + "WHERE r.status = 'DRAFT' AND r.decisionClaimedAt IS NULL SET r.decisionClaimedAt = datetime(), "
+                        + "r.pendingAdjustment = null RETURN r.version", params).list().isEmpty();
+                if (claimed) {
+                    tx.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$d}) "
+                            + "SET d.pendingAdjustment=$a", params);
+                }
+                return claimed;
+            });
+        }
+    }
+
     public void reject(String missionId, int version) {
         write("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) SET r.status='REJECTED'",
                 Map.of("id", missionId, "v", version));
