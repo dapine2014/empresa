@@ -35,19 +35,17 @@ case "$1" in
   test)
     make_sln
     rm -f /work/.forjai/playthroughs.json
-    set +e
-    checked dotnet test "$SLN" --no-build -c Debug --logger "trx;LogFileName=results.trx" --results-directory /work/.forjai
-    rc=$?
+    # `checked` reactiva errexit: los rc se capturan con || para que las partidas corran aunque fallen los tests unitarios.
+    rc=0
+    checked dotnet test "$SLN" --no-build -c Debug --logger "trx;LogFileName=results.trx" --results-directory /work/.forjai || rc=$?
     play=0
     # Spec 2026-10-14 Kael §2.3: las partidas simuladas de Vera sobre la escena principal real.
     # timeout: sin el ensamblado compilado el runner gira al 100% de CPU sin terminar (spike Task 0).
     if [ -n "$(find /work/game/playthroughs -name '*.cs' -print -quit 2>/dev/null)" ]; then
       timeout 120 godot --headless --fixed-fps 60 --path /work/game res://forjai/Runner.tscn -- --out=/work/.forjai/playthroughs.json \
-        > /tmp/play.log 2>&1
-      play=$?
+        > /tmp/play.log 2>&1 || play=$?
       cat /tmp/play.log
     fi
-    set -e
     [ "$rc" -eq 0 ] && [ "$play" -eq 0 ] ;;
   smoke)
     [ -f /work/game/project.godot ] || { echo "Falta game/project.godot"; exit 1; }

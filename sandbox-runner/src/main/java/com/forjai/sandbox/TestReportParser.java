@@ -27,11 +27,11 @@ public final class TestReportParser {
     private static final Pattern JSON_START = Pattern.compile("\"test\":\\{\"id\":(\\d+),\"name\":\"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final Pattern JSON_DONE_ID = Pattern.compile("\"testID\":(\\d+)");
 
-    private TestReportParser() {
-    }
-
     private static final Pattern PLAYTHROUGH = Pattern.compile(
             "\\{\"name\":\"((?:[^\"\\\\]|\\\\.)*)\",\"outcome\":\"(PASSED|FAILED)\"");
+
+    private TestReportParser() {
+    }
 
     public static TestCounts parse(Path workDir) {
         var base = parseReports(workDir);
