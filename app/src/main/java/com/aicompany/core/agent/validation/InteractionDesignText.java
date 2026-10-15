@@ -62,10 +62,13 @@ public final class InteractionDesignText {
                     scenarios.stream().map(id -> id + "→" + targets.get(id)).collect(Collectors.joining(", ")));
         }
         var game = design.game();
-        var ruleIds = new LinkedHashSet<String>();
-        scenarios.forEach(id -> Optional.ofNullable(targets.get(id)).filter(t -> t.startsWith("REGLA-")).ifPresent(ruleIds::add));
-        ruleIds.addAll(nn(game.win()));
-        ruleIds.addAll(nn(game.lose()));
+        // Van todas las reglas menos las que solo apuntan escenarios de OTROS incrementos: las sin escenario
+        // (rebote en la pared) o con condición de control también las necesita quien programa este incremento.
+        var ownTargets = new HashSet<String>();
+        var otherTargets = new HashSet<String>();
+        targets.forEach((scenario, target) -> (scenarios.contains(scenario) ? ownTargets : otherTargets).add(target));
+        var winLose = new HashSet<String>(nn(game.win()));
+        winLose.addAll(nn(game.lose()));
         return """
                 DISEÑO DE JUEGO APROBADO (Kael): INCREMENTO %d
                 Estados: %s
@@ -79,6 +82,9 @@ public final class InteractionDesignText {
                 Dificultad: %s
                 Escenarios → regla o control: %s
                 Sin assets externos: dibuja con nodos (ColorRect, Polygon2D, Label) o en _Draw().
+                Lee el input SOLO con las acciones de [input] (Input.IsActionPressed / GetAxis), nunca con teclas directas.
+                No uses GetTree().Quit(), ChangeSceneToFile ni ReloadCurrentScene, ni rutas /root/…: el reinicio tras game over se hace dentro de la escena.
+                Expón en el script de la escena principal, como propiedades públicas, el estado que se verifica (puntaje, estado del loop).
                 """.formatted(increment, String.join(", ", nn(game.states())),
                 nn(game.transitions()).stream().map(t -> t.from() + "→" + t.to() + " (" + t.trigger() + ")")
                         .collect(Collectors.joining(", ")),
@@ -87,7 +93,8 @@ public final class InteractionDesignText {
                         .collect(Collectors.joining("; ")),
                 nn(game.controls()).stream().map(c -> "- " + c.action() + " [" + c.key() + "]: " + c.effect())
                         .collect(Collectors.joining("\n")),
-                nn(game.rules()).stream().filter(r -> ruleIds.contains(r.id()))
+                nn(game.rules()).stream().filter(r -> winLose.contains(r.id()) || ownTargets.contains(r.id())
+                                || !otherTargets.contains(r.id()))
                         .map(r -> "- " + r.id() + ": SI " + r.condition() + " ENTONCES " + r.effect())
                         .collect(Collectors.joining("\n")),
                 String.join(", ", nn(game.win())), String.join(", ", nn(game.lose())),

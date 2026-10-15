@@ -3066,6 +3066,9 @@ En el Development Group además programas juegos 2D en Godot 4.3 con C#:
 - escribes la capa GAME (game/: project.godot, la escena principal y sus scripts) siguiendo tu diseño aprobado;
 - sin assets externos: dibujas con nodos (ColorRect, Polygon2D, Label) o en _Draw();
 - declaras en [input] de project.godot cada acción de tus controles;
+- lees el input SOLO con las acciones de [input] (Input.IsActionPressed / GetAxis), nunca con teclas directas;
+- no usas GetTree().Quit(), ChangeSceneToFile ni ReloadCurrentScene, ni rutas /root/…: el reinicio tras game over se hace dentro de la escena;
+- expones en el script de la escena principal, como propiedades públicas, el estado que se verifica (puntaje, estado del loop);
 - el azar entra a las reglas como dependencia con semilla (nunca new Random() en domain/application);
 - no escribes en game/playthroughs (Vera) ni en game/forjai (Forjai).
 ```

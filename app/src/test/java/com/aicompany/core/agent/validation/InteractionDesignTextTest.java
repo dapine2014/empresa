@@ -39,12 +39,25 @@ class InteractionDesignTextTest {
                 List.of(new Entity("pelota", "Pelota", List.of(new Property("velocidad", 300.0)))),
                 List.of(new Control("move_right", "Right", "mueve")),
                 List.of(new Rule("REGLA-01", "move_right", "avanza"), new Rule("REGLA-02", "pasa", "pierde"),
-                        new Rule("REGLA-03", "otra", "x")),
+                        new Rule("REGLA-03", "otra", "x"), new Rule("REGLA-04", "pelota toca la pared", "rebota"),
+                        new Rule("REGLA-05", "se presiona move_right en el borde", "se detiene")),
                 List.of(), List.of("REGLA-02"), List.of(), List.of(new ScenarioRule("ESC-01", "REGLA-01"),
                 new ScenarioRule("ESC-02", "REGLA-03")), List.of("h")));
         var block = InteractionDesignText.incrementBlock(design, SPEC, 1);
         assertTrue(block.contains("move_right") && block.contains("300") && block.contains("REGLA-01")
                 && block.contains("REGLA-02"), block);   // REGLA-02 por ser de lose
-        assertFalse(block.contains("REGLA-03"), block);  // es del incremento 2
+        assertFalse(block.contains("REGLA-03"), block);  // solo la apunta un escenario del incremento 2
+        assertTrue(block.contains("REGLA-04") && block.contains("rebota"), block);      // sin escenario: va
+        assertTrue(block.contains("REGLA-05") && block.contains("se detiene"), block);  // condición de control: va
+    }
+
+    @Test void theGameBlockCarriesTheGodotRulesForKaelsCode() {
+        var design = new InteractionDesign("GAME", null, new GameDesign(List.of("PLAYING"), List.of(), List.of(),
+                List.of(new Control("jump", "Space", "salta")), List.of(new Rule("REGLA-01", "jump", "salta")),
+                List.of(), List.of(), List.of(), List.of(new ScenarioRule("ESC-01", "REGLA-01")), List.of()));
+        var block = InteractionDesignText.incrementBlock(design, SPEC, 1);
+        assertTrue(block.contains("Lee el input SOLO con las acciones de [input]"), block);
+        assertTrue(block.contains("No uses GetTree().Quit(), ChangeSceneToFile ni ReloadCurrentScene"), block);
+        assertTrue(block.contains("como propiedades públicas, el estado que se verifica"), block);
     }
 }

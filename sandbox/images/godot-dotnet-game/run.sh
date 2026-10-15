@@ -42,9 +42,15 @@ case "$1" in
     # Spec 2026-10-14 Kael §2.3: las partidas simuladas de Vera sobre la escena principal real.
     # timeout: sin el ensamblado compilado el runner gira al 100% de CPU sin terminar (spike Task 0).
     if [ -n "$(find /work/game/playthroughs -name '*.cs' -print -quit 2>/dev/null)" ]; then
+      mkdir -p /work/.forjai
       timeout 120 godot --headless --fixed-fps 60 --path /work/game res://forjai/Runner.tscn -- --out=/work/.forjai/playthroughs.json \
         > /tmp/play.log 2>&1 || play=$?
       cat /tmp/play.log
+      # Si el juego cierra Godot o cambia de escena, el runner no llega a escribir: eso no puede pasar como verde.
+      if [ ! -f /work/.forjai/playthroughs.json ]; then
+        play=1
+        echo "FORJAI: el runner de partidas no escribió resultados (¿el juego llamó Quit o cambió de escena?)"
+      fi
     fi
     [ "$rc" -eq 0 ] && [ "$play" -eq 0 ] ;;
   smoke)

@@ -61,7 +61,8 @@ public final class GameRunnerFiles {
 
                 public override async void _Ready()
                 {
-                    GD.Seed(0);
+                    // En _Ready la raíz todavía está agregando hijos y rechaza el AddChild de la escena principal.
+                    await NextFrame();
                     var mainPath = (string)ProjectSettings.GetSetting("application/run/main_scene");
                     var types = typeof(PlaythroughRunner).Assembly.GetTypes()
                         .Where(t => t.IsSubclassOf(typeof(Playthrough)) && !t.IsAbstract)
@@ -83,8 +84,12 @@ public final class GameRunnerFiles {
                     var frames = 0;
                     try
                     {
+                        // Cada partida arranca de la misma semilla, sin depender de las partidas anteriores.
+                        GD.Seed(0);
                         main = GD.Load<PackedScene>(mainPath).Instantiate();
-                        AddChild(main);
+                        // Como en el juego real: la escena principal cuelga de la raíz y es la escena actual.
+                        GetTree().Root.AddChild(main);
+                        GetTree().CurrentScene = main;
                         await NextFrame();
                         var playthrough = (Playthrough)Activator.CreateInstance(type)!;
                         foreach (var s in playthrough.Steps(main))
@@ -95,7 +100,7 @@ public final class GameRunnerFiles {
                                 case StepKind.Press:
                                     if (!InputMap.HasAction(s.Action))
                                     {
-                                        return Fail(type, step, "la acción \"" + s.Action + "\" no está en [input] de project.godot");
+                                        return Fail(type, step, "la acción \\"" + s.Action + "\\" no está en [input] de project.godot");
                                     }
                                     Input.ParseInputEvent(new InputEventAction { Action = s.Action!, Pressed = true });
                                     for (var i = 0; i < s.Frames; i++, frames++) await NextFrame();
