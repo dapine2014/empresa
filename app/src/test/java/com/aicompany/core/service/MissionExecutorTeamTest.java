@@ -747,6 +747,13 @@ class MissionExecutorTeamTest {
         order.verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
                 argThat(m -> m.contains("Kael")));
         verify(planner, never()).plan(any(), any(), any(), any());
+        // Revisión Task 5 (R2): eventos en orden Aria → Kael, un solo READY de requisitos.
+        var events = inOrder(this.events);
+        events.verify(this.events).publish(eq("EMPRESA_REQUIREMENTS_READY"), eq("M-9"), isNull(), eq("product-owner"), anyMap());
+        events.verify(this.events).publish(eq("EMPRESA_INTERACTION_DESIGN_READY"), eq("M-9"), isNull(),
+                eq(InteractionDesignWriter.KAEL), argThat(d -> Integer.valueOf(1).equals(d.get("version"))
+                        && Integer.valueOf(1).equals(d.get("specVersion"))));
+        verify(this.events, times(1)).publish(eq("EMPRESA_REQUIREMENTS_READY"), any(), any(), any(), anyMap());
     }
 
     // Spec 2026-10-14 Kael §1.2: con la policy en 0 ambos quedan aprobados por la policy y Neo recibe el diseño.
@@ -761,6 +768,9 @@ class MissionExecutorTeamTest {
         when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
         executor.executeAsync("M-9", "Un CRM").get();
         verify(designMemory).approve("M-9", 1, "policy");
+        verify(events, times(1)).publish(eq("EMPRESA_REQUIREMENTS_READY"), any(), any(), any(), anyMap());
+        verify(events).publish(eq("EMPRESA_REQUIREMENTS_APPROVED"), eq("M-9"), isNull(), eq("policy"),
+                argThat(d -> Integer.valueOf(1).equals(d.get("interactionDesignVersion"))));
         verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), argThat(i -> i.contains("DISEÑO DE JUEGO APROBADO")
                 && i.contains("TIPO DE EXPERIENCIA: GAME")), any());
     }
@@ -787,7 +797,10 @@ class MissionExecutorTeamTest {
                 .thenReturn(new InteractionDesignWriter.Written(2, DESIGN));
         executor.adjustDesignAsync("M-9", "paleta más grande").get();
         verify(writer, never()).write(any(), any(), any(), any());
-        verify(requirements).releaseDecision("M-9", 1);
+        // Revisión Task 5 (R1): la decisión se libera antes de que Kael escriba.
+        var order = inOrder(requirements, designWriter);
+        order.verify(requirements).releaseDecision("M-9", 1);
+        order.verify(designWriter).write(eq("M-9"), eq(GAME_SPEC), eq(1), eq(Optional.of(DESIGN)), eq("paleta más grande"));
         verify(memory, atLeastOnce()).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(), anyString());
     }
     // Spec 2026-10-14 Kael §1.2: con Kael apagado la misión APP/GAME no sigue tras Aria: queda FAILED y nunca espera.
@@ -801,5 +814,107 @@ class MissionExecutorTeamTest {
                 argThat(m -> m.contains("Kael está apagado")));
         verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
                 anyString());
+    }
+    private static com.aicompany.core.recovery.ResumePoint resumeAt(com.aicompany.core.recovery.ResumePoint.Stage stage) {
+        return new com.aicompany.core.recovery.ResumePoint(stage, 0, com.aicompany.core.recovery.ResumePoint.RoundKind.ORIGINAL,
+                null);
+    }
+
+    private void withGameDraft(int specVersion, int designVersion, int designSpecVersion) throws Exception {
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(specVersion,
+                JsonMapper.builder().build().writeValueAsString(GAME_SPEC), "DRAFT", "", null)));
+        when(designMemory.latest("M-9")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(designVersion,
+                JsonMapper.builder().build().writeValueAsString(DESIGN), "DRAFT", designSpecVersion, "")));
+    }
+
+    // Spec 2026-10-14 Kael §1.2: ajustar a Aria siempre rehace el diseño (el anterior queda SUPERSEDED).
+    @Test
+    void adjustingAriaMakesKaelRedesignOverTheNewStories() throws Exception {
+        withKael();
+        withGameDraft(1, 1, 1);
+        when(writer.write(eq("M-9"), eq("Un CRM"), any(), eq("solo clientes")))
+                .thenReturn(new RequirementsWriter.Written(2, GAME_SPEC));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(2), any(), anyString()))
+                .thenReturn(new InteractionDesignWriter.Written(2, DESIGN));
+        executor.adjustRequirementsAsync("M-9", "solo clientes").get();
+        var order = inOrder(designMemory, designWriter);
+        order.verify(designMemory).supersedeDraft("M-9");
+        order.verify(designWriter).write(eq("M-9"), eq(GAME_SPEC), eq(2), eq(Optional.of(DESIGN)),
+                eq("Aria cambió las historias de usuario: rehaz el diseño sobre las HU actuales."));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael diseñó el juego (versión 2)")));
+    }
+
+    // Spec 2026-10-14 Kael §1.2: la ronda de evidencia sin requisitos aprobados vuelve a Aria y Kael rediseña.
+    @Test
+    void anEvidenceRoundWithoutApprovedRequirementsRedesigns() throws Exception {
+        withKael();
+        when(requirements.approved("M-9")).thenReturn(Optional.empty());
+        when(requirements.latest("M-9")).thenReturn(Optional.empty());
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(writer.write(eq("M-9"), eq("Un CRM"), any(), eq("más detalle")))
+                .thenReturn(new RequirementsWriter.Written(2, GAME_SPEC));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(2), any(), anyString()))
+                .thenReturn(new InteractionDesignWriter.Written(1, DESIGN));
+        executor.reexecuteAsync("M-9", "Un CRM", 1, "más detalle").get();
+        verify(designMemory).supersedeDraft("M-9");
+        verify(designWriter).write(eq("M-9"), eq(GAME_SPEC), eq(2), eq(Optional.empty()), anyString());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael")));
+        verify(planner, never()).plan(any(), any(), any(), any(), anyInt());
+    }
+
+    // Spec 2026-10-14 Kael §1.2: el retome en Kael nunca repite a Aria; diseña sobre el último borrador.
+    @Test
+    void resumingAtDesignCallsOnlyKaelOverTheLatestDraft() throws Exception {
+        withKael();
+        when(requirements.latest("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(3,
+                JsonMapper.builder().build().writeValueAsString(GAME_SPEC), "DRAFT", "", null)));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(3), eq(Optional.empty()), isNull()))
+                .thenReturn(new InteractionDesignWriter.Written(1, DESIGN));
+        executor.resumeAsync("M-9", resumeAt(com.aicompany.core.recovery.ResumePoint.Stage.DESIGN)).get();
+        verify(writer, never()).write(any(), any(), any(), any());
+        verify(designWriter).write(eq("M-9"), eq(GAME_SPEC), eq(3), eq(Optional.empty()), isNull());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael")));
+    }
+
+    // Spec 2026-10-14 Kael §1.2: un ajuste a Kael cortado se repite con el ajuste guardado.
+    @Test
+    void resumingAtDesignAdjustmentRepeatsTheSavedAdjustment() throws Exception {
+        withKael();
+        withGameDraft(1, 1, 1);
+        when(designMemory.pendingAdjustment("M-9")).thenReturn(Optional.of("paleta más grande"));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(1), any(), eq("paleta más grande")))
+                .thenReturn(new InteractionDesignWriter.Written(2, DESIGN));
+        executor.resumeAsync("M-9", resumeAt(com.aicompany.core.recovery.ResumePoint.Stage.DESIGN_ADJUSTMENT)).get();
+        verify(writer, never()).write(any(), any(), any(), any());
+        var order = inOrder(requirements, designWriter);
+        order.verify(requirements).releaseDecision("M-9", 1);
+        order.verify(designWriter).write(eq("M-9"), eq(GAME_SPEC), eq(1), eq(Optional.of(DESIGN)), eq("paleta más grande"));
+        verify(events).publish(eq("EMPRESA_INTERACTION_DESIGN_ADJUSTED"), eq("M-9"), isNull(), eq("human"),
+                argThat(d -> Integer.valueOf(2).equals(d.get("version")) && "paleta más grande".equals(d.get("instruction"))));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("versión 2")));
+    }
+
+    // Spec 2026-10-14 Kael §1.2: al retomar la espera, el fundador ve el diseño DRAFT de esa versión del spec.
+    @Test
+    void resumingTheApprovalWaitShowsTheDesignOfThatSpecVersion() throws Exception {
+        withKael();
+        withGameDraft(2, 4, 2);
+        executor.resumeAsync("M-9", resumeAt(com.aicompany.core.recovery.ResumePoint.Stage.AWAIT_APPROVAL)).get();
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Requisitos y diseño listos (Aria + Kael)"), argThat(m -> m.contains("Kael diseñó el juego (versión 4)")));
+        verifyNoInteractions(designWriter);
+    }
+
+    @Test
+    void resumingTheApprovalWaitIgnoresADesignOfAnotherSpecVersion() throws Exception {
+        withKael();
+        withGameDraft(2, 4, 1);
+        executor.resumeAsync("M-9", resumeAt(com.aicompany.core.recovery.ResumePoint.Stage.AWAIT_APPROVAL)).get();
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Requisitos listos (Aria)"), argThat(m -> !m.contains("Kael")));
     }
 }
