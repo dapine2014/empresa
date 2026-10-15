@@ -153,9 +153,20 @@ class TeamPlanValidatorTest {
         var tasks = validTasks();
         tasks.add(new PlannedTask("interaction-design", "WORK", "GAMEPLAY", "Juego",
                 List.of("godot"), List.of("game")));
+        tasks.set(2, new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests", List.of("tests"),
+                List.of("test/saludo", "game/playthroughs")));
         var errors = validateDev(plan("GODOT_DOTNET_GAME",
                 List.of(new TeamPlan.BoundedContext("Combate", "Combate")), GLOSSARY, tasks));
-        assertTrue(errors.stream().noneMatch(e -> e.contains("habilitado")), errors.toString());
+        assertTrue(errors.stream().noneMatch(e -> e.contains("habilitado") || e.contains("solapan")), errors.toString());
+    }
+
+    @Test
+    void nestedPathsOfNonQaTasksStillOverlap() {
+        var tasks = validTasks();
+        tasks.add(new PlannedTask("interaction-design", "WORK", "GAMEPLAY", "Juego", List.of("godot"), List.of("game")));
+        tasks.add(new PlannedTask("devops", "WORK", "DB", "Datos", List.of("persistence"), List.of("game/playthroughs")));
+        var errors = validateDev(plan("GODOT_DOTNET_GAME", CONTEXTS, GLOSSARY, tasks));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("se solapan")), errors.toString());
     }
 
     @Test

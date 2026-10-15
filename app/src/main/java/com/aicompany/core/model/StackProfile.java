@@ -190,20 +190,20 @@ public enum StackProfile {
         return Optional.empty();
     }
 
-    /** Capas que ofrece el perfil (por contexto y compartidas). */
+    /** Spec 2026-10-14 Kael §2.1: dentro de game/, las partidas son de Vera y el runner es de Forjai. */
+    public static final String PLAYTHROUGHS_ROOT = "game/playthroughs";
+    public static final String FORJAI_GAME_ROOT = "game/forjai";
+
     /** Fase del Development Group en que el perfil está habilitado (spec 2026-10-01). */
     public int phase() {
         return 1;
     }
 
-    /** Spec 2026-10-14 Kael §2.1: dentro de game/, las partidas son de Vera y el runner es de Forjai. */
-    public static final String PLAYTHROUGHS_ROOT = "game/playthroughs";
-    public static final String FORJAI_GAME_ROOT = "game/forjai";
-
     public boolean enabledNow() {
         return phase() <= DevelopmentPhase.CURRENT;
     }
 
+    /** Capas que ofrece el perfil (por contexto y compartidas). */
     public List<Layer> layers() {
         var layers = new ArrayList<Layer>();
         contextRoots.forEach(r -> layers.add(r.layer()));
