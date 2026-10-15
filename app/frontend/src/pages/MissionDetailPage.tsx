@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { InvestorDecision, MissionResponse, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
+import type { AdjustTarget, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -190,6 +190,15 @@ const INCREMENT_READY = new Set(['AWAITING_INVESTOR', 'COMPLETED', 'FAILED'])
 function MissionRequirements({ missionId, status }: { missionId: string; status: string }) {
   const queryClient = useQueryClient()
   const [adjustment, setAdjustment] = useState('')
+  const [target, setTarget] = useState<AdjustTarget>('ARIA')
+  const designQuery = useQuery({
+    queryKey: ['interactionDesign', missionId],
+    queryFn: () => api.interactionDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const hasDesign = !!designQuery.data?.design
+  const effectiveTarget: AdjustTarget = hasDesign ? target : 'ARIA'
   const query = useQuery({
     queryKey: ['requirements', missionId],
     queryFn: () => api.requirements(missionId),
@@ -199,10 +208,11 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['requirements', missionId] })
     void queryClient.invalidateQueries({ queryKey: ['missionDetails', missionId] })
+    void queryClient.invalidateQueries({ queryKey: ['interactionDesign', missionId] })
   }
   const decide = useMutation({
     mutationFn: (decision: RequirementsDecision) =>
-      api.decideRequirements(missionId, decision, decision === 'ADJUST' ? adjustment : undefined),
+      api.decideRequirements(missionId, decision, decision === 'ADJUST' ? adjustment : undefined, effectiveTarget),
     onSuccess: () => {
       setAdjustment('')
       refresh()
@@ -226,6 +236,7 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
         Versión {view.version} — {view.versionStatus}
         {view.approvedVersion != null && <> — incremento construido: {view.builtIncrement} de {view.incrementsTotal}</>}
       </p>
+      {spec.experience && <p>Tipo: {spec.experience}</p>}
       <p>{spec.summary}</p>
       <h3>Roles</h3>
       <ul>
@@ -272,10 +283,17 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
           <button disabled={decide.isPending} onClick={() => decide.mutate('REJECT')}>
             Rechazar
           </button>
+          <label>
+            Ajuste para{' '}
+            <select value={effectiveTarget} onChange={(e) => setTarget(e.target.value as AdjustTarget)}>
+              <option value="ARIA">Aria</option>
+              {hasDesign && <option value="KAEL">Kael</option>}
+            </select>
+          </label>
           <textarea
             value={adjustment}
             onChange={(e) => setAdjustment(e.target.value)}
-            placeholder="Qué debe cambiar Aria"
+            placeholder={`Qué debe cambiar ${effectiveTarget === 'KAEL' ? 'Kael' : 'Aria'}`}
           />
           <button disabled={decide.isPending || !adjustment.trim()} onClick={() => decide.mutate('ADJUST')}>
             Ajustar
@@ -289,6 +307,101 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
       )}
       {decide.isError && <p className="error">{decide.error.message}</p>}
       {build.isError && <p className="error">{build.error.message}</p>}
+    </div>
+  )
+}
+
+/** Spec 2026-10-14 Kael: diseño de interacción (pantallas y flujos, o reglas del juego); 404 = sin diseño. */
+function MissionDesign({ missionId }: { missionId: string }) {
+  const query = useQuery({
+    queryKey: ['interactionDesign', missionId],
+    queryFn: () => api.interactionDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const view = query.data
+  if (!view?.design) {
+    return null
+  }
+  const { app, game } = view.design
+  const props = (list: DesignProperty[]) => list.map((p) => `${p.name}=${p.value ?? '—'}`).join(', ')
+  return (
+    <div className="decision-form">
+      <h2>Diseño (Kael)</h2>
+      <p>
+        Versión {view.version} — {view.status}
+      </p>
+      {app && (
+        <>
+          <h3>Pantallas</h3>
+          <ul>
+            {app.screens.map((s) => (
+              <li key={s.id}>
+                {s.id} {s.name} ({s.role}): {s.purpose} — {s.states.join(', ')}
+              </li>
+            ))}
+          </ul>
+          <h3>Flujos</h3>
+          <ul>
+            {app.flows.map((f) => (
+              <li key={f.story}>
+                {f.story}: {f.screens.join(' → ')}
+              </li>
+            ))}
+          </ul>
+          {app.frictionRisks.length > 0 && (
+            <>
+              <h3>Hipótesis</h3>
+              <ul>
+                {app.frictionRisks.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+      {game && (
+        <>
+          <h3>Estados</h3>
+          <p>{game.states.join(', ')}</p>
+          <ul>
+            {game.transitions.map((t) => (
+              <li key={`${t.from}-${t.to}-${t.trigger}`}>
+                {t.from} → {t.to} ({t.trigger})
+              </li>
+            ))}
+          </ul>
+          <h3>Controles</h3>
+          <ul>
+            {game.controls.map((c) => (
+              <li key={c.action}>
+                {c.action} [{c.key}]: {c.effect}
+              </li>
+            ))}
+          </ul>
+          <h3>Entidades</h3>
+          <ul>
+            {game.entities.map((e) => (
+              <li key={e.id}>
+                {e.name}: {props(e.properties)}
+              </li>
+            ))}
+          </ul>
+          <h3>Reglas</h3>
+          <ul>
+            {game.rules.map((r) => (
+              <li key={r.id}>
+                {r.id}: SI {r.condition} ENTONCES {r.effect}
+              </li>
+            ))}
+          </ul>
+          <p>Gana: {game.win.join('; ')}</p>
+          <p>Pierde: {game.lose.join('; ')}</p>
+          {game.difficulty.length > 0 && <p>Dificultad: {props(game.difficulty)}</p>}
+          {game.balanceHypotheses.length > 0 && <p>Hipótesis de balance: {game.balanceHypotheses.join('; ')}</p>}
+        </>
+      )}
     </div>
   )
 }
@@ -353,6 +466,7 @@ export default function MissionDetailPage() {
       <MissionModelCost missionId={mission.missionId} />
 
       {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
+      {mission.teamId && <MissionDesign missionId={mission.missionId} />}
 
       {mission.teamId && <MissionDatabase missionId={mission.missionId} />}
 

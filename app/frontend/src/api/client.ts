@@ -1,4 +1,6 @@
 import type {
+  AdjustTarget,
+  InteractionDesignView,
   DatabaseConnectionForm,
   DatabaseConnectionInfo,
   MissionDatabaseStatus,
@@ -195,10 +197,18 @@ export const api = {
   requirements: (missionId: string) =>
     request<RequirementsView>(`/api/company/missions/${missionId}/requirements`),
 
-  decideRequirements: (missionId: string, decision: RequirementsDecision, instruction?: string) =>
+  interactionDesign: (missionId: string) =>
+    request<InteractionDesignView>(`/api/company/missions/${missionId}/interaction-design`),
+
+  decideRequirements: (
+    missionId: string,
+    decision: RequirementsDecision,
+    instruction?: string,
+    target: AdjustTarget = 'ARIA',
+  ) =>
     request<RequirementsView>(`/api/company/missions/${missionId}/requirements/decision`, {
       method: 'POST',
-      body: JSON.stringify({ decision, instruction: instruction ?? null }),
+      body: JSON.stringify({ decision, instruction: instruction ?? null, target }),
     }),
 
   buildIncrement: (missionId: string, increment: number) =>

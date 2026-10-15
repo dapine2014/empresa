@@ -623,6 +623,7 @@ export interface RequirementsSpec {
   roles: { name: string; description: string }[]
   userStories: RequirementsStory[]
   increments: { number: number; goal: string; userStoryIds: string[] }[]
+  experience?: 'APP' | 'GAME' | 'NONE' | null
 }
 
 export interface RequirementsView {
@@ -638,6 +639,40 @@ export interface RequirementsView {
 }
 
 export type RequirementsDecision = 'APPROVE' | 'ADJUST' | 'REJECT'
+
+// Spec 2026-10-14 Kael: diseño de interacción (InteractionDesign / InteractionDesignView en Java).
+export interface DesignScreen { id: string; name: string; purpose: string; role: string; states: string[] }
+export interface DesignFlow { story: string; screens: string[]; actions: string[] }
+export interface AppDesign {
+  screens: DesignScreen[]
+  flows: DesignFlow[]
+  scenarioScreens: { scenario: string; screen: string }[]
+  frictionRisks: string[]
+}
+export interface DesignProperty { name: string; value: number | null }
+export interface GameDesign {
+  states: string[]
+  transitions: { from: string; to: string; trigger: string }[]
+  entities: { id: string; name: string; properties: DesignProperty[] }[]
+  controls: { action: string; key: string; effect: string }[]
+  rules: { id: string; condition: string; effect: string }[]
+  win: string[]
+  lose: string[]
+  difficulty: DesignProperty[]
+  scenarioRules: { scenario: string; target: string }[]
+  balanceHypotheses: string[]
+}
+export interface InteractionDesign { experience: 'APP' | 'GAME'; app: AppDesign | null; game: GameDesign | null }
+export interface InteractionDesignView {
+  missionId: string
+  version: number | null
+  status: string | null
+  specVersion: number | null
+  approvedVersion: number | null
+  design: InteractionDesign | null
+  summary: string
+}
+export type AdjustTarget = 'ARIA' | 'KAEL'
 
 // Costo real por misión (2026-10-04): MissionController.ModelCostView.
 export interface ModelUsageRow {
