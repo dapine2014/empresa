@@ -1676,6 +1676,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (context.plan().databaseOrNull() != null) {
             checks.add(databaseChecks(context, headSha));
         }
+        if (context.plan().hasComponent(StackProfile.GODOT_DOTNET_GAME)) {
+            checks.add(gameChecks(context, agentId, headSha));
+        }
         var api = apiChecks(context, owned, headSha);
         if (api != null) {
             checks.add(api);
@@ -1924,6 +1927,41 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return "\n\n" + StackProfile.FULLSTACK_APP_RULE + "\n";
         }
         return ownsBackendApi(task.ownedPathsOrEmpty()) ? "\n\n" + StackProfile.FULLSTACK_API_RULE + "\n" : "";
+    }
+
+    /** Spec 2026-10-14 Kael §2.2: assets, escena principal, azar inyectable y rutas reservadas, con reintento. */
+    private java.util.function.Function<DevelopmentResult, List<String>> gameChecks(TeamMissionContext context,
+                                                                                    String agentId, String headSha) {
+        var component = context.plan().resolvedComponents().stream()
+                .filter(c -> c.profile() == StackProfile.GODOT_DOTNET_GAME).findFirst().orElse(null);
+        var rulesRoots = new ArrayList<String>();
+        for (var ctx : context.plan().contextNames()) {
+            for (var layer : List.of(StackProfile.Layer.DOMAIN, StackProfile.Layer.APPLICATION)) {
+                StackProfile.GODOT_DOTNET_GAME.resolveRoot(ctx, layer)
+                        .map(root -> component == null ? root : component.prefix(root)).ifPresent(rulesRoots::add);
+            }
+        }
+        var existing = new java.util.LinkedHashMap<String, String>();
+        try {
+            if (headSha != null) {
+                for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                    if ((path.startsWith("game/") || path.contains("/game/")) && path.endsWith(".tscn")) {
+                        existing.put(path, "");
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            existing.clear();
+        }
+        var qa = isQa(context, agentId);
+        return result -> {
+            var errors = new ArrayList<String>();
+            errors.addAll(com.aicompany.core.agent.validation.GameAssetGate.check(result.files()));
+            errors.addAll(com.aicompany.core.agent.validation.GameMainSceneGate.check(result.files(), existing));
+            errors.addAll(com.aicompany.core.agent.validation.InjectableRandomGate.check(result.files(), rulesRoots));
+            errors.addAll(com.aicompany.core.agent.validation.ReservedGamePathsGate.check(result.files(), qa));
+            return errors;
+        };
     }
 
     /** Spec 2026-10-02 §2.4: migraciones, secretos y contrato, con reintento al dueño del archivo. */

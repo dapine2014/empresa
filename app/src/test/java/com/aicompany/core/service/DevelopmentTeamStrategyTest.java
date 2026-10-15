@@ -34,6 +34,43 @@ class DevelopmentTeamStrategyTest {
 
     private final MissionMemoryService memory = mock(MissionMemoryService.class);
     private final DevelopmentRuntime runtime = mock(DevelopmentRuntime.class);
+
+    private final java.util.Map<String, Integer> gameCalls = new java.util.HashMap<>();
+
+    {
+        // Un plan con juego añade los gates de juego: la generación pasa por la variante con chequeos. Por defecto
+        // se reenvía a las variantes sin chequeos que los tests ya stubean: la primera llamada de una tarea a la de 6
+        // args (si está stubbeada para ella) y las siguientes (correcciones) a la de 7; sin stub, a la otra.
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenAnswer(inv -> {
+                    var a = inv.getArguments();
+                    var id = (String) a[0];
+                    @SuppressWarnings("unchecked")
+                    var owned = (List<String>) a[4];
+                    @SuppressWarnings("unchecked")
+                    var projects = (List<String>) a[5];
+                    @SuppressWarnings("unchecked")
+                    var required = (List<String>) a[6];
+                    var nth = gameCalls.merge(id, 1, Integer::sum);
+                    var has6 = stubbedFor(id, 6);
+                    var has7 = stubbedFor(id, 7);
+                    var use6 = has6 && (nth == 1 || !has7);
+                    return use6 ? runtime.generate(id, (String) a[1], (String) a[2], (String) a[3], owned, projects)
+                            : runtime.generate(id, (String) a[1], (String) a[2], (String) a[3], owned, projects, required);
+                });
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private boolean stubbedFor(String id, int args) {
+        return org.mockito.Mockito.mockingDetails(runtime).getStubbings().stream().anyMatch(st -> {
+            var inv = st.getInvocation();
+            if (!inv.getMethod().getName().equals("generate") || inv.getMethod().getParameterCount() != args
+                    || !(st instanceof org.mockito.internal.invocation.InvocationMatcher matcher)) {
+                return false;
+            }
+            return ((org.mockito.ArgumentMatcher) matcher.getMatchers().get(0)).matches(id);
+        });
+    }
     private final DevelopmentWorkspaceService workspace = mock(DevelopmentWorkspaceService.class);
     private final StaticWorkspaceValidator validator = mock(StaticWorkspaceValidator.class);
     private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
