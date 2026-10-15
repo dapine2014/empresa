@@ -193,8 +193,12 @@ public enum StackProfile {
     /** Capas que ofrece el perfil (por contexto y compartidas). */
     /** Fase del Development Group en que el perfil está habilitado (spec 2026-10-01). */
     public int phase() {
-        return this == GODOT_DOTNET_GAME ? 3 : 1;
+        return 1;
     }
+
+    /** Spec 2026-10-14 Kael §2.1: dentro de game/, las partidas son de Vera y el runner es de Forjai. */
+    public static final String PLAYTHROUGHS_ROOT = "game/playthroughs";
+    public static final String FORJAI_GAME_ROOT = "game/forjai";
 
     public boolean enabledNow() {
         return phase() <= DevelopmentPhase.CURRENT;

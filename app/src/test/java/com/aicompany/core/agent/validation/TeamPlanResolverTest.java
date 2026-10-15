@@ -106,6 +106,18 @@ class TeamPlanResolverTest {
     }
 
     @Test
+    void veraOwnsThePlaythroughsInAGame() {
+        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", "Pong", List.of(
+                t("interaction-design", "WORK", "godot"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+
+        var vera = of(result.plan(), "qa").stream().filter(x -> "WORK".equals(x.kind())).findFirst().orElseThrow();
+        assertTrue(vera.ownedPaths().contains("game/playthroughs"), vera.ownedPaths().toString());
+        var kael = of(result.plan(), "interaction-design").get(0);
+        assertTrue(kael.ownedPaths().contains("game"), kael.ownedPaths().toString());
+        assertEquals(List.of(), result.errors());
+    }
+
+    @Test
     void flutterEntryFilesWithoutAPresentationOwnerAreAnError() {
         var result = resolver.resolve(plan("FLUTTER_WEB_APP", "saludo", List.of(
                 t("backend", "WORK", "backend"), t("qa", "WORK", "tests"))), DEVELOPMENT);

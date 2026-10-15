@@ -28,7 +28,7 @@ public final class RoleLayerCatalog {
             "UI_UX", new RoleLayers(List.of(Layer.PRESENTATION),
                     List.of(Layer.DOMAIN, Layer.APPLICATION, Layer.INFRASTRUCTURE), 1, true),
             "QA", new RoleLayers(List.of(Layer.TESTS), List.of(), 1, true),
-            "GAME_DEV", new RoleLayers(List.of(Layer.GAME), List.of(), 3, true),
+            "GAME_DEV", new RoleLayers(List.of(Layer.GAME), List.of(Layer.DOMAIN, Layer.APPLICATION), 1, true),
             "SPECIALIST_3D", new RoleLayers(List.of(), List.of(), 3, true),
             "CREATIVE", new RoleLayers(List.of(), List.of(), 3, true),
             "DEVOPS", new RoleLayers(List.of(), List.of(), 2, true)
@@ -117,7 +117,10 @@ public final class RoleLayerCatalog {
                 + "Diego/DATA_ARCHITECT → INFRASTRUCTURE; "
                 + "Mila/UI_UX → PRESENTATION y los archivos de entrada (y DOMAIN/APPLICATION/INFRASTRUCTURE si no "
                 + "participa Iris); Vera/QA → los tests de aceptación (después del código) y la revisión final; "
-                + "Kael/GAME_DEV, Orion/SPECIALIST_3D, Luna/CREATIVE y Andrea/DEVOPS todavía no están habilitados "
+                + "Kael/GAME_DEV → GAME (todo game/, incluidos project.godot y la escena principal; y DOMAIN/APPLICATION "
+                + "si no participa Iris), solo en GODOT_DOTNET_GAME; Vera/QA también escribe las partidas simuladas "
+                + "en game/playthroughs; "
+                + "Orion/SPECIALIST_3D, Luna/CREATIVE y Andrea/DEVOPS todavía no están habilitados "
                 + "(fase " + DevelopmentPhase.CURRENT + ")";
     }
 }

@@ -116,6 +116,7 @@ public class TeamPlanResolver {
         }
 
         addMigrations(plan, membersById, resolved);
+        addPlaythroughs(plan, membersById, resolved);
 
         return new Resolution(new TeamPlan(plan.summary(), plan.techStack(), plan.entryPoint(), resolved,
                 List.of(), plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(), plan.database(),
@@ -196,6 +197,26 @@ public class TeamPlanResolver {
                 }
                 tasks.set(i, withKindAndPaths(task, task.kind(), task.action(), paths));
                 return;
+            }
+        }
+    }
+
+    /** Spec 2026-10-14 Kael §2.3: en un juego, Vera escribe además las partidas simuladas. */
+    private static void addPlaythroughs(TeamPlan plan, Map<String, TeamMemberInfo> membersById, List<PlannedTask> resolved) {
+        if (!plan.hasComponent(StackProfile.GODOT_DOTNET_GAME)) {
+            return;
+        }
+        var prefix = plan.resolvedComponents().stream().filter(c -> c.profile() == StackProfile.GODOT_DOTNET_GAME)
+                .findFirst().map(c -> c.prefix(StackProfile.PLAYTHROUGHS_ROOT)).orElse(StackProfile.PLAYTHROUGHS_ROOT);
+        for (int i = 0; i < resolved.size(); i++) {
+            var task = resolved.get(i);
+            var member = membersById.get(task.agentId());
+            if (member != null && "QA".equals(member.roleCode()) && TeamPlan.KIND_WORK.equals(task.kind())) {
+                var paths = new ArrayList<>(task.ownedPathsOrEmpty());
+                if (!paths.contains(prefix)) {
+                    paths.add(prefix);
+                }
+                resolved.set(i, withKindAndPaths(task, task.kind(), task.action(), paths));
             }
         }
     }

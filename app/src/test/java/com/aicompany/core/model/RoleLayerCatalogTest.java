@@ -61,14 +61,38 @@ class RoleLayerCatalogTest {
     void onlyPhaseOneRolesAndProfilesAreEnabled() {
         assertTrue(RoleLayerCatalog.enabledNow("UI_UX"));
         assertTrue(RoleLayerCatalog.enabledNow("DATA_ARCHITECT"));
-        assertFalse(RoleLayerCatalog.enabledNow("GAME_DEV"));
+        assertTrue(RoleLayerCatalog.enabledNow("GAME_DEV"));
         assertFalse(RoleLayerCatalog.enabledNow("SPECIALIST_3D"));
         assertFalse(RoleLayerCatalog.enabledNow("CREATIVE"));
         assertFalse(RoleLayerCatalog.enabledNow("DEVOPS"));
         assertFalse(RoleLayerCatalog.enabledNow("UNKNOWN"));
         assertTrue(StackProfile.FLUTTER_WEB_APP.enabledNow());
         assertTrue(StackProfile.DOTNET_APP.enabledNow());
-        assertFalse(StackProfile.GODOT_DOTNET_GAME.enabledNow());
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.enabledNow());
+    }
+
+    @Test void kaelWritesTheGameAndTheRulesWithoutIris() {
+        var roles = new LinkedHashMap<String, String>();
+        roles.put("interaction-design", "GAME_DEV");
+        roles.put("qa", "QA");
+        var layers = RoleLayerCatalog.assign(roles, StackProfile.GODOT_DOTNET_GAME.layers());
+        assertEquals(List.of(Layer.DOMAIN, Layer.APPLICATION, Layer.GAME), layers.get("interaction-design"));
+        assertEquals(List.of(Layer.TESTS), layers.get("qa"));
+    }
+
+    @Test void withIrisKaelOnlyWritesTheGame() {
+        var roles = new LinkedHashMap<String, String>();
+        roles.put("interaction-design", "GAME_DEV");
+        roles.put("backend", "BACKEND");
+        var layers = RoleLayerCatalog.assign(roles, StackProfile.GODOT_DOTNET_GAME.layers());
+        assertEquals(List.of(Layer.GAME), layers.get("interaction-design"));
+        assertEquals(List.of(Layer.DOMAIN, Layer.APPLICATION), layers.get("backend"));
+    }
+
+    @Test void kaelIsEnabledNow() {
+        assertTrue(RoleLayerCatalog.enabledNow("GAME_DEV"));
+        assertFalse(RoleLayerCatalog.enabledNow("SPECIALIST_3D"));
+        assertFalse(RoleLayerCatalog.describe().contains("Kael/GAME_DEV, Orion"), RoleLayerCatalog.describe());
     }
 
     // Revisión final (I-2): el respaldo no puede depender del orden en que Neo listó las tareas.
