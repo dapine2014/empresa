@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TestReportParserTest {
 
@@ -100,5 +101,34 @@ class TestReportParserTest {
         Files.writeString(dir.resolve(".forjai/results.trx"),
                 "<TestRun><Results><UnitTestResult testId=\"a\" outcome=\"Passed\" testName=\"Ns.C.ESC_06_t(s: &quot;a&amp;b&quot;)\" /></Results></TestRun>");
         assertEquals(List.of(new SandboxResult.TestCase("Ns.C.ESC_06_t(s: \"a&b\")", "PASSED")), TestReportParser.parse(dir).tests());
+    }
+
+    @Test
+    void playthroughsAreAddedToTheTrxTests() throws Exception {
+        Files.createDirectories(work.resolve(".forjai"));
+        Files.writeString(work.resolve(".forjai/results.trx"), """
+                <TestRun><Results><UnitTestResult testName="Pong.Tests.ScoreTests.ESC_02_suma" outcome="Passed" /></Results>
+                <ResultSummary><Counters total="1" passed="1" failed="0" /></ResultSummary></TestRun>""");
+        Files.writeString(work.resolve(".forjai/playthroughs.json"),
+                "[{\"name\":\"ESC_01_mueve\",\"outcome\":\"PASSED\",\"failedStep\":\"\",\"message\":\"\"},"
+                + "{\"name\":\"ESC_03_pierde\",\"outcome\":\"FAILED\",\"failedStep\":\"paso 2\",\"message\":\"falló la aserción: game over\"}]");
+        var counts = TestReportParser.parse(work);
+        assertEquals(2, counts.passed());
+        assertEquals(1, counts.failed());
+        assertTrue(counts.tests().contains(new SandboxResult.TestCase("[juego] ESC_01_mueve", "PASSED")));
+        assertTrue(counts.tests().contains(new SandboxResult.TestCase("[juego] ESC_03_pierde", "FAILED")));
+    }
+
+    @Test
+    void aMissingOrCorruptPlaythroughReportAddsNothing() throws Exception {
+        Files.createDirectories(work.resolve(".forjai"));
+        Files.writeString(work.resolve(".forjai/results.trx"), """
+                <TestRun><Results><UnitTestResult testName="A.B.C" outcome="Passed" /></Results>
+                <ResultSummary><Counters total="1" passed="1" failed="0" /></ResultSummary></TestRun>""");
+        assertEquals(1, TestReportParser.parse(work).tests().size());
+        Files.writeString(work.resolve(".forjai/playthroughs.json"), "[{\"name\":");
+        var counts = TestReportParser.parse(work);
+        assertEquals(1, counts.tests().size());
+        assertEquals(1, counts.passed());
     }
 }

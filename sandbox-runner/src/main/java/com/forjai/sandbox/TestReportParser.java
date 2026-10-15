@@ -30,7 +30,45 @@ public final class TestReportParser {
     private TestReportParser() {
     }
 
+    private static final Pattern PLAYTHROUGH = Pattern.compile(
+            "\\{\"name\":\"((?:[^\"\\\\]|\\\\.)*)\",\"outcome\":\"(PASSED|FAILED)\"");
+
     public static TestCounts parse(Path workDir) {
+        var base = parseReports(workDir);
+        var games = playthroughs(workDir);
+        if (games.isEmpty()) {
+            return base;
+        }
+        var tests = new ArrayList<>(base.tests());
+        tests.addAll(games);
+        var passed = (int) games.stream().filter(t -> "PASSED".equals(t.outcome())).count();
+        return new TestCounts(base.passed() + passed, base.failed() + games.size() - passed, tests);
+    }
+
+    /** Spec 2026-10-14 Kael §2.3: partidas simuladas del runner de Forjai; ausente o corrupto = ninguna. */
+    private static List<SandboxResult.TestCase> playthroughs(Path workDir) {
+        try {
+            var file = workDir.resolve(".forjai/playthroughs.json");
+            if (!Files.isRegularFile(file)) {
+                return List.of();
+            }
+            var content = Files.readString(file).strip();
+            if (!content.startsWith("[") || !content.endsWith("]")) {
+                return List.of();
+            }
+            var out = new ArrayList<SandboxResult.TestCase>();
+            var m = PLAYTHROUGH.matcher(content);
+            while (m.find()) {
+                out.add(new SandboxResult.TestCase("[juego] " + m.group(1).replace("\\\"", "\"").replace("\\\\", "\\"),
+                        m.group(2)));
+            }
+            return out;
+        } catch (IOException | RuntimeException ex) {
+            return List.of();
+        }
+    }
+
+    private static TestCounts parseReports(Path workDir) {
         try {
             var trx = workDir.resolve(".forjai/results.trx");
             if (Files.isRegularFile(trx)) {

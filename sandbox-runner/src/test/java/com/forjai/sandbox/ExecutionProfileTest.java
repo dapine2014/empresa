@@ -24,4 +24,9 @@ class ExecutionProfileTest {
             assertTrue(profile.image().startsWith("localhost/forjai-sandbox/"));
         }
     }
+
+    @Test
+    void godotProfileUsesImageVersion2() {
+        assertEquals("localhost/forjai-sandbox/godot-dotnet-game:2", ExecutionProfile.GODOT_DOTNET_GAME.image());
+    }
 }

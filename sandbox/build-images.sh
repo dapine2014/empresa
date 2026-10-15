@@ -2,10 +2,11 @@
 # Construye las imágenes del sandbox con Podman sin root (una vez y al cambiar versiones).
 set -euo pipefail
 cd "$(dirname "$0")/images"
-for profile in dotnet-app godot-dotnet-game flutter-web-app egress-proxy; do
+for profile in dotnet-app flutter-web-app egress-proxy; do
   echo "== $profile"
   podman build -t "localhost/forjai-sandbox/$profile:1" "$profile"
 done
+echo "== godot-dotnet-game"; podman build -t "localhost/forjai-sandbox/godot-dotnet-game:2" godot-dotnet-game
 podman images | grep forjai-sandbox
 # Parte 3: caché de dependencias aprobadas (staging de FETCH, NuGet aprobado y pub sembrado desde la imagen).
 mkdir -p ~/forjai-deps/staging ~/forjai-deps/nuget
