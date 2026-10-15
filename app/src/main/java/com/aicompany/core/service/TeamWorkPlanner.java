@@ -194,7 +194,7 @@ public class TeamWorkPlanner {
                 var errors = new ArrayList<String>(validator.validate(plan, team, mode, connections));
                 resolverErrors.stream().filter(error -> !errors.contains(error)).forEach(errors::add);
                 if (mode == TeamExecutionMode.DEVELOPMENT) {
-                    errors.addAll(com.aicompany.core.agent.validation.RequestedComponents.errors(instruction, plan));
+                    errors.addAll(instructionRules(instruction, plan, team));
                 }
 
                 if (errors.isEmpty()) {
@@ -391,5 +391,12 @@ public class TeamWorkPlanner {
 
     private String safeMessage(Exception ex, String defaultMessage) {
         return ex.getMessage() == null || ex.getMessage().isBlank() ? defaultMessage : ex.getMessage();
+    }
+
+    /** Spec 2026-10-14 Kael (Review Focus 1): con el tipo declarado por Aria manda ExperienceRule, no la heurística. */
+    static java.util.List<String> instructionRules(String instruction, TeamPlan plan, TeamSnapshot team) {
+        return com.aicompany.core.agent.validation.ExperienceRule.declared(instruction).isPresent()
+                ? com.aicompany.core.agent.validation.ExperienceRule.errors(instruction, plan, team)
+                : com.aicompany.core.agent.validation.RequestedComponents.errors(instruction, plan);
     }
 }
