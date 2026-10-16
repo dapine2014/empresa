@@ -252,6 +252,33 @@ class MissionRecoveryServiceTest {
                 ResumePoint.of(service.snapshot(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT"))).stage());
     }
 
+    // Revisión conjunta (spec 2026-10-15): el par DRAFT sin revisión cerrada (con la policy encendida) se retoma en la revisión.
+    @Test void aDraftPairWithoutAClosedReviewIsPendingOnlyWithThePolicyOn() throws Exception {
+        var designs = mock(InteractionDesignMemoryService.class);
+        var review = mock(JointReviewService.class);
+        var reviews = mock(JointReviewMemoryService.class);
+        service.setInteractionDesigns(designs);
+        service.setJointReview(review, reviews);
+        var spec = new com.aicompany.core.agent.model.RequirementsSpec("Juego", List.of(), List.of(), List.of(), List.of(),
+                List.of(), "GAME");
+        when(missions.tasks("M-1")).thenReturn(List.of());
+        when(requirements.latest("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(2,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(spec), "DRAFT", "", null)));
+        when(designs.latest("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(3, "{}", "DRAFT", 2, "")));
+        when(review.enabled()).thenReturn(true);
+        when(reviews.closedFor("M-1", 2, 3)).thenReturn(Optional.empty());
+        var snapshot = service.snapshot(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT"));
+        assertTrue(snapshot.jointReviewPending());
+        assertEquals(ResumePoint.Stage.JOINT_REVIEW, ResumePoint.of(snapshot).stage());
+        when(reviews.closedFor("M-1", 2, 3)).thenReturn(Optional.of(new JointReviewMemoryService.Review(1, 1, 2, 3,
+                "COHERENT", "[]", "[]", "", "")));
+        assertFalse(service.snapshot(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT")).jointReviewPending());
+        when(reviews.closedFor("M-1", 2, 3)).thenReturn(Optional.empty());
+        when(review.enabled()).thenReturn(false);
+        assertEquals(ResumePoint.Stage.AWAIT_APPROVAL,
+                ResumePoint.of(service.snapshot(mission("M-1", MissionStatus.PLANNING, "TEAM-DEVELOPMENT"))).stage());
+    }
+
     @Test void aFinishedHumanVerificationIsNotPending() {
         var now = Instant.now();
         when(missions.evidenceRound("M-1")).thenReturn(0);

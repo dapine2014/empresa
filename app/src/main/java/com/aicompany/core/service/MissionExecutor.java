@@ -282,8 +282,61 @@ public class MissionExecutor {
             designMemory.supersedeDraft(missionId);
         }
         publishReady(missionId, written);
-        awaitApproval(missionId, written, design(missionId, written, previousDesign,
-                "Aria cambió las historias de usuario: rehaz el diseño sobre las HU actuales."));
+        var designed = design(missionId, written, previousDesign, JointReviewService.ARIA_CHANGED_ADJUSTMENT);
+        var reviewed = reviewed(missionId, written, designed);
+        awaitApproval(missionId, reviewed.written(), reviewed.designed(), reviewed.note());
+    }
+
+    private JointReviewService jointReview;
+
+    /** Revisión conjunta (spec 2026-10-15): opcional (sin ella, HU y diseño van al fundador sin revisar). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setJointReview(JointReviewService jointReview) {
+        this.jointReview = jointReview;
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): antes de que el fundador vea HU y diseño, Neo y Aria resuelven contradicciones. */
+    record Reviewed(RequirementsWriter.Written written, InteractionDesignWriter.Written designed, String note) {
+    }
+
+    private Reviewed reviewed(String missionId, RequirementsWriter.Written written, InteractionDesignWriter.Written designed) {
+        if (jointReview == null || designed == null) {
+            return new Reviewed(written, designed, "");
+        }
+        var outcomes = new java.util.ArrayList<JointReviewService.Outcome>();
+        for (int round = 1; round <= JointReviewService.ROUNDS; round++) {
+            advanceMission(missionId, MissionStatus.PLANNING, 7, "Revisión conjunta (Neo + Aria)",
+                    "Neo y Aria revisan que las HU y el diseño no se contradigan (ronda " + round + ").");
+            var outcome = jointReview.review(missionId, written.spec(), written.version(), designed.design(),
+                    designed.version(), round);
+            outcomes.add(outcome);
+            if (!outcome.needsChanges()) {
+                break;
+            }
+            if (outcome.requirementsAdjustment() != null) {
+                var previousDesign = designed.design();
+                written = rewriteRequirements(missionId, memory.instructionOf(missionId).orElse(""),
+                        outcome.requirementsAdjustment());
+                events.publish("EMPRESA_REQUIREMENTS_ADJUSTED", missionId, null, JointReviewWriter.NEO,
+                        Map.of("version", written.version(), "instruction", outcome.requirementsAdjustment()));
+                if (designMemory != null) {
+                    designMemory.supersedeDraft(missionId);
+                }
+                publishReady(missionId, written);
+                var designAdjustment = JointReviewService.ARIA_CHANGED_ADJUSTMENT
+                        + (outcome.designAdjustment() == null ? "" : "\n" + outcome.designAdjustment());
+                designed = design(missionId, written, java.util.Optional.of(previousDesign), designAdjustment);
+                if (designed == null) {
+                    break; // Aria cambió la experiencia a NONE: ya no hay diseño que revisar.
+                }
+            } else {
+                designed = designWriter.write(missionId, written.spec(), written.version(),
+                        java.util.Optional.of(designed.design()), outcome.designAdjustment());
+                events.publish("EMPRESA_INTERACTION_DESIGN_ADJUSTED", missionId, null, JointReviewWriter.NEO,
+                        Map.of("version", designed.version(), "instruction", outcome.designAdjustment()));
+            }
+        }
+        return new Reviewed(written, designed, jointReview.founderNote(outcomes));
     }
 
     static String investorBlock(String routedRequest) {
@@ -490,8 +543,11 @@ public class MissionExecutor {
             // Revisión Task 5 (R2): los eventos siguen el orden Aria → Kael; un solo READY por spec escrito.
             publishReady(missionId, written);
             var designed = design(missionId, written, java.util.Optional.empty(), null);
+            var reviewed = reviewed(missionId, written, designed);
+            written = reviewed.written();
+            designed = reviewed.designed();
             if (companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED) >= 1.0) {
-                awaitApproval(missionId, written, designed);
+                awaitApproval(missionId, written, designed, reviewed.note());
                 return;
             }
             if (designed != null) {
@@ -541,17 +597,24 @@ public class MissionExecutor {
      * No publica EMPRESA_REQUIREMENTS_READY: lo hace quien escribió el spec, antes de que Kael diseñe.
      */
     private void awaitApproval(String missionId, RequirementsWriter.Written written, InteractionDesignWriter.Written designed) {
+        awaitApproval(missionId, written, designed, "");
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): {@code reviewNote} (lo que resolvieron Neo y Aria) va al final del mensaje. */
+    private void awaitApproval(String missionId, RequirementsWriter.Written written, InteractionDesignWriter.Written designed,
+                               String reviewNote) {
+        var note = reviewNote == null || reviewNote.isBlank() ? "" : " " + reviewNote;
         var text = "Aria escribió " + written.spec().userStoriesOrEmpty().size() + " historias en "
                 + written.spec().incrementNumbers().size() + " incremento(s). Esperan tu aprobación: "
                 + com.aicompany.core.agent.validation.RequirementsText.summary(written.spec());
         if (designed == null) {
-            advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos listos (Aria)", text);
+            advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos listos (Aria)", text + note);
             return;
         }
         advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos y diseño listos (Aria + Kael)",
                 text + " Kael diseñó " + ("GAME".equals(designed.design().experience()) ? "el juego" : "la interacción")
                         + " (versión " + designed.version() + "): "
-                        + com.aicompany.core.agent.validation.InteractionDesignText.summary(designed.design()));
+                        + com.aicompany.core.agent.validation.InteractionDesignText.summary(designed.design()) + note);
     }
 
     static String withIncrement(com.aicompany.core.agent.model.RequirementsSpec spec, int increment, String instruction) {
@@ -727,7 +790,14 @@ public class MissionExecutor {
             // Spec 2026-10-14 Kael §1.2: el retome en Kael nunca repite a Aria.
             case DESIGN -> {
                 var written = latestRequirements(missionId);
-                awaitApproval(missionId, written, design(missionId, written, java.util.Optional.empty(), null));
+                var reviewed = reviewed(missionId, written, design(missionId, written, java.util.Optional.empty(), null));
+                awaitApproval(missionId, reviewed.written(), reviewed.designed(), reviewed.note());
+            }
+            // Revisión conjunta (spec 2026-10-15): el retome en la revisión no repite a Aria ni a Kael.
+            case JOINT_REVIEW -> {
+                var written = latestRequirements(missionId);
+                var reviewed = reviewed(missionId, written, draftDesignFor(missionId, written.version()));
+                awaitApproval(missionId, reviewed.written(), reviewed.designed(), reviewed.note());
             }
             case DESIGN_ADJUSTMENT -> redesign(missionId, designMemory.pendingAdjustment(missionId).orElseThrow());
             case PLAN, GENERATE, VERIFY -> resumeRound(missionId, instruction, teamId, mode, point);
@@ -979,7 +1049,8 @@ public class MissionExecutor {
         var designed = designWriter.write(missionId, written.spec(), written.version(), previous, adjustment);
         events.publish("EMPRESA_INTERACTION_DESIGN_ADJUSTED", missionId, null, "human",
                 Map.of("version", designed.version(), "instruction", adjustment));
-        awaitApproval(missionId, written, designed);
+        var reviewed = reviewed(missionId, written, designed);
+        awaitApproval(missionId, reviewed.written(), reviewed.designed(), reviewed.note());
     }
 
     private RequirementsWriter.Written latestRequirements(String missionId) {

@@ -12,18 +12,31 @@ import java.util.List;
  * Spec 2026-10-14 Kael §1.2: {@code designNeeded}: el último spec de Aria es APP o GAME (y Kael está disponible);
  * {@code designForLatestSpec}: hay un diseño DRAFT de Kael para esa versión del spec; {@code pendingDesignAdjustment}: el
  * ajuste a Kael reclamado y sin terminar, o null.
+ * <p>
+ * Revisión conjunta (spec 2026-10-15): {@code jointReviewPending}: hay diseño DRAFT para el spec DRAFT, la policy está
+ * encendida y no hay una revisión cerrada para ese par de versiones.
  */
 public record MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
                               String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,
                               boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask,
-                              boolean designNeeded, boolean designForLatestSpec, String pendingDesignAdjustment) {
+                              boolean designNeeded, boolean designForLatestSpec, String pendingDesignAdjustment,
+                              boolean jointReviewPending) {
     public record RoundTask(String taskId, String status, String commitSha) { }
+
+    public MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
+                           String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,
+                           boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask,
+                           boolean designNeeded, boolean designForLatestSpec, String pendingDesignAdjustment) {
+        this(missionId, teamId, round, incrementOfRound, correctionRound, latestRequirementsStatus, requirementsApproved,
+                pendingAdjustment, planForRound, workTasks, humanVerifyTask, designNeeded, designForLatestSpec,
+                pendingDesignAdjustment, false);
+    }
 
     public MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
                            String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,
                            boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask) {
         this(missionId, teamId, round, incrementOfRound, correctionRound, latestRequirementsStatus, requirementsApproved,
-                pendingAdjustment, planForRound, workTasks, humanVerifyTask, false, false, null);
+                pendingAdjustment, planForRound, workTasks, humanVerifyTask, false, false, null, false);
     }
 
     public MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,

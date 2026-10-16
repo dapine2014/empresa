@@ -98,4 +98,18 @@ class ResumePointTest {
         assertEquals(ResumePoint.Stage.AWAIT_APPROVAL, ResumePoint.of(dev(0, null, false, "DRAFT", false, null, false,
                 List.of())).stage());
     }
+    // Revisión conjunta (spec 2026-10-15): diseño DRAFT del spec DRAFT sin revisión cerrada → se retoma la revisión.
+    @Test
+    void aDraftPairWithoutAClosedReviewResumesInTheJointReview() {
+        var s = new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 0, 1, false, "DRAFT", false, null, false, List.of(), null,
+                true, true, null, true);
+        assertEquals(ResumePoint.Stage.JOINT_REVIEW, ResumePoint.of(s).stage());
+    }
+
+    @Test
+    void aDraftPairAlreadyReviewedWaitsForTheFounder() {
+        var s = new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 0, 1, false, "DRAFT", false, null, false, List.of(), null,
+                true, true, null, false);
+        assertEquals(ResumePoint.Stage.AWAIT_APPROVAL, ResumePoint.of(s).stage());
+    }
 }

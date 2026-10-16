@@ -919,4 +919,102 @@ class MissionExecutorTeamTest {
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
                 eq("Requisitos listos (Aria)"), argThat(m -> !m.contains("Kael")));
     }
+
+    // Revisión conjunta (spec 2026-10-15): un cambio de diseño decidido por Neo y Aria rehace a Kael y se revisa de nuevo.
+    @Test
+    void aDesignDecisionRedesignsAndReviewsTheNewPairBeforeTheFounder() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        var review = mock(JointReviewService.class);
+        executor.setJointReview(review);
+        when(review.review(eq("M-9"), any(), anyInt(), any(), eq(1), eq(1))).thenReturn(new JointReviewService.Outcome(
+                "RESOLVED", List.of(), List.of(), null, JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): usar 800", ""));
+        when(review.review(eq("M-9"), any(), anyInt(), any(), eq(2), eq(2))).thenReturn(new JointReviewService.Outcome(
+                "COHERENT", List.of(), List.of(), null, null, ""));
+        when(review.founderNote(anyList())).thenReturn("Neo y Aria resolvieron 1 contradicción: CONTRA-01.");
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(1), eq(Optional.of(DESIGN)), startsWith(JointReviewService.PREFIX)))
+                .thenReturn(new InteractionDesignWriter.Written(2, DESIGN));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(designWriter).write(eq("M-9"), any(), anyInt(), any(), startsWith(JointReviewService.PREFIX));
+        verify(review).review(eq("M-9"), any(), anyInt(), any(), eq(2), eq(2));
+        verify(writer, times(1)).write(any(), any(), any(), any());
+        verify(events).publish(eq("EMPRESA_INTERACTION_DESIGN_ADJUSTED"), eq("M-9"), isNull(), eq(JointReviewWriter.NEO),
+                argThat(d -> Integer.valueOf(2).equals(d.get("version"))));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                contains("Neo y Aria resolvieron 1 contradicción"));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                contains("Kael diseñó el juego (versión 2)"));
+    }
+
+    // Revisión conjunta (spec 2026-10-15): una decisión sobre las HU hace que Aria reescriba y Kael rediseñe encima.
+    @Test
+    void aRequirementsDecisionRewritesTheStoriesAndRedesignsOverThem() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        var review = mock(JointReviewService.class);
+        executor.setJointReview(review);
+        when(review.review(eq("M-9"), any(), eq(1), any(), eq(1), eq(1))).thenReturn(new JointReviewService.Outcome(
+                "RESOLVED", List.of(), List.of(), JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): HU con 800",
+                null, ""));
+        when(review.review(eq("M-9"), any(), eq(2), any(), eq(2), eq(2))).thenReturn(new JointReviewService.Outcome(
+                "COHERENT", List.of(), List.of(), null, null, ""));
+        when(review.founderNote(anyList())).thenReturn("Neo y Aria resolvieron 1 contradicción: CONTRA-01.");
+        when(writer.write(eq("M-9"), eq("Un CRM"), any(), startsWith(JointReviewService.PREFIX)))
+                .thenReturn(new RequirementsWriter.Written(2, GAME_SPEC));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(2), eq(Optional.of(DESIGN)),
+                startsWith(JointReviewService.ARIA_CHANGED_ADJUSTMENT))).thenReturn(new InteractionDesignWriter.Written(2, DESIGN));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(events).publish(eq("EMPRESA_REQUIREMENTS_ADJUSTED"), eq("M-9"), isNull(), eq(JointReviewWriter.NEO),
+                argThat(d -> Integer.valueOf(2).equals(d.get("version"))));
+        verify(designMemory).supersedeDraft("M-9");
+        verify(review).review(eq("M-9"), any(), eq(2), any(), eq(2), eq(2));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael diseñó el juego (versión 2)") && m.contains("Neo y Aria resolvieron")));
+    }
+
+    // Revisión conjunta (spec 2026-10-15): con la aprobación automática, la revisión corre antes de aprobar.
+    @Test
+    void withAutoApprovalTheReviewRunsBeforeApproving() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(0.0);
+        when(designMemory.approved("M-9")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(DESIGN), "APPROVED", 1, "")));
+        when(requirements.approved("M-9")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(GAME_SPEC), "APPROVED", "", null)));
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+        var review = mock(JointReviewService.class);
+        executor.setJointReview(review);
+        when(review.review(eq("M-9"), any(), anyInt(), any(), anyInt(), anyInt())).thenReturn(new JointReviewService.Outcome(
+                "COHERENT", List.of(), List.of(), null, null, ""));
+        when(review.founderNote(anyList())).thenReturn("");
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        var order = inOrder(review, requirements);
+        order.verify(review).review(eq("M-9"), eq(GAME_SPEC), eq(1), eq(DESIGN), eq(1), eq(1));
+        order.verify(requirements).approveWithDesign("M-9", 1, 1, "policy");
+        verify(review, times(1)).review(any(), any(), anyInt(), any(), anyInt(), anyInt());
+    }
+
+    // Revisión conjunta (spec 2026-10-15): el retome en la revisión no repite a Aria ni a Kael; revisa el par DRAFT.
+    @Test
+    void resumingAtTheJointReviewReviewsTheDraftPairOnly() throws Exception {
+        withKael();
+        withGameDraft(2, 4, 2);
+        var review = mock(JointReviewService.class);
+        executor.setJointReview(review);
+        when(review.review(eq("M-9"), any(), anyInt(), any(), anyInt(), anyInt())).thenReturn(new JointReviewService.Outcome(
+                "COHERENT", List.of(), List.of(), null, null, ""));
+        when(review.founderNote(anyList())).thenReturn("Neo y Aria no encontraron contradicciones.");
+        executor.resumeAsync("M-9", resumeAt(com.aicompany.core.recovery.ResumePoint.Stage.JOINT_REVIEW)).get();
+        verify(review).review(eq("M-9"), eq(GAME_SPEC), eq(2), eq(DESIGN), eq(4), eq(1));
+        verify(writer, never()).write(any(), any(), any(), any());
+        verifyNoInteractions(designWriter);
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael diseñó el juego (versión 4)") && m.contains("Neo y Aria no encontraron")));
+    }
 }

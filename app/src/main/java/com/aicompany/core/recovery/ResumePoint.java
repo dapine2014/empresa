@@ -8,10 +8,11 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
     /**
      * HUMAN_VERIFY (revisión 2026-10-06 §5): una verificación humana cortada se repite como verificación, sin modelos.
      * DESIGN / DESIGN_ADJUSTMENT (spec 2026-10-14 Kael §1.2): Kael diseña (o ajusta) sobre el borrador de Aria, sin
-     * repetir a Aria.
+     * repetir a Aria. JOINT_REVIEW (spec 2026-10-15): Neo y Aria revisan el par DRAFT (HU + diseño) sin repetir a Aria ni
+     * a Kael.
      */
     public enum Stage { REQUIREMENTS, ADJUSTMENT, AWAIT_APPROVAL, PLAN, GENERATE, VERIFY, INTERRUPT, HUMAN_VERIFY, DESIGN,
-        DESIGN_ADJUSTMENT }
+        DESIGN_ADJUSTMENT, JOINT_REVIEW }
 
     public enum RoundKind { ORIGINAL, INCREMENT, EVIDENCE, CORRECTION }
 
@@ -39,6 +40,9 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
                 }
                 if (!s.designForLatestSpec()) {
                     return new ResumePoint(Stage.DESIGN, s.round(), kind, increment);
+                }
+                if (s.jointReviewPending()) {
+                    return new ResumePoint(Stage.JOINT_REVIEW, s.round(), kind, increment);
                 }
             }
             if ("DRAFT".equals(s.latestRequirementsStatus())) {

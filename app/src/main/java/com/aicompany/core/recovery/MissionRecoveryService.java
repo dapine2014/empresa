@@ -265,6 +265,16 @@ public class MissionRecoveryService {
         this.json = json;
     }
 
+    private JointReviewService jointReview;
+    private JointReviewMemoryService jointReviews;
+
+    /** Revisión conjunta (spec 2026-10-15): para retomar en la revisión (opcional en tests: sin ella, nunca se retoma ahí). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setJointReview(JointReviewService jointReview, JointReviewMemoryService jointReviews) {
+        this.jointReview = jointReview;
+        this.jointReviews = jointReviews;
+    }
+
     private DevelopmentWorkspaceService workspace;
 
     /** Revisión 2026-10-06 §5: para saber si la misión tiene repositorio (opcional en tests). */
@@ -442,6 +452,7 @@ public class MissionRecoveryService {
         var designNeeded = false;
         var designForLatest = false;
         String pendingDesign = null;
+        var jointReviewPending = false;
         // Solo con el spec en DRAFT (ResumePoint no mira estos campos en otro caso): un spec ya aprobado no se relee.
         if (designs != null && latest.filter(v -> "DRAFT".equals(v.status())).isPresent()) {
             var latestSpec = latest.map(v -> json.readValue(v.specJson(),
@@ -453,11 +464,18 @@ public class MissionRecoveryService {
             designForLatest = latestDesign.filter(d -> "DRAFT".equals(d.status())
                     && latest.map(v -> v.version() == d.specVersion()).orElse(false)).isPresent();
             pendingDesign = designs.pendingAdjustment(missionId).orElse(null);
+            // Revisión conjunta (spec 2026-10-15): el par DRAFT sin revisión cerrada se retoma en la revisión.
+            if (designForLatest && jointReview != null && jointReviews != null && jointReview.enabled()) {
+                var specVersion = latest.orElseThrow().version();
+                var designVersion = latestDesign.orElseThrow().version();
+                jointReviewPending = jointReviews.closedFor(missionId, specVersion, designVersion).isEmpty();
+            }
         }
         return new MissionSnapshot(missionId, mission.teamId(), round, increment, correction,
                 latest.map(RequirementsMemoryService.Version::status).orElse(null),
                 requirements.approved(missionId).isPresent(), requirements.pendingAdjustment(missionId).orElse(null),
-                planTask || !tasks.isEmpty(), tasks, humanVerify, designNeeded, designForLatest, pendingDesign);
+                planTask || !tasks.isEmpty(), tasks, humanVerify, designNeeded, designForLatest, pendingDesign,
+                jointReviewPending);
     }
 
     private Optional<AgentTask> lastValidation(String missionId) {
