@@ -1260,6 +1260,14 @@ public class CeoService {
                 com.aicompany.core.agent.model.RequirementsSpec.class);
     }
 
+    /** Contrato (spec 2026-10-16 contrato §1): el contrato de Aria (format ClientContract.SCHEMA, sin tools). */
+    public com.aicompany.core.agent.model.ClientContract writeContract(String agentId, String prompt, String agentPrompt,
+                                                                        String model) {
+        return callStructured("CLIENT_CONTRACT", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.ClientContract.SCHEMA,
+                com.aicompany.core.agent.model.ClientContract.class);
+    }
+
     /** Spec 2026-10-14 Kael §1.3: diseño de interacción de una app. format sin tools. */
     public com.aicompany.core.agent.model.InteractionDesign.AppDesign writeAppDesign(String agentId, String prompt,
                                                                                     String agentPrompt, String model) {
