@@ -60,5 +60,10 @@ class PaidRetryTest {
         var cancelled = PaidRetry.start("a", "nvidia:x", company, health);
         cancelled.note(new MissionCancellations.MissionCancelledException("M-1"));
         assertEquals(Optional.empty(), cancelled.next("op"));
+
+        var wrapped = PaidRetry.start("a", "nvidia:x", company, health);
+        wrapped.note(new IllegalStateException("no devolvió un JSON válido",
+                new RuntimeException("x", new MissionCancellations.MissionCancelledException("M-1"))));
+        assertEquals(Optional.empty(), wrapped.next("op"));
     }
 }

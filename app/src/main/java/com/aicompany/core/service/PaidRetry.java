@@ -61,9 +61,9 @@ public final class PaidRetry {
         return new PaidRetry(agentId, usedModel, down, company, health);
     }
 
-    /** Anota el error de un intento: una cancelación de misión apaga el intento extra. */
+    /** Anota el error de un intento: una cancelación de misión (aunque venga envuelta) apaga el intento extra. */
     public void note(Throwable error) {
-        if (error instanceof MissionCancellations.MissionCancelledException) {
+        if (MissionCancellations.cancellationIn(error).isPresent()) {
             cancelled = true;
         }
     }

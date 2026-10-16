@@ -70,7 +70,6 @@ class ContractWriterTest {
         verify(contracts, never()).saveDraft(any(), any(), any());
     }
 
-    // Review Focus 1: cada ajuste del fundador parte de la versión anterior y deja una versión nueva.
     @Test void threeInvalidAttemptsGetOneMoreWithThePaidFallback() {
         when(company.agentPaidFallbackModel("product-owner")).thenReturn("bedrock:kimi");
         when(ceo.writeContract(anyString(), anyString(), any(), any())).thenReturn(INVALID, INVALID, INVALID, VALID);
@@ -86,6 +85,18 @@ class ContractWriterTest {
         verify(ceo, times(3)).writeContract(anyString(), anyString(), any(), any());
     }
 
+    @Test void aWrappedCancellationIsRethrownWithoutRetryingOrThePaidFallback() {
+        when(company.agentPaidFallbackModel("product-owner")).thenReturn("bedrock:kimi");
+        var cancelled = new MissionCancellations.MissionCancelledException("M-1");
+        when(ceo.writeContract(anyString(), anyString(), any(), any()))
+                .thenThrow(new IllegalStateException("Aria no devolvió un JSON válido", cancelled));
+        var ex = assertThrows(MissionCancellations.MissionCancelledException.class,
+                () -> writer.write("M-1", "un pong", Optional.empty(), null));
+        assertSame(cancelled, ex);
+        verify(ceo, times(1)).writeContract(anyString(), anyString(), any(), any());
+    }
+
+    // Review Focus 1: cada ajuste del fundador parte de la versión anterior y deja una versión nueva.
     @Test void anAdjustmentStartsFromThePreviousVersion() {
         when(contracts.latest("M-1")).thenReturn(Optional.of(new ContractMemoryService.Version(1, "{}", "DRAFT", "", null)));
         when(contracts.saveDraft(anyString(), anyString(), any())).thenReturn(2);

@@ -84,9 +84,11 @@ public class ContractWriter {
                 ClientContract contract;
                 try {
                     contract = ceo.writeContract(ARIA, prompt, agentPrompt, model);
-                } catch (MissionCancellations.MissionCancelledException ex) {
-                    throw ex; // cancelar la misión no es una respuesta inválida: no se reintenta.
                 } catch (Exception ex) {
+                    var cancelled = MissionCancellations.cancellationIn(ex);
+                    if (cancelled.isPresent()) {
+                        throw cancelled.get(); // cancelar la misión (aunque venga envuelta) no se reintenta.
+                    }
                     feedback = "- " + (ex.getMessage() == null ? "Respuesta no procesable." : ex.getMessage());
                     continue;
                 }

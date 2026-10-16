@@ -92,6 +92,17 @@ class RequirementsWriterTest {
     }
 
     @Test
+    void aWrappedCancellationNeverTriesThePaidFallback() {
+        when(company.agentPaidFallbackModel("product-owner")).thenReturn("bedrock:kimi");
+        when(ceo.writeRequirements(anyString(), anyString(), anyString(), anyString())).thenThrow(
+                new IllegalStateException("Aria no devolvió un JSON válido",
+                        new MissionCancellations.MissionCancelledException("M-1")));
+        var ex = assertThrows(IllegalStateException.class, () -> writer.write("M-1", "x", Optional.empty(), null));
+        verify(ceo, never()).writeRequirements(anyString(), anyString(), anyString(), eq("bedrock:kimi"));
+        assertFalse(ex.getMessage().contains("respaldo pago"), ex.getMessage());
+    }
+
+    @Test
     void anAdjustmentSendsThePreviousSpecAndTheInstructionAndUsesAVersionedTask() {
         when(requirements.latest("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "DRAFT", "", null)));
         when(requirements.saveDraft(anyString(), anyString(), any())).thenReturn(2);

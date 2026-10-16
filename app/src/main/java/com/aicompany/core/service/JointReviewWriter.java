@@ -118,9 +118,11 @@ public class JointReviewWriter {
                     return items.apply(result);
                 }
                 feedback = "- " + String.join("\n- ", errors);
-            } catch (MissionCancellations.MissionCancelledException ex) {
-                throw ex; // cancelar la misión no es una respuesta inválida: no se reintenta.
             } catch (RuntimeException ex) {
+                var cancelled = MissionCancellations.cancellationIn(ex);
+                if (cancelled.isPresent()) {
+                    throw cancelled.get(); // cancelar la misión (aunque venga envuelta) no se reintenta.
+                }
                 feedback = "- " + (ex.getMessage() == null ? "Respuesta no procesable." : ex.getMessage());
             }
             log.warn("MISSION {} - joint review {} rejected attempt={} errors={}", missionId, step, attempt, feedback);

@@ -32,6 +32,20 @@ public class MissionCancellations {
         }
     }
 
+    /**
+     * La cancelación en un error, aunque llegue envuelta (CeoService envuelve cualquier error en «no devolvió un JSON
+     * válido»): recorre la cadena de causas.
+     */
+    public static java.util.Optional<MissionCancelledException> cancellationIn(Throwable error) {
+        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+        for (var t = error; t != null && seen.add(t); t = t.getCause()) {
+            if (t instanceof MissionCancelledException cancelled) {
+                return java.util.Optional.of(cancelled);
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
     public static class MissionCancelledException extends IllegalStateException {
         public MissionCancelledException(String missionId) {
             super("La misión " + missionId + " fue cancelada por el fundador.");

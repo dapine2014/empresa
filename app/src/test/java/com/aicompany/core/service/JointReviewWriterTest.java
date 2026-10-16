@@ -69,6 +69,16 @@ class JointReviewWriterTest {
                 eq("bedrock:kimi"));
     }
 
+    @Test void aWrappedCancellationIsRethrownWithoutRetrying() {
+        var cancelled = new MissionCancellations.MissionCancelledException("M-1");
+        when(ceo.detectContradictions(anyString(), anyString(), anyString(), anyString()))
+                .thenThrow(new IllegalStateException("Neo no devolvió un JSON válido", cancelled));
+        var ex = assertThrows(MissionCancellations.MissionCancelledException.class,
+                () -> writer.detect("M-1", JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of()));
+        assertSame(cancelled, ex);
+        verify(ceo, times(1)).detectContradictions(anyString(), anyString(), anyString(), anyString());
+    }
+
     @Test void ariaDecidesWithNeosContradictionsInFront() {
         when(ceo.decideContradictions(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(new Resolution(List.of(new Decision("CONTRA-01", "DESIGN", "usar 800", "las HU mandan"))));
