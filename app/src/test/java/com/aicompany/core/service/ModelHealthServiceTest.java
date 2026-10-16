@@ -232,4 +232,43 @@ class ModelHealthServiceTest {
         assertEquals("DOWN", snapshot.get(0).status());
         assertEquals(List.of("backend"), snapshot.get(1).affectedAgents());
     }
+    // Verificado en vivo (Pong, 2026-10-15): glm-5.3 respondía el ping pero daba 504 en las llamadas reales; el ping
+    // exitoso borraba los fallos y lo devolvía en minutos, y cada llamada de Kael perdía ~16 min con él.
+    @Test
+    void aSuccessfulQuickCheckDoesNotEraseTheFailuresOfRealCalls() {
+        chainOf(GLM);
+        when(nvidia.ping("z-ai/glm-5.3")).thenReturn(true);
+        health.recordFailure(GLM, "HTTP 504");
+
+        health.probeFreeChain();
+        health.recordFailure(GLM, "HTTP 504");
+
+        assertTrue(health.isDown(GLM));
+    }
+
+    @Test
+    void aModelBroughtBackByThePingIsOnProbationAndOneRealFailureTakesItDownAgain() {
+        health.recordFailure(KIMI, "x");
+        health.recordFailure(KIMI, "x");
+        when(nvidia.ping("moonshotai/kimi-k3")).thenReturn(true);
+        health.probeDownModels();
+        assertFalse(health.isDown(KIMI));
+
+        health.recordFailure(KIMI, "HTTP 504");
+
+        assertTrue(health.isDown(KIMI));
+    }
+
+    @Test
+    void aRealSuccessEndsTheProbation() {
+        health.recordFailure(KIMI, "x");
+        health.recordFailure(KIMI, "x");
+        when(nvidia.ping("moonshotai/kimi-k3")).thenReturn(true);
+        health.probeDownModels();
+
+        health.recordSuccess(KIMI);
+        health.recordFailure(KIMI, "HTTP 504");
+
+        assertFalse(health.isDown(KIMI));
+    }
 }

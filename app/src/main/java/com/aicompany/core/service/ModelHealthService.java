@@ -192,9 +192,9 @@ public class ModelHealthService {
             if (client == null) {
                 continue;
             }
-            if (client.ping(remote.model())) {
-                recordSuccess(model);
-            } else {
+            // Verificado en vivo (Pong, 2026-10-15): un ping exitoso no prueba que las llamadas reales funcionen
+            // (glm-5.3 respondía el ping y daba 504 a Kael); solo una llamada real exitosa borra los fallos.
+            if (!client.ping(remote.model())) {
                 recordFailure(model, "no respondió el chequeo rápido (" + probeTimeout.toSeconds() + " s)");
             }
         }
@@ -264,10 +264,13 @@ public class ModelHealthService {
             if (client == null || !client.ping(remote.model())) {
                 continue;
             }
+            // Vuelve a prueba: queda UP pero con un fallo menos del umbral, así un solo fallo real lo tumba de nuevo
+            // (verificado en vivo: glm-5.3 volvía por ping a los 3 min y seguía dando 504); una llamada real exitosa
+            // termina la prueba.
             var cameBack = new boolean[1];
             states.computeIfPresent(model, (k, s) -> {
                 cameBack[0] = s.down();
-                return State.UP;
+                return s.down() ? new State(FAILURES_TO_DOWN - 1, false, null, s.lastError()) : s;
             });
             if (cameBack[0]) {
                 announceUp(model, entry.getValue().since());
