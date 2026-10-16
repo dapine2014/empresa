@@ -9,10 +9,11 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
      * HUMAN_VERIFY (revisión 2026-10-06 §5): una verificación humana cortada se repite como verificación, sin modelos.
      * DESIGN / DESIGN_ADJUSTMENT (spec 2026-10-14 Kael §1.2): Kael diseña (o ajusta) sobre el borrador de Aria, sin
      * repetir a Aria. JOINT_REVIEW (spec 2026-10-15): Neo y Aria revisan el par DRAFT (HU + diseño) sin repetir a Aria ni
-     * a Kael.
+     * a Kael. CONTRACT_ADJUSTMENT (spec 2026-10-16): Aria rehace el contrato con el ajuste reclamado; un contrato DRAFT se
+     * retoma en AWAIT_APPROVAL.
      */
     public enum Stage { REQUIREMENTS, ADJUSTMENT, AWAIT_APPROVAL, PLAN, GENERATE, VERIFY, INTERRUPT, HUMAN_VERIFY, DESIGN,
-        DESIGN_ADJUSTMENT, JOINT_REVIEW }
+        DESIGN_ADJUSTMENT, JOINT_REVIEW, CONTRACT_ADJUSTMENT }
 
     public enum RoundKind { ORIGINAL, INCREMENT, EVIDENCE, CORRECTION }
 
@@ -31,6 +32,13 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
             return new ResumePoint(Stage.HUMAN_VERIFY, s.round(), kind, increment);
         }
         if (!s.requirementsApproved()) {
+            // Contrato (spec 2026-10-16): mientras el contrato espera, todavía no hay HU.
+            if (s.pendingContractAdjustment() != null) {
+                return new ResumePoint(Stage.CONTRACT_ADJUSTMENT, s.round(), kind, increment);
+            }
+            if ("DRAFT".equals(s.latestContractStatus())) {
+                return new ResumePoint(Stage.AWAIT_APPROVAL, s.round(), kind, increment);
+            }
             if (s.pendingAdjustment() != null) {
                 return new ResumePoint(Stage.ADJUSTMENT, s.round(), kind, increment);
             }

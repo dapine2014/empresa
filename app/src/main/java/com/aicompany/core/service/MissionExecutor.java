@@ -229,6 +229,39 @@ public class MissionExecutor {
         this.requirementsMemory = requirementsMemory;
     }
 
+    private ContractWriter contractWriter;
+    private ContractMemoryService contractMemory;
+
+    /** Contrato (spec 2026-10-16): opcional (sin él, Aria escribe las HU directo desde el pedido, como antes). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setContracts(ContractWriter contractWriter, ContractMemoryService contractMemory) {
+        this.contractWriter = contractWriter;
+        this.contractMemory = contractMemory;
+    }
+
+    private boolean contractApplies() {
+        return contractWriter != null && contractMemory != null;
+    }
+
+    /** Contrato (spec 2026-10-16 §1): el fundador (el cliente) aprueba o ajusta el contrato antes de que haya HU. */
+    private void awaitContractApproval(String missionId, ContractWriter.Written written) {
+        advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 4, "Contrato listo (Aria)",
+                "Aria levantó el contrato con tu pedido. Espera tu aprobación antes de escribir las historias: "
+                        + com.aicompany.core.agent.validation.ContractText.summary(written.contract(), written.version()));
+    }
+
+    private ContractWriter.Written latestContract(String missionId) {
+        var latest = contractMemory.latest(missionId).orElseThrow();
+        return new ContractWriter.Written(latest.version(), jsonMapper.readValue(latest.contractJson(),
+                com.aicompany.core.agent.model.ClientContract.class));
+    }
+
+    private ContractWriter.Written rewriteContract(String missionId, String instruction, String adjustment) {
+        var previous = contractMemory.latest(missionId).map(v -> jsonMapper.readValue(v.contractJson(),
+                com.aicompany.core.agent.model.ClientContract.class));
+        return contractWriter.write(missionId, instruction, previous, adjustment);
+    }
+
     private boolean ariaApplies(TeamExecutionMode mode) {
         return mode == TeamExecutionMode.DEVELOPMENT && requirementsWriter != null && requirementsMemory != null;
     }
@@ -571,30 +604,22 @@ public class MissionExecutor {
                 .orElseThrow(() -> new IllegalStateException("No hay estrategia de ejecución para " + mode));
 
         if (ariaApplies(mode)) {
-            advanceMission(missionId, MissionStatus.PLANNING, 3, "Requisitos (Aria)",
-                    "Aria está convirtiendo el pedido en historias de usuario.");
-            var written = requirementsWriter.write(missionId, instruction, java.util.Optional.empty(), null);
-            // Revisión Task 5 (R2): los eventos siguen el orden Aria → Kael; un solo READY por spec escrito.
-            publishReady(missionId, written);
-            var designed = design(missionId, written, java.util.Optional.empty(), null);
-            var reviewed = reviewed(missionId, written, designed);
-            written = reviewed.written();
-            designed = reviewed.designed();
-            if (companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED) >= 1.0) {
-                awaitApproval(missionId, written, designed, reviewed.note());
-                return;
+            // Contrato (spec 2026-10-16 §1): primero el contrato con el cliente; nunca se repite uno aprobado.
+            if (contractApplies() && contractMemory.approved(missionId).isEmpty()) {
+                advanceMission(missionId, MissionStatus.PLANNING, 2, "Contrato (Aria)",
+                        "Aria está levantando el contrato con tu pedido.");
+                var contract = contractWriter.write(missionId, instruction, java.util.Optional.empty(), null);
+                events.publish("EMPRESA_CONTRACT_READY", missionId, null, ContractWriter.ARIA,
+                        Map.of("version", contract.version(), "items", contract.contract().itemsOrEmpty().size()));
+                if (companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED) >= 1.0) {
+                    awaitContractApproval(missionId, contract);
+                    return;
+                }
+                contractMemory.approve(missionId, contract.version(), "policy");
+                events.publish("EMPRESA_CONTRACT_APPROVED", missionId, null, "policy",
+                        Map.of("version", contract.version(), "approvedBy", "policy"));
             }
-            if (designed != null) {
-                requirementsMemory.approveWithDesign(missionId, written.version(), designed.version(), "policy");
-            } else {
-                requirementsMemory.approve(missionId, written.version(), "policy");
-            }
-            // Revisión final Aria (14): aprobado por la policy, no por el fundador (agentId "policy").
-            events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "policy",
-                    designed == null ? Map.of("version", written.version(), "approvedBy", "policy")
-                            : Map.of("version", written.version(), "approvedBy", "policy",
-                            "interactionDesignVersion", designed.version()));
-            planAndRunIncrement(missionId, instruction, teamId, mode, written.spec(), 1, 0);
+            writeStoriesAndDesign(missionId, instruction, teamId, mode);
             return;
         }
 
@@ -619,6 +644,34 @@ public class MissionExecutor {
 
         runTeamPlan(missionId, instruction, mode,
                 new TeamMissionContext(missionId, instruction, planned.team(), planned.plan()));
+    }
+
+    /** Spec 2026-10-03 Aria + 2026-10-14 Kael + revisión conjunta: HU, diseño y revisión; luego espera o planifica. */
+    private void writeStoriesAndDesign(String missionId, String instruction, String teamId, TeamExecutionMode mode) {
+        advanceMission(missionId, MissionStatus.PLANNING, 3, "Requisitos (Aria)",
+                "Aria está convirtiendo el pedido en historias de usuario.");
+        var written = requirementsWriter.write(missionId, instruction, java.util.Optional.empty(), null);
+        // Revisión Task 5 (R2): los eventos siguen el orden Aria → Kael; un solo READY por spec escrito.
+        publishReady(missionId, written);
+        var designed = design(missionId, written, java.util.Optional.empty(), null);
+        var reviewed = reviewed(missionId, written, designed);
+        written = reviewed.written();
+        designed = reviewed.designed();
+        if (companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED) >= 1.0) {
+            awaitApproval(missionId, written, designed, reviewed.note());
+            return;
+        }
+        if (designed != null) {
+            requirementsMemory.approveWithDesign(missionId, written.version(), designed.version(), "policy");
+        } else {
+            requirementsMemory.approve(missionId, written.version(), "policy");
+        }
+        // Revisión final Aria (14): aprobado por la policy, no por el fundador (agentId "policy").
+        events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "policy",
+                designed == null ? Map.of("version", written.version(), "approvedBy", "policy")
+                        : Map.of("version", written.version(), "approvedBy", "policy",
+                        "interactionDesignVersion", designed.version()));
+        planAndRunIncrement(missionId, instruction, teamId, mode, written.spec(), 1, 0);
     }
 
     private void publishReady(String missionId, RequirementsWriter.Written written) {
@@ -817,10 +870,16 @@ public class MissionExecutor {
                 awaitApprovalAfterAria(missionId, written);
             }
             case AWAIT_APPROVAL -> {
-                var written = latestRequirements(missionId);
-                publishReady(missionId, written);
-                awaitApproval(missionId, written, draftDesignFor(missionId, written.version()));
+                // Contrato (spec 2026-10-16): un contrato en DRAFT es lo que espera al fundador (todavía no hay HU).
+                if (contractApplies() && contractMemory.latest(missionId).filter(c -> "DRAFT".equals(c.status())).isPresent()) {
+                    awaitContractApproval(missionId, latestContract(missionId));
+                } else {
+                    var written = latestRequirements(missionId);
+                    publishReady(missionId, written);
+                    awaitApproval(missionId, written, draftDesignFor(missionId, written.version()));
+                }
             }
+            case CONTRACT_ADJUSTMENT -> adjustContract(missionId, contractMemory.pendingAdjustment(missionId).orElseThrow());
             // Spec 2026-10-14 Kael §1.2: el retome en Kael nunca repite a Aria.
             case DESIGN -> {
                 var written = latestRequirements(missionId);
@@ -1051,6 +1110,32 @@ public class MissionExecutor {
             var mode = TeamExecutionMode.forTeamType(TeamMemoryService.teamType(teamId).orElseThrow());
             planAndRunIncrement(missionId, instruction, teamId, mode, approvedSpec(missionId), 1, 0);
         });
+    }
+
+    /** Contrato (spec 2026-10-16 §1): aprobado el contrato, Aria escribe las HU desde él. */
+    public CompletableFuture<Void> continueAfterContractAsync(String missionId) {
+        // Síncrono, como continueAfterApprovalAsync: la misión deja AWAITING_SPEC_APPROVAL aunque el hilo espere en la cola.
+        advanceMission(missionId, MissionStatus.PLANNING, 3, "Requisitos (Aria)",
+                "Contrato aprobado: Aria escribe las historias de usuario.");
+        return submit(missionId, "continue after contract", () -> {
+            var teamId = memory.teamId(missionId).orElseThrow();
+            var instruction = memory.instructionOf(missionId).orElse("");
+            var mode = TeamExecutionMode.forTeamType(TeamMemoryService.teamType(teamId).orElseThrow());
+            writeStoriesAndDesign(missionId, instruction, teamId, mode);
+        });
+    }
+
+    /** Contrato (spec 2026-10-16 §1): Aria rehace el contrato con el ajuste del fundador y vuelve a esperar. */
+    public CompletableFuture<Void> adjustContractAsync(String missionId, String adjustment) {
+        advanceMission(missionId, MissionStatus.PLANNING, 2, "Contrato (Aria)", "Aria ajusta el contrato: " + adjustment);
+        return submit(missionId, "contract adjustment", () -> adjustContract(missionId, adjustment));
+    }
+
+    private void adjustContract(String missionId, String adjustment) {
+        var written = rewriteContract(missionId, memory.instructionOf(missionId).orElse(""), adjustment);
+        events.publish("EMPRESA_CONTRACT_ADJUSTED", missionId, null, "human",
+                Map.of("version", written.version(), "instruction", adjustment));
+        awaitContractApproval(missionId, written);
     }
 
     /** Spec 2026-10-03 Aria §2: Aria rehace los requisitos con el ajuste del fundador y vuelve a esperar. */

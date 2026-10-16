@@ -206,6 +206,118 @@ class MissionExecutorTeamTest {
         when(memory.lastValidationStatus("M-9")).thenReturn(Optional.of("VERIFIED"));
     }
 
+    private final ContractWriter contractWriter = mock(ContractWriter.class);
+    private final ContractMemoryService contracts = mock(ContractMemoryService.class);
+    private static final com.aicompany.core.agent.model.ClientContract CONTRACT =
+            new com.aicompany.core.agent.model.ClientContract("Un CRM.", "APP",
+                    List.of(new com.aicompany.core.agent.model.ClientContract.Item("MOD-01", "MODULE", "Clientes", "alta")),
+                    List.of(), false, "pequeño");
+
+    private void withContract() throws Exception {
+        withAria();
+        executor.setContracts(contractWriter, contracts);
+        when(contractWriter.write(eq("M-9"), eq("Un CRM"), any(), any()))
+                .thenReturn(new ContractWriter.Written(1, CONTRACT));
+    }
+
+    @Test
+    void aDevelopmentMissionStopsAtTheContractWaitingForTheFounder() throws Exception {
+        withContract();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Contrato listo (Aria)"), argThat(m -> m.contains("MOD-01 [Módulo] Clientes")));
+        verify(writer, never()).write(any(), any(), any(), any());
+        verify(events).publish(eq("EMPRESA_CONTRACT_READY"), eq("M-9"), isNull(), eq("product-owner"), anyMap());
+    }
+
+    @Test
+    void withAnApprovedContractTheMissionGoesStraightToTheStories() throws Exception {
+        withContract();
+        when(contracts.approved("M-9")).thenReturn(Optional.of(new ContractMemoryService.Version(1, "{}", "APPROVED", "", null)));
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(contractWriter, never()).write(any(), any(), any(), any());
+        verify(writer).write(eq("M-9"), eq("Un CRM"), eq(Optional.empty()), isNull());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Requisitos listos (Aria)"), anyString());
+    }
+
+    @Test
+    void withTheApprovalPolicyOffTheContractIsApprovedByPolicyAndAriaWritesTheStories() throws Exception {
+        withContract();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(0.0);
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        var order = inOrder(contracts, writer);
+        order.verify(contracts).approve("M-9", 1, "policy");
+        order.verify(writer).write(eq("M-9"), eq("Un CRM"), eq(Optional.empty()), isNull());
+        verify(events).publish(eq("EMPRESA_CONTRACT_APPROVED"), eq("M-9"), isNull(), eq("policy"), anyMap());
+    }
+
+    @Test
+    void afterApprovingTheContractAriaWritesTheStoriesAndWaitsAgain() throws Exception {
+        withContract();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+
+        executor.continueAfterContractAsync("M-9").get();
+
+        verify(writer).write(eq("M-9"), eq("Un CRM"), eq(Optional.empty()), isNull());
+        verify(contractWriter, never()).write(any(), any(), any(), any());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Requisitos listos (Aria)"), anyString());
+    }
+
+    @Test
+    void adjustingTheContractRewritesItAndWaitsAgain() throws Exception {
+        withContract();
+        when(contracts.latest("M-9")).thenReturn(Optional.of(new ContractMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(CONTRACT), "DRAFT", "", null)));
+        when(contractWriter.write(eq("M-9"), eq("Un CRM"), eq(Optional.of(CONTRACT)), eq("agrega inventarios")))
+                .thenReturn(new ContractWriter.Written(2, CONTRACT));
+
+        executor.adjustContractAsync("M-9", "agrega inventarios").get();
+
+        verify(events).publish(eq("EMPRESA_CONTRACT_ADJUSTED"), eq("M-9"), isNull(), eq("human"),
+                argThat(d -> Integer.valueOf(2).equals(d.get("version"))));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Contrato listo (Aria)"), argThat(m -> m.contains("versión 2")));
+        verify(writer, never()).write(any(), any(), any(), any());
+    }
+
+    @Test
+    void resumingWithTheContractInDraftWaitsForTheFounderAgain() throws Exception {
+        withContract();
+        when(contracts.latest("M-9")).thenReturn(Optional.of(new ContractMemoryService.Version(3,
+                JsonMapper.builder().build().writeValueAsString(CONTRACT), "DRAFT", "", null)));
+
+        executor.resumeAsync("M-9", resumeAt(com.aicompany.core.recovery.ResumePoint.Stage.AWAIT_APPROVAL)).get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Contrato listo (Aria)"), argThat(m -> m.contains("versión 3")));
+        verifyNoInteractions(contractWriter);
+    }
+
+    @Test
+    void resumingAClaimedContractAdjustmentRepeatsIt() throws Exception {
+        withContract();
+        when(contracts.latest("M-9")).thenReturn(Optional.of(new ContractMemoryService.Version(1,
+                JsonMapper.builder().build().writeValueAsString(CONTRACT), "DRAFT", "", null)));
+        when(contracts.pendingAdjustment("M-9")).thenReturn(Optional.of("agrega inventarios"));
+        when(contractWriter.write(eq("M-9"), eq("Un CRM"), eq(Optional.of(CONTRACT)), eq("agrega inventarios")))
+                .thenReturn(new ContractWriter.Written(2, CONTRACT));
+
+        executor.resumeAsync("M-9", resumeAt(com.aicompany.core.recovery.ResumePoint.Stage.CONTRACT_ADJUSTMENT)).get();
+
+        verify(contractWriter).write(eq("M-9"), eq("Un CRM"), eq(Optional.of(CONTRACT)), eq("agrega inventarios"));
+    }
+
     // Spec 2026-10-03 Aria §1: tras Aria la misión espera al fundador; Neo no corre.
     @Test
     void aDevelopmentMissionStopsAfterAriaWaitingForApproval() throws Exception {

@@ -15,13 +15,26 @@ import java.util.List;
  * <p>
  * Revisión conjunta (spec 2026-10-15): {@code jointReviewPending}: hay diseño DRAFT para el spec DRAFT, la policy está
  * encendida y no hay una revisión cerrada para ese par de versiones.
+ * <p>
+ * {@code latestContractStatus}/{@code pendingContractAdjustment} (contrato, spec 2026-10-16): estado del último contrato y el
+ * ajuste reclamado sin terminar, o null.
  */
 public record MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
                               String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,
                               boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask,
                               boolean designNeeded, boolean designForLatestSpec, String pendingDesignAdjustment,
-                              boolean jointReviewPending) {
+                              boolean jointReviewPending, String latestContractStatus, String pendingContractAdjustment) {
     public record RoundTask(String taskId, String status, String commitSha) { }
+
+    public MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
+                           String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,
+                           boolean planForRound, List<RoundTask> workTasks, String humanVerifyTask,
+                           boolean designNeeded, boolean designForLatestSpec, String pendingDesignAdjustment,
+                           boolean jointReviewPending) {
+        this(missionId, teamId, round, incrementOfRound, correctionRound, latestRequirementsStatus, requirementsApproved,
+                pendingAdjustment, planForRound, workTasks, humanVerifyTask, designNeeded, designForLatestSpec,
+                pendingDesignAdjustment, jointReviewPending, null, null);
+    }
 
     public MissionSnapshot(String missionId, String teamId, int round, Integer incrementOfRound, boolean correctionRound,
                            String latestRequirementsStatus, boolean requirementsApproved, String pendingAdjustment,

@@ -112,4 +112,21 @@ class ResumePointTest {
                 true, true, null, false);
         assertEquals(ResumePoint.Stage.AWAIT_APPROVAL, ResumePoint.of(s).stage());
     }
+
+    private static MissionSnapshot withContract(String contractStatus, String contractAdjustment) {
+        return new MissionSnapshot("M-1", "TEAM-DEVELOPMENT", 0, null, false, null, false, null, false, List.of(), null,
+                false, false, null, false, contractStatus, contractAdjustment);
+    }
+
+    @Test void aDraftContractWaitsForTheFounder() {
+        assertEquals(ResumePoint.Stage.AWAIT_APPROVAL, ResumePoint.of(withContract("DRAFT", null)).stage());
+    }
+
+    @Test void aClaimedContractAdjustmentIsRepeated() {
+        assertEquals(ResumePoint.Stage.CONTRACT_ADJUSTMENT, ResumePoint.of(withContract("DRAFT", "agrega inventarios")).stage());
+    }
+
+    @Test void anApprovedContractWithoutStoriesGoesToAria() {
+        assertEquals(ResumePoint.Stage.REQUIREMENTS, ResumePoint.of(withContract("APPROVED", null)).stage());
+    }
 }

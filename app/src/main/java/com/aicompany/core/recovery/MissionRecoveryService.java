@@ -250,6 +250,14 @@ public class MissionRecoveryService {
         executor.verifyAsync(missionId);
     }
 
+    private com.aicompany.core.service.ContractMemoryService contracts;
+
+    /** Contrato (spec 2026-10-16): para retomar el contrato (opcional en tests: sin él, nunca se retoma ahí). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setContracts(com.aicompany.core.service.ContractMemoryService contracts) {
+        this.contracts = contracts;
+    }
+
     private InteractionDesignMemoryService designs;
     private tools.jackson.databind.json.JsonMapper json = tools.jackson.databind.json.JsonMapper.builder().build();
 
@@ -478,7 +486,9 @@ public class MissionRecoveryService {
                 latest.map(RequirementsMemoryService.Version::status).orElse(null),
                 requirements.approved(missionId).isPresent(), requirements.pendingAdjustment(missionId).orElse(null),
                 planTask || !tasks.isEmpty(), tasks, humanVerify, designNeeded, designForLatest, pendingDesign,
-                jointReviewPending);
+                jointReviewPending,
+                contracts == null ? null : contracts.latest(missionId).map(c -> c.status()).orElse(null),
+                contracts == null ? null : contracts.pendingAdjustment(missionId).orElse(null));
     }
 
     private Optional<AgentTask> lastValidation(String missionId) {
