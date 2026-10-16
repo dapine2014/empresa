@@ -68,4 +68,14 @@ class SceneSheetTest {
         assertFalse(s.contains("B */"));
         assertFalse(s.contains("main.Pelota"));
     }
+
+    @Test void nestedTypesAreNotMembers() {
+        var src = "public partial class Main : Node2D { [Export] public int Velocidad { get; set; } = 200;\n"
+                + "public enum Estado { Jugando, Fin }\npublic class Inner { public int X; } }";
+        var names = SceneSheet.extract("Main", List.of(src)).stream().map(SceneSheet.Member::name).toList();
+        assertTrue(names.contains("Velocidad"), names.toString());
+        assertFalse(names.contains("Estado"), names.toString());
+        assertFalse(names.contains("Inner"), names.toString());
+        assertFalse(names.contains("X"), names.toString());
+    }
 }

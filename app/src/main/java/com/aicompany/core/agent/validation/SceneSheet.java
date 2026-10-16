@@ -47,7 +47,7 @@ public final class SceneSheet {
 
     private static final java.util.regex.Pattern MEMBER = java.util.regex.Pattern.compile(
             "\\bpublic\\s+(?:(?:static|readonly|override|virtual|new|sealed|const|async)\\s+)*"
-                    + "([A-Za-z_][\\w.]*(?:<[^;{}()=]*?>)?\\??(?:\\[\\])?)\\s+([A-Za-z_]\\w*)\\s*(\\(|\\{|=>|=|;)");
+                    + "(?!(?:class|struct|enum|interface|record|delegate|event)\\b)([A-Za-z_][\\w.]*(?:<[^;{}()=]*?>)?\\??(?:\\[\\])?)\\s+([A-Za-z_]\\w*)\\s*(\\(|\\{|=>|=|;)");
 
     public static List<Member> extract(String className, java.util.Collection<String> sources) {
         var out = new java.util.ArrayList<Member>();
