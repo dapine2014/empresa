@@ -1,5 +1,7 @@
 # Juegos por niveles y escenas — Implementation Plan
 
+> **Reemplazado** por `2026-10-16-contrato-epicas-y-juegos.md` (sin ejecutar).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Que un juego se parta en niveles o escenas con sus HU (Aria, aprobadas por el fundador), que Kael diseñe por nivel y declare sus escenas, que Forjai genere escenas `.tscn` válidas y que Vera reciba y respete un contrato de las escenas antes del sandbox.
