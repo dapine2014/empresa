@@ -2,6 +2,7 @@ import type {
   FreeModelChain,
   AdjustTarget,
   InteractionDesignView,
+  JointReviewView,
   DatabaseConnectionForm,
   DatabaseConnectionInfo,
   MissionDatabaseStatus,
@@ -203,6 +204,7 @@ export const api = {
 
   interactionDesign: (missionId: string) =>
     request<InteractionDesignView>(`/api/company/missions/${missionId}/interaction-design`),
+  jointReview: (missionId: string) => request<JointReviewView[]>(`/api/company/missions/${missionId}/joint-review`),
 
   decideRequirements: (
     missionId: string,

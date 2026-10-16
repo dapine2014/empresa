@@ -313,6 +313,50 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
   )
 }
 
+/** Revisión conjunta (spec 2026-10-15): Neo detecta contradicciones entre HU y diseño, Aria decide, Java aplica. */
+function MissionJointReview({ missionId }: { missionId: string }) {
+  const query = useQuery({
+    queryKey: ['jointReview', missionId],
+    queryFn: () => api.jointReview(missionId),
+    refetchInterval: 10_000,
+  })
+  const reviews = query.data ?? []
+  if (reviews.length === 0) return null
+  return (
+    <section>
+      <h2>Revisión conjunta (Neo + Aria)</h2>
+      {reviews.map((r) => (
+        <div key={r.number}>
+          <p>
+            <strong>Ronda {r.round}</strong>: {r.status} (HU v{r.specVersion}, diseño v{r.designVersion})
+            {r.detail && <span className="hint"> — {r.detail}</span>}
+          </p>
+          <ul>
+            {r.contradictions.map((c) => {
+              const d = r.decisions.find((x) => x.id === c.id)
+              return (
+                <li key={c.id}>
+                  <code>{c.id}</code> ({c.requirementRefs.join(', ')} ↔ {c.designRefs.join(', ')}): {c.requirementSays} ↔{' '}
+                  {c.designSays}
+                  {d ? (
+                    <>
+                      {' '}
+                      → <strong>{d.side === 'DESIGN' ? 'diseño' : 'HU'}</strong>: {d.change}{' '}
+                      <span className="hint">({d.reason})</span>
+                    </>
+                  ) : (
+                    <> → ⚠ sin resolver</>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 /** Spec 2026-10-14 Kael: diseño de interacción (pantallas y flujos, o reglas del juego); 404 = sin diseño. */
 function MissionDesign({ missionId }: { missionId: string }) {
   const query = useQuery({
@@ -470,6 +514,7 @@ export default function MissionDetailPage() {
 
       {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
       {mission.teamId && <MissionDesign missionId={mission.missionId} />}
+      {mission.teamId && <MissionJointReview missionId={mission.missionId} />}
 
       {mission.teamId && <MissionDatabase missionId={mission.missionId} />}
 

@@ -12,6 +12,7 @@ import com.aicompany.core.model.MissionStatusResponse;
 import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.InteractionDesignView;
+import com.aicompany.core.model.JointReviewView;
 import com.aicompany.core.agent.model.InteractionDesign;
 import com.aicompany.core.agent.validation.InteractionDesignText;
 import com.aicompany.core.agent.model.RequirementsSpec;
@@ -97,6 +98,26 @@ public class MissionService {
         events.publishMission("EMPRESA_MISSION_UPDATED", missionId, MissionStatus.CANCELLED.name(), 100, "Cancelada",
                 message);
         return memory.find(missionId).orElseThrow();
+    }
+
+    private JointReviewMemoryService jointReviews;
+
+    /** Revisión conjunta (spec 2026-10-15): opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setJointReviews(JointReviewMemoryService jointReviews) {
+        this.jointReviews = jointReviews;
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): las rondas de la misión, en orden. */
+    public List<JointReviewView> jointReviews(String missionId) {
+        if (jointReviews == null) {
+            return List.of();
+        }
+        return jointReviews.all(missionId).stream().map(r -> new JointReviewView(r.number(), r.round(), r.specVersion(),
+                r.designVersion(), r.status(),
+                List.of(JSON.readValue(r.contradictionsJson(), com.aicompany.core.agent.model.JointReview.Contradiction[].class)),
+                List.of(JSON.readValue(r.decisionsJson(), com.aicompany.core.agent.model.JointReview.Decision[].class)),
+                r.detail(), r.at())).toList();
     }
 
     private AgentAvailability agentAvailability;

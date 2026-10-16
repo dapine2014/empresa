@@ -699,3 +699,30 @@ export interface ModelCostView {
   calls: number
   rows: ModelUsageRow[]
 }
+
+// Revisión conjunta (spec 2026-10-15): JointReviewView.
+export interface JointReviewContradiction {
+  id: string
+  requirementRefs: string[]
+  designRefs: string[]
+  requirementSays: string
+  designSays: string
+  proposal: { side: 'DESIGN' | 'REQUIREMENTS'; change: string } | null
+}
+export interface JointReviewDecision {
+  id: string
+  side: 'DESIGN' | 'REQUIREMENTS'
+  change: string
+  reason: string
+}
+export interface JointReviewView {
+  number: number
+  round: number
+  specVersion: number
+  designVersion: number
+  status: 'COHERENT' | 'RESOLVED' | 'UNRESOLVED' | 'FAILED' | 'SKIPPED'
+  contradictions: JointReviewContradiction[]
+  decisions: JointReviewDecision[]
+  detail: string
+  at: string
+}

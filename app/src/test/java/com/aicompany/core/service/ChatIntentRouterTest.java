@@ -2922,4 +2922,32 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("MISSION-C (ronda 1 de 3)"), response);
         assertTrue(response.contains("MISSION-F (con tu indicación)"), response);
     }
+
+    // Revisión conjunta (spec 2026-10-15): el chat responde la revisión en Java, sin modelo.
+    @Test
+    void theJointReviewIsAnsweredInJava() {
+        when(missionService.jointReviews("MISSION-PONG-2")).thenReturn(List.of(new com.aicompany.core.model.JointReviewView(
+                1, 1, 1, 1, "RESOLVED",
+                List.of(new com.aicompany.core.agent.model.JointReview.Contradiction("CONTRA-01", List.of("HU-02"),
+                        List.of("REGLA-07"), "800x600", "x > 640",
+                        new com.aicompany.core.agent.model.JointReview.Proposal("DESIGN", "usar 800"))),
+                List.of(new com.aicompany.core.agent.model.JointReview.Decision("CONTRA-01", "DESIGN", "usar 800", "las HU mandan")),
+                "", "2026-10-15T20:00:00Z")));
+
+        var response = router.route("muéstrame la revisión de MISSION-PONG-2");
+
+        assertTrue(response.contains("Ronda 1: RESOLVED"), response);
+        assertTrue(response.contains("CONTRA-01 (HU-02 ↔ REGLA-07): 800x600 ↔ x > 640 → diseño: usar 800 (las HU mandan)"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void contradictionsQuestionAlsoShowsTheReviewAndSaysWhenThereIsNone() {
+        when(missionService.jointReviews("MISSION-PONG-2")).thenReturn(List.of());
+
+        var response = router.route("¿qué contradicciones resolvieron en MISSION-PONG-2?");
+
+        assertTrue(response.contains("MISSION-PONG-2 no tiene revisión conjunta"), response);
+        verifyNoInteractions(ceoService);
+    }
 }

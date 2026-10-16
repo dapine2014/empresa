@@ -106,3 +106,5 @@ EMPRESA_MISSION_CORRECTION_STARTED (`MissionExecutor.correctAsync`, `agentId="sy
 EMPRESA_MISSION_BLOCKED (`MissionExecutor.block`, `agentId="system"`): un freno (`MAX_AUTO_CORRECTIONS` o `MAX_MISSION_COST_USD`; "sin avance" ya no bloquea desde la revisión 2026-10-06) detuvo la corrección; la misión queda `BLOCKED` y manda correo. `data: {reason}`.
 
 EMPRESA_CORRECTION_STRATEGY_PROPOSED (`MissionExecutor`, `agentId="engineering"`; revisión 2026-10-06): ante un error persistente, Neo propuso una estrategia nueva (con búsqueda web) para la ronda de corrección. `data: {round, fingerprint, sources}` — `fingerprint` = identidad de la falla repetida, `sources` = URL leídas.
+
+EMPRESA_JOINT_REVIEW_COMPLETED (`JointReviewService`, `agentId="engineering"`; spec revisión conjunta): terminó una ronda de la revisión conjunta de Neo y Aria. `data: {round, status, contradictions, resolvedBy: {requirements, design}}` — `status` = `COHERENT|RESOLVED|UNRESOLVED|FAILED|SKIPPED`, `resolvedBy` = cuántas contradicciones se resolvieron cambiando las HU o el diseño.

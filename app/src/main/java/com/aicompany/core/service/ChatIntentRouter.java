@@ -28,6 +28,7 @@ import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
 import com.aicompany.core.model.PolicyKey;
+import com.aicompany.core.model.JointReviewView;
 import com.aicompany.core.model.ProductStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -494,7 +495,7 @@ public class ChatIntentRouter {
         var normalized = normalize(message);
         return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
                 || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
-                || SHOW_DESIGN.matcher(normalized).find() || ADJUST_KAEL.matcher(message).find()
+                || SHOW_DESIGN.matcher(normalized).find() || SHOW_REVIEW.matcher(normalized).find() || ADJUST_KAEL.matcher(message).find()
                 || requirementsAdjustment(message) != null;
     }
 
@@ -1160,6 +1161,10 @@ public class ChatIntentRouter {
     private static final Pattern SHOW_DESIGN = Pattern.compile(
             "(?i)^\\s*(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:el\\s+)?dise(?:n|ñ)o"
                     + "(?:\\s+(?:de\\s+kael|de\\s+interaccion|del\\s+juego|de\\s+pantallas))?\\s+de\\s+(" + MISSION_REF + ")");
+    /** Revisión conjunta (spec 2026-10-15): "muéstrame la revisión de MISSION-X", "¿qué contradicciones … MISSION-X?". */
+    private static final Pattern SHOW_REVIEW = Pattern.compile(
+            "(?i)(?:\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:la\\s+)?revision(?:\\s+conjunta)?\\s+de\\s+"
+                    + "|\\bcontradicciones\\b.*?)(" + MISSION_REF + ")");
     private static final Pattern ADJUST_KAEL = Pattern.compile(
             "(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*,\\s*kael\\s*:\\s*(.+)$", Pattern.DOTALL);
     private static final Pattern APPROVE_STORIES = Pattern.compile(
@@ -1171,6 +1176,20 @@ public class ChatIntentRouter {
     private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos)\\b");
     private static final Pattern BUILD_INCREMENT = Pattern.compile(
             "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(" + MISSION_REF + ")");
+
+    private static String formatReview(JointReviewView r) {
+        var lines = new ArrayList<String>();
+        lines.add("Ronda " + r.round() + ": " + r.status() + " (HU v" + r.specVersion() + ", diseño v" + r.designVersion() + ")"
+                + (r.detail() == null || r.detail().isBlank() ? "" : " — " + r.detail()));
+        for (var c : r.contradictions()) {
+            var decision = r.decisions().stream().filter(d -> d.id().equals(c.id())).findFirst();
+            lines.add("- " + c.id() + " (" + String.join(", ", c.requirementRefs()) + " ↔ " + String.join(", ", c.designRefs())
+                    + "): " + c.requirementSays() + " ↔ " + c.designSays()
+                    + decision.map(d -> " → " + ("DESIGN".equals(d.side()) ? "diseño" : "HU") + ": " + d.change()
+                    + " (" + d.reason() + ")").orElse(" → sin resolver"));
+        }
+        return String.join("\n", lines);
+    }
 
     private String handleRequirements(String message) {
         var normalized = normalize(message);
@@ -1189,6 +1208,16 @@ public class ChatIntentRouter {
                         RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjustKael.group(2).strip(),
                         RequirementsDecisionCommand.Target.KAEL));
                 return "Le pasé el ajuste a Kael; te aviso cuando el diseño de " + missionId + " esté listo.";
+            }
+            var showReview = SHOW_REVIEW.matcher(normalized);
+            if (showReview.find()) {
+                var missionId = showReview.group(1).toUpperCase(Locale.ROOT);
+                var reviews = missionService.jointReviews(missionId);
+                if (reviews.isEmpty()) {
+                    return missionId + " no tiene revisión conjunta de Neo y Aria.";
+                }
+                return "Revisión conjunta de " + missionId + ":\n" + reviews.stream().map(ChatIntentRouter::formatReview)
+                        .collect(Collectors.joining("\n"));
             }
             var showDesign = SHOW_DESIGN.matcher(normalized);
             if (showDesign.find()) {

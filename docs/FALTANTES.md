@@ -62,6 +62,8 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 
 - [x] Cancelar una misión en curso desde el Command Center y el chat (2026-10-15; hecho el mismo día): hoy no existe; el Pong se canceló marcándolo `CANCELLED` en Neo4j con company-core detenido.
 - [ ] El estratega de corrección abrió las rondas 4 y 5 del Pong con la misma falla repetida (mismas 4 partidas): revisar por qué no frenó.
+- [ ] Prueba en vivo de la revisión conjunta: un juego nuevo (no el Pong) que llegue coherente sin intervención y termine `VERIFIED` (tercera condición para dar a Kael por ajustado).
+- [ ] Revisión conjunta: si company-core se reinicia después de que Aria guardó HU nuevas por la revisión y antes de que Kael rediseñe, el retome `DESIGN` rediseña desde cero (sin el diseño previo ni el ajuste de diseño decidido por Neo y Aria); la revisión siguiente lo vuelve a detectar.
 
 ## 3. Fuera del código
 

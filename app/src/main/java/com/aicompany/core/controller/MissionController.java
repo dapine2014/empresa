@@ -1,6 +1,7 @@
 package com.aicompany.core.controller;
 
 import com.aicompany.core.model.InteractionDesignView;
+import com.aicompany.core.model.JointReviewView;
 import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.DecisionCommand;
@@ -110,6 +111,12 @@ public class MissionController {
     public ResponseEntity<RequirementsView> requirements(@PathVariable String missionId) {
         return missionService.requirements(missionId).map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): rondas de Neo + Aria (lista vacía = sin revisión). */
+    @GetMapping("/{missionId}/joint-review")
+    public List<JointReviewView> jointReview(@PathVariable String missionId) {
+        return missionService.jointReviews(missionId);
     }
 
     /** Spec 2026-10-14 Kael §3: diseño de Kael de la misión (404 = sin diseño). */
