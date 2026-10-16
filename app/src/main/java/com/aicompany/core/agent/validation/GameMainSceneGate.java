@@ -17,6 +17,11 @@ public final class GameMainSceneGate {
     }
 
     public static List<String> check(List<DevelopmentResult.GeneratedFile> returned, Map<String, String> existing) {
+        return check(returned, existing, null);
+    }
+
+    public static List<String> check(List<DevelopmentResult.GeneratedFile> returned, Map<String, String> existing,
+                                     String expectedMainScene) {
         var godot = returned.stream().filter(Objects::nonNull)
                 .filter(f -> f.path() != null && (GODOT.equals(f.path()) || f.path().endsWith("/" + GODOT)))
                 .findFirst();
@@ -27,6 +32,10 @@ public final class GameMainSceneGate {
         var m = MAIN.matcher(godot.get().content() == null ? "" : godot.get().content());
         if (!m.find()) {
             return List.of(godotPath + " debe declarar run/main_scene=\"res://<Escena>.tscn\" en [application].");
+        }
+        if (expectedMainScene != null && !expectedMainScene.equals(m.group(1))) {
+            return List.of(godotPath + ": run/main_scene debe ser \"res://" + expectedMainScene
+                    + "\" (ESCENA-01 del diseño de Kael); declara \"res://" + m.group(1) + "\".");
         }
         // res:// es la carpeta de project.godot (con o sin prefijo de componente).
         var scene = godotPath.substring(0, godotPath.length() - "project.godot".length()) + m.group(1);

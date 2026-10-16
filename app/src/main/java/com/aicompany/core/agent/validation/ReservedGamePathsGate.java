@@ -14,10 +14,17 @@ public final class ReservedGamePathsGate {
     }
 
     public static List<String> check(List<DevelopmentResult.GeneratedFile> files, boolean isQa) {
+        return check(files, isQa, java.util.Set.of());
+    }
+
+    public static List<String> check(List<DevelopmentResult.GeneratedFile> files, boolean isQa,
+                                     java.util.Set<String> forjaiScenes) {
         var errors = new ArrayList<String>();
         for (var f : files.stream().filter(Objects::nonNull).toList()) {
             var path = f.path() == null ? "" : OwnedPaths.normalize(f.path());
-            if (under(StackProfile.FORJAI_GAME_ROOT, path)) {
+            if (forjaiScenes.contains(path)) {
+                errors.add(path + " es de Forjai: no lo escribas (tu escena crea sus nodos en _Ready).");
+            } else if (under(StackProfile.FORJAI_GAME_ROOT, path)) {
                 errors.add(path + " es del runner de Forjai: no lo escribas.");
             } else if (!isQa && under(StackProfile.PLAYTHROUGHS_ROOT, path)) {
                 errors.add(path + " es una partida simulada de Vera (QA): no la escribas.");

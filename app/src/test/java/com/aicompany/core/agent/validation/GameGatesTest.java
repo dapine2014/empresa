@@ -84,4 +84,43 @@ class GameGatesTest {
         assertEquals(List.of(), InjectableRandomGate.check(List.of(new GeneratedFile("src/Pong.Domain/Ball.cs",
                 "var r = new Random();")), roots));
     }
+
+    // Juegos por niveles (spec 2026-10-16 contrato §4).
+    private static final List<GameSceneScriptsGate.SceneScript> SCENES = List.of(
+            new GameSceneScriptsGate.SceneScript("ESCENA-01", "Main", "game/Main.cs", true));
+
+    @Test void everySceneHasItsScriptWithItsClassAndLevelMembers() {
+        var owned = List.of("game");
+        assertTrue(GameSceneScriptsGate.check(List.of(), Map.of(), SCENES, owned).get(0).contains("Falta game/Main.cs"));
+        var noLevels = GameSceneScriptsGate.check(List.of(new GeneratedFile("game/Main.cs",
+                "public partial class Main : Node2D { }")), Map.of(), SCENES, owned);
+        assertTrue(noLevels.stream().anyMatch(e -> e.contains("public int Level")), noLevels.toString());
+        assertTrue(noLevels.stream().anyMatch(e -> e.contains("StartLevel")), noLevels.toString());
+        var wrongClass = GameSceneScriptsGate.check(List.of(new GeneratedFile("game/Main.cs",
+                "public class Juego : Node { }")), Map.of(), SCENES, owned);
+        assertTrue(wrongClass.stream().anyMatch(e -> e.contains("public partial class Main : Node2D")), wrongClass.toString());
+        var ok = "public partial class Main : Node2D { public int Level { get; private set; } = 1;\n"
+                + "  public void StartLevel(int level) { Level = level; } }";
+        assertEquals(List.of(), GameSceneScriptsGate.check(List.of(new GeneratedFile("game/Main.cs", ok)), Map.of(), SCENES, owned));
+        // En una ronda, Kael no lo devuelve: vale el del repositorio.
+        assertEquals(List.of(), GameSceneScriptsGate.check(List.of(), Map.of("game/Main.cs", ok), SCENES, owned));
+        // Quien no es dueño de game/ no responde por las escenas.
+        assertEquals(List.of(), GameSceneScriptsGate.check(List.of(), Map.of(), SCENES, List.of("src/Pong.Domain")));
+    }
+
+    @Test void theMainSceneMustBeTheOneOfTheDesign() {
+        var godot = new GeneratedFile("game/project.godot", "[application]\nrun/main_scene=\"res://Juego.tscn\"\n");
+        var errors = GameMainSceneGate.check(List.of(godot), Map.of("game/Juego.tscn", "", "game/Main.tscn", ""), "Main.tscn");
+        assertTrue(errors.stream().anyMatch(e -> e.contains("res://Main.tscn")), errors.toString());
+        assertEquals(List.of(), GameMainSceneGate.check(List.of(new GeneratedFile("game/project.godot",
+                "[application]\nrun/main_scene=\"res://Main.tscn\"\n")), Map.of("game/Main.tscn", ""), "Main.tscn"));
+    }
+
+    @Test void theScenesOfForjaiAreReserved() {
+        var errors = ReservedGamePathsGate.check(List.of(new GeneratedFile("game/Main.tscn", "x")), false,
+                java.util.Set.of("game/Main.tscn"));
+        assertEquals(List.of("game/Main.tscn es de Forjai: no lo escribas (tu escena crea sus nodos en _Ready)."), errors);
+        assertEquals(List.of(), ReservedGamePathsGate.check(List.of(new GeneratedFile("game/Main.cs", "x")), false,
+                java.util.Set.of("game/Main.tscn")));
+    }
 }

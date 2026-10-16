@@ -2256,4 +2256,27 @@ class DevelopmentTeamStrategyTest {
         verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
                 anyList(), anyList(), any());
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void withScenesTheOwnerOfGameMustWriteTheirScriptsAndCannotWriteTheScenes() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.cs"))).thenReturn(null);
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(null);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var checks = ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(),
+                anyList(), checks.capture());
+        var gate = (java.util.function.Function<DevelopmentResult, List<String>>) checks.getValue();
+        var errors = gate.apply(new DevelopmentResult("r", List.of(new GeneratedFile("game/Main.tscn", "x"))));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("game/Main.tscn es de Forjai")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("Falta game/Main.cs")), errors.toString());
+    }
 }

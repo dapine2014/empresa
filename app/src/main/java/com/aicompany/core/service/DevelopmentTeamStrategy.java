@@ -1825,7 +1825,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             checks.add(databaseChecks(context, headSha));
         }
         if (context.plan().hasComponent(StackProfile.GODOT_DOTNET_GAME)) {
-            checks.add(gameChecks(context, agentId, headSha));
+            checks.add(gameChecks(context, agentId, owned, headSha));
         }
         var api = apiChecks(context, owned, headSha);
         if (api != null) {
@@ -2079,7 +2079,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     /** Spec 2026-10-14 Kael §2.2: assets, escena principal, azar inyectable y rutas reservadas, con reintento. */
     private java.util.function.Function<DevelopmentResult, List<String>> gameChecks(TeamMissionContext context,
-                                                                                    String agentId, String headSha) {
+                                                                                    String agentId, List<String> owned,
+                                                                                    String headSha) {
         var component = context.plan().resolvedComponents().stream()
                 .filter(c -> c.profile() == StackProfile.GODOT_DOTNET_GAME).findFirst().orElse(null);
         var rulesRoots = new ArrayList<String>();
@@ -2101,13 +2102,39 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         } catch (Exception ex) {
             existing.clear();
         }
+        // Juegos por niveles (spec 2026-10-16 contrato §4): escenas del incremento, sus scripts y la escena principal.
+        var approved = approvedGameScenes(context.missionId());
+        var sceneScripts = new ArrayList<com.aicompany.core.agent.validation.GameSceneScriptsGate.SceneScript>();
+        var existingScripts = new java.util.LinkedHashMap<String, String>();
+        String mainScene = null;
+        if (approved.isPresent()) {
+            var a = approved.get();
+            for (var s : com.aicompany.core.agent.validation.GameScenes.upTo(a.game(), a.spec(), a.increment())) {
+                var path = component == null ? com.aicompany.core.agent.validation.GameScenes.scriptPath(s.script())
+                        : component.prefix(com.aicompany.core.agent.validation.GameScenes.scriptPath(s.script()));
+                sceneScripts.add(new com.aicompany.core.agent.validation.GameSceneScriptsGate.SceneScript(s.id(),
+                        s.script(), path, com.aicompany.core.agent.validation.GameScenes.hasLevels(a.game(), s.id())));
+                var content = headSha == null ? null : readOrNull(context.missionId(), headSha, path);
+                if (content != null) {
+                    existingScripts.put(path, content);
+                }
+            }
+            mainScene = com.aicompany.core.agent.validation.GameScenes.main(a.game())
+                    .map(s -> s.script() + ".tscn").orElse(null);
+        }
+        var forjaiScenes = java.util.Set.copyOf(sceneSkeletonPaths(context));
+        var expectedMain = mainScene;
         var qa = isQa(context, agentId);
         return result -> {
             var errors = new ArrayList<String>();
             errors.addAll(com.aicompany.core.agent.validation.GameAssetGate.check(result.files()));
-            errors.addAll(com.aicompany.core.agent.validation.GameMainSceneGate.check(result.files(), existing));
+            errors.addAll(com.aicompany.core.agent.validation.GameMainSceneGate.check(result.files(), existing, expectedMain));
             errors.addAll(com.aicompany.core.agent.validation.InjectableRandomGate.check(result.files(), rulesRoots));
-            errors.addAll(com.aicompany.core.agent.validation.ReservedGamePathsGate.check(result.files(), qa));
+            errors.addAll(com.aicompany.core.agent.validation.ReservedGamePathsGate.check(result.files(), qa, forjaiScenes));
+            if (!qa) {
+                errors.addAll(com.aicompany.core.agent.validation.GameSceneScriptsGate.check(result.files(),
+                        existingScripts, sceneScripts, owned));
+            }
             return errors;
         };
     }
