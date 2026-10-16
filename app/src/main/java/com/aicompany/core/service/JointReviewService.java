@@ -75,16 +75,20 @@ public class JointReviewService {
         } else {
             outcome = run(missionId, spec, design, round);
         }
-        memory.save(missionId, round, specVersion, designVersion, outcome.status(),
-                JSON.writeValueAsString(outcome.contradictions()), JSON.writeValueAsString(outcome.decisions()),
-                outcome.detail());
-        log.info("MISSION {} - joint review round={} status={} contradictions={}", missionId, round, outcome.status(),
-                outcome.contradictions().size());
-        events.publish("EMPRESA_JOINT_REVIEW_COMPLETED", missionId, null, JointReviewWriter.NEO, Map.of(
-                "round", round, "status", outcome.status(), "contradictions", outcome.contradictions().size(),
-                "resolvedBy", Map.of(
-                        "requirements", count(outcome.decisions(), JointReview.REQUIREMENTS),
-                        "design", count(outcome.decisions(), JointReview.DESIGN))));
+        try {
+            memory.save(missionId, round, specVersion, designVersion, outcome.status(),
+                    JSON.writeValueAsString(outcome.contradictions()), JSON.writeValueAsString(outcome.decisions()),
+                    outcome.detail());
+            log.info("MISSION {} - joint review round={} status={} contradictions={}", missionId, round, outcome.status(),
+                    outcome.contradictions().size());
+            events.publish("EMPRESA_JOINT_REVIEW_COMPLETED", missionId, null, JointReviewWriter.NEO, Map.of(
+                    "round", round, "status", outcome.status(), "contradictions", outcome.contradictions().size(),
+                    "resolvedBy", Map.of(
+                            "requirements", count(outcome.decisions(), JointReview.REQUIREMENTS),
+                            "design", count(outcome.decisions(), JointReview.DESIGN))));
+        } catch (RuntimeException ex) {
+            log.warn("MISSION {} - joint review round={} could not be recorded: {}", missionId, round, ex.getMessage());
+        }
         return outcome;
     }
 

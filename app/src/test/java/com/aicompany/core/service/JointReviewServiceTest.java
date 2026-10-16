@@ -84,6 +84,7 @@ class JointReviewServiceTest {
         assertEquals("FAILED", outcome.status());
         assertFalse(outcome.needsChanges());
         assertTrue(outcome.detail().contains("sin respuesta válida"));
+        verify(memory).save(eq("M-1"), eq(1), eq(2), eq(3), eq("FAILED"), anyString(), anyString(), contains("sin respuesta válida"));
     }
 
     @Test void withThePolicyOffOrNeoOrAriaOffItIsSkipped() {
@@ -96,6 +97,18 @@ class JointReviewServiceTest {
         assertEquals("SKIPPED", neoOff.status());
         assertTrue(neoOff.detail().contains("Neo"));
         verifyNoInteractions(writer);
+    }
+
+    @Test void withAriaOffItIsSkipped() {
+        when(policies.activeValue(PolicyKey.JOINT_REVIEW_ENABLED)).thenReturn(1.0);
+        when(availability.isEnabled("engineering")).thenReturn(true);
+        when(availability.isEnabled(RequirementsWriter.ARIA)).thenReturn(false);
+
+        var outcome = service.review("M-1", JointReviewValidatorTest.SPEC, 2, JointReviewValidatorTest.GAME, 3, 1);
+
+        assertEquals("SKIPPED", outcome.status());
+        assertTrue(outcome.detail().contains("Aria"));
+        verify(writer, never()).detect(anyString(), any(), any(), anyList());
     }
 
     @Test void theFoundersAdjustmentsReachNeoButNotTheReviewsOwn() {
@@ -120,5 +133,15 @@ class JointReviewServiceTest {
         assertTrue(note.contains("CONTRA-01 (HU-01 ↔ REGLA-01) → diseño: usar 800"), note);
         assertTrue(note.contains("⚠ Sin resolver: CONTRA-02"), note);
         assertEquals("", service.founderNote(List.of()));
+    }
+
+    @Test void whenMemorySaveFailsTheOutcomeIsStillReturned() {
+        when(writer.detect(anyString(), any(), any(), anyList())).thenReturn(List.of());
+        doThrow(new RuntimeException("neo4j caído")).when(memory).save(anyString(), anyInt(), anyInt(), anyInt(), anyString(), anyString(), anyString(), anyString());
+
+        var outcome = service.review("M-1", JointReviewValidatorTest.SPEC, 2, JointReviewValidatorTest.GAME, 3, 1);
+
+        assertEquals("COHERENT", outcome.status());
+        assertFalse(outcome.needsChanges());
     }
 }
