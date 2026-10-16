@@ -71,6 +71,21 @@ class ContractWriterTest {
     }
 
     // Review Focus 1: cada ajuste del fundador parte de la versión anterior y deja una versión nueva.
+    @Test void threeInvalidAttemptsGetOneMoreWithThePaidFallback() {
+        when(company.agentPaidFallbackModel("product-owner")).thenReturn("bedrock:kimi");
+        when(ceo.writeContract(anyString(), anyString(), any(), any())).thenReturn(INVALID, INVALID, INVALID, VALID);
+        var written = writer.write("M-1", "un pong", Optional.empty(), null);
+        assertEquals(1, written.version());
+        verify(ceo).writeContract(anyString(), contains("CORRECCIÓN DEL INTENTO ANTERIOR"), any(), eq("bedrock:kimi"));
+        verify(missions).setTaskModelUsed("M-1-CONTRACT", "bedrock:kimi");
+    }
+
+    @Test void withoutPaidFallbackItIsExactlyThreeCalls() {
+        when(ceo.writeContract(anyString(), anyString(), any(), any())).thenReturn(INVALID);
+        assertThrows(IllegalStateException.class, () -> writer.write("M-1", "un pong", Optional.empty(), null));
+        verify(ceo, times(3)).writeContract(anyString(), anyString(), any(), any());
+    }
+
     @Test void anAdjustmentStartsFromThePreviousVersion() {
         when(contracts.latest("M-1")).thenReturn(Optional.of(new ContractMemoryService.Version(1, "{}", "DRAFT", "", null)));
         when(contracts.saveDraft(anyString(), anyString(), any())).thenReturn(2);

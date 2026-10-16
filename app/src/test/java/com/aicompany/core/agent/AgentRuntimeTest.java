@@ -269,6 +269,29 @@ class AgentRuntimeTest {
     }
 
     @Test
+    void afterThreeRejectedResultsTheAgentGetsOneMoreAttemptWithThePaidFallback() throws Exception {
+        var badResult = agentResult("finance", "");
+        var goodResult = agentResult("finance", "recomendación ok");
+        when(companyMemory.agentPaidFallbackModel("finance")).thenReturn("bedrock:kimi");
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("qwen3:8b")))
+                .thenReturn(outcome(badResult));
+        when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("bedrock:kimi")))
+                .thenReturn(outcome(goodResult));
+        when(validator.validate(badResult))
+                .thenReturn(new AgentResultValidator.ValidationResult(false, List.of("recommendation es obligatorio")));
+        when(validator.validate(goodResult)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));
+        when(evidenceGate.validate(goodResult)).thenReturn(new EvidenceValidationGate.ValidationResult(true, List.of()));
+
+        var future = runtime.execute("TASK-1", "MISSION-1", "finance", "UNIT_ECONOMICS", "instrucción");
+
+        assertEquals(goodResult, future.get());
+        verify(ceoService, times(3)).executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), eq("qwen3:8b"));
+        verify(ceoService).executeAgentTask(eq("finance"), contains("recommendation es obligatorio"), anyString(),
+                eq("MISSION-1"), eq("TASK-1"), eq("bedrock:kimi"));
+        verify(memory).setTaskModelUsed("TASK-1", "bedrock:kimi");
+    }
+
+    @Test
     void failsTaskAfterExhaustingAllRetriesOnUnparsableResponse() {
         when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), anyString()))
                 .thenThrow(new IllegalStateException("respuesta no parseable"));

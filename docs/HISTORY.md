@@ -1126,3 +1126,7 @@ Rulings del plan: (1) la experiencia la manda el contrato: `withContract` la cop
 Verificación manual del runner (podman, perfil Godot .NET): `Scene`/`Do` con restore y build rc 0 y test rc 1 como se esperaba; `ESC_01_nivel2` y `ESC_02_menu` PASSED y `ESC_03_falla` FAILED con «debe fallar». Se usó un proyecto trivial porque el Pong de `~/forjai-products` tiene `JuegoService.cs` roto (CS1513).
 
 Pendiente: el despliegue (junto con la revisión conjunta, con OK del fundador), la prueba en vivo del Pong de 3 niveles con contrato y la entrega B (refinar HU tras cada entrega, ajustar lo construido y cambiar un contrato aprobado).
+
+## Intento extra con Bedrock tras respuestas inválidas (2026-10-16)
+
+`MISSION-PONG-NIVELES-1792188926` quedó `FAILED` en el diseño: Kael, con `nemotron-3-super`, ignoró 3 veces la corrección «El control move_left no se usa en ninguna regla». Bedrock no se probó porque el respaldo pago solo entraba cuando la llamada fallaba o el modelo estaba caído, no cuando respondía mal. Decisión del fundador: el orden es **NVIDIA gratis → Bedrock → mejor local**, los 17 agentes con `bedrock:global.moonshotai.kimi-k3` como respaldo pago, y **un intento extra con Bedrock** cuando el gratis agota los intentos con respuestas inválidas. Implementado en Java (`PaidRetry`, ver ARCHITECTURE «Respaldo pago») en todos los ciclos de validación con reintento; sin respaldo pago configurado todo sigue igual.

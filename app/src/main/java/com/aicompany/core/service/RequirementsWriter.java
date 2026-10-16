@@ -48,6 +48,14 @@ public class RequirementsWriter {
         this.defaultModel = defaultModel;
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Intento extra con el respaldo pago (2026-10-16): opcional; sin él no se mira si los modelos están DOWN. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
     private ContractMemoryService contracts;
 
     /** Contrato (spec 2026-10-16 contrato §2): opcional; sin él (o sin contrato aprobado) Aria escribe desde el pedido. */
@@ -77,7 +85,16 @@ public class RequirementsWriter {
             var base = prompt(instruction, previous, adjustment, contract);
             String feedback = null;
             String understood = null;
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            var paidRetry = PaidRetry.start(ARIA, model, company, modelHealth);
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS + 1; attempt++) {
+                if (attempt > MAX_ATTEMPTS) {
+                    // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                    var paid = paidRetry.next("requirements");
+                    if (paid.isEmpty()) {
+                        break;
+                    }
+                    model = paid.get();
+                }
                 var prompt = feedback == null ? base : base + """
 
                         CORRECCIÓN DEL INTENTO ANTERIOR (Java rechazó el spec por esto; corrígelo todo):
@@ -92,6 +109,7 @@ public class RequirementsWriter {
                     spec = ceo.writeRequirements(ARIA, prompt, agentPrompt, model);
                     spec = spec == null ? null : spec.withContract(contract.orElse(null));
                 } catch (Exception ex) {
+                    paidRetry.note(ex);
                     feedback = "- " + (ex.getMessage() == null ? "Respuesta no procesable." : ex.getMessage());
                     continue;
                 }
@@ -100,6 +118,9 @@ public class RequirementsWriter {
                     var specJson = json.writeValueAsString(spec);
                     var version = requirements.saveDraft(missionId, specJson, adjustment);
                     missions.updateTask(taskId, "COMPLETED", specJson);
+                    if (paidRetry.used() != null) {
+                        missions.setTaskModelUsed(taskId, paidRetry.used());
+                    }
                     log.info("MISSION {} - requirements v{} accepted stories={}", missionId, version,
                             spec.userStoriesOrEmpty().size());
                     return new Written(version, spec);
@@ -109,7 +130,7 @@ public class RequirementsWriter {
                 log.warn("MISSION {} - requirements rejected attempt={} errors={} understood={}", missionId, attempt,
                         feedback, understood.length() > 4000 ? understood.substring(0, 4000) + "…" : understood);
             }
-            var message = "Aria no produjo requisitos válidos después de " + MAX_ATTEMPTS + " intentos:\n" + feedback;
+            var message = "Aria no produjo requisitos válidos después de " + MAX_ATTEMPTS + " intentos" + paidRetry.suffix() + ":\n" + feedback;
             missions.updateTask(taskId, "FAILED", message);
             throw new IllegalStateException(message);
         } finally {

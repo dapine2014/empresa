@@ -58,6 +58,27 @@ class InteractionDesignWriterTest {
         verify(designs, never()).saveDraft(anyString(), anyString(), anyInt(), any());
     }
 
+    @Test void threeInvalidDesignsWithTheFreeModelGetOneExtraAttemptWithThePaidFallback() {
+        var health = mock(ModelHealthService.class);
+        writer.setModelHealth(health);
+        when(company.agentPaidFallbackModel("interaction-design")).thenReturn("bedrock:kimi");
+        when(ceo.writeAppDesign(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(INVALID, INVALID, INVALID, VALID);
+        var written = writer.write("M-1", SPEC, 1, Optional.empty(), null);
+        assertEquals(1, written.version());
+        verify(ceo, times(3)).writeAppDesign(anyString(), anyString(), anyString(), eq("nvidia:x/y"));
+        verify(ceo).writeAppDesign(eq("interaction-design"), contains("CORRECCIÓN DEL INTENTO ANTERIOR"), anyString(),
+                eq("bedrock:kimi"));
+        verify(missions).setTaskModelUsed("M-1-INTERACTION", "bedrock:kimi");
+    }
+
+    @Test void withoutPaidFallbackThreeInvalidDesignsAreExactlyThreeCalls() {
+        when(ceo.writeAppDesign(anyString(), anyString(), anyString(), anyString())).thenReturn(INVALID);
+        var ex = assertThrows(IllegalStateException.class, () -> writer.write("M-1", SPEC, 1, Optional.empty(), null));
+        verify(ceo, times(3)).writeAppDesign(anyString(), anyString(), anyString(), anyString());
+        assertFalse(ex.getMessage().contains("respaldo pago"));
+    }
+
     @Test void kaelOffFailsWithoutCallingTheModel() {
         when(availability.isEnabled("interaction-design")).thenReturn(false);
         var ex = assertThrows(IllegalStateException.class, () -> writer.write("M-1", SPEC, 1, Optional.empty(), null));

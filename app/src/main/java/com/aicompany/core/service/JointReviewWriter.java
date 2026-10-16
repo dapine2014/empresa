@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -42,6 +43,14 @@ public class JointReviewWriter {
         this.defaultModel = defaultModel;
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Intento extra con el respaldo pago (2026-10-16): opcional; sin él no se mira si los modelos están DOWN. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
     public List<JointReview.Contradiction> detect(String missionId, RequirementsSpec spec, InteractionDesign design,
                                                   List<String> founderAdjustments) {
         var base = context(spec, design) + """
@@ -57,8 +66,8 @@ public class JointReviewWriter {
                 side DESIGN (cambiar el diseño) o REQUIREMENTS (cambiar las HU) y el cambio concreto (con números).
                 Máximo 10. Si no hay ninguna, responde {"contradictions": []}.
                 """ + founder(founderAdjustments);
-        return withRetries(missionId, "detect", base,
-                prompt -> ceo.detectContradictions(NEO, prompt, prompts.activePrompt(NEO), model(NEO)),
+        return withRetries(missionId, "detect", NEO, base,
+                (prompt, model) -> ceo.detectContradictions(NEO, prompt, prompts.activePrompt(NEO), model),
                 detection -> JointReviewValidator.validateDetection(detection, spec, design),
                 JointReview.Detection::contradictions);
     }
@@ -75,24 +84,35 @@ public class JointReviewWriter {
                 HU), el cambio concreto que se aplica (puedes aceptar el de Neo o escribir otro) y la razón. No puedes
                 descartar una contradicción.
                 """.formatted(JSON.writeValueAsString(contradictions)) + founder(founderAdjustments);
-        return withRetries(missionId, "decide", base,
-                prompt -> ceo.decideContradictions(RequirementsWriter.ARIA, prompt,
-                        prompts.activePrompt(RequirementsWriter.ARIA), model(RequirementsWriter.ARIA)),
+        return withRetries(missionId, "decide", RequirementsWriter.ARIA, base,
+                (prompt, model) -> ceo.decideContradictions(RequirementsWriter.ARIA, prompt,
+                        prompts.activePrompt(RequirementsWriter.ARIA), model),
                 resolution -> JointReviewValidator.validateResolution(resolution, contradictions),
                 JointReview.Resolution::decisions);
     }
 
-    private <R, T> List<T> withRetries(String missionId, String step, String base, Function<String, R> call,
-                                       Function<R, List<String>> validate, Function<R, List<T>> items) {
+    private <R, T> List<T> withRetries(String missionId, String step, String agentId, String base,
+                                       BiFunction<String, String, R> call, Function<R, List<String>> validate,
+                                       Function<R, List<T>> items) {
         String feedback = null;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        var model = model(agentId);
+        var paidRetry = PaidRetry.start(agentId, model, company, modelHealth);
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS + 1; attempt++) {
+            if (attempt > MAX_ATTEMPTS) {
+                // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                var paid = paidRetry.next("joint-review-" + step);
+                if (paid.isEmpty()) {
+                    break;
+                }
+                model = paid.get();
+            }
             var prompt = feedback == null ? base : base + """
 
                     CORRECCIÓN DEL INTENTO ANTERIOR (Java rechazó la respuesta por esto; corrígelo todo):
                     %s
                     """.formatted(feedback);
             try {
-                var result = call.apply(prompt);
+                var result = call.apply(prompt, model);
                 var errors = validate.apply(result);
                 if (errors.isEmpty()) {
                     return items.apply(result);
@@ -106,7 +126,7 @@ public class JointReviewWriter {
             log.warn("MISSION {} - joint review {} rejected attempt={} errors={}", missionId, step, attempt, feedback);
         }
         throw new IllegalStateException("La revisión conjunta (" + step + ") no produjo una respuesta válida después de "
-                + MAX_ATTEMPTS + " intentos:\n" + feedback);
+                + MAX_ATTEMPTS + " intentos" + paidRetry.suffix() + ":\n" + feedback);
     }
 
     private static String context(RequirementsSpec spec, InteractionDesign design) {

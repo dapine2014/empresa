@@ -77,6 +77,14 @@ public class TeamWorkPlanner {
         this.defaultAgentModel = defaultAgentModel;
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Intento extra con el respaldo pago (2026-10-16): opcional; sin él no se mira si los modelos están DOWN. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
     private AgentAvailability agentAvailability;
 
     /** Decisión del fundador (2026-10-01): el líder solo ve a los miembros encendidos (opcional en tests). */
@@ -164,7 +172,18 @@ public class TeamWorkPlanner {
             String previousPlanJson = null;
             var maxRetries = mode == TeamExecutionMode.DEVELOPMENT ? MAX_DEVELOPMENT_PLAN_RETRIES : MAX_PLAN_RETRIES;
 
-            for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            var paidRetry = PaidRetry.start(leaderId, model, companyMemory, modelHealth);
+
+            for (int attempt = 0; attempt <= maxRetries + 1; attempt++) {
+
+                if (attempt > maxRetries) {
+                    // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                    var paid = paidRetry.next("team-plan");
+                    if (paid.isEmpty()) {
+                        break;
+                    }
+                    model = paid.get();
+                }
 
                 var prompt = feedback == null ? basePrompt : basePrompt + correctionBlock(feedback, previousPlanJson);
 
@@ -173,6 +192,7 @@ public class TeamWorkPlanner {
                 try {
                     plan = ceoService.planTeamWork(leaderId, prompt, leaderPrompt, model);
                 } catch (Exception ex) {
+                    paidRetry.note(ex);
                     feedback = "- " + safeMessage(ex, "Respuesta no procesable.");
                     publishRejected(missionId, taskId, leaderId, attempt, feedback);
                     continue;
@@ -200,6 +220,9 @@ public class TeamWorkPlanner {
                 if (errors.isEmpty()) {
 
                     memory.updateTask(taskId, "COMPLETED", toJson(plan));
+                    if (paidRetry.used() != null) {
+                        memory.setTaskModelUsed(taskId, paidRetry.used());
+                    }
 
                     events.publish("EMPRESA_TEAM_PLAN_CREATED", missionId, taskId, leaderId,
                             Map.of("teamId", teamId, "tasks", plan.tasksOrEmpty().size()));
@@ -216,7 +239,7 @@ public class TeamWorkPlanner {
             }
 
             var message = "El líder " + leaderId + " no produjo un plan válido para " + teamId
-                    + " después de " + (maxRetries + 1) + " intentos:\n" + feedback;
+                    + " después de " + (maxRetries + 1) + " intentos" + paidRetry.suffix() + ":\n" + feedback;
 
             memory.updateTask(taskId, "FAILED", message);
 

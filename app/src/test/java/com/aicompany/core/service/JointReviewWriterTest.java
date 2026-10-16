@@ -58,6 +58,17 @@ class JointReviewWriterTest {
         verify(ceo, times(3)).detectContradictions(anyString(), anyString(), anyString(), anyString());
     }
 
+    @Test void threeInvalidDetectionsGetOneMoreWithNeosPaidFallback() {
+        when(company.agentPaidFallbackModel("engineering")).thenReturn("bedrock:kimi");
+        when(ceo.detectContradictions(anyString(), anyString(), anyString(), anyString())).thenReturn(
+                new Detection(List.of(INVALID)), new Detection(List.of(INVALID)), new Detection(List.of(INVALID)),
+                new Detection(List.of(VALID)));
+
+        assertEquals(List.of(VALID), writer.detect("M-1", JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of()));
+        verify(ceo).detectContradictions(eq("engineering"), contains("CORRECCIÓN DEL INTENTO ANTERIOR"), anyString(),
+                eq("bedrock:kimi"));
+    }
+
     @Test void ariaDecidesWithNeosContradictionsInFront() {
         when(ceo.decideContradictions(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(new Resolution(List.of(new Decision("CONTRA-01", "DESIGN", "usar 800", "las HU mandan"))));

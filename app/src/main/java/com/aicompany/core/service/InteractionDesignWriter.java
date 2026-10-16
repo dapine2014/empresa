@@ -55,6 +55,14 @@ public class InteractionDesignWriter {
         this.defaultModel = defaultModel;
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Intento extra con el respaldo pago (2026-10-16): opcional; sin él no se mira si los modelos están DOWN. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
     public Written write(String missionId, RequirementsSpec spec, int specVersion, Optional<InteractionDesign> previous,
                          String adjustment) {
         var experience = spec.experienceOrNull();
@@ -80,7 +88,16 @@ public class InteractionDesignWriter {
             var base = prompt(spec, experience, sameExperience, adjustment);
             String feedback = null;
             String understood = null;
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            var paidRetry = PaidRetry.start(KAEL, model, company, modelHealth);
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS + 1; attempt++) {
+                if (attempt > MAX_ATTEMPTS) {
+                    // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                    var paid = paidRetry.next("interaction-design");
+                    if (paid.isEmpty()) {
+                        break;
+                    }
+                    model = paid.get();
+                }
                 var prompt = feedback == null ? base : base + """
 
                         CORRECCIÓN DEL INTENTO ANTERIOR (Java rechazó el diseño por esto; corrígelo todo):
@@ -103,6 +120,7 @@ public class InteractionDesignWriter {
                         design = new InteractionDesign("GAME", null, game);
                     }
                 } catch (Exception ex) {
+                    paidRetry.note(ex);
                     feedback = "- " + (ex.getMessage() == null ? "Respuesta no procesable." : ex.getMessage());
                     continue;
                 }
@@ -110,6 +128,9 @@ public class InteractionDesignWriter {
                     var designJson = json.writeValueAsString(design);
                     var version = designs.saveDraft(missionId, designJson, specVersion, adjustment);
                     missions.updateTask(taskId, "COMPLETED", designJson);
+                    if (paidRetry.used() != null) {
+                        missions.setTaskModelUsed(taskId, paidRetry.used());
+                    }
                     log.info("MISSION {} - interaction design v{} accepted experience={}", missionId, version, experience);
                     return new Written(version, design);
                 }
@@ -118,7 +139,7 @@ public class InteractionDesignWriter {
                 log.warn("MISSION {} - interaction design rejected attempt={} errors={} understood={}", missionId,
                         attempt, feedback, understood.length() > 4000 ? understood.substring(0, 4000) + "…" : understood);
             }
-            var message = "Kael no produjo un diseño válido después de " + MAX_ATTEMPTS + " intentos:\n" + feedback;
+            var message = "Kael no produjo un diseño válido después de " + MAX_ATTEMPTS + " intentos" + paidRetry.suffix() + ":\n" + feedback;
             missions.updateTask(taskId, "FAILED", message);
             throw new IllegalStateException(message);
         } finally {

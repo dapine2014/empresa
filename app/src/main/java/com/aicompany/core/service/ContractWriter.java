@@ -47,6 +47,14 @@ public class ContractWriter {
         this.defaultModel = defaultModel;
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Intento extra con el respaldo pago (2026-10-16): opcional; sin él no se mira si los modelos están DOWN. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
     public Written write(String missionId, String instruction, Optional<ClientContract> previous, String adjustment) {
         var nextVersion = contracts.latest(missionId).map(v -> v.version() + 1).orElse(1);
         var taskId = missionId + "-CONTRACT" + (nextVersion > 1 ? "-V" + nextVersion : "");
@@ -58,7 +66,16 @@ public class ContractWriter {
             var agentPrompt = prompts.activePrompt(ARIA);
             var base = prompt(instruction, previous, adjustment);
             String feedback = null;
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            var paidRetry = PaidRetry.start(ARIA, model, company, modelHealth);
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS + 1; attempt++) {
+                if (attempt > MAX_ATTEMPTS) {
+                    // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                    var paid = paidRetry.next("contract");
+                    if (paid.isEmpty()) {
+                        break;
+                    }
+                    model = paid.get();
+                }
                 var prompt = feedback == null ? base : base + """
 
                         CORRECCIÓN DEL INTENTO ANTERIOR (Java rechazó el contrato por esto; corrígelo todo):
@@ -78,6 +95,9 @@ public class ContractWriter {
                     var contractJson = json.writeValueAsString(contract);
                     var version = contracts.saveDraft(missionId, contractJson, adjustment);
                     missions.updateTask(taskId, "COMPLETED", contractJson);
+                    if (paidRetry.used() != null) {
+                        missions.setTaskModelUsed(taskId, paidRetry.used());
+                    }
                     log.info("MISSION {} - contract v{} accepted items={}", missionId, version,
                             contract.itemsOrEmpty().size());
                     return new Written(version, contract);
@@ -85,7 +105,7 @@ public class ContractWriter {
                 feedback = "- " + String.join("\n- ", errors);
                 log.warn("MISSION {} - contract rejected attempt={} errors={}", missionId, attempt, feedback);
             }
-            var message = "Aria no produjo un contrato válido después de " + MAX_ATTEMPTS + " intentos:\n" + feedback;
+            var message = "Aria no produjo un contrato válido después de " + MAX_ATTEMPTS + " intentos" + paidRetry.suffix() + ":\n" + feedback;
             missions.updateTask(taskId, "FAILED", message);
             throw new IllegalStateException(message);
         } finally {

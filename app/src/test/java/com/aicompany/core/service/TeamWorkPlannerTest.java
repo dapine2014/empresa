@@ -141,6 +141,21 @@ class TeamWorkPlannerTest {
     }
 
     @Test
+    void afterThreeInvalidPlansTheLeaderGetsOneMoreAttemptWithThePaidFallback() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        when(companyMemory.agentPaidFallbackModel("growth-content")).thenReturn("bedrock:kimi");
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), eq("qwen3:8b"))).thenReturn(planWithOutsider());
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), eq("bedrock:kimi"))).thenReturn(validPlan());
+
+        var result = planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS);
+
+        assertFalse(result.plan().tasksOrEmpty().isEmpty());
+        verify(ceoService, times(3)).planTeamWork(anyString(), anyString(), anyString(), eq("qwen3:8b"));
+        verify(ceoService).planTeamWork(anyString(), contains("CORRECCIÓN"), anyString(), eq("bedrock:kimi"));
+        verify(memory).setTaskModelUsed("MISSION-5-GROWTH-CONTENT-PLAN", "bedrock:kimi");
+    }
+
+    @Test
     void anUnparseableResponseCountsAsARejectedAttempt() {
         when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
         when(ceoService.planTeamWork(anyString(), anyString(), anyString(), anyString()))

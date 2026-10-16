@@ -170,6 +170,42 @@ class DevelopmentRuntimeTest {
     }
 
     @Test
+    void afterThreeInvalidResultsTheAgentGetsOneMoreAttemptWithThePaidFallback() throws Exception {
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        runtime.setModelHealth(health);
+        when(health.effectiveModel(anyString(), anyString())).thenAnswer(inv -> inv.getArgument(1));
+        when(companyMemory.agentPaidFallbackModel("backend")).thenReturn("bedrock:kimi");
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("qwen3:8b")))
+                .thenReturn(dev("docs/notas.md"));
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("bedrock:kimi")))
+                .thenReturn(dev("web/game/main.js"));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        assertEquals("web/game/main.js", result.files().get(0).path());
+        verify(ceoService, times(3)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("qwen3:8b"));
+        verify(ceoService).generateDevelopmentArtifact(anyString(), argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR")
+                && p.contains("docs/notas.md")), anyString(), eq("bedrock:kimi"));
+        verify(memory).setTaskModelUsed("T-1", "bedrock:kimi");
+    }
+
+    @Test
+    void thePaidFallbackIsNotRetriedWhenTheAgentsModelWasAlreadyDown() {
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        runtime.setModelHealth(health);
+        when(health.isDown("qwen3:8b")).thenReturn(true);
+        when(health.effectiveModel(anyString(), anyString())).thenReturn("bedrock:kimi");
+        when(companyMemory.agentPaidFallbackModel("backend")).thenReturn("bedrock:kimi");
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("docs/notas.md"));
+
+        var future = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game"));
+
+        assertThrows(ExecutionException.class, future::get);
+        verify(ceoService, times(3)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
     void usesTheAgentsOwnPersistedModel() throws Exception {
         when(companyMemory.agentModel("backend", "qwen3:8b")).thenReturn("llama3:8b");
         when(ceoService.generateDevelopmentArtifact(eq("backend"), anyString(), anyString(), eq("llama3:8b")))

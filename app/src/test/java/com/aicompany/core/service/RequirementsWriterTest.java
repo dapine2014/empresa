@@ -64,6 +64,34 @@ class RequirementsWriterTest {
     }
 
     @Test
+    void allInvalidIncludingThePaidFallbackFailsAndTheMessageSaysSo() {
+        when(company.agentPaidFallbackModel("product-owner")).thenReturn("bedrock:kimi");
+        when(ceo.writeRequirements(anyString(), anyString(), anyString(), anyString())).thenReturn(INVALID);
+        var ex = assertThrows(IllegalStateException.class, () -> writer.write("M-1", "x", Optional.empty(), null));
+        verify(ceo, times(4)).writeRequirements(anyString(), anyString(), anyString(), anyString());
+        verify(ceo).writeRequirements(anyString(), contains("CORRECCIÓN DEL INTENTO ANTERIOR"), anyString(), eq("bedrock:kimi"));
+        assertTrue(ex.getMessage().contains("después de 3 intentos (y uno con el respaldo pago bedrock:kimi)"),
+                ex.getMessage());
+    }
+
+    @Test
+    void withoutPaidFallbackItIsExactlyThreeCalls() {
+        when(ceo.writeRequirements(anyString(), anyString(), anyString(), anyString())).thenReturn(INVALID);
+        var ex = assertThrows(IllegalStateException.class, () -> writer.write("M-1", "x", Optional.empty(), null));
+        verify(ceo, times(3)).writeRequirements(anyString(), anyString(), anyString(), anyString());
+        assertFalse(ex.getMessage().contains("respaldo pago"));
+    }
+
+    @Test
+    void aCancelledMissionNeverTriesThePaidFallback() {
+        when(company.agentPaidFallbackModel("product-owner")).thenReturn("bedrock:kimi");
+        when(ceo.writeRequirements(anyString(), anyString(), anyString(), anyString()))
+                .thenThrow(new MissionCancellations.MissionCancelledException("M-1"));
+        assertThrows(IllegalStateException.class, () -> writer.write("M-1", "x", Optional.empty(), null));
+        verify(ceo, never()).writeRequirements(anyString(), anyString(), anyString(), eq("bedrock:kimi"));
+    }
+
+    @Test
     void anAdjustmentSendsThePreviousSpecAndTheInstructionAndUsesAVersionedTask() {
         when(requirements.latest("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1, "{}", "DRAFT", "", null)));
         when(requirements.saveDraft(anyString(), anyString(), any())).thenReturn(2);
