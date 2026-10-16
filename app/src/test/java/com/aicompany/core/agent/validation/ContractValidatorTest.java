@@ -67,4 +67,10 @@ class ContractValidatorTest {
         var errors = ContractValidator.validate(new ClientContract("x", "APP", items, List.of(), true, "módulos"));
         assertTrue(errors.stream().anyMatch(e -> e.contains("máximo 10")), errors.toString());
     }
+
+    @Test void nullKindProducesErrorNotException() {
+        var errors = String.join("\n", ContractValidator.validate(new ClientContract("x", "APP",
+                List.of(new Item("MOD-01", null, "Módulo", "x")), List.of(), true, "módulos")));
+        assertTrue(errors.contains("kind debe ser"), errors);
+    }
 }

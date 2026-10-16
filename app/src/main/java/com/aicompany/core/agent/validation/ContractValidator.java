@@ -47,7 +47,7 @@ public final class ContractValidator {
                 errors.add("El ítem " + (i + 1) + " debe tener id " + expected + " (tiene " + item.id()
                         + "): los ids van en orden.");
             }
-            if (experience != null && !kinds.contains(item.kind())) {
+            if (experience != null && (item.kind() == null || !kinds.contains(item.kind()))) {
                 errors.add(item.id() + ": kind debe ser " + String.join(" o ", kinds) + " en " + experience.name()
                         + "; recibido: \"" + item.kind() + "\".");
             }
@@ -65,7 +65,7 @@ public final class ContractValidator {
             if (items.stream().noneMatch(i -> "LEVEL".equals(i.kind()))) {
                 errors.add("Un juego necesita al menos un ítem LEVEL (un nivel jugable).");
             }
-            var playable = items.stream().filter(i -> PLAYABLE.contains(i.kind())).count();
+            var playable = items.stream().filter(i -> "LEVEL".equals(i.kind()) || "SCENE".equals(i.kind())).count();
             if (playable >= 2 && !contract.epics()) {
                 errors.add("Un juego con varios niveles o escenas lleva épicas (useEpics: true): cada nivel o escena es "
                         + "una épica.");
