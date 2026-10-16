@@ -51,7 +51,9 @@ public final class JointReviewValidator {
                 errors.add(label + ": requirementRefs necesita al menos una HU-NN o ESC-NN.");
             }
             for (var ref : c.requirementRefs()) {
-                if (!requirementIds.contains(ref)) {
+                if (ref == null) {
+                    errors.add(label + ": requirementRefs tiene un elemento vacío.");
+                } else if (!requirementIds.contains(ref)) {
                     errors.add(label + ": " + ref + " no existe en las HU (existen " + requirementIds + ").");
                 }
             }
@@ -59,7 +61,9 @@ public final class JointReviewValidator {
                 errors.add(label + ": designRefs necesita al menos un id del diseño.");
             }
             for (var ref : c.designRefs()) {
-                if (!designIds.contains(ref)) {
+                if (ref == null) {
+                    errors.add(label + ": designRefs tiene un elemento vacío.");
+                } else if (!designIds.contains(ref)) {
                     errors.add(label + ": " + ref + " no existe en el diseño (existen " + designIds + ").");
                 }
             }
@@ -119,8 +123,10 @@ public final class JointReviewValidator {
     static Set<String> requirementIds(RequirementsSpec spec) {
         var ids = new java.util.TreeSet<String>();
         for (var story : spec.userStoriesOrEmpty()) {
-            ids.add(story.id());
-            story.scenariosOrEmpty().forEach(s -> ids.add(s.id()));
+            if (story.id() != null) ids.add(story.id());
+            story.scenariosOrEmpty().forEach(s -> {
+                if (s.id() != null) ids.add(s.id());
+            });
         }
         return ids;
     }

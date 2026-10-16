@@ -110,4 +110,24 @@ public class JointReviewValidatorTest {
         assertTrue(errors.contains("change"), errors);
         assertTrue(errors.contains("reason"), errors);
     }
+
+    @Test void nullElementInRequirementRefsProducesErrorNotException() {
+        var reqRefs = new ArrayList<String>();
+        reqRefs.add("HU-01");
+        reqRefs.add(null);
+        var d = new Detection(List.of(new Contradiction("CONTRA-01", reqRefs, List.of("REGLA-01"),
+                "las HU dicen 800", "el diseño usa 640", new Proposal(JointReview.DESIGN, "usar 800"))));
+        var errors = String.join("\n", JointReviewValidator.validateDetection(d, SPEC, GAME));
+        assertTrue(errors.contains("requirementRefs tiene un elemento vacío"), errors);
+    }
+
+    @Test void nullElementInDesignRefsProducesErrorNotException() {
+        var designRefs = new ArrayList<String>();
+        designRefs.add("REGLA-01");
+        designRefs.add(null);
+        var d = new Detection(List.of(new Contradiction("CONTRA-01", List.of("HU-01"), designRefs,
+                "las HU dicen 800", "el diseño usa 640", new Proposal(JointReview.DESIGN, "usar 800"))));
+        var errors = String.join("\n", JointReviewValidator.validateDetection(d, SPEC, GAME));
+        assertTrue(errors.contains("designRefs tiene un elemento vacío"), errors);
+    }
 }
