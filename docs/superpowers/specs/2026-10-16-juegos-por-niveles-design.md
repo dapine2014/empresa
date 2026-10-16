@@ -1,5 +1,7 @@
 # Juegos por niveles y escenas (2026-10-16)
 
+> **Reemplazado** por `2026-10-16-contrato-epicas-y-juegos-design.md` (el fundador agregó el contrato del cliente y las épicas). El plan `plans/2026-10-16-juegos-por-niveles.md` queda sin ejecutar.
+
 ## Por qué
 
 El Pong 3 (`MISSION-KAEL-PONG-1792113455`) quedó `BLOCKED` tras 20 correcciones. Causas medidas en sus 16 rondas:
