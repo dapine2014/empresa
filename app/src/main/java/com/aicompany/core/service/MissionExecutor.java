@@ -303,10 +303,11 @@ public class MissionExecutor {
         if (jointReview == null || designed == null) {
             return new Reviewed(written, designed, "");
         }
+        var enabled = jointReview.enabled();
         var outcomes = new java.util.ArrayList<JointReviewService.Outcome>();
         for (int round = 1; round <= JointReviewService.ROUNDS; round++) {
             // Con la policy en 0 el flujo es el de hoy (sin paso visible); review() igual registra el SKIPPED.
-            if (jointReview.enabled()) {
+            if (enabled) {
                 advanceMission(missionId, MissionStatus.PLANNING, 7, "Revisión conjunta (Neo + Aria)",
                         "Neo y Aria revisan que las HU y el diseño no se contradigan (ronda " + round + ").");
             }
@@ -339,7 +340,8 @@ public class MissionExecutor {
                         Map.of("version", designed.version(), "instruction", outcome.designAdjustment()));
             }
         }
-        return new Reviewed(written, designed, jointReview.founderNote(outcomes));
+        // Con la policy en 0 el fundador no ve aviso: el SKIPPED queda registrado, pero el mensaje es el de hoy.
+        return new Reviewed(written, designed, enabled ? jointReview.founderNote(outcomes) : "");
     }
 
     static String investorBlock(String routedRequest) {

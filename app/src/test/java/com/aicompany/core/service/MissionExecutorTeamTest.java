@@ -961,8 +961,11 @@ class MissionExecutorTeamTest {
         when(review.enabled()).thenReturn(false);
         when(review.review(any(), any(), anyInt(), any(), anyInt(), anyInt())).thenReturn(new JointReviewService.Outcome(
                 "SKIPPED", List.of(), List.of(), null, null, "La revisión conjunta está apagada (policy)."));
-        when(review.founderNote(anyList())).thenReturn("");
+        when(review.founderNote(anyList())).thenReturn("⚠ La revisión conjunta está apagada (policy).");
         executor.executeAsync("M-9", "Un CRM").get();
+        verify(review, never()).founderNote(anyList());
+        verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("⚠") || m.toLowerCase().contains("revisión conjunta")));
         verify(review, times(1)).review(eq("M-9"), eq(GAME_SPEC), eq(1), eq(DESIGN), eq(1), eq(1));
         verify(memory, never()).updateMission(any(), any(), anyInt(), eq("Revisión conjunta (Neo + Aria)"), anyString());
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
@@ -976,6 +979,7 @@ class MissionExecutorTeamTest {
         when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
         var review = mock(JointReviewService.class);
         executor.setJointReview(review);
+        when(review.enabled()).thenReturn(true);
         when(review.review(eq("M-9"), any(), eq(1), any(), eq(1), eq(1))).thenReturn(new JointReviewService.Outcome(
                 "RESOLVED", List.of(), List.of(), JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): HU con 800",
                 null, ""));
@@ -1009,6 +1013,7 @@ class MissionExecutorTeamTest {
         when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
         var review = mock(JointReviewService.class);
         executor.setJointReview(review);
+        when(review.enabled()).thenReturn(true);
         when(review.review(eq("M-9"), any(), anyInt(), any(), anyInt(), anyInt())).thenReturn(new JointReviewService.Outcome(
                 "COHERENT", List.of(), List.of(), null, null, ""));
         when(review.founderNote(anyList())).thenReturn("");
@@ -1028,6 +1033,7 @@ class MissionExecutorTeamTest {
         withGameDraft(2, 4, 2);
         var review = mock(JointReviewService.class);
         executor.setJointReview(review);
+        when(review.enabled()).thenReturn(true);
         when(review.review(eq("M-9"), any(), anyInt(), any(), anyInt(), anyInt())).thenReturn(new JointReviewService.Outcome(
                 "COHERENT", List.of(), List.of(), null, null, ""));
         when(review.founderNote(anyList())).thenReturn("Neo y Aria no encontraron contradicciones.");
