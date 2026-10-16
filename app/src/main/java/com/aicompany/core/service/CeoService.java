@@ -1297,6 +1297,22 @@ public class CeoService {
                 com.aicompany.core.agent.model.StrategyProposal.class);
     }
 
+    /** Revisión conjunta (spec 2026-10-15): Neo lista las contradicciones entre HU y diseño. format sin tools. */
+    public com.aicompany.core.agent.model.JointReview.Detection detectContradictions(String agentId, String prompt,
+                                                                                  String agentPrompt, String model) {
+        return callStructured("JOINT_REVIEW_DETECT", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.JointReview.Detection.SCHEMA,
+                com.aicompany.core.agent.model.JointReview.Detection.class);
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): Aria decide cada contradicción. format sin tools. */
+    public com.aicompany.core.agent.model.JointReview.Resolution decideContradictions(String agentId, String prompt,
+                                                                                   String agentPrompt, String model) {
+        return callStructured("JOINT_REVIEW_DECIDE", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.JointReview.Resolution.SCHEMA,
+                com.aicompany.core.agent.model.JointReview.Resolution.class);
+    }
+
     /** Revisión estática del repo (spec §7, capa 2): format StaticReviewResultSchema, sin tools. */
     public StaticReviewResult reviewStaticWorkspace(String agentId, String prompt, String agentPrompt, String model) {
         return callStructured("STATIC_REVIEW", agentId, prompt, agentPrompt, model,
