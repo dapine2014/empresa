@@ -261,6 +261,7 @@ export type PolicyKey =
   | 'SPEC_APPROVAL_REQUIRED'
   | 'MAX_AUTO_CORRECTIONS'
   | 'MAX_MISSION_COST_USD'
+  | 'JOINT_REVIEW_ENABLED'
 
 export interface PolicyVersionSummary {
   version: number

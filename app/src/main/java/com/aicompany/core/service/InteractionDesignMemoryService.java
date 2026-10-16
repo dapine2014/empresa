@@ -3,6 +3,7 @@ package com.aicompany.core.service;
 import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -75,6 +76,15 @@ public class InteractionDesignMemoryService {
                             + "{status:'DRAFT'}) WHERE d.pendingAdjustment IS NOT NULL RETURN d.pendingAdjustment AS a "
                             + "ORDER BY d.version DESC LIMIT 1", Map.of("id", missionId))
                     .list(r -> r.get("a").asString()).stream().findFirst();
+        }
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): las instrucciones de cada versión, en orden (para no deshacer las del fundador). */
+    public List<String> instructions(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion) "
+                            + "WHERE d.instruction IS NOT NULL AND d.instruction <> '' RETURN d.instruction AS i ORDER BY d.version",
+                    Map.of("id", missionId)).list(r -> r.get("i").asString());
         }
     }
 

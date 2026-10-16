@@ -87,4 +87,14 @@ class CompanyPolicyDefaultsTest {
         assertThrows(IllegalArgumentException.class,
                 () -> CompanyPolicyService.validateValue(PolicyKey.SPEC_APPROVAL_REQUIRED, 2));
     }
+
+    // Revisión conjunta (spec 2026-10-15): encendida por defecto, solo 0 o 1.
+    @Test
+    void jointReviewIsSeededOnAndOnlyAcceptsZeroOrOne() {
+        var defaults = CompanyPolicyService.defaults(new AppProperties("Forjai", 50, 60));
+        assertEquals(1.0, defaults.get(PolicyKey.JOINT_REVIEW_ENABLED));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.JOINT_REVIEW_ENABLED, 0));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.JOINT_REVIEW_ENABLED, 1));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.JOINT_REVIEW_ENABLED, 2));
+    }
 }

@@ -63,6 +63,8 @@ public class CompanyPolicyService {
         // Revisión 2026-10-06 §1: 20 rondas y US$ 10 como frenos de la corrección automática.
         map.put(PolicyKey.MAX_AUTO_CORRECTIONS, 20.0);
         map.put(PolicyKey.MAX_MISSION_COST_USD, 10.0);
+        // Revisión conjunta (spec 2026-10-15): Neo y Aria resuelven las contradicciones de HU y diseño antes del fundador.
+        map.put(PolicyKey.JOINT_REVIEW_ENABLED, 1.0);
         return map;
     }
 
@@ -174,7 +176,7 @@ public class CompanyPolicyService {
      */
     static void validateValue(PolicyKey key, double value) {
         if (key == PolicyKey.ORCHESTRATOR_ENABLED || key == PolicyKey.PROSPECTING_ENABLED
-                || key == PolicyKey.SPEC_APPROVAL_REQUIRED) {
+                || key == PolicyKey.SPEC_APPROVAL_REQUIRED || key == PolicyKey.JOINT_REVIEW_ENABLED) {
             if (value != 0 && value != 1) {
                 throw new IllegalArgumentException(key + " solo admite 0 (apagado) o 1 (encendido)");
             }

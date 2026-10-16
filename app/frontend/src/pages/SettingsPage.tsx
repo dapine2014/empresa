@@ -22,6 +22,7 @@ const POLICY_LABELS: Record<PolicyKey, string> = {
   SPEC_APPROVAL_REQUIRED: 'Aprobar los requisitos de Aria antes de construir (1 = sí, 0 = no)',
   MAX_AUTO_CORRECTIONS: 'Correcciones automáticas por incremento (máximo)',
   MAX_MISSION_COST_USD: 'Costo máximo de modelos por misión (US$)',
+  JOINT_REVIEW_ENABLED: 'Revisión conjunta de Neo y Aria de HU y diseño antes de tu aprobación (1 = sí, 0 = no)',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {

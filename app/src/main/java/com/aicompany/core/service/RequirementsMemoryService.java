@@ -4,6 +4,7 @@ import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -213,6 +214,15 @@ public class RequirementsMemoryService {
     public void releaseDecision(String missionId, int version) {
         write("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
                 + "REMOVE r.decisionClaimedAt, r.pendingAdjustment", Map.of("id", missionId, "v", version));
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): las instrucciones de cada versión, en orden (para no deshacer las del fundador). */
+    public List<String> instructions(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion) "
+                            + "WHERE r.instruction IS NOT NULL AND r.instruction <> '' RETURN r.instruction AS i ORDER BY r.version",
+                    Map.of("id", missionId)).list(r -> r.get("i").asString());
+        }
     }
 
     private void write(String cypher, Map<String, Object> params) {
