@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import CancelMissionButton from '../components/CancelMissionButton'
 import DeleteMissionButton from '../components/DeleteMissionButton'
 import type { AdjustTarget, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
@@ -455,6 +456,7 @@ export default function MissionDetailPage() {
         {mission.teamId && <>{' — '}👥 {mission.teamId}</>}
       </p>
       {!showsRecovery(mission) && <p className="mission-message">{mission.message}</p>}
+      <CancelMissionButton missionId={mission.missionId} status={mission.status} />
       <DeleteMissionButton
         missionId={mission.missionId}
         status={mission.status}

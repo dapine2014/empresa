@@ -86,6 +86,38 @@ class MissionExecutorTest {
         assertFalse(held.isLive("M-1"));
     }
 
+    // Cancelar una misión en curso (2026-10-15): una cancelada no arranca trabajo nuevo y su hilo no la avanza ni avisa.
+    @Test
+    void aCancelledMissionStartsNoNewWorkAndIsNotAdvanced() {
+        var cancellations = new MissionCancellations();
+        var pending = new java.util.ArrayList<Runnable>();
+        var held = executorWith(pending::add);
+        held.setCancellations(cancellations);
+        cancellations.cancel("M-1");
+
+        held.executeAsync("M-1", "x");
+
+        assertTrue(pending.isEmpty());
+        assertFalse(held.isLive("M-1"));
+        verify(memory, never()).updateMission(eq("M-1"), any(), anyInt(), anyString(), anyString());
+    }
+
+    @Test
+    void aMissionCancelledWhileRunningIsNotMovedToFailedByItsThread() {
+        var cancellations = new MissionCancellations();
+        executor.setCancellations(cancellations);
+        when(runtime.execute(anyString(), anyString(), anyString(), anyString(), anyString())).thenAnswer(inv -> {
+            cancellations.cancel("M-2");
+            throw new MissionCancellations.MissionCancelledException("M-2");
+        });
+
+        executor.executeAsync("M-2", "x");
+
+        verify(memory, never()).updateMission(eq("M-2"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+        verify(events, never()).publishMission(eq("EMPRESA_MISSION_FAILED"), eq("M-2"), anyString(), anyInt(), anyString(), anyString());
+        verifyNoInteractions(alertMailService);
+    }
+
     // Review Task 4: el final de una ronda no desregistra la siguiente ronda de la misma misión.
     @Test
     void overlappingRegistrationsOfTheSameMissionStayLiveUntilBothEnd() {

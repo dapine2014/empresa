@@ -365,7 +365,27 @@ public class ChatIntentRouter {
                 || detectDecision(message) != null
                 || isRequirementsCommand(message)
                 || RESUME.matcher(normalize(message)).find()
-                || VERIFY.matcher(normalize(message)).find();
+                || VERIFY.matcher(normalize(message)).find()
+                || CANCEL.matcher(normalize(message)).find();
+    }
+
+    /** Cancelar una misión en curso (2026-10-15): "cancela MISSION-X". */
+    private static final Pattern CANCEL = Pattern.compile("(?i)^\\s*(?:por favor\\s+)?cancela(?:r)?\\s+(?:la\\s+misi[oó]n\\s+)?("
+            + MISSION_REF + ")\\b");
+
+    private String handleCancel(String message) {
+        var m = CANCEL.matcher(normalize(message));
+        if (!m.find()) {
+            return null;
+        }
+        var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        try {
+            missionService.cancel(missionId, "human");
+            return missionId + " cancelada. El trabajo en curso se detiene en su próximo paso (la llamada al modelo que ya "
+                    + "estaba corriendo termina sola); no se retoma.";
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
     }
 
     /** Revisión 2026-10-06 §5 (manos humanas): "verifica MISSION-X". */
@@ -737,6 +757,10 @@ public class ChatIntentRouter {
         var resumeReply = handleResume(message);
         if (resumeReply != null) {
             return resumeReply;
+        }
+        var cancelReply = handleCancel(message);
+        if (cancelReply != null) {
+            return cancelReply;
         }
         var verifyReply = handleVerify(message);
         if (verifyReply != null) {

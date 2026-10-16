@@ -2732,6 +2732,24 @@ class ChatIntentRouterTest {
         verifyNoInteractions(ceoService);
     }
 
+    // Cancelar una misión en curso (2026-10-15): "cancela MISSION-X" es gobernanza y no toca al modelo.
+    @Test
+    void cancelIsAGovernanceCommand() {
+        var response = router.route("Cancela la misión MISSION-KAEL-PONG-9");
+        verify(missionService).cancel("MISSION-KAEL-PONG-9", "human");
+        assertTrue(response.contains("MISSION-KAEL-PONG-9 cancelada"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void aRefusedCancelExplainsWhy() {
+        when(missionService.cancel("MISSION-9", "human"))
+                .thenThrow(new IllegalStateException("La misión MISSION-9 ya terminó (COMPLETED): no hay nada que cancelar."));
+        var response = router.route("cancelar MISSION-9");
+        assertTrue(response.startsWith("No se pudo:") && response.contains("ya terminó"), response);
+        verifyNoInteractions(ceoService);
+    }
+
     // Spec misiones durables §4: el status muestra retomadas, en corrección, bloqueadas e interrumpidas.
     @Test
     void theStatusShowsTheRecovery() {

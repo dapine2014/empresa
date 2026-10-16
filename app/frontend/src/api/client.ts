@@ -224,6 +224,9 @@ export const api = {
   verifyMission: (missionId: string) =>
     request<MissionResponse>(`/api/company/missions/${missionId}/verify`, { method: 'POST' }),
 
+  /** Cancelar una misión en curso (2026-10-15). */
+  cancelMission: (missionId: string) =>
+    request<MissionResponse>(`/api/company/missions/${missionId}/cancel`, { method: 'POST' }),
   deleteMission: (missionId: string) =>
     request<void>(`/api/company/missions/${missionId}`, { method: 'DELETE' }),
 

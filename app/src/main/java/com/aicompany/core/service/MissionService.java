@@ -64,6 +64,41 @@ public class MissionService {
         this.policies = policies;
     }
 
+    private MissionCancellations cancellations;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCancellations(MissionCancellations cancellations) {
+        this.cancellations = cancellations;
+    }
+
+    /** Ya terminadas: no hay nada que cancelar (una FAILED o COMPLETED se borra, no se cancela). */
+    private static final Set<MissionStatus> NOT_CANCELLABLE = Set.of(
+            MissionStatus.COMPLETED, MissionStatus.CANCELLED, MissionStatus.FAILED);
+
+    /**
+     * Cancelar una misión en curso (decisión del fundador 2026-10-15; antes no había forma y el Pong se canceló a mano en
+     * Neo4j). Queda CANCELLED de inmediato, sus tareas abiertas también, y el trabajo vivo se corta en su siguiente
+     * llamada al modelo (la que ya estaba en curso termina sola). Una misión CANCELLED no se retoma.
+     */
+    public MissionResponse cancel(String missionId, String actor) {
+        var mission = memory.find(missionId)
+                .orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId + "."));
+        if (NOT_CANCELLABLE.contains(mission.status())) {
+            throw new IllegalStateException("La misión " + missionId + " ya terminó (" + mission.status()
+                    + "): no hay nada que cancelar.");
+        }
+        if (cancellations != null) {
+            cancellations.cancel(missionId);
+        }
+        var message = "Cancelada por el fundador (estaba en " + mission.status() + ").";
+        memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Cancelada", message);
+        var tasks = memory.cancelOpenTasks(missionId);
+        log.info("MISSION_CANCELLED missionId={} actor={} from={} openTasks={}", missionId, actor, mission.status(), tasks);
+        events.publishMission("EMPRESA_MISSION_UPDATED", missionId, MissionStatus.CANCELLED.name(), 100, "Cancelada",
+                message);
+        return memory.find(missionId).orElseThrow();
+    }
+
     private AgentAvailability agentAvailability;
 
     /** Decisión del fundador (2026-10-01): solo trabajan los agentes encendidos (opcional en tests). */
@@ -550,6 +585,11 @@ public class MissionService {
         if (FOUNDATIONAL_MISSION_ID.equals(missionId)) {
             throw new IllegalStateException(
                     FOUNDATIONAL_MISSION_ID + " es la misión fundacional y no se puede borrar");
+        }
+
+        // Una misión recién cancelada puede tener todavía un hilo terminando su última llamada: no se borra hasta que pare.
+        if (mission.get().status() == MissionStatus.CANCELLED && executor.isLive(missionId)) {
+            throw new IllegalStateException("La misión " + missionId + " se está deteniendo: bórrala en un minuto.");
         }
 
         if (!DELETABLE_STATUSES.contains(mission.get().status())) {

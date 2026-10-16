@@ -151,7 +151,10 @@ public class MissionMemoryService {
     public void updateMission(String missionId, MissionStatus status, int progress, String currentStep, String message) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                tx.run("MATCH (m:Mission {id:$id}) SET m.status=$status, m.progress=$progress, m.currentStep=$step, m.message=$message, m.updatedAt=$updatedAt",
+                // Cancelar una misión en curso (2026-10-15): una misión CANCELLED no vuelve a cambiar de estado aunque
+                // un hilo que seguía vivo intente avanzarla.
+                tx.run("MATCH (m:Mission {id:$id}) WHERE m.status <> 'CANCELLED' OR $status = 'CANCELLED' "
+                                + "SET m.status=$status, m.progress=$progress, m.currentStep=$step, m.message=$message, m.updatedAt=$updatedAt",
                         Map.of("id", missionId, "status", status.name(), "progress", progress,
                                 "step", currentStep, "message", message, "updatedAt", Instant.now().toString()));
                 return null;
@@ -499,7 +502,10 @@ public class MissionMemoryService {
                         params);
 
                 tx.run("OPTIONAL MATCH (m:Mission {id:$missionId}) " +
-                                "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY]->(n) " +
+                                // 2026-10-15: también las HU de Aria y los diseños de Kael (quedaban huérfanos).
+                                // El costo de modelos (ModelUsage) se conserva: es gasto real del mes.
+                                "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY|HAS_REQUIREMENTS"
+                                + "|HAS_INTERACTION_DESIGN]->(n) " +
                                 "WITH m, collect(DISTINCT n) AS owned " +
                                 "FOREACH (n IN owned | DETACH DELETE n) " +
                                 "FOREACH (x IN CASE WHEN m IS NULL THEN [] ELSE [m] END | DETACH DELETE x)",
@@ -624,6 +630,15 @@ public class MissionMemoryService {
                         Map.of("agentId", agentId, "status", status));
                 return null;
             });
+        }
+    }
+
+    /** Cancelar una misión en curso (2026-10-15): sus tareas pendientes o en curso quedan CANCELLED. */
+    public int cancelOpenTasks(String missionId) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> tx.run("MATCH (t:AgentTask {missionId:$id}) WHERE t.status IN ['PENDING','RUNNING'] "
+                            + "SET t.status='CANCELLED', t.updatedAt=$at RETURN count(t) AS n",
+                    Map.of("id", missionId, "at", Instant.now().toString())).single().get("n").asInt());
         }
     }
 

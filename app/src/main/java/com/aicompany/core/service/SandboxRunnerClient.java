@@ -32,8 +32,19 @@ public class SandboxRunnerClient {
         return verify(missionId, commitSha, stackProfile, "");
     }
 
+    private MissionCancellations cancellations;
+
+    /** Cancelar una misión en curso (2026-10-15): una misión cancelada no lanza más jobs al sandbox. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCancellations(MissionCancellations cancellations) {
+        this.cancellations = cancellations;
+    }
+
     /** Spec 2026-10-02 B1 §3: VERIFY de la carpeta de un componente ("" = raíz). */
     public Optional<SandboxResult> verify(String missionId, String commitSha, String stackProfile, String componentDir) {
+        if (cancellations != null && cancellations.isCancelled(missionId)) {
+            throw new MissionCancellations.MissionCancelledException(missionId);
+        }
         try {
             lastError = null;
             var body = new java.util.LinkedHashMap<String, Object>(Map.of("jobType", "VERIFY", "missionId", missionId,

@@ -623,8 +623,24 @@ public class MissionExecutor {
         return java.util.Set.copyOf(liveMissions.keySet());
     }
 
+    private MissionCancellations cancellations;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCancellations(MissionCancellations cancellations) {
+        this.cancellations = cancellations;
+    }
+
+    private boolean cancelled(String missionId) {
+        return cancellations != null && cancellations.isCancelled(missionId);
+    }
+
     /** Corre {@code work} en el pool de misiones con la misión registrada como viva mientras dure. */
     private CompletableFuture<Void> runLive(String missionId, Runnable work) {
+        // Cancelar una misión en curso (2026-10-15): una cancelada no arranca trabajo nuevo (retome, corrección, ronda).
+        if (cancelled(missionId)) {
+            log.info("MISSION {} - cancelled, not starting new work", missionId);
+            return CompletableFuture.completedFuture(null);
+        }
         liveMissions.merge(missionId, 1, Integer::sum);
         try {
             return CompletableFuture.runAsync(() -> {
@@ -1357,6 +1373,12 @@ public class MissionExecutor {
             int progress,
             String currentStep,
             String message) {
+
+        // Cancelar una misión en curso (2026-10-15): el hilo que seguía vivo no la avanza ni avisa nada más.
+        if (cancelled(missionId) && status != MissionStatus.CANCELLED) {
+            log.info("MISSION {} - cancelled, ignoring transition to {}", missionId, status);
+            return;
+        }
 
         memory.updateMission(
                 missionId,

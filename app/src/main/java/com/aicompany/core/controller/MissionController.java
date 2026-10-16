@@ -39,6 +39,12 @@ public class MissionController {
      * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): verifica el último commit del repositorio sin
      * modelos (un desarrollador corrigió e hizo commit).
      */
+    /** Cancelar una misión en curso (decisión del fundador 2026-10-15): botón en Missions y chat "cancela MISSION-X". */
+    @PostMapping("/{missionId}/cancel")
+    public MissionResponse cancel(@PathVariable String missionId) {
+        return missionService.cancel(missionId, "human");
+    }
+
     @PostMapping("/{missionId}/verify")
     public ResponseEntity<MissionResponse> verify(@PathVariable String missionId) {
         recoveryService.verify(missionId);

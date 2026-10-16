@@ -1786,6 +1786,12 @@ public class CeoService {
     }
 
     private FreeModelChainService freeChain;
+    private MissionCancellations cancellations;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCancellations(MissionCancellations cancellations) {
+        this.cancellations = cancellations;
+    }
 
     /** Cadena de modelos gratis (2026-10-15). Setter opcional: los tests que no lo usan no cambian. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -1934,6 +1940,10 @@ public class CeoService {
             Boolean think) {
 
         rejectFormatCombinedWithTools(operation, format, tools);
+        // Cancelar una misión en curso (2026-10-15): el trabajo de una misión cancelada se corta antes de llamar al modelo.
+        if (cancellations != null) {
+            cancellations.checkCurrent();
+        }
 
         var startedAt = System.nanoTime();
 

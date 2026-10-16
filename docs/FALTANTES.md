@@ -60,7 +60,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | `ExperienceRule` con `APP`/`GAME` no prohíbe componentes extra (p. ej. un backend junto a la app o al juego) | Kael híbrido (revisión final, menor 4) | Solo exige el stack y los roles requeridos |
 | [ ] | Al retomar tras un reinicio con `SPEC_APPROVAL_REQUIRED = 0`, la misión espera la aprobación del fundador | Kael híbrido (revisión final, menor 2) | Falla hacia el fundador, coherente con el `AWAIT_APPROVAL` del retome; aplicar la policy al retomar |
 
-- [ ] Cancelar una misión en curso desde el Command Center y el chat (2026-10-15): hoy no existe; el Pong se canceló marcándolo `CANCELLED` en Neo4j con company-core detenido.
+- [x] Cancelar una misión en curso desde el Command Center y el chat (2026-10-15; hecho el mismo día): hoy no existe; el Pong se canceló marcándolo `CANCELLED` en Neo4j con company-core detenido.
 - [ ] El estratega de corrección abrió las rondas 4 y 5 del Pong con la misma falla repetida (mismas 4 partidas): revisar por qué no frenó.
 
 ## 3. Fuera del código
