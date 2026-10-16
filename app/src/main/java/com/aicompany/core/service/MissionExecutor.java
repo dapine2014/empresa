@@ -319,8 +319,15 @@ public class MissionExecutor {
             }
             if (outcome.requirementsAdjustment() != null) {
                 var previousDesign = designed.design();
-                written = rewriteRequirements(missionId, memory.instructionOf(missionId).orElse(""),
-                        outcome.requirementsAdjustment());
+                try {
+                    written = rewriteRequirements(missionId, memory.instructionOf(missionId).orElse(""),
+                            outcome.requirementsAdjustment());
+                } catch (MissionCancellations.MissionCancelledException ex) {
+                    throw ex;
+                } catch (RuntimeException ex) {
+                    // Aria no guardó HU nuevas: el par anterior (sin superseder) sigue siendo el que decide el fundador.
+                    return notApplied(missionId, written, designed, enabled, outcomes, ex);
+                }
                 events.publish("EMPRESA_REQUIREMENTS_ADJUSTED", missionId, null, JointReviewWriter.NEO,
                         Map.of("version", written.version(), "instruction", outcome.requirementsAdjustment()));
                 if (designMemory != null) {
@@ -334,14 +341,36 @@ public class MissionExecutor {
                     break; // Aria cambió la experiencia a NONE: ya no hay diseño que revisar.
                 }
             } else {
-                designed = designWriter.write(missionId, written.spec(), written.version(),
-                        java.util.Optional.of(designed.design()), outcome.designAdjustment());
+                try {
+                    designed = designWriter.write(missionId, written.spec(), written.version(),
+                            java.util.Optional.of(designed.design()), outcome.designAdjustment());
+                } catch (MissionCancellations.MissionCancelledException ex) {
+                    throw ex;
+                } catch (RuntimeException ex) {
+                    // Kael no guardó diseño nuevo: el par anterior sigue en DRAFT para el fundador.
+                    return notApplied(missionId, written, designed, enabled, outcomes, ex);
+                }
                 events.publish("EMPRESA_INTERACTION_DESIGN_ADJUSTED", missionId, null, JointReviewWriter.NEO,
                         Map.of("version", designed.version(), "instruction", outcome.designAdjustment()));
             }
         }
         // Con la policy en 0 el fundador no ve aviso: el SKIPPED queda registrado, pero el mensaje es el de hoy.
         return new Reviewed(written, designed, enabled ? jointReview.founderNote(outcomes) : "");
+    }
+
+    /**
+     * Revisión conjunta (spec 2026-10-15): la revisión nunca deja la misión FAILED. Si Aria o Kael no pueden aplicar la
+     * decisión (agotaron los intentos, modelo caído, Kael apagado), el fundador decide sobre el último par que sigue en
+     * DRAFT, con el aviso. Si Aria ya guardó HU nuevas y Kael falla al rediseñarlas, la excepción sigue como en el ajuste
+     * del fundador a Aria ({@code awaitApprovalAfterAria}): esas HU no tienen diseño y no se pueden aprobar.
+     */
+    private Reviewed notApplied(String missionId, RequirementsWriter.Written written,
+                                InteractionDesignWriter.Written designed, boolean enabled,
+                                java.util.List<JointReviewService.Outcome> outcomes, RuntimeException ex) {
+        log.warn("MISSION {} - joint review decision could not be applied: {}", missionId, ex.getMessage());
+        var note = enabled ? jointReview.founderNote(outcomes) : "";
+        var warning = "⚠ No se pudo aplicar la decisión de Neo y Aria: " + ex.getMessage();
+        return new Reviewed(written, designed, note.isBlank() ? warning : note + " " + warning);
     }
 
     static String investorBlock(String routedRequest) {

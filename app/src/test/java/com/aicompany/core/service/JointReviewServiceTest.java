@@ -45,14 +45,14 @@ class JointReviewServiceTest {
 
         assertEquals("COHERENT", outcome.status());
         assertFalse(outcome.needsChanges());
-        verify(writer, never()).decide(anyString(), any(), any(), anyList());
+        verify(writer, never()).decide(anyString(), any(), any(), anyList(), anyList());
         verify(memory).save(eq("M-1"), eq(1), eq(2), eq(3), eq("COHERENT"), anyString(), anyString(), anyString());
         verify(events).publish(eq("EMPRESA_JOINT_REVIEW_COMPLETED"), eq("M-1"), isNull(), eq("engineering"), anyMap());
     }
 
     @Test void ariasDecisionsAreGroupedIntoOneAdjustmentPerSide() {
         when(writer.detect(anyString(), any(), any(), anyList())).thenReturn(List.of(C1, C2));
-        when(writer.decide(anyString(), any(), any(), anyList())).thenReturn(List.of(
+        when(writer.decide(anyString(), any(), any(), anyList(), anyList())).thenReturn(List.of(
                 new Decision("CONTRA-01", "DESIGN", "usar 800", "las HU mandan"),
                 new Decision("CONTRA-02", "REQUIREMENTS", "la pelota acelera 5 %", "más desafío")));
 
@@ -73,7 +73,7 @@ class JointReviewServiceTest {
 
         assertEquals("UNRESOLVED", outcome.status());
         assertFalse(outcome.needsChanges());
-        verify(writer, never()).decide(anyString(), any(), any(), anyList());
+        verify(writer, never()).decide(anyString(), any(), any(), anyList(), anyList());
     }
 
     @Test void aFailedReviewDoesNotBlockTheMission() {
@@ -85,6 +85,29 @@ class JointReviewServiceTest {
         assertFalse(outcome.needsChanges());
         assertTrue(outcome.detail().contains("sin respuesta válida"));
         verify(memory).save(eq("M-1"), eq(1), eq(2), eq(3), eq("FAILED"), anyString(), anyString(), contains("sin respuesta válida"));
+    }
+
+    @Test void ariaReceivesTheSameFounderAdjustmentsAsNeo() {
+        when(requirements.instructions("M-1")).thenReturn(List.of("la paleta va a la derecha",
+                JointReviewService.PREFIX + "\n- CONTRA-01: usar 800"));
+        when(writer.detect(anyString(), any(), any(), anyList())).thenReturn(List.of(C1));
+        when(writer.decide(anyString(), any(), any(), anyList(), anyList())).thenReturn(List.of(
+                new Decision("CONTRA-01", "DESIGN", "usar 800", "las HU mandan")));
+
+        service.review("M-1", JointReviewValidatorTest.SPEC, 2, JointReviewValidatorTest.GAME, 3, 1);
+
+        verify(writer).detect(anyString(), any(), any(), eq(List.of("la paleta va a la derecha")));
+        verify(writer).decide(anyString(), any(), any(), anyList(), eq(List.of("la paleta va a la derecha")));
+    }
+
+    @Test void aCancellationIsRethrownAndNoFailedReviewIsRecorded() {
+        when(writer.detect(anyString(), any(), any(), anyList()))
+                .thenThrow(new MissionCancellations.MissionCancelledException("M-1"));
+
+        assertThrows(MissionCancellations.MissionCancelledException.class,
+                () -> service.review("M-1", JointReviewValidatorTest.SPEC, 2, JointReviewValidatorTest.GAME, 3, 1));
+        verify(memory, never()).save(anyString(), anyInt(), anyInt(), anyInt(), anyString(), anyString(), anyString(),
+                anyString());
     }
 
     @Test void withThePolicyOffOrNeoOrAriaOffItIsSkipped() {

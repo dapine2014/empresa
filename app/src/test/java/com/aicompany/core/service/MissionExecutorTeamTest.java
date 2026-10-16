@@ -1044,4 +1044,85 @@ class MissionExecutorTeamTest {
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
                 argThat(m -> m.contains("Kael diseñó el juego (versión 4)") && m.contains("Neo y Aria no encontraron")));
     }
+
+    private JointReviewService reviewDeciding(String requirementsAdjustment, String designAdjustment) {
+        var review = mock(JointReviewService.class);
+        executor.setJointReview(review);
+        when(review.enabled()).thenReturn(true);
+        when(review.review(eq("M-9"), any(), anyInt(), any(), anyInt(), eq(1))).thenReturn(new JointReviewService.Outcome(
+                "RESOLVED", List.of(), List.of(), requirementsAdjustment, designAdjustment, ""));
+        when(review.founderNote(anyList())).thenReturn("Neo y Aria resolvieron 1 contradicción: CONTRA-01.");
+        return review;
+    }
+
+    // Revisión final (1a): si Kael no puede aplicar la decisión, el fundador decide sobre el par anterior (nunca FAILED).
+    @Test
+    void whenKaelCannotApplyTheReviewDecisionTheFounderGetsThePreviousPair() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        var review = reviewDeciding(null, JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): usar 800");
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(1), eq(Optional.of(DESIGN)), startsWith(JointReviewService.PREFIX)))
+                .thenThrow(new IllegalStateException("Kael no produjo un diseño válido"));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael diseñó el juego (versión 1)") && m.contains("Neo y Aria resolvieron")
+                        && m.contains("⚠ No se pudo aplicar la decisión de Neo y Aria: Kael no produjo un diseño válido")));
+        verify(review, times(1)).review(any(), any(), anyInt(), any(), anyInt(), anyInt());
+        verify(events, never()).publish(eq("EMPRESA_INTERACTION_DESIGN_ADJUSTED"), any(), any(), any(), anyMap());
+    }
+
+    // Revisión final (1b): si Aria no puede reescribir, el diseño anterior no se supersede y sigue ofrecido al fundador.
+    @Test
+    void whenAriaCannotApplyTheReviewDecisionThePreviousDesignIsStillOffered() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        reviewDeciding(JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): HU con 800", null);
+        when(writer.write(eq("M-9"), eq("Un CRM"), any(), startsWith(JointReviewService.PREFIX)))
+                .thenThrow(new IllegalStateException("Aria no produjo requisitos válidos"));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(designMemory, never()).supersedeDraft(any());
+        verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(),
+                eq("Requisitos y diseño listos (Aria + Kael)"), argThat(m -> m.contains("Kael diseñó el juego (versión 1)")
+                        && m.contains("⚠ No se pudo aplicar la decisión de Neo y Aria: Aria no produjo requisitos válidos")));
+        verify(events, never()).publish(eq("EMPRESA_REQUIREMENTS_ADJUSTED"), any(), any(), any(), anyMap());
+    }
+
+    // Revisión final (1c): Aria guardó HU nuevas y Kael falla al rediseñarlas: igual que el ajuste del fundador a Aria
+    // (awaitApprovalAfterAria), la misión queda FAILED; esas HU sin diseño no se podrían aprobar ni ajustar (M-3).
+    @Test
+    void whenKaelFailsOverTheStoriesAriaRewroteTheMissionFailsLikeAFounderAdjustment() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        reviewDeciding(JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): HU con 800", null);
+        when(writer.write(eq("M-9"), eq("Un CRM"), any(), startsWith(JointReviewService.PREFIX)))
+                .thenReturn(new RequirementsWriter.Written(2, GAME_SPEC));
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(2), any(), startsWith(JointReviewService.ARIA_CHANGED_ADJUSTMENT)))
+                .thenThrow(new IllegalStateException("Kael está apagado"));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.FAILED), anyInt(), anyString(),
+                argThat(m -> m.contains("Kael está apagado")));
+    }
+
+    // Revisión final (4): una cancelación durante la aplicación no se convierte en un aviso al fundador.
+    @Test
+    void aCancellationWhileApplyingTheReviewDecisionIsNotSwallowed() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        reviewDeciding(null, JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): usar 800");
+        when(designWriter.write(eq("M-9"), eq(GAME_SPEC), eq(1), eq(Optional.of(DESIGN)), startsWith(JointReviewService.PREFIX)))
+                .thenThrow(new MissionCancellations.MissionCancelledException("M-9"));
+
+        executor.executeAsync("M-9", "Un CRM").get();
+
+        verify(memory, never()).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                anyString());
+    }
 }

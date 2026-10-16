@@ -64,7 +64,8 @@ public class JointReviewWriter {
     }
 
     public List<JointReview.Decision> decide(String missionId, RequirementsSpec spec, InteractionDesign design,
-                                             List<JointReview.Contradiction> contradictions) {
+                                             List<JointReview.Contradiction> contradictions,
+                                             List<String> founderAdjustments) {
         var base = context(spec, design) + """
 
                 Eres Aria, Product Owner: el alcance es tuyo. Neo (líder técnico) encontró estas contradicciones entre
@@ -73,7 +74,7 @@ public class JointReviewWriter {
                 Decide CADA una exactamente una vez: side DESIGN (se cambia el diseño) o REQUIREMENTS (se cambian tus
                 HU), el cambio concreto que se aplica (puedes aceptar el de Neo o escribir otro) y la razón. No puedes
                 descartar una contradicción.
-                """.formatted(JSON.writeValueAsString(contradictions));
+                """.formatted(JSON.writeValueAsString(contradictions)) + founder(founderAdjustments);
         return withRetries(missionId, "decide", base,
                 prompt -> ceo.decideContradictions(RequirementsWriter.ARIA, prompt,
                         prompts.activePrompt(RequirementsWriter.ARIA), model(RequirementsWriter.ARIA)),
@@ -97,6 +98,8 @@ public class JointReviewWriter {
                     return items.apply(result);
                 }
                 feedback = "- " + String.join("\n- ", errors);
+            } catch (MissionCancellations.MissionCancelledException ex) {
+                throw ex; // cancelar la misión no es una respuesta inválida: no se reintenta.
             } catch (RuntimeException ex) {
                 feedback = "- " + (ex.getMessage() == null ? "Respuesta no procesable." : ex.getMessage());
             }

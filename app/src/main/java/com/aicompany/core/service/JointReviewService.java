@@ -102,10 +102,12 @@ public class JointReviewService {
             if (round >= ROUNDS) {
                 return new Outcome("UNRESOLVED", contradictions, List.of(), null, null, "");
             }
-            var decisions = writer.decide(missionId, spec, design, contradictions);
+            var decisions = writer.decide(missionId, spec, design, contradictions, founder);
             return new Outcome("RESOLVED", contradictions, decisions,
                     adjustment(contradictions, decisions, JointReview.REQUIREMENTS),
                     adjustment(contradictions, decisions, JointReview.DESIGN), "");
+        } catch (MissionCancellations.MissionCancelledException ex) {
+            throw ex; // la cancelación corta la misión; no es una revisión FAILED.
         } catch (RuntimeException ex) {
             log.warn("MISSION {} - joint review failed: {}", missionId, ex.getMessage());
             return new Outcome("FAILED", List.of(), List.of(), null, null,

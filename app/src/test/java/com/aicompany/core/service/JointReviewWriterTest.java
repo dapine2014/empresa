@@ -62,11 +62,31 @@ class JointReviewWriterTest {
         when(ceo.decideContradictions(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(new Resolution(List.of(new Decision("CONTRA-01", "DESIGN", "usar 800", "las HU mandan"))));
 
-        var decisions = writer.decide("M-1", JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of(VALID));
+        var decisions = writer.decide("M-1", JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of(VALID), List.of());
 
         assertEquals("usar 800", decisions.get(0).change());
         verify(ceo).decideContradictions(eq(RequirementsWriter.ARIA), argThat(p -> p.contains("CONTRA-01")
                 && p.contains("x > 640") && p.contains("usar 800")), anyString(), anyString());
+    }
+
+    @Test void ariaGetsTheFoundersAdjustmentsAsUntouchable() {
+        when(ceo.decideContradictions(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new Resolution(List.of(new Decision("CONTRA-01", "DESIGN", "usar 800", "las HU mandan"))));
+
+        writer.decide("M-1", JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of(VALID),
+                List.of("la paleta va a la derecha"));
+
+        verify(ceo).decideContradictions(eq(RequirementsWriter.ARIA), argThat(p -> p.contains("la paleta va a la derecha")
+                && p.contains("nunca")), anyString(), anyString());
+    }
+
+    @Test void aCancellationIsRethrownWithoutRetrying() {
+        when(ceo.decideContradictions(anyString(), anyString(), anyString(), anyString()))
+                .thenThrow(new MissionCancellations.MissionCancelledException("M-1"));
+
+        assertThrows(MissionCancellations.MissionCancelledException.class, () -> writer.decide("M-1",
+                JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of(VALID), List.of()));
+        verify(ceo, times(1)).decideContradictions(anyString(), anyString(), anyString(), anyString());
     }
 
     @Test void aMissingDecisionIsRetried() {
@@ -74,7 +94,7 @@ class JointReviewWriterTest {
                 .thenReturn(new Resolution(List.of()),
                         new Resolution(List.of(new Decision("CONTRA-01", "REQUIREMENTS", "aceptar 640", "mejor"))));
 
-        assertEquals(1, writer.decide("M-1", JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of(VALID)).size());
+        assertEquals(1, writer.decide("M-1", JointReviewValidatorTest.SPEC, JointReviewValidatorTest.GAME, List.of(VALID), List.of()).size());
         verify(ceo).decideContradictions(anyString(), argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR")),
                 anyString(), anyString());
     }
