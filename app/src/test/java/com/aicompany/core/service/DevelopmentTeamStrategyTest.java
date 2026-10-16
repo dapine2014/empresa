@@ -2152,6 +2152,59 @@ class DevelopmentTeamStrategyTest {
         strategy.setInteractionDesign(designs);
     }
 
+    // Juegos por niveles (spec 2026-10-16 contrato §4): en un juego, Vera genera después del dueño de game aunque Neo la
+    // ponga antes y las dos rutas caigan en la capa GAME.
+    @Test
+    void inAGameQaGoesLast() {
+        var plan = context().plan();
+        var vera = new PlannedTask("qa", "WORK", "TESTS", "Partidas", List.of("QA"), List.of("game/playthroughs"));
+        var neo = new PlannedTask("engineering", "WORK", "GAME", "Juego", List.of("x"), List.of("game"));
+        var ordered = DevelopmentTeamStrategy.orderTasks(List.of(vera, neo), plan, "qa"::equals);
+        assertEquals(List.of("engineering", "qa"), ordered.stream().map(PlannedTask::agentId).toList());
+    }
+
+    // Vera recibe la ficha leído del código commiteado de la escena (sin modelo).
+    @Test
+    void veraGetsTheSceneSheetFromTheCommittedCode() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(null);
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("game/Main.cs", "game/Main.tscn"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.cs"))).thenReturn(
+                "public partial class Main : Node2D { public int Level { get; private set; } public void StartLevel(int level) { } public int Puntaje; }");
+        var base = context();
+        var tasks = new ArrayList<>(base.plan().tasksOrEmpty());
+        tasks.add(2, new PlannedTask("qa", "WORK", "TESTS", "Partidas", List.of("QA"), List.of("game/playthroughs")));
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, tasks, List.of(), p.stackProfile(), p.boundedContexts(),
+                p.ubiquitousLanguage());
+        var members = base.team().members().stream()
+                .map(m -> m.agentId().equals("qa")
+                        ? new TeamMemberInfo(m.agentId(), m.name(), m.role(), "QA", m.capabilities(), m.model()) : m)
+                .toList();
+        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", members);
+        var context = new TeamMissionContext("M-1", "crear un juego", team, plan);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
+                        List.of("game/playthroughs/ESC_01_x.cs")));
+        when(runtime.review(eq("M-1-QA-REVIEW"), eq("M-1"), eq("qa"), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), prompt.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("game/playthroughs/ESC_01_x.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context, progress);
+
+        assertTrue(prompt.getValue().contains("FICHA DE LAS ESCENAS"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("- Main (game/Main.tscn, escena principal): int Level { get; }; "
+                + "void StartLevel(int level); int Puntaje"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("Do(main => ((Main)main).StartLevel(2))"), prompt.getValue());
+    }
+
     // Juegos por niveles (spec 2026-10-16 contrato §4): Forjai commitea la escena de cada nivel del incremento, antes de Kael.
     @Test
     void forjaiCommitsTheSceneSkeletonsOfTheIncrementBeforeTheAgents() throws Exception {

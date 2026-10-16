@@ -182,7 +182,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
         // contra clases que nunca vio y el código no compilaba. Se genera por capas (domain → application →
         // infrastructure → api/game/presentation → tests) y cada agente ve el código ya commiteado.
-        var ordered = orderTasks(work, plan);
+        var ordered = orderTasks(work, plan, agentId -> isQa(context, agentId));
         var failures = new ArrayList<String>();
         var committed = new ArrayList<CommittedWork>();
         var generationHead = scaffold == null ? null : scaffold.commitSha();
@@ -244,10 +244,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 result = context.round() > 0
                         ? generate(id, missionId, task.agentId(),
                                 buildWorkPrompt(context, task) + ROUND_RULE
+                                        + (isQa(context, task.agentId()) ? sceneSheetBlock(context, generationHead) : "")
                                         + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
                                 task.ownedPathsOrEmpty(), expectedProjects, List.of(), context, generationHead)
                         : generate(id, missionId, task.agentId(),
                                 buildWorkPrompt(context, task)
+                                        + (isQa(context, task.agentId()) ? sceneSheetBlock(context, generationHead) : "")
                                         + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
                                 task.ownedPathsOrEmpty(), expectedProjects, null, context, generationHead);
             } catch (Exception ex) {
@@ -1356,12 +1358,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * uno por capa; los tests siempre al final. Con un componente es el orden por capas de siempre.
      */
     static List<PlannedTask> orderTasks(List<PlannedTask> work, TeamPlan plan) {
+        return orderTasks(work, plan, agentId -> false);
+    }
+
+    /** Juegos por niveles (spec 2026-10-16 contrato §4): en un juego, QA (las partidas de Vera) va siempre al final. */
+    static List<PlannedTask> orderTasks(List<PlannedTask> work, TeamPlan plan, java.util.function.Predicate<String> isQa) {
         var components = plan.resolvedComponents();
         if (components.isEmpty()) {
             return work;
         }
+        var game = plan.hasComponent(StackProfile.GODOT_DOTNET_GAME);
         return work.stream()
-                .sorted(java.util.Comparator.comparingInt(task -> task.ownedPathsOrEmpty().stream()
+                .sorted(java.util.Comparator.comparingInt(task -> game && isQa.test(task.agentId()) ? 2_000
+                        : task.ownedPathsOrEmpty().stream()
                         .map(path -> rank(components, plan.contextNames(), path))
                         .min(Integer::compare).orElse(Integer.MAX_VALUE)))
                 .toList();
@@ -2077,6 +2086,62 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return ownsBackendApi(task.ownedPathsOrEmpty()) ? "\n\n" + StackProfile.FULLSTACK_API_RULE + "\n" : "";
     }
 
+    /** Contratos de las escenas del incremento, leídos del código commiteado en headSha (sin modelo). */
+    Map<String, List<com.aicompany.core.agent.validation.SceneSheet.Member>> sceneContracts(TeamMissionContext context,
+                                                                                               String headSha) {
+        var approved = approvedGameScenes(context.missionId());
+        if (approved.isEmpty() || headSha == null) {
+            return Map.of();
+        }
+        var a = approved.get();
+        var sources = new ArrayList<String>();
+        try {
+            for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                if (path.endsWith(".cs") && (path.startsWith("game/") || path.contains("/game/"))
+                        && !path.contains(StackProfile.PLAYTHROUGHS_ROOT + "/") && !path.contains(StackProfile.FORJAI_GAME_ROOT + "/")) {
+                    var content = readOrNull(context.missionId(), headSha, path);
+                    if (content != null) {
+                        sources.add(content);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the scene scripts: {}", context.missionId(), safeMessage(ex, "sin detalle"));
+            return Map.of();
+        }
+        var contracts = new LinkedHashMap<String, List<com.aicompany.core.agent.validation.SceneSheet.Member>>();
+        for (var s : nnScenes(a)) {
+            contracts.put(s.script(), com.aicompany.core.agent.validation.SceneSheet.extract(s.script(), sources));
+        }
+        return contracts;
+    }
+
+    private static List<com.aicompany.core.agent.model.InteractionDesign.Scene> nnScenes(
+            com.aicompany.core.agent.validation.GameScenes.Approved a) {
+        return com.aicompany.core.agent.validation.GameScenes.upTo(a.game(), a.spec(), a.increment());
+    }
+
+    /** Juegos por niveles (spec 2026-10-16 contrato §4): lo que recibe Vera; vacío si no es un juego con escenas. */
+    String sceneSheetBlock(TeamMissionContext context, String headSha) {
+        var contracts = sceneContracts(context, headSha);
+        if (contracts.isEmpty()) {
+            return "";
+        }
+        var main = approvedGameScenes(context.missionId())
+                .flatMap(a -> com.aicompany.core.agent.validation.GameScenes.main(a.game()))
+                .map(com.aicompany.core.agent.model.InteractionDesign.Scene::script).orElse("");
+        return "\n\nFICHA DE LAS ESCENAS (Java lo leyó del código commiteado de Kael, commit " + headSha
+                + "): en las partidas solo puedes usar estos miembros de cada escena; cualquier otro no existe.\n"
+                + contracts.entrySet().stream().map(e -> "- " + e.getKey() + " ("
+                        + com.aicompany.core.agent.validation.GameScenes.scenePath(e.getKey())
+                        + (e.getKey().equals(main) ? ", escena principal" : "") + "): "
+                        + (e.getValue().isEmpty() ? "(sin miembros públicos)" : e.getValue().stream()
+                        .map(com.aicompany.core.agent.validation.SceneSheet::render).collect(Collectors.joining("; "))))
+                .collect(Collectors.joining("\n"))
+                + "\nPara otra escena que no sea la principal: public override string Scene => \"<script>\";. Para arrancar "
+                + "en un nivel: yield return Do(main => ((" + main + ")main).StartLevel(2)); antes de los Press/Wait.\n";
+    }
+
     /** Spec 2026-10-14 Kael §2.2: assets, escena principal, azar inyectable y rutas reservadas, con reintento. */
     private java.util.function.Function<DevelopmentResult, List<String>> gameChecks(TeamMissionContext context,
                                                                                     String agentId, List<String> owned,
@@ -2125,12 +2190,17 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var forjaiScenes = java.util.Set.copyOf(sceneSkeletonPaths(context));
         var expectedMain = mainScene;
         var qa = isQa(context, agentId);
+        var contracts = qa ? sceneContracts(context, headSha)
+                : Map.<String, List<com.aicompany.core.agent.validation.SceneSheet.Member>>of();
         return result -> {
             var errors = new ArrayList<String>();
             errors.addAll(com.aicompany.core.agent.validation.GameAssetGate.check(result.files()));
             errors.addAll(com.aicompany.core.agent.validation.GameMainSceneGate.check(result.files(), existing, expectedMain));
             errors.addAll(com.aicompany.core.agent.validation.InjectableRandomGate.check(result.files(), rulesRoots));
             errors.addAll(com.aicompany.core.agent.validation.ReservedGamePathsGate.check(result.files(), qa, forjaiScenes));
+            if (qa && !contracts.isEmpty()) {
+                errors.addAll(com.aicompany.core.agent.validation.PlaythroughSheetGate.check(result.files(), contracts));
+            }
             if (!qa) {
                 errors.addAll(com.aicompany.core.agent.validation.GameSceneScriptsGate.check(result.files(),
                         existingScripts, sceneScripts, owned));
