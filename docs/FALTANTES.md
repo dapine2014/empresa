@@ -65,7 +65,10 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 - [ ] Prueba en vivo de la revisión conjunta: un juego nuevo (no el Pong) que llegue coherente sin intervención y termine `VERIFIED` (tercera condición para dar a Kael por ajustado).
 - [ ] Revisión conjunta: si company-core se reinicia después de que Aria guardó HU nuevas por la revisión y antes de que Kael rediseñe, el retome `DESIGN` rediseña desde cero (sin el diseño previo ni el ajuste de diseño decidido por Neo y Aria); la revisión siguiente lo vuelve a detectar.
 
-- [ ] Juegos: niveles/escenas con HU propias en Aria y Kael, esqueletos `.tscn` generados por Forjai y contrato de escena Kael↔Vera con chequeo antes del sandbox (Pong 3 BLOCKED, 2026-10-16; diseño en curso).
+- [x] Juegos: niveles/escenas con HU propias en Aria y Kael, esqueletos `.tscn` generados por Forjai y contrato de escena Kael↔Vera con chequeo antes del sandbox (Pong 3 BLOCKED, 2026-10-16; hecho en código con el plan `2026-10-16-contrato-epicas-y-juegos`: `Main.tscn` sin script y contrato Kael↔Vera cubiertos por `GameSceneScriptsGate`, `GameMainSceneGate` y `PlaythroughSheetGate`; la parte en vivo sigue pendiente abajo).
+- [ ] Desplegar la revisión conjunta y la entrega A (contrato, épicas y juegos por niveles), con OK del fundador y sin misiones vivas.
+- [ ] Prueba en vivo del Pong de 3 niveles con contrato (Aria propone el contrato, el fundador lo aprueba, cada nivel en su incremento).
+- [ ] **Entrega B** del contrato: refinar HU tras cada entrega, ajustar lo construido y cambiar un contrato aprobado. Es el pendiente de Aria «HU nuevas después de aprobar».
 - [ ] `systemd-inhibit` de las pruebas en vivo con `--what=sleep:idle:handle-lid-switch` (GNOME suspendió por inactividad, 2026-10-15).
 
 ## 3. Fuera del código

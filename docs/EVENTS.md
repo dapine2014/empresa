@@ -108,3 +108,10 @@ EMPRESA_MISSION_BLOCKED (`MissionExecutor.block`, `agentId="system"`): un freno 
 EMPRESA_CORRECTION_STRATEGY_PROPOSED (`MissionExecutor`, `agentId="engineering"`; revisión 2026-10-06): ante un error persistente, Neo propuso una estrategia nueva (con búsqueda web) para la ronda de corrección. `data: {round, fingerprint, sources}` — `fingerprint` = identidad de la falla repetida, `sources` = URL leídas.
 
 EMPRESA_JOINT_REVIEW_COMPLETED (`JointReviewService`, `agentId="engineering"`; spec revisión conjunta): terminó una ronda de la revisión conjunta de Neo y Aria. `data: {round, status, contradictions, resolvedBy: {requirements, design}}` — `status` = `COHERENT|RESOLVED|UNRESOLVED|FAILED|SKIPPED`, `resolvedBy` = cuántas contradicciones se resolvieron cambiando las HU o el diseño.
+EMPRESA_CONTRACT_READY (`MissionExecutor`, `agentId` = Aria; spec contrato 2026-10-16): Aria dejó el contrato del cliente en `DRAFT` y la misión espera al fundador ("Contrato listo (Aria)"). `data: {version, items}` — `items` = cantidad de ítems `MOD-NN` del contrato.
+
+EMPRESA_CONTRACT_APPROVED (`MissionService`, `agentId="human"`, o `MissionExecutor`, `agentId="policy"`): se aprobó el contrato (botón o chat del fundador, o la policy). `data: {version}`, más `approvedBy: "policy"` cuando lo aprobó la policy.
+
+EMPRESA_CONTRACT_ADJUSTED (`MissionExecutor`, `agentId="human"`): el fundador pidió ajustar el contrato; Aria lo reescribe en una versión nueva. `data: {version, instruction}`.
+
+EMPRESA_CONTRACT_REJECTED (`MissionService`, `agentId="human"`): el fundador rechazó el contrato. `data: {version}`.
