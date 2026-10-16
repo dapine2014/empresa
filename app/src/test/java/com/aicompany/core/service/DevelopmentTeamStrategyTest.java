@@ -2185,4 +2185,75 @@ class DevelopmentTeamStrategyTest {
 
         verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), anyString(), anyString(), any());
     }
+
+    @Test
+    void sceneSkeletonPathsFollowTheIncrement() throws Exception {
+        withLeveledGame(1);
+        assertEquals(List.of("game/Main.tscn"), strategy.sceneSkeletonPaths(context()));
+        withLeveledGame(2);
+        assertEquals(List.of("game/Main.tscn", "game/GameOver.tscn"), strategy.sceneSkeletonPaths(context()));
+    }
+
+    private void stubRoundOne(String mainTscnAtHead) throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(mainTscnAtHead);
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI-R1"), eq("frontend-ui"), eq("Mila"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES-R1"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+    }
+
+    private static TeamMissionContext roundOne() {
+        var base = context();
+        return new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
+    }
+
+    @Test
+    void inARoundAnExistingSceneIsNeverOverwritten() throws Exception {
+        stubRoundOne("[gd_scene]");
+
+        strategy.execute(roundOne(), progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES-R1"), anyString(), anyString(), any());
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), anyString(), anyString(), any());
+    }
+
+    @Test
+    void inARoundAMissingSceneIsCommittedWithTheRoundSuffix() throws Exception {
+        stubRoundOne(null);
+
+        strategy.execute(roundOne(), progress);
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCENES-R1"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().map(GeneratedFile::path).toList().equals(List.of("game/Main.tscn"))));
+    }
+
+    @Test
+    void ifTheDesignCannotBeReadThereAreNoScenesAndTheMissionContinues() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenThrow(new RuntimeException("Neo4j caído"));
+        strategy.setInteractionDesign(designs);
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        assertTrue(strategy.approvedGameScenes("M-1").isEmpty());
+        strategy.execute(context(), progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), anyString(), anyString(), any());
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), any());
+    }
 }
