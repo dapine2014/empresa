@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import CancelMissionButton from '../components/CancelMissionButton'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { AdjustTarget, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
+import type { AdjustTarget, ContractView, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, RequirementsStory, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -185,6 +185,31 @@ function MissionModelCost({ missionId }: { missionId: string }) {
   )
 }
 
+const KIND_LABEL: Record<string, string> = { MODULE: 'Módulo', SYSTEM: 'Sistema', LEVEL: 'Nivel', SCENE: 'Escena' }
+
+function ContractSection({ view }: { view: ContractView }) {
+  const c = view.contract
+  return (
+    <>
+      <h3>
+        Contrato (versión {view.version} — {view.status})
+      </h3>
+      <p>{c.summary}</p>
+      <ul>
+        {c.items.map((i) => (
+          <li key={i.id}>
+            <strong>{i.id}</strong> [{KIND_LABEL[i.kind] ?? i.kind}] {i.name} — {i.description}
+          </li>
+        ))}
+      </ul>
+      {c.outOfScope.length > 0 && <p>Fuera de alcance: {c.outOfScope.join('; ')}</p>}
+      <p>
+        Épicas: {c.useEpics ? 'sí' : 'no'} ({c.epicsReason})
+      </p>
+    </>
+  )
+}
+
 const INCREMENT_READY = new Set(['AWAITING_INVESTOR', 'COMPLETED', 'FAILED'])
 
 /** Spec 2026-10-03 Aria: requisitos de Aria, aprobación e incrementos (404 = la misión no tiene requisitos). */
@@ -200,7 +225,6 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
   })
   // Solo un diseño en DRAFT se ajusta: uno aprobado, rechazado o reemplazado ya no admite ajuste a Kael.
   const hasDesign = !!designQuery.data?.design && designQuery.data.status === 'DRAFT'
-  const effectiveTarget: AdjustTarget = hasDesign ? target : 'ARIA'
   const query = useQuery({
     queryKey: ['requirements', missionId],
     queryFn: () => api.requirements(missionId),
@@ -225,7 +249,9 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
     onSuccess: refresh,
   })
   const view = query.data
-  if (!view || !view.spec) {
+  const contractWaiting = view?.contract?.status === 'DRAFT'
+  const effectiveTarget: AdjustTarget = hasDesign && !contractWaiting ? target : 'ARIA'
+  if (!view || (!view.spec && !view.contract)) {
     return null
   }
   const spec = view.spec
@@ -234,28 +260,25 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
   return (
     <div className="decision-form">
       <h2>Requisitos (Aria)</h2>
-      <p>
-        Versión {view.version} — {view.versionStatus}
-        {view.approvedVersion != null && <> — incremento construido: {view.builtIncrement} de {view.incrementsTotal}</>}
-      </p>
-      {spec.experience && <p>Tipo: {spec.experience}</p>}
-      <p>{spec.summary}</p>
-      <h3>Roles</h3>
-      <ul>
-        {spec.roles.map((r) => (
-          <li key={r.name}>
-            <strong>{r.name}</strong> — {r.description}
-          </li>
-        ))}
-      </ul>
-      {spec.increments.map((inc) => (
-        <div key={inc.number}>
-          <h3>
-            Incremento {inc.number}: {inc.goal}
-          </h3>
-          {spec.userStories
-            .filter((s) => inc.userStoryIds.includes(s.id))
-            .map((s) => (
+      {view.contract && <ContractSection view={view.contract} />}
+      {spec && (
+        <>
+          <p>
+            Versión {view.version} — {view.versionStatus}
+            {view.approvedVersion != null && <> — incremento construido: {view.builtIncrement} de {view.incrementsTotal}</>}
+          </p>
+          {spec.experience && <p>Tipo: {spec.experience}</p>}
+          <p>{spec.summary}</p>
+          <h3>Roles</h3>
+          <ul>
+            {spec.roles.map((r) => (
+              <li key={r.name}>
+                <strong>{r.name}</strong> — {r.description}
+              </li>
+            ))}
+          </ul>
+          {spec.increments.map((inc) => {
+            const story = (s: RequirementsStory) => (
               <div key={s.id}>
                 <p>
                   <strong>{s.id}</strong> ({s.role}): quiero {s.iWant} para {s.soThat}
@@ -272,24 +295,46 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
                   ))}
                 </ul>
               </div>
-            ))}
-        </div>
-      ))}
-      {spec.assumptions.length > 0 && <p>Supuestos: {spec.assumptions.join('; ')}</p>}
-      {spec.outOfScope.length > 0 && <p>Fuera de alcance: {spec.outOfScope.join('; ')}</p>}
+            )
+            const stories = spec.userStories.filter((s) => inc.userStoryIds.includes(s.id))
+            const epics = spec.useEpics
+              ? (spec.contractItems ?? []).filter((i) => stories.some((s) => s.contractItem === i.id))
+              : []
+            return (
+              <div key={inc.number}>
+                <h3>
+                  Incremento {inc.number}: {inc.goal}
+                </h3>
+                {epics.length === 0
+                  ? stories.map(story)
+                  : epics.map((i) => (
+                      <div key={i.id}>
+                        <h4>
+                          Épica {i.id} [{KIND_LABEL[i.kind] ?? i.kind}] {i.name}: {i.description}
+                        </h4>
+                        {stories.filter((s) => s.contractItem === i.id).map(story)}
+                      </div>
+                    ))}
+              </div>
+            )
+          })}
+          {spec.assumptions.length > 0 && <p>Supuestos: {spec.assumptions.join('; ')}</p>}
+          {spec.outOfScope.length > 0 && <p>Fuera de alcance: {spec.outOfScope.join('; ')}</p>}
+        </>
+      )}
       {status === 'AWAITING_SPEC_APPROVAL' && (
         <div>
           <button disabled={decide.isPending} onClick={() => decide.mutate('APPROVE')}>
-            Aprobar
+            {contractWaiting ? 'Aprobar contrato' : 'Aprobar'}
           </button>{' '}
           <button disabled={decide.isPending} onClick={() => decide.mutate('REJECT')}>
-            Rechazar
+            {contractWaiting ? 'Rechazar contrato' : 'Rechazar'}
           </button>
           <label>
             Ajuste para{' '}
             <select value={effectiveTarget} onChange={(e) => setTarget(e.target.value as AdjustTarget)}>
               <option value="ARIA">Aria</option>
-              {hasDesign && <option value="KAEL">Kael</option>}
+              {hasDesign && !contractWaiting && <option value="KAEL">Kael</option>}
             </select>
           </label>
           <textarea
@@ -442,6 +487,27 @@ function MissionDesign({ missionId }: { missionId: string }) {
               </li>
             ))}
           </ul>
+          {(game.scenes ?? []).length > 0 && (
+            <>
+              <h3>Escenas</h3>
+              <ul>
+                {(game.scenes ?? []).map((s) => (
+                  <li key={s.id}>
+                    {s.id} {s.name} ({s.script}): {s.purpose}
+                  </li>
+                ))}
+              </ul>
+              <h3>Niveles</h3>
+              <ul>
+                {(game.levels ?? []).map((l) => (
+                  <li key={l.item}>
+                    {l.item} en {l.scene}: {props(l.parameters)}
+                    {l.advanceRule ? ` → ${l.advanceRule}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <p>Gana: {game.win.join('; ')}</p>
           <p>Pierde: {game.lose.join('; ')}</p>
           {game.difficulty.length > 0 && <p>Dificultad: {props(game.difficulty)}</p>}

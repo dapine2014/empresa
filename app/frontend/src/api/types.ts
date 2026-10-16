@@ -614,7 +614,33 @@ export interface RequirementsScenario {
   then: string[]
 }
 
+// Contrato (spec 2026-10-16): la solicitud del cliente (ClientContract / ContractView en Java).
+export interface ContractItem {
+  id: string
+  kind: 'MODULE' | 'SYSTEM' | 'LEVEL' | 'SCENE'
+  name: string
+  description: string
+}
+
+export interface ClientContract {
+  summary: string
+  experience: 'APP' | 'GAME' | 'NONE'
+  items: ContractItem[]
+  outOfScope: string[]
+  useEpics: boolean
+  epicsReason: string
+}
+
+export interface ContractView {
+  version: number
+  status: string
+  approvedVersion: number | null
+  contract: ClientContract
+  summary: string
+}
+
 export interface RequirementsStory {
+  contractItem?: string | null
   id: string
   role: string
   iWant: string
@@ -632,6 +658,8 @@ export interface RequirementsSpec {
   userStories: RequirementsStory[]
   increments: { number: number; goal: string; userStoryIds: string[] }[]
   experience?: 'APP' | 'GAME' | 'NONE' | null
+  contractItems?: ContractItem[] | null
+  useEpics?: boolean | null
 }
 
 export interface RequirementsView {
@@ -644,6 +672,7 @@ export interface RequirementsView {
   incrementsTotal: number
   spec: RequirementsSpec | null
   summary: string
+  contract?: ContractView | null
 }
 
 export type RequirementsDecision = 'APPROVE' | 'ADJUST' | 'REJECT'
@@ -669,6 +698,8 @@ export interface GameDesign {
   difficulty: DesignProperty[]
   scenarioRules: { scenario: string; target: string }[]
   balanceHypotheses: string[]
+  scenes?: { id: string; name: string; script: string; purpose: string }[]
+  levels?: { item: string; scene: string; parameters: DesignProperty[]; advanceRule: string }[]
 }
 export interface InteractionDesign { experience: 'APP' | 'GAME'; app: AppDesign | null; game: GameDesign | null }
 export interface InteractionDesignView {
