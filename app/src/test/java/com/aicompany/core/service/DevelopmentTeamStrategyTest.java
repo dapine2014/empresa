@@ -2166,6 +2166,47 @@ class DevelopmentTeamStrategyTest {
     // Vera recibe la ficha leído del código commiteado de la escena (sin modelo).
     @Test
     void veraGetsTheSceneSheetFromTheCommittedCode() throws Exception {
+        var context = leveledQaContext();
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), prompt.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("game/playthroughs/ESC_01_x.cs")));
+
+        strategy.execute(context, progress);
+
+        assertTrue(prompt.getValue().contains("FICHA DE LAS ESCENAS"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("- Main (game/Main.tscn, escena principal): int Level { get; }; "
+                + "void StartLevel(int level); int Puntaje"), prompt.getValue());
+        // Revisión final F1-F2: la numeración de los niveles, lo heredado de Godot y un nivel real del incremento.
+        assertTrue(prompt.getValue().contains("Level y StartLevel usan 1..N: 1 = MOD-01 Nivel 1"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("Además puedes usar lo heredado de Godot: GetNode, GetNodeOrNull, HasNode"),
+                prompt.getValue());
+        assertTrue(prompt.getValue().contains("Do(main => ((Main)main).StartLevel(1))"), prompt.getValue());
+    }
+
+    // Revisión final F3: la corrección del sandbox para Vera también lleva la ficha de las escenas.
+    @Test
+    void veraRepairPromptCarriesTheSceneSheet() throws Exception {
+        var context = leveledQaContext();
+        var pass = Optional.of(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("build", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 3, 0),
+                new SandboxResult.StepResult("smoke", "PASS", 0, 1000, "", 0, 0))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("game/playthroughs/ESC_01_x.cs")))
+                .thenReturn(pass);
+        var prompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), prompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("game/playthroughs/ESC_01_x.cs")))
+                .thenReturn(CompletableFuture.completedFuture(corrected("game/playthroughs/ESC_01_x.cs")));
+
+        strategy.execute(context, progress);
+
+        var repair = prompts.getAllValues().stream().filter(p -> p.contains("CORRECCIÓN DEL SANDBOX")).findFirst()
+                .orElseThrow(() -> new AssertionError(prompts.getAllValues().toString()));
+        assertTrue(repair.contains("FICHA DE LAS ESCENAS"), repair);
+    }
+
+    private TeamMissionContext leveledQaContext() throws Exception {
         stubHappyPath();
         withLeveledGame(1);
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"), any()))
@@ -2185,24 +2226,14 @@ class DevelopmentTeamStrategyTest {
                         ? new TeamMemberInfo(m.agentId(), m.name(), m.role(), "QA", m.capabilities(), m.model()) : m)
                 .toList();
         var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", members);
-        var context = new TeamMissionContext("M-1", "crear un juego", team, plan);
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
                         List.of("game/playthroughs/ESC_01_x.cs")));
         when(runtime.review(eq("M-1-QA-REVIEW"), eq("M-1"), eq("qa"), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
-        var prompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), prompt.capture(), anyList(), anyList(), anyList(), any()))
-                .thenReturn(CompletableFuture.completedFuture(dev("game/playthroughs/ESC_01_x.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
-
-        strategy.execute(context, progress);
-
-        assertTrue(prompt.getValue().contains("FICHA DE LAS ESCENAS"), prompt.getValue());
-        assertTrue(prompt.getValue().contains("- Main (game/Main.tscn, escena principal): int Level { get; }; "
-                + "void StartLevel(int level); int Puntaje"), prompt.getValue());
-        assertTrue(prompt.getValue().contains("Do(main => ((Main)main).StartLevel(2))"), prompt.getValue());
+        return new TeamMissionContext("M-1", "crear un juego", team, plan);
     }
 
     // Juegos por niveles (spec 2026-10-16 contrato §4): Forjai commitea la escena de cada nivel del incremento, antes de Kael.

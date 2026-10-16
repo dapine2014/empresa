@@ -81,15 +81,16 @@ public final class InteractionDesignText {
                     Niveles de este incremento (parámetros y regla para pasar al siguiente):
                     %s
                     Cada escena es public partial class <script> : Node2D en game/<script>.cs y crea por código, en _Ready, TODOS los nodos que usa (AddChild): la .tscn no tiene hijos, nunca los esperes ni uses GetNode de hijos de la escena.
-                    Las escenas con niveles exponen public int Level { get; } y public void StartLevel(int level) (StartLevel deja el nivel listo para jugar; las partidas simuladas lo usan para arrancar directo en un nivel).
+                    Las escenas donde ocurre un nivel o escena del contrato exponen public int Level { get; } y public void StartLevel(int level) (StartLevel deja el nivel listo para jugar; las partidas simuladas lo usan para arrancar directo en un nivel).%s
                     game/project.godot declara run/main_scene="res://%s.tscn" (ESCENA-01).
                     """.formatted(
                     scenes.stream().map(s -> "- " + s.id() + " " + s.name() + " → " + GameScenes.scenePath(s.script())
                                     + " + " + GameScenes.scriptPath(s.script()) + " (clase " + s.script()
                                     + (GameScenes.MAIN.equals(s.id()) ? ", escena principal" : "") + "): " + s.purpose())
                             .collect(Collectors.joining("\n")),
-                    nn(game.levels()).stream().filter(l -> levels.contains(l.item())).map(InteractionDesignText::level)
+                    nn(game.levels()).stream().filter(l -> levels.contains(l.item())).map(l -> level(spec, l))
                             .collect(Collectors.joining("\n")),
+                    GameScenes.levelNumbering(spec).isEmpty() ? "" : "\n" + GameScenes.levelNumbering(spec),
                     main);
         }
         return """
@@ -125,9 +126,10 @@ public final class InteractionDesignText {
                 scenarios.stream().map(id -> id + "→" + targets.get(id)).collect(Collectors.joining(", "))) + sceneBlock;
     }
 
-    private static String level(InteractionDesign.LevelDesign l) {
+    private static String level(RequirementsSpec spec, InteractionDesign.LevelDesign l) {
         var rule = l.advanceRule() == null || l.advanceRule().isBlank() ? "" : " — pasa al siguiente con " + l.advanceRule().strip();
-        return "- " + l.item() + " en " + l.scene() + ": " + nn(l.parameters()).stream()
+        var number = GameScenes.levelNumber(spec, l.item());
+        return "- " + (number > 0 ? "Nivel " + number + " (" + l.item() + ")" : l.item()) + " en " + l.scene() + ": " + nn(l.parameters()).stream()
                 .map(p -> p.name() + "=" + num(p.value())).collect(Collectors.joining(", ", "{", "}")) + rule;
     }
 

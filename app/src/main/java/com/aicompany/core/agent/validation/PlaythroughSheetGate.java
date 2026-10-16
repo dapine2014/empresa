@@ -21,9 +21,15 @@ import java.util.stream.Collectors;
 public final class PlaythroughSheetGate {
 
     /** Lo heredado de Node/Node2D que una partida puede usar sobre la escena. */
-    public static final Set<String> GODOT_MEMBERS = Set.of("GetNode", "GetNodeOrNull", "GetChildren", "GetChild",
-            "GetChildCount", "FindChild", "Position", "GlobalPosition", "Visible", "Name", "IsInsideTree", "GetTree",
-            "Rotation", "Scale");
+    public static final Set<String> GODOT_MEMBERS = java.util.Collections.unmodifiableSequencedSet(new LinkedHashSet<>(List.of(
+            "GetNode", "GetNodeOrNull", "HasNode", "GetParent", "GetChildren", "GetChild", "GetChildCount", "FindChild",
+            "GetTree", "GetViewport", "GetViewportRect", "IsInsideTree", "IsNodeReady", "QueueFree", "Name", "Visible",
+            "Show", "Hide", "Modulate", "SelfModulate", "ZIndex", "ProcessMode", "Position", "GlobalPosition", "Rotation",
+            "GlobalRotation", "Scale", "Transform", "GlobalTransform", "ToGlobal", "ToLocal", "_Ready", "_Process",
+            "_PhysicsProcess", "_Input", "_UnhandledInput")));
+
+    /** La lista de lo heredado de Godot, en orden, para los prompts y los mensajes de error. */
+    public static final String GODOT_MEMBERS_TEXT = String.join(", ", GODOT_MEMBERS);
 
     private static final Pattern SCENE = Pattern.compile("\\bScene\\s*=>\\s*\"([^\"]*)\"");
     private static final Pattern CAST_ACCESS = Pattern.compile("\\(\\s*\\(\\s*([A-Za-z_]\\w*)\\s*\\)\\s*([A-Za-z_]\\w*)\\s*\\)\\s*\\.\\s*([A-Za-z_]\\w*)");
@@ -87,6 +93,8 @@ public final class PlaythroughSheetGate {
             return;
         }
         errors.add(path + ": " + type + "." + name + " no existe; existen: "
-                + members.stream().map(SceneSheet.Member::name).collect(Collectors.joining(", ")) + ".");
+                + (members.isEmpty() ? "(sin miembros públicos)"
+                : members.stream().map(SceneSheet.Member::name).collect(Collectors.joining(", ")))
+                + "; heredados de Godot: " + GODOT_MEMBERS_TEXT + ".");
     }
 }

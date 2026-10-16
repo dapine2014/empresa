@@ -426,6 +426,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     var required = task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
                             .anyMatch(e -> OwnedPaths.coveredByAny(List.of(owned), e.path()))).toList();
                     var basePrompt = buildWorkPrompt(context, task) + repairBlock(entry.getValue(), current)
+                            + (isQa(context, task.agentId()) ? sceneSheetBlock(context, headSha) : "")
                             + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
                             + "commit " + headSha + "); devuelve tus archivos corregidos y completos:",
                             validatorModel(context, task.agentId()));
@@ -2127,9 +2128,16 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (contracts.isEmpty()) {
             return "";
         }
-        var main = approvedGameScenes(context.missionId())
-                .flatMap(a -> com.aicompany.core.agent.validation.GameScenes.main(a.game()))
+        var approved = approvedGameScenes(context.missionId());
+        var main = approved.flatMap(a -> com.aicompany.core.agent.validation.GameScenes.main(a.game()))
                 .map(com.aicompany.core.agent.model.InteractionDesign.Scene::script).orElse("");
+        // Revisión final F1: el ejemplo usa un nivel real del incremento (1..N sobre los LEVEL del contrato).
+        var numbering = approved.map(a -> com.aicompany.core.agent.validation.GameScenes.levelNumbering(a.spec()))
+                .orElse("");
+        var example = approved.flatMap(a -> a.spec().gameLevelsOf(a.increment()).stream()
+                        .mapToInt(i -> com.aicompany.core.agent.validation.GameScenes.levelNumber(a.spec(), i.id()))
+                        .filter(n -> n > 0).boxed().findFirst())
+                .orElse(2);
         return "\n\nFICHA DE LAS ESCENAS (Java lo leyó del código commiteado de Kael, commit " + headSha
                 + "): en las partidas solo puedes usar estos miembros de cada escena; cualquier otro no existe.\n"
                 + contracts.entrySet().stream().map(e -> "- " + e.getKey() + " ("
@@ -2138,8 +2146,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         + (e.getValue().isEmpty() ? "(sin miembros públicos)" : e.getValue().stream()
                         .map(com.aicompany.core.agent.validation.SceneSheet::render).collect(Collectors.joining("; "))))
                 .collect(Collectors.joining("\n"))
+                + "\nAdemás puedes usar lo heredado de Godot: "
+                + com.aicompany.core.agent.validation.PlaythroughSheetGate.GODOT_MEMBERS_TEXT + "."
+                + (numbering.isEmpty() ? "" : "\n" + numbering)
                 + "\nPara otra escena que no sea la principal: public override string Scene => \"<script>\";. Para arrancar "
-                + "en un nivel: yield return Do(main => ((" + main + ")main).StartLevel(2)); antes de los Press/Wait.\n";
+                + "en un nivel: yield return Do(main => ((" + main + ")main).StartLevel(" + example + ")); antes de los Press/Wait.\n";
     }
 
     /** Spec 2026-10-14 Kael §2.2: assets, escena principal, azar inyectable y rutas reservadas, con reintento. */

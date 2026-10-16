@@ -95,6 +95,13 @@ class RoleLayerCatalogTest {
         assertFalse(RoleLayerCatalog.describe().contains("Kael/GAME_DEV, Orion"), RoleLayerCatalog.describe());
     }
 
+    // Revisión final F4: en un juego con escenas Forjai escribe la .tscn; Kael escribe el script.
+    @Test void kaelWritesTheMainSceneScriptNotATscnForjaiAlreadyCreated() {
+        var text = RoleLayerCatalog.describe();
+        assertTrue(text.contains("el script de la escena principal; si Forjai ya creó la .tscn de una escena, no la escribas"), text);
+        assertFalse(text.contains("project.godot y la escena principal"), text);
+    }
+
     // Revisión final (I-2): el respaldo no puede depender del orden en que Neo listó las tareas.
     @Test
     void fallbackLayersFollowAFixedRolePriorityNotThePlanOrder() {

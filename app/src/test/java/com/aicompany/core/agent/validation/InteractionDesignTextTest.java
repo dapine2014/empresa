@@ -68,10 +68,31 @@ class InteractionDesignTextTest {
         assertTrue(block.contains("Escenas (Forjai ya creó cada game/<script>.tscn con el script en el nodo raíz; no las escribas):"), block);
         assertTrue(block.contains("- ESCENA-01 Cancha → game/Main.tscn + game/Main.cs (clase Main, escena principal)"), block);
         assertFalse(block.contains("ESCENA-02 Fin"), block);
-        assertTrue(block.contains("- MOD-01 en ESCENA-01: {} — pasa al siguiente con REGLA-01"), block);
+        assertTrue(block.contains("- Nivel 1 (MOD-01) en ESCENA-01: {} — pasa al siguiente con REGLA-01"), block);
         assertTrue(block.contains("public partial class <script> : Node2D"), block);
-        assertTrue(block.contains("public int Level { get; }"), block);
+        assertTrue(block.contains("Las escenas donde ocurre un nivel o escena del contrato exponen public int Level { get; }"), block);
+        assertTrue(block.contains("Level y StartLevel usan 1..N: 1 = MOD-01 Nivel 1 (solo los niveles del contrato"), block);
         assertTrue(block.contains("run/main_scene=\"res://Main.tscn\""), block);
+    }
+
+    // Revisión final F1: Level/StartLevel numeran 1..N solo los ítems LEVEL del contrato, en su orden.
+    @Test void levelsAreNumberedOverTheLevelItemsOfTheContract() {
+        var spec = new RequirementsSpec("Plataformas", List.of(), List.of(), List.of(new RequirementsSpec.Role("jugador", "d")),
+                List.of(new RequirementsSpec.UserStory("HU-01", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-01"),
+                        new RequirementsSpec.UserStory("HU-02", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-03")),
+                List.of(new RequirementsSpec.Increment(1, "N2", List.of("HU-01", "HU-02"))), "GAME",
+                List.of(new com.aicompany.core.agent.model.ClientContract.Item("MOD-01", "SYSTEM", "Motor", "x"),
+                        new com.aicompany.core.agent.model.ClientContract.Item("MOD-02", "LEVEL", "Nivel 1", "x"),
+                        new com.aicompany.core.agent.model.ClientContract.Item("MOD-03", "LEVEL", "Nivel 2", "x"),
+                        new com.aicompany.core.agent.model.ClientContract.Item("MOD-04", "LEVEL", "Nivel 3", "x")), true);
+        assertEquals(0, GameScenes.levelNumber(spec, "MOD-01"));
+        assertEquals(2, GameScenes.levelNumber(spec, "MOD-03"));
+        var game = new GameDesign(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(new Scene("ESCENA-01", "Mundo", "Main", "x")),
+                List.of(new LevelDesign("MOD-03", "ESCENA-01", List.of(new Property("enemigos", 4.0)), "")));
+        var block = InteractionDesignText.incrementBlock(new InteractionDesign("GAME", null, game), spec, 1);
+        assertTrue(block.contains("- Nivel 2 (MOD-03) en ESCENA-01: {enemigos=4}"), block);
+        assertTrue(block.contains("Level y StartLevel usan 1..N: 1 = MOD-02 Nivel 1, 2 = MOD-03 Nivel 2, 3 = MOD-04 Nivel 3"), block);
     }
 
     @Test void theSummaryShowsScenesAndLevels() {

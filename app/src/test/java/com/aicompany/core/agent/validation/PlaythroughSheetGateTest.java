@@ -55,6 +55,25 @@ class PlaythroughSheetGateTest {
         assertTrue(errors.stream().anyMatch(e -> e.contains("Node2D no es una escena del diseño")), errors.toString());
     }
 
+    // Revisión final F2: más heredados de Node/CanvasItem/Node2D y los virtuales, sobre una variable con alias.
+    @Test void moreInheritedGodotMembersPassOnAnAlias() {
+        assertEquals(List.of(), check("""
+                var game = (Main)main;
+                yield return Assert(() => game.HasNode("x") && game.GetViewportRect().Size.X > 0, "ok");
+                yield return Do(m => game._PhysicsProcess(0.016));
+                """));
+    }
+
+    @Test void theErrorListsTheInheritedGodotMembers() {
+        var errors = check("var j = (Menu)main; j.Nada = 1;");
+        assertTrue(errors.stream().anyMatch(e -> e.contains("Menu.Nada no existe; existen: Visible2; heredados de Godot: GetNode")),
+                errors.toString());
+        var empty = PlaythroughSheetGate.check(List.of(new GeneratedFile("game/playthroughs/ESC_01_x.cs",
+                "var j = (Main)main; j.Nada = 1;")), Map.of("Main", List.of()));
+        assertTrue(empty.stream().anyMatch(e -> e.contains("existen: (sin miembros públicos); heredados de Godot:")),
+                empty.toString());
+    }
+
     // Review Focus 5: un string con texto parecido a un acceso no dispara el gate.
     @Test void stringsDoNotCount() {
         assertEquals(List.of(), check("yield return Assert(() => true, \"((Main)main).Inexistente no se usa\");"));

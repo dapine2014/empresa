@@ -879,7 +879,13 @@ public class MissionExecutor {
                     awaitApproval(missionId, written, draftDesignFor(missionId, written.version()));
                 }
             }
-            case CONTRACT_ADJUSTMENT -> adjustContract(missionId, contractMemory.pendingAdjustment(missionId).orElseThrow());
+            case CONTRACT_ADJUSTMENT -> {
+                if (!contractApplies()) {
+                    throw new IllegalStateException("No se puede retomar el ajuste del contrato de " + missionId
+                            + ": falta el servicio de contratos.");
+                }
+                adjustContract(missionId, contractMemory.pendingAdjustment(missionId).orElseThrow());
+            }
             // Spec 2026-10-14 Kael §1.2: el retome en Kael nunca repite a Aria.
             case DESIGN -> {
                 var written = latestRequirements(missionId);
