@@ -1,6 +1,7 @@
 package com.aicompany.core.agent.validation;
 
 import com.aicompany.core.agent.model.InteractionDesign.*;
+import com.aicompany.core.agent.model.ClientContract;
 import com.aicompany.core.agent.model.RequirementsSpec;
 import org.junit.jupiter.api.Test;
 
@@ -167,5 +168,109 @@ class InteractionDesignValidatorTest {
         var nullRole = new RequirementsSpec("x", List.of(), List.of(),
                 java.util.Arrays.asList(new RequirementsSpec.Role(null, "d"), null), SPEC.userStories(), SPEC.increments(), "APP");
         assertDoesNotThrow(() -> InteractionDesignValidator.validateApp(app(List.of(P1), FLOW, MAP), nullRole));
+    }
+
+    static final RequirementsSpec PONG = new RequirementsSpec("Pong", List.of(), List.of(),
+            List.of(new RequirementsSpec.Role("jugador", "d")),
+            List.of(new RequirementsSpec.UserStory("HU-01", "jugador", "q", "p", List.of("c"), List.of(),
+                            List.of(new RequirementsSpec.Scenario("ESC-01", "a", List.of("d"), List.of("c"), List.of("e"))), "MOD-01"),
+                    new RequirementsSpec.UserStory("HU-02", "jugador", "q", "p", List.of("c"), List.of(),
+                            List.of(new RequirementsSpec.Scenario("ESC-02", "b", List.of("d"), List.of("c"), List.of("e"))), "MOD-02")),
+            List.of(new RequirementsSpec.Increment(1, "N1", List.of("HU-01")),
+                    new RequirementsSpec.Increment(2, "N2", List.of("HU-02"))), "GAME",
+            List.of(new ClientContract.Item("MOD-01", "LEVEL", "Nivel 1", "normal"),
+                    new ClientContract.Item("MOD-02", "LEVEL", "Nivel 2", "rápida")), true);
+
+    static GameDesign pongDesign(List<Scene> scenes, List<LevelDesign> levels) {
+        return new GameDesign(List.of("PLAYING"), List.of(), List.of(), List.of(new Control("move_up", "Up", "sube")),
+                List.of(new Rule("REGLA-01", "move_up apretado", "la paleta sube"),
+                        new Rule("REGLA-02", "puntaje >= 50", "pasa al nivel 2")),
+                List.of("REGLA-02"), List.of(), List.of(),
+                List.of(new ScenarioRule("ESC-01", "REGLA-01"), new ScenarioRule("ESC-02", "REGLA-01")),
+                List.of("hipótesis"), scenes, levels);
+    }
+
+    static final Scene MAIN = new Scene("ESCENA-01", "Cancha", "Main", "donde se juega");
+    static final LevelDesign N1 = new LevelDesign("MOD-01", "ESCENA-01",
+            List.of(new Property("velocidad_pelota", 200.0)), "REGLA-02");
+    static final LevelDesign N2 = new LevelDesign("MOD-02", "ESCENA-01",
+            List.of(new Property("velocidad_pelota", 300.0)), "");
+
+    // Juegos por niveles (spec 2026-10-16 contrato §3).
+    @Test void aDesignWithScenesAndOneEntryPerLevelPasses() {
+        assertEquals(List.of(), InteractionDesignValidator.validateGame(pongDesign(List.of(MAIN), List.of(N1, N2)), PONG));
+    }
+
+    @Test void everyLevelOfTheContractHasExactlyOneDesignAndNoExtras() {
+        var errors = InteractionDesignValidator.validateGame(pongDesign(List.of(MAIN), List.of(N1,
+                new LevelDesign("MOD-07", "ESCENA-01", List.of(), ""))), PONG);
+        var all = String.join("\n", errors);
+        assertTrue(all.contains("MOD-02 no tiene diseño"), all);
+        assertTrue(all.contains("MOD-07, que no es un nivel o escena del contrato"), all);
+    }
+
+    @Test void scenesNeedValidUniqueIdsAndScripts() {
+        var errors = InteractionDesignValidator.validateGame(pongDesign(List.of(MAIN,
+                        new Scene("ESCENA-01", "Otra", "main", "x"), new Scene("ESCENA-03", "Menu", "Main", "x")),
+                List.of(N1, N2)), PONG);
+        var all = String.join("\n", errors);
+        assertTrue(all.contains("La escena ESCENA-01 está repetida"), all);
+        assertTrue(all.contains("\"main\""), all);
+        assertTrue(all.contains("El script Main está repetido"), all);
+    }
+
+    @Test void aSceneCannotUseARunnerClassName() {
+        var errors = InteractionDesignValidator.validateGame(pongDesign(
+                List.of(new Scene("ESCENA-01", "Cancha", "Playthrough", "x")),
+                List.of(new LevelDesign("MOD-01", "ESCENA-01", List.of(), "REGLA-02"),
+                        new LevelDesign("MOD-02", "ESCENA-01", List.of(), ""))), PONG);
+        assertTrue(errors.stream().anyMatch(e -> e.contains("Playthrough") && e.contains("runner")), errors.toString());
+    }
+
+    @Test void theMainSceneIsRequiredAndLevelsUseExistingScenes() {
+        var errors = InteractionDesignValidator.validateGame(pongDesign(List.of(new Scene("ESCENA-02", "Menu", "Menu", "x")),
+                List.of(new LevelDesign("MOD-01", "ESCENA-05", List.of(), "REGLA-02"),
+                        new LevelDesign("MOD-02", "ESCENA-02", List.of(), ""))), PONG);
+        var all = String.join("\n", errors);
+        assertTrue(all.contains("ESCENA-01"), all);
+        assertTrue(all.contains("MOD-01 usa la escena ESCENA-05, que no está en scenes"), all);
+    }
+
+    @Test void theAdvanceRuleIsRequiredExceptInTheLastLevelAndMustExist() {
+        var errors = InteractionDesignValidator.validateGame(pongDesign(List.of(MAIN),
+                List.of(new LevelDesign("MOD-01", "ESCENA-01", List.of(), ""),
+                        new LevelDesign("MOD-02", "ESCENA-01", List.of(), "REGLA-09"))), PONG);
+        var all = String.join("\n", errors);
+        assertTrue(all.contains("MOD-01 necesita advanceRule"), all);
+        assertTrue(all.contains("MOD-02: advanceRule REGLA-09 no está en rules"), all);
+    }
+
+    @Test void levelParametersAreNumbersAndThereAreAtMostEightScenes() {
+        var many = new java.util.ArrayList<Scene>();
+        for (int i = 1; i <= 9; i++) {
+            many.add(new Scene("ESCENA-%02d".formatted(i), "E" + i, "Escena" + i, "x"));
+        }
+        var errors = InteractionDesignValidator.validateGame(pongDesign(many,
+                List.of(new LevelDesign("MOD-01", "ESCENA-01", List.of(new Property("pelotas", null)), "REGLA-02"), N2)),
+                PONG);
+        var all = String.join("\n", errors);
+        assertTrue(all.contains("máximo 8"), all);
+        assertTrue(all.contains("MOD-01: el parámetro \"pelotas\" necesita un número"), all);
+    }
+
+    @Test void aSceneItemDoesNotNeedAnAdvanceRule() {
+        var menuFirst = new RequirementsSpec("Pong", List.of(), List.of(), PONG.rolesOrEmpty(), PONG.userStoriesOrEmpty(),
+                PONG.incrementsOrEmpty(), "GAME", List.of(new ClientContract.Item("MOD-01", "SCENE", "Menú", "inicio"),
+                        new ClientContract.Item("MOD-02", "LEVEL", "Nivel 1", "normal")), true);
+        assertEquals(List.of(), InteractionDesignValidator.validateGame(pongDesign(List.of(MAIN),
+                List.of(new LevelDesign("MOD-01", "ESCENA-01", List.of(), ""),
+                        new LevelDesign("MOD-02", "ESCENA-01", List.of(), ""))), menuFirst));
+    }
+
+    @Test void aGameWithoutLevelsDoesNotNeedScenes() {
+        var oldSpec = new RequirementsSpec("Pong", List.of(), List.of(), List.of(new RequirementsSpec.Role("jugador", "d")),
+                PONG.userStoriesOrEmpty(), List.of(new RequirementsSpec.Increment(1, "MVP", List.of("HU-01", "HU-02"))),
+                "GAME");
+        assertEquals(List.of(), InteractionDesignValidator.validateGame(pongDesign(List.of(), List.of()), oldSpec));
     }
 }

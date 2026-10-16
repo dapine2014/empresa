@@ -51,13 +51,32 @@ public record InteractionDesign(String experience, AppDesign app, GameDesign gam
     public record Rule(String id, String condition, String effect) { }
     public record ScenarioRule(String scenario, String target) { }
 
+    /** Juegos por niveles (spec 2026-10-16 contrato §3): una escena Godot; script es la clase C# y el nombre de sus archivos. */
+    public record Scene(String id, String name, String script, String purpose) { }
+
+    /** Por cada nivel o escena del contrato (item MOD-NN): dónde ocurre, sus parámetros y la regla que pasa al siguiente (vacía en el último). */
+    public record LevelDesign(String item, String scene, List<Property> parameters, String advanceRule) {
+        public LevelDesign { parameters = parameters == null ? List.of() : parameters; }
+    }
+
     public record GameDesign(@JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> states,
                              List<Transition> transitions, List<Entity> entities, List<Control> controls, List<Rule> rules,
                              @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> win,
                              @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> lose,
                              List<Property> difficulty, List<ScenarioRule> scenarioRules,
-                             @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> balanceHypotheses) {
+                             @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> balanceHypotheses,
+                             List<Scene> scenes, List<LevelDesign> levels) {
+        /** Diseños anteriores a juegos por niveles (spec 2026-10-16): sin escenas ni niveles. */
+        public GameDesign(List<String> states, List<Transition> transitions, List<Entity> entities, List<Control> controls,
+                          List<Rule> rules, List<String> win, List<String> lose, List<Property> difficulty,
+                          List<ScenarioRule> scenarioRules, List<String> balanceHypotheses) {
+            this(states, transitions, entities, controls, rules, win, lose, difficulty, scenarioRules, balanceHypotheses,
+                    null, null);
+        }
+
         public GameDesign {
+            scenes = scenes == null ? List.of() : scenes;
+            levels = levels == null ? List.of() : levels;
             states = states == null ? List.of() : states;
             transitions = transitions == null ? List.of() : transitions;
             entities = entities == null ? List.of() : entities;
@@ -76,21 +95,27 @@ public record InteractionDesign(String experience, AppDesign app, GameDesign gam
         }
 
         public static final Map<String, Object> SCHEMA = Map.of("type", "object",
-                "properties", Map.of(
-                        "states", strings(),
-                        "transitions", array(Map.of("type", "object", "properties", Map.of("from", str(), "to", str(),
-                                "trigger", str()), "required", List.of("from", "to", "trigger"))),
-                        "entities", array(Map.of("type", "object", "properties", Map.of("id", str(), "name", str(),
-                                "properties", array(property())), "required", List.of("id", "name", "properties"))),
-                        "controls", array(Map.of("type", "object", "properties", Map.of("action", str(), "key", str(),
-                                "effect", str()), "required", List.of("action", "key", "effect"))),
-                        "rules", array(Map.of("type", "object", "properties", Map.of("id", str(), "condition", str(),
-                                "effect", str()), "required", List.of("id", "condition", "effect"))),
-                        "win", strings(), "lose", strings(),
-                        "difficulty", array(property()),
-                        "scenarioRules", array(Map.of("type", "object", "properties", Map.of("scenario", str(),
-                                "target", str()), "required", List.of("scenario", "target"))),
-                        "balanceHypotheses", strings()),
+                "properties", Map.ofEntries(
+                        Map.entry("states", strings()),
+                        Map.entry("transitions", array(Map.of("type", "object", "properties", Map.of("from", str(), "to", str(),
+                                "trigger", str()), "required", List.of("from", "to", "trigger")))),
+                        Map.entry("entities", array(Map.of("type", "object", "properties", Map.of("id", str(), "name", str(),
+                                "properties", array(property())), "required", List.of("id", "name", "properties")))),
+                        Map.entry("controls", array(Map.of("type", "object", "properties", Map.of("action", str(), "key", str(),
+                                "effect", str()), "required", List.of("action", "key", "effect")))),
+                        Map.entry("rules", array(Map.of("type", "object", "properties", Map.of("id", str(), "condition", str(),
+                                "effect", str()), "required", List.of("id", "condition", "effect")))),
+                        Map.entry("win", strings()), Map.entry("lose", strings()),
+                        Map.entry("difficulty", array(property())),
+                        Map.entry("scenarioRules", array(Map.of("type", "object", "properties", Map.of("scenario", str(),
+                                "target", str()), "required", List.of("scenario", "target")))),
+                        Map.entry("balanceHypotheses", strings()),
+                        Map.entry("scenes", array(Map.of("type", "object", "properties", Map.of("id", str(), "name", str(),
+                                "script", str(), "purpose", str()), "required", List.of("id", "name", "script", "purpose")))),
+                        Map.entry("levels", array(Map.of("type", "object", "properties", Map.of("item", str(),
+                                "scene", str(), "parameters", array(property()), "advanceRule", str()),
+                                "required", List.of("item", "scene", "parameters", "advanceRule"))))),
+                
                 "required", List.of("states", "transitions", "entities", "controls", "rules", "win", "lose",
                         "difficulty", "scenarioRules", "balanceHypotheses"));
     }

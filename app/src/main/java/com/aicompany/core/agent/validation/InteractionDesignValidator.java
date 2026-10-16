@@ -1,6 +1,7 @@
 package com.aicompany.core.agent.validation;
 
 import com.aicompany.core.agent.model.InteractionDesign.*;
+import com.aicompany.core.agent.model.ClientContract;
 import com.aicompany.core.agent.model.RequirementsSpec;
 
 import java.util.*;
@@ -13,6 +14,11 @@ public final class InteractionDesignValidator {
     public static final int MAX_SCREENS = 15;
     public static final int MAX_RULES = 20;
     public static final int MAX_CONTROLS = 8;
+    public static final int MAX_SCENES = 8;
+    public static final Pattern SCRIPT = Pattern.compile("[A-Z][A-Za-z0-9]*");
+    /** Clases del runner de Forjai (namespace Forjai.Playthroughs): una escena con ese nombre choca en el build. */
+    public static final Set<String> RESERVED_SCRIPTS = Set.of("Playthrough", "PlaythroughRunner", "Step", "StepKind");
+    private static final Pattern ESCENA = Pattern.compile("ESCENA-\\d{2}");
     private static final Pattern PANT = Pattern.compile("PANT-\\d{2}");
     private static final Pattern REGLA = Pattern.compile("REGLA-\\d{2}");
     private static final Pattern ACTION = Pattern.compile("[a-z][a-z0-9_]*");
@@ -130,7 +136,70 @@ public final class InteractionDesignValidator {
         if (nn(design.balanceHypotheses()).stream().allMatch(h -> h == null || h.isBlank())) {
             errors.add("balanceHypotheses necesita al menos una hipótesis de balance.");
         }
+        validateLevels(design, spec, rules, errors);
         return errors;
+    }
+
+    /** Juegos por niveles (spec 2026-10-16 contrato §3): solo si el contrato tiene niveles o escenas. */
+    private static void validateLevels(GameDesign design, RequirementsSpec spec, Set<String> rules, List<String> errors) {
+        var levelItems = spec.gameLevels().stream().map(ClientContract.Item::id).filter(Objects::nonNull).toList();
+        if (levelItems.isEmpty()) {
+            return;
+        }
+        var scenes = nn(design.scenes());
+        if (scenes.size() > MAX_SCENES) {
+            errors.add("Hay " + scenes.size() + " escenas: máximo " + MAX_SCENES + ".");
+        }
+        var sceneIds = new LinkedHashSet<String>();
+        var scripts = new HashSet<String>();
+        for (var s : scenes) {
+            if (s.id() == null || !ESCENA.matcher(s.id()).matches()) {
+                errors.add("El id de escena \"" + s.id() + "\" no tiene el formato ESCENA-01.");
+            } else if (!sceneIds.add(s.id())) {
+                errors.add("La escena " + s.id() + " está repetida.");
+            }
+            if (s.script() == null || !SCRIPT.matcher(s.script()).matches()) {
+                errors.add(s.id() + ": script \"" + s.script() + "\" debe ser un nombre de clase C# que empieza en "
+                        + "mayúscula, sin espacios (p. ej. Main, Menu).");
+            } else if (RESERVED_SCRIPTS.contains(s.script())) {
+                errors.add(s.id() + ": script " + s.script() + " es una clase del runner de Forjai: usa otro nombre.");
+            } else if (!scripts.add(s.script())) {
+                errors.add("El script " + s.script() + " está repetido: cada escena tiene el suyo.");
+            }
+        }
+        if (!sceneIds.contains("ESCENA-01")) {
+            errors.add("scenes necesita ESCENA-01: la escena principal (la que abre el juego).");
+        }
+        var lastLevel = spec.gameLevels().stream().filter(i -> "LEVEL".equals(i.kind())).reduce((a, b) -> b)
+                .map(ClientContract.Item::id).orElse(null);
+        var designed = new HashMap<String, Integer>();
+        for (var l : nn(design.levels())) {
+            designed.merge(String.valueOf(l.item()), 1, Integer::sum);
+            if (!levelItems.contains(l.item())) {
+                errors.add("Hay un diseño para " + l.item() + ", que no es un nivel o escena del contrato " + levelItems + ".");
+                continue;
+            }
+            if (l.scene() == null || !sceneIds.contains(l.scene())) {
+                errors.add(l.item() + " usa la escena " + l.scene() + ", que no está en scenes.");
+            }
+            nn(l.parameters()).stream().filter(p -> p.value() == null).forEach(p -> errors.add(l.item()
+                    + ": el parámetro \"" + p.name() + "\" necesita un número en value (p. ej. velocidad_pelota=200)."));
+            var isLevel = spec.gameLevels().stream().anyMatch(i -> l.item().equals(i.id()) && "LEVEL".equals(i.kind()));
+            var rule = l.advanceRule() == null ? "" : l.advanceRule().strip();
+            if (rule.isEmpty() && isLevel && !l.item().equals(lastLevel)) {
+                errors.add(l.item() + " necesita advanceRule: la REGLA-NN que pasa al nivel siguiente.");
+            } else if (!rule.isEmpty() && !rules.contains(rule)) {
+                errors.add(l.item() + ": advanceRule " + rule + " no está en rules.");
+            }
+        }
+        for (var id : levelItems) {
+            var n = designed.getOrDefault(id, 0);
+            if (n == 0) {
+                errors.add(id + " no tiene diseño: agrega uno en levels con item \"" + id + "\".");
+            } else if (n > 1) {
+                errors.add(id + " tiene " + n + " diseños: deja uno.");
+            }
+        }
     }
 
     /** Todo escenario del spec asignado una vez, a un destino existente; ningún escenario inventado. */
