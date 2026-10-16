@@ -124,6 +124,7 @@ public final class RequirementsSpecValidator {
         if (hasCycle(depsOf)) {
             errors.add("Las dependencias entre historias forman un ciclo.");
         }
+        validateContract(spec, errors);
         return errors;
     }
 
@@ -158,5 +159,40 @@ public final class RequirementsSpecValidator {
         }
         state.put(node, 2);
         return false;
+    }
+
+    /** Contrato (spec 2026-10-16 contrato §2): solo con los ítems del contrato aprobado (misiones viejas: nada). */
+    private static void validateContract(RequirementsSpec spec, List<String> errors) {
+        var items = spec.contractItemsOrEmpty();
+        if (items.isEmpty()) {
+            return;
+        }
+        var ids = items.stream().map(com.aicompany.core.agent.model.ClientContract.Item::id).toList();
+        for (var story : spec.userStoriesOrEmpty()) {
+            if (story.contractItem() == null || story.contractItem().isBlank()) {
+                errors.add(story.id() + ": contractItem debe decir a qué ítem del contrato pertenece (" + ids + ").");
+            } else if (!ids.contains(story.contractItem())) {
+                errors.add(story.id() + ": contractItem " + story.contractItem() + " no está en el contrato " + ids + ".");
+            }
+        }
+        var incrementOf = new HashMap<String, Integer>();
+        spec.incrementsOrEmpty().forEach(i -> i.userStoryIdsOrEmpty().forEach(id -> incrementOf.put(id, i.number())));
+        for (var item : items) {
+            var stories = spec.storiesOfItem(item.id());
+            if (stories.isEmpty()) {
+                errors.add(item.id() + " (" + item.name() + ") no tiene historias: todo lo del contrato necesita al "
+                        + "menos una HU.");
+                continue;
+            }
+            if (spec.experienceOrNull() == RequirementsSpec.Experience.GAME
+                    && ("LEVEL".equals(item.kind()) || "SCENE".equals(item.kind()))) {
+                var increments = stories.stream().map(s -> incrementOf.get(s.id())).filter(java.util.Objects::nonNull)
+                        .distinct().sorted().toList();
+                if (increments.size() > 1) {
+                    errors.add(item.id() + " (" + item.name() + ") está partido en los incrementos " + increments
+                            + ": un nivel o escena va completo en un incremento.");
+                }
+            }
+        }
     }
 }

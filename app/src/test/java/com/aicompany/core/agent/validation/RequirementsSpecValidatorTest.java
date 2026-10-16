@@ -1,5 +1,6 @@
 package com.aicompany.core.agent.validation;
 
+import com.aicompany.core.agent.model.ClientContract;
 import com.aicompany.core.agent.model.RequirementsSpec;
 import com.aicompany.core.agent.model.RequirementsSpec.*;
 import org.junit.jupiter.api.Test;
@@ -143,5 +144,78 @@ class RequirementsSpecValidatorTest {
         assertEquals(List.of("HU-01"), spec.increments().get(0).userStoryIds());
         assertEquals(List.of("a"), spec.assumptions());
         assertEquals(List.of("reportes"), spec.outOfScope());
+    }
+
+    // Contrato (spec 2026-10-16 contrato §2): las HU salen del contrato aprobado; Java valida la cobertura.
+    private static final ClientContract PONG_CONTRACT = new ClientContract("Un Pong de 2 niveles.", "GAME",
+            List.of(new ClientContract.Item("MOD-01", "SYSTEM", "Controles", "paletas"),
+                    new ClientContract.Item("MOD-02", "LEVEL", "Nivel 1", "normal"),
+                    new ClientContract.Item("MOD-03", "LEVEL", "Nivel 2", "rápida")),
+            List.of(), true, "un nivel por épica");
+
+    private static UserStory hu(String id, String item, Scenario... scenarios) {
+        return new UserStory(id, "vendedor", "quiero algo", "para algo", List.of("criterio"), List.of(),
+                List.of(scenarios), item);
+    }
+
+    private static RequirementsSpec fromContract(List<UserStory> stories, List<Increment> increments) {
+        return new RequirementsSpec("Pong", List.of(), List.of(), ROLES, stories, increments, "APP")
+                .withContract(PONG_CONTRACT);
+    }
+
+    @Test
+    void storiesFromTheContractPassAndJavaGroupsThemByItem() {
+        var spec = fromContract(List.of(hu("HU-01", "MOD-01", esc("ESC-01")), hu("HU-02", "MOD-02", esc("ESC-02")),
+                        hu("HU-03", "MOD-03", esc("ESC-03"))),
+                List.of(new Increment(1, "Nivel 1 jugable", List.of("HU-01", "HU-02")),
+                        new Increment(2, "Más velocidad", List.of("HU-03"))));
+        assertEquals(List.of(), RequirementsSpecValidator.validate(spec));
+        assertEquals("GAME", spec.experience());          // la experiencia la manda el contrato (ruling 1)
+        assertTrue(spec.epics());
+        assertEquals(List.of("MOD-01", "MOD-02"), spec.itemsOf(1).stream().map(ClientContract.Item::id).toList());
+        assertEquals(List.of("MOD-02"), spec.gameLevelsOf(1).stream().map(ClientContract.Item::id).toList());
+        assertEquals(List.of("MOD-02", "MOD-03"), spec.gameLevels().stream().map(ClientContract.Item::id).toList());
+        assertEquals(List.of("HU-03"), spec.storiesOfItem("MOD-03").stream().map(UserStory::id).toList());
+    }
+
+    // Review Focus 4.
+    @Test
+    void everyStoryNeedsAnExistingItemAndEveryItemNeedsAStory() {
+        var spec = fromContract(List.of(hu("HU-01", "MOD-01", esc("ESC-01")), hu("HU-02", null, esc("ESC-02")),
+                        hu("HU-03", "MOD-09", esc("ESC-03"))),
+                List.of(new Increment(1, "MVP", List.of("HU-01", "HU-02", "HU-03"))));
+        var all = String.join("\n", RequirementsSpecValidator.validate(spec));
+        assertTrue(all.contains("HU-02: contractItem debe decir a qué ítem del contrato pertenece"), all);
+        assertTrue(all.contains("HU-03: contractItem MOD-09 no está en el contrato"), all);
+        assertTrue(all.contains("MOD-02 (Nivel 1) no tiene historias"), all);
+        assertTrue(all.contains("MOD-03 (Nivel 2) no tiene historias"), all);
+    }
+
+    @Test
+    void inAGameALevelIsNeverSplitBetweenIncrements() {
+        var spec = fromContract(List.of(hu("HU-01", "MOD-01", esc("ESC-01")), hu("HU-02", "MOD-02", esc("ESC-02")),
+                        hu("HU-03", "MOD-02", esc("ESC-03")), hu("HU-04", "MOD-03", esc("ESC-04")),
+                        hu("HU-05", "MOD-01", esc("ESC-05"))),
+                List.of(new Increment(1, "MVP", List.of("HU-01", "HU-02")),
+                        new Increment(2, "Resto", List.of("HU-03", "HU-04", "HU-05"))));
+        var all = String.join("\n", RequirementsSpecValidator.validate(spec));
+        assertTrue(all.contains("MOD-02 (Nivel 1) está partido en los incrementos [1, 2]"), all);
+        // un SYSTEM sí puede crecer en varios incrementos
+        assertFalse(all.contains("MOD-01 (Controles) está partido"), all);
+    }
+
+    // Review Focus 3: sin contrato (misión vieja) no hay reglas nuevas; withContract(null) limpia lo que invente el modelo.
+    @Test
+    void withoutAContractNothingChanges() {
+        var old = spec(ROLES, List.of(hu("HU-01", "vendedor", List.of(), esc("ESC-01"))),
+                List.of(new Increment(1, "MVP", List.of("HU-01"))));
+        assertEquals(List.of(), RequirementsSpecValidator.validate(old));
+        var invented = new RequirementsSpec("CRM", List.of(), List.of(), ROLES,
+                List.of(hu("HU-01", "MOD-07", esc("ESC-01"))), List.of(new Increment(1, "MVP", List.of("HU-01"))),
+                "APP", List.of(new ClientContract.Item("MOD-07", "MODULE", "x", "x")), true).withContract(null);
+        assertEquals(List.of(), invented.contractItemsOrEmpty());
+        assertFalse(invented.epics());
+        assertEquals("APP", invented.experience());
+        assertEquals(List.of(), RequirementsSpecValidator.validate(invented));
     }
 }

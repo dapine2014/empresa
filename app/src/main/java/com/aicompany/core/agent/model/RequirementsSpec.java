@@ -14,12 +14,19 @@ import java.util.Objects;
  * Verificado en vivo (2026-10-04): el modelo puede escribir un texto suelto donde va una lista; vale como un elemento.
  */
 public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> assumptions, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> outOfScope, List<Role> roles,
-                               List<UserStory> userStories, List<Increment> increments, String experience) {
+                               List<UserStory> userStories, List<Increment> increments, String experience,
+                               List<ClientContract.Item> contractItems, Boolean useEpics) {
 
     /** Specs guardados antes de Spec 2026-10-14 Kael §1: sin tipo de experiencia (null). */
     public RequirementsSpec(String summary, List<String> assumptions, List<String> outOfScope, List<Role> roles,
                             List<UserStory> userStories, List<Increment> increments) {
-        this(summary, assumptions, outOfScope, roles, userStories, increments, null);
+        this(summary, assumptions, outOfScope, roles, userStories, increments, null, null, null);
+    }
+
+    /** Specs anteriores al contrato (spec 2026-10-16): sin ítems del contrato ni épicas. */
+    public RequirementsSpec(String summary, List<String> assumptions, List<String> outOfScope, List<Role> roles,
+                            List<UserStory> userStories, List<Increment> increments, String experience) {
+        this(summary, assumptions, outOfScope, roles, userStories, increments, experience, null, null);
     }
 
     /** Spec 2026-10-14 Kael §1: APP (pantallas), GAME (juego) o NONE (solo API o servicio, sin interfaz). */
@@ -45,7 +52,14 @@ public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Fea
     }
 
     public record UserStory(String id, String role, String iWant, String soThat, @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> acceptanceCriteria,
-                            @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> dependsOn, List<Scenario> scenarios) {
+                            @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> dependsOn, List<Scenario> scenarios,
+                            String contractItem) {
+
+        /** HU anteriores al contrato (spec 2026-10-16): sin ítem. */
+        public UserStory(String id, String role, String iWant, String soThat, List<String> acceptanceCriteria,
+                         List<String> dependsOn, List<Scenario> scenarios) {
+            this(id, role, iWant, soThat, acceptanceCriteria, dependsOn, scenarios, null);
+        }
 
         public UserStory {
             acceptanceCriteria = orEmpty(acceptanceCriteria);
@@ -133,6 +147,50 @@ public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Fea
         return storiesOf(increment).stream().mapToInt(s -> s.scenariosOrEmpty().size()).sum();
     }
 
+    private static final java.util.Set<String> PLAYABLE = java.util.Set.of("LEVEL", "SCENE");
+
+    public List<ClientContract.Item> contractItemsOrEmpty() {
+        return contractItems == null ? List.of() : contractItems.stream().filter(Objects::nonNull).toList();
+    }
+
+    public boolean epics() {
+        return Boolean.TRUE.equals(useEpics);
+    }
+
+    /** Las HU de un ítem del contrato (su épica), en el orden de userStories. */
+    public List<UserStory> storiesOfItem(String itemId) {
+        return userStoriesOrEmpty().stream().filter(s -> itemId != null && itemId.equals(s.contractItem())).toList();
+    }
+
+    /** Los ítems del contrato con al menos una HU en el incremento, en el orden del contrato. */
+    public List<ClientContract.Item> itemsOf(int increment) {
+        var items = storiesOf(increment).stream().map(UserStory::contractItem).filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        return contractItemsOrEmpty().stream().filter(i -> items.contains(i.id())).toList();
+    }
+
+    /** Los niveles y escenas del contrato (en un juego), en el orden en que se juegan. */
+    public List<ClientContract.Item> gameLevels() {
+        return contractItemsOrEmpty().stream().filter(i -> PLAYABLE.contains(i.kind())).toList();
+    }
+
+    public List<ClientContract.Item> gameLevelsOf(int increment) {
+        return itemsOf(increment).stream().filter(i -> PLAYABLE.contains(i.kind())).toList();
+    }
+
+    /**
+     * Contrato (spec 2026-10-16 contrato §2): Java copia al spec los ítems del contrato aprobado, si lleva épicas y su
+     * experiencia (manda el contrato). Sin contrato (misión anterior) los deja vacíos aunque el modelo los haya inventado.
+     */
+    public RequirementsSpec withContract(ClientContract contract) {
+        if (contract == null) {
+            return new RequirementsSpec(summary, assumptions, outOfScope, roles, userStories, increments, experience,
+                    null, null);
+        }
+        return new RequirementsSpec(summary, assumptions, outOfScope, roles, userStories, increments,
+                contract.experience(), contract.itemsOrEmpty(), contract.epics());
+    }
+
     private static Map<String, Object> stringArray() {
         return Map.of("type", "array", "items", Map.of("type", "string"));
     }
@@ -156,7 +214,8 @@ public record RequirementsSpec(String summary, @JsonFormat(with = JsonFormat.Fea
                             "properties", Map.of("id", Map.of("type", "string"), "role", Map.of("type", "string"),
                                     "iWant", Map.of("type", "string"), "soThat", Map.of("type", "string"),
                                     "acceptanceCriteria", stringArray(), "dependsOn", stringArray(),
-                                    "scenarios", Map.of("type", "array", "items", SCENARIO_SCHEMA)),
+                                    "scenarios", Map.of("type", "array", "items", SCENARIO_SCHEMA),
+                                    "contractItem", Map.of("type", "string")),
                             "required", List.of("id", "role", "iWant", "soThat", "acceptanceCriteria", "dependsOn",
                                     "scenarios"))),
                     "increments", Map.of("type", "array", "items", Map.of("type", "object",
