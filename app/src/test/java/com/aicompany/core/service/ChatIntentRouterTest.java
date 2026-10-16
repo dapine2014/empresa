@@ -2994,4 +2994,27 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("Le pasé el ajuste a Aria"), response);
         verifyNoInteractions(ceoService);
     }
+
+    // Contrato (spec 2026-10-16 contrato §1) + Review Focus 5: el contrato se ve, se aprueba y se rechaza por chat.
+    @Test
+    void theFounderSeesAndApprovesTheContractByChat() {
+        var contract = new com.aicompany.core.model.ContractView(1, "DRAFT", null, null, "Contrato (versión 1, juego): Pong");
+        when(missionService.requirements("MISSION-X")).thenReturn(Optional.of(new RequirementsView("MISSION-X",
+                "AWAITING_SPEC_APPROVAL", null, null, null, 0, 0, null, "", contract)));
+
+        assertTrue(router.route("muéstrame el contrato de MISSION-X").contains("Contrato (versión 1, juego): Pong"));
+        assertTrue(router.route("aprueba el contrato de MISSION-X").contains("Contrato de MISSION-X aprobado: Aria escribe las historias"));
+        verify(missionService).decideRequirements(eq("MISSION-X"), argThat(c ->
+                c.decision() == RequirementsDecisionCommand.RequirementsDecision.APPROVE));
+        verify(missionService, never()).recordDecision(anyString(), any());
+    }
+
+    @Test
+    void anAdjustmentWhileTheContractWaitsGoesToAria() {
+        var contract = new com.aicompany.core.model.ContractView(1, "DRAFT", null, null, "Contrato");
+        when(missionService.requirements("MISSION-X")).thenReturn(Optional.of(new RequirementsView("MISSION-X",
+                "AWAITING_SPEC_APPROVAL", null, null, null, 0, 0, null, "", contract)));
+
+        assertTrue(router.route("para MISSION-X: el nivel 3 tiene dos pelotas").contains("contrato de MISSION-X"));
+    }
 }

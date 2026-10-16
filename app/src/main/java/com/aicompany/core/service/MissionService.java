@@ -11,6 +11,7 @@ import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.MissionStatusResponse;
 import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.RequirementsView;
+import com.aicompany.core.model.ContractView;
 import com.aicompany.core.model.InteractionDesignView;
 import com.aicompany.core.model.JointReviewView;
 import com.aicompany.core.agent.model.InteractionDesign;
@@ -235,6 +236,26 @@ public class MissionService {
         this.requirementsMemory = requirementsMemory;
     }
 
+    private ContractMemoryService contracts;
+
+    /** Contrato (spec 2026-10-16): opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setContracts(ContractMemoryService contracts) {
+        this.contracts = contracts;
+    }
+
+    private ContractView contractView(String missionId) {
+        if (contracts == null) {
+            return null;
+        }
+        return contracts.latest(missionId).map(v -> {
+            var contract = JSON.readValue(v.contractJson(), com.aicompany.core.agent.model.ClientContract.class);
+            return new ContractView(v.version(), v.status(),
+                    contracts.approved(missionId).map(ContractMemoryService.Version::version).orElse(null), contract,
+                    com.aicompany.core.agent.validation.ContractText.summary(contract, v.version()));
+        }).orElse(null);
+    }
+
     private InteractionDesignMemoryService designs;
 
     /** Spec 2026-10-14 Kael: diseño de interacción de Kael (opcional en tests). */
@@ -271,7 +292,7 @@ public class MissionService {
                 requirementsMemory.approved(missionId).map(RequirementsMemoryService.Version::version).orElse(null),
                 requirementsMemory.builtIncrement(missionId),
                 spec == null ? 0 : spec.incrementNumbers().size(), spec,
-                spec == null ? "" : RequirementsText.summary(spec)));
+                spec == null ? "" : RequirementsText.summary(spec), contractView(missionId)));
     }
 
     public RequirementsView decideRequirements(String missionId, RequirementsDecisionCommand command) {
@@ -280,6 +301,13 @@ public class MissionService {
         if (mission.status() != MissionStatus.AWAITING_SPEC_APPROVAL) {
             throw new IllegalStateException("MISSION " + missionId + " no está esperando la aprobación de requisitos "
                     + "(estado actual: " + mission.status() + ").");
+        }
+        // Contrato (spec 2026-10-16 §1): mientras el contrato está en DRAFT, la decisión es sobre el contrato.
+        var draftContract = contracts == null ? Optional.<ContractMemoryService.Version>empty()
+                : contracts.latest(missionId).filter(c -> "DRAFT".equals(c.status()));
+        if (draftContract.isPresent()) {
+            decideContract(mission, draftContract.get(), command);
+            return requirements(missionId).orElseThrow();
         }
         var version = requirementsMemory.latest(missionId)
                 .orElseThrow(() -> new IllegalStateException("MISSION " + missionId + " no tiene requisitos."));
@@ -362,6 +390,46 @@ public class MissionService {
             }
         }
         return requirements(missionId).orElseThrow();
+    }
+
+    private void decideContract(MissionResponse mission, ContractMemoryService.Version contract,
+                                RequirementsDecisionCommand command) {
+        var missionId = mission.missionId();
+        if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && command.targetOrAria() == RequirementsDecisionCommand.Target.KAEL) {
+            throw new IllegalStateException("El contrato de " + missionId + " es de Aria: ajústalo sin «Kael».");
+        }
+        if (command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
+            requireAgentsOn(mission.teamId(), "decidir sobre el contrato de " + missionId, true);
+        }
+        if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && (command.instruction() == null || command.instruction().isBlank())) {
+            throw new IllegalArgumentException("Para ajustar el contrato escribe la instrucción para Aria.");
+        }
+        var adjustment = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                ? command.instruction().strip() : null;
+        if (!contracts.claimDecision(missionId, contract.version(), adjustment)) {
+            throw new IllegalStateException("La versión " + contract.version() + " del contrato de " + missionId
+                    + " ya tiene una decisión en curso.");
+        }
+        switch (command.decision()) {
+            case APPROVE -> {
+                contracts.approve(missionId, contract.version(), "founder");
+                events.publish("EMPRESA_CONTRACT_APPROVED", missionId, null, "human",
+                        Map.of("version", contract.version()));
+                executor.continueAfterContractAsync(missionId);
+            }
+            case ADJUST -> executor.adjustContractAsync(missionId, adjustment);
+            case REJECT -> {
+                contracts.reject(missionId, contract.version());
+                memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Contrato rechazado",
+                        "El fundador rechazó el contrato de Aria.");
+                events.publishMission("EMPRESA_MISSION_UPDATED", missionId, MissionStatus.CANCELLED.name(), 100,
+                        "Contrato rechazado", "El fundador rechazó el contrato de Aria.");
+                events.publish("EMPRESA_CONTRACT_REJECTED", missionId, null, "human",
+                        Map.of("version", contract.version()));
+            }
+        }
     }
 
     private static final Set<MissionStatus> STOPPED = Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.COMPLETED,

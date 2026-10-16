@@ -25,6 +25,7 @@ import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
+import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
 import com.aicompany.core.model.PolicyKey;
@@ -495,7 +496,8 @@ public class ChatIntentRouter {
         var normalized = normalize(message);
         return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
                 || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
-                || SHOW_DESIGN.matcher(normalized).find() || ADJUST_KAEL.matcher(message).find()
+                || SHOW_DESIGN.matcher(normalized).find() || SHOW_CONTRACT.matcher(normalized).find()
+                || ADJUST_KAEL.matcher(message).find()
                 || requirementsAdjustment(message) != null || reviewQuery(normalized) != null;
     }
 
@@ -512,6 +514,11 @@ public class ChatIntentRouter {
         var waiting = missionService.requirements(missionId)
                 .map(v -> MissionStatus.AWAITING_SPEC_APPROVAL.name().equals(v.status())).orElse(false);
         return waiting ? adjust : null;
+    }
+
+    private boolean contractWaiting(String missionId) {
+        return missionService.requirements(missionId).map(RequirementsView::contract)
+                .map(c -> "DRAFT".equals(c.status())).orElse(false);
     }
 
     private ChatReply ceoReply(String text) {
@@ -1161,6 +1168,9 @@ public class ChatIntentRouter {
     private static final Pattern SHOW_DESIGN = Pattern.compile(
             "(?i)^\\s*(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:el\\s+)?dise(?:n|ñ)o"
                     + "(?:\\s+(?:de\\s+kael|de\\s+interaccion|del\\s+juego|de\\s+pantallas))?\\s+de\\s+(" + MISSION_REF + ")");
+    /** Contrato (spec 2026-10-16): "muéstrame el contrato de MISSION-X". */
+    private static final Pattern SHOW_CONTRACT = Pattern.compile(
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:el\\s+)?contrato\\s+de\\s+(" + MISSION_REF + ")");
     /** Revisión conjunta (spec 2026-10-15): "muéstrame la revisión de MISSION-X" (responde aunque no haya revisión). */
     private static final Pattern SHOW_REVIEW = Pattern.compile(
             "(?i)\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:la\\s+)?revision(?:\\s+conjunta)?\\s+de\\s+("
@@ -1173,12 +1183,12 @@ public class ChatIntentRouter {
     private static final Pattern ADJUST_KAEL = Pattern.compile(
             "(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*,\\s*kael\\s*:\\s*(.+)$", Pattern.DOTALL);
     private static final Pattern APPROVE_STORIES = Pattern.compile(
-            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
+            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos|contrato)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern REJECT_STORIES = Pattern.compile(
-            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
+            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos|contrato)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*:\\s*(.+)$",
             Pattern.DOTALL);
-    private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos)\\b");
+    private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos|contrato)\\b");
     private static final Pattern BUILD_INCREMENT = Pattern.compile(
             "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(" + MISSION_REF + ")");
 
@@ -1236,6 +1246,13 @@ public class ChatIntentRouter {
                         RequirementsDecisionCommand.Target.KAEL));
                 return "Le pasé el ajuste a Kael; te aviso cuando el diseño de " + missionId + " esté listo.";
             }
+            var showContract = SHOW_CONTRACT.matcher(normalized);
+            if (showContract.find()) {
+                var missionId = showContract.group(1).toUpperCase(Locale.ROOT);
+                return missionService.requirements(missionId).map(RequirementsView::contract)
+                        .map(c -> c.summary() + " (" + c.status() + ")")
+                        .orElse(missionId + " no tiene contrato de Aria.");
+            }
             var showDesign = SHOW_DESIGN.matcher(normalized);
             if (showDesign.find()) {
                 var missionId = showDesign.group(1).toUpperCase(Locale.ROOT);
@@ -1256,27 +1273,38 @@ public class ChatIntentRouter {
             var approve = APPROVE_STORIES.matcher(normalized);
             if (approve.find()) {
                 var missionId = approve.group(1).toUpperCase(Locale.ROOT);
+                var contractPending = contractWaiting(missionId);
                 // Se consulta antes de decidir, para saber si había diseño de Kael que aprobar junto con las HU.
                 var withDesign = missionService.interactionDesign(missionId)
                         .map(v -> "DRAFT".equals(v.status()) || "APPROVED".equals(v.status())).orElse(false);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+                if (contractPending) {
+                    return "Contrato de " + missionId + " aprobado: Aria escribe las historias de usuario.";
+                }
                 return "Requisitos" + (withDesign ? " y diseño" : "") + " de " + missionId
                         + " aprobados: Neo planifica el incremento 1.";
             }
             var reject = REJECT_STORIES.matcher(normalized);
             if (reject.find()) {
                 var missionId = reject.group(1).toUpperCase(Locale.ROOT);
+                var contractPending = contractWaiting(missionId);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+                if (contractPending) {
+                    return "Contrato de " + missionId + " rechazado: la misión quedó cancelada.";
+                }
                 return "Requisitos de " + missionId + " rechazados: la misión quedó cancelada.";
             }
             var adjust = requirementsAdjustment(message);
             if (adjust != null) {
                 var missionId = adjust.group(1).toUpperCase(Locale.ROOT);
+                var contractPending = contractWaiting(missionId);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjust.group(2).strip()));
-                return "Le pasé el ajuste a Aria; te aviso cuando las historias de " + missionId + " estén listas.";
+                return contractPending
+                        ? "Le pasé el ajuste a Aria; te aviso cuando el contrato de " + missionId + " esté listo."
+                        : "Le pasé el ajuste a Aria; te aviso cuando las historias de " + missionId + " estén listas.";
             }
             // Revisión final (2): después de los comandos que deciden ("para MISSION-X: hay contradicciones …" es un ajuste).
             var review = reviewQuery(normalized);
@@ -2217,8 +2245,10 @@ public class ChatIntentRouter {
                 .map(MissionResponse::missionId).toList();
         var specLine = awaitingSpec.isEmpty() ? ""
                 : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec.stream()
-                        .map(id -> missionService.interactionDesign(id).isPresent() ? id + " (HU + diseño)" : id).toList())
-                        + " (\"muéstrame las HU de <misión>\"; \"muéstrame el diseño de <misión>\").";
+                        .map(id -> contractWaiting(id) ? id + " (contrato)"
+                                : missionService.interactionDesign(id).isPresent() ? id + " (HU + diseño)" : id).toList())
+                        + " (\"muéstrame el contrato de <misión>\"; \"muéstrame las HU de <misión>\"; "
+                        + "\"muéstrame el diseño de <misión>\").";
         // Revisión final QA (M6): cobertura N/M de las misiones que esperan tu decisión (cualquier entorno).
         var coverage = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
                 .flatMap(m -> latestCoverage(m.missionId()).map(c -> m.missionId() + " " + c.ratio()).stream())

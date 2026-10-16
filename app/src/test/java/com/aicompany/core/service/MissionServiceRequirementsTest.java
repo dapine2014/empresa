@@ -355,4 +355,80 @@ class MissionServiceRequirementsTest {
                 RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
         verify(requirements).reject("M-9", 2);
     }
+
+    private final ContractMemoryService contracts = mock(ContractMemoryService.class);
+
+    private void withDraftContract(int version) {
+        service.setContracts(contracts);
+        when(memory.find("M-9")).thenReturn(Optional.of(missionIn(MissionStatus.AWAITING_SPEC_APPROVAL)));
+        when(contracts.latest("M-9")).thenReturn(Optional.of(new ContractMemoryService.Version(version,
+                "{\"summary\":\"Un CRM.\",\"experience\":\"APP\",\"items\":[],\"outOfScope\":[],\"useEpics\":false,"
+                        + "\"epicsReason\":\"x\"}", "DRAFT", "", null)));
+        when(contracts.claimDecision(anyString(), anyInt(), any())).thenReturn(true);
+    }
+
+    // Contrato (spec 2026-10-16 contrato §1): con el contrato en DRAFT, la decisión es sobre el contrato.
+    @Test
+    void approvingADraftContractContinuesToTheStories() {
+        withDraftContract(2);
+
+        var view = service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+
+        verify(contracts).approve("M-9", 2, "founder");
+        verify(executor).continueAfterContractAsync("M-9");
+        verify(executor, never()).continueAfterApprovalAsync(anyString());
+        verify(requirements, never()).approve(anyString(), anyInt(), anyString());
+        verify(events).publish(eq("EMPRESA_CONTRACT_APPROVED"), eq("M-9"), isNull(), eq("human"), anyMap());
+        assertNotNull(view);
+    }
+
+    @Test
+    void adjustingADraftContractGoesToAriaAndKaelCannotAdjustIt() {
+        withDraftContract(1);
+
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, " agrega inventarios "));
+        verify(contracts).claimDecision("M-9", 1, "agrega inventarios");
+        verify(executor).adjustContractAsync("M-9", "agrega inventarios");
+
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "x", RequirementsDecisionCommand.Target.KAEL)));
+        assertThrows(IllegalArgumentException.class, () -> service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, " ")));
+    }
+
+    @Test
+    void rejectingADraftContractCancelsTheMission() {
+        withDraftContract(1);
+
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+
+        verify(contracts).reject("M-9", 1);
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.CANCELLED), eq(100), eq("Contrato rechazado"), anyString());
+        verify(events).publish(eq("EMPRESA_CONTRACT_REJECTED"), eq("M-9"), isNull(), eq("human"), anyMap());
+    }
+
+    // Review Focus 1: doble clic sobre el contrato.
+    @Test
+    void aSecondDecisionOnTheSameContractVersionIsRejected() {
+        withDraftContract(1);
+        when(contracts.claimDecision(anyString(), anyInt(), any())).thenReturn(false);
+
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null)));
+        verify(executor, never()).continueAfterContractAsync(anyString());
+    }
+
+    @Test
+    void theViewIncludesTheContract() {
+        withDraftContract(1);
+
+        var view = service.requirements("M-9").orElseThrow();
+
+        assertEquals(1, view.contract().version());
+        assertEquals("DRAFT", view.contract().status());
+        assertTrue(view.contract().summary().startsWith("Contrato (versión 1, aplicación): Un CRM."), view.contract().summary());
+    }
 }
