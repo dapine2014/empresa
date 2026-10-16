@@ -27,8 +27,7 @@ public final class TestReportParser {
     private static final Pattern JSON_START = Pattern.compile("\"test\":\\{\"id\":(\\d+),\"name\":\"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final Pattern JSON_DONE_ID = Pattern.compile("\"testID\":(\\d+)");
 
-    private static final Pattern PLAYTHROUGH = Pattern.compile(
-            "\\{\"name\":\"((?:[^\"\\\\]|\\\\.)*)\",\"outcome\":\"(PASSED|FAILED)\"");
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
     private TestReportParser() {
     }
@@ -52,20 +51,32 @@ public final class TestReportParser {
             if (!Files.isRegularFile(file)) {
                 return List.of();
             }
-            var content = Files.readString(file).strip();
-            if (!content.startsWith("[") || !content.endsWith("]")) {
-                return List.of();
-            }
             var out = new ArrayList<SandboxResult.TestCase>();
-            var m = PLAYTHROUGH.matcher(content);
-            while (m.find()) {
-                out.add(new SandboxResult.TestCase("[juego] " + m.group(1).replace("\\\"", "\"").replace("\\\\", "\\"),
-                        m.group(2)));
+            // Verificado en vivo (Pong, 2026-10-15): se lee como JSON (System.Text.Json escapa los no ASCII) y la
+            // partida fallida lleva su paso y su motivo, para que la corrección no sea a ciegas.
+            for (var item : JSON.readTree(file.toFile())) {
+                var name = item.path("name").asString("");
+                var outcome = item.path("outcome").asString("");
+                if (name.isEmpty() || !("PASSED".equals(outcome) || "FAILED".equals(outcome))) {
+                    continue;
+                }
+                var step = item.path("failedStep").asString("").strip();
+                var message = item.path("message").asString("").strip();
+                var detail = "FAILED".equals(outcome) && !(step + message).isEmpty()
+                        ? (step.isEmpty() ? message : message.isEmpty() ? step : step + ": " + message) : null;
+                out.add(new SandboxResult.TestCase("[juego] " + name, outcome, detail));
             }
             return out;
-        } catch (IOException | RuntimeException ex) {
+        } catch (RuntimeException ex) {
             return List.of();
         }
+    }
+
+    /** Las partidas fallidas con su paso y motivo, para el final de la salida del paso test; "" si no hay. */
+    public static String failureDetails(List<SandboxResult.TestCase> tests) {
+        var lines = tests.stream().filter(t -> "FAILED".equals(t.outcome()) && t.detail() != null)
+                .map(t -> "- " + t.name() + ": " + t.detail() + "\n").toList();
+        return lines.isEmpty() ? "" : "\nPartidas simuladas fallidas (paso y motivo):\n" + String.join("", lines);
     }
 
     private static TestCounts parseReports(Path workDir) {

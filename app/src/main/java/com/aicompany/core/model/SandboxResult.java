@@ -5,8 +5,14 @@ import java.util.List;
 /** Resultado del sandbox-runner (mismo JSON que sandbox-runner/SandboxResult). */
 public record SandboxResult(String overall, List<StepResult> steps) {
 
-    /** QA casos de uso (2026-10-05): un test con su nombre y resultado ({@code PASSED|FAILED|SKIPPED}). */
-    public record TestCase(String name, String outcome) {
+    /**
+     * QA casos de uso (2026-10-05): un test con su nombre y resultado ({@code PASSED|FAILED|SKIPPED}). {@code detail}
+     * (2026-10-15): en una partida simulada fallida, el paso y el motivo que manda el runner; si no, null.
+     */
+    public record TestCase(String name, String outcome, String detail) {
+        public TestCase(String name, String outcome) {
+            this(name, outcome, null);
+        }
     }
 
     public record StepResult(String name, String status, int exitCode, long durationMs, String outputTail,

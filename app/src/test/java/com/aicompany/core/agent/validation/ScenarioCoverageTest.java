@@ -28,6 +28,13 @@ class ScenarioCoverageTest {
         assertFalse(check.passed());
         assertTrue(check.detail().contains("0/2") && check.detail().contains("ESC-11"), check.detail());
     }
+    // Verificado en vivo (Pong, 2026-10-15): una partida fallida dice en qué paso y por qué.
+    @Test void aFailedPlaythroughShowsItsStepAndMessageInTheCheck() {
+        var rows = ScenarioCoverage.compute(List.of(esc("ESC-03")), List.of(
+                new SandboxResult.TestCase("[juego] ESC_03_rebota", "FAILED", "paso 4: falló la aserción: rebota")));
+        var check = ScenarioCoverage.check(rows);
+        assertTrue(check.detail().contains("[juego] ESC_03_rebota (paso 4: falló la aserción: rebota)"), check.detail());
+    }
     @Test void oneComponentPassingIsEnough() {
         var rows = ScenarioCoverage.compute(List.of(esc("ESC-05")), List.of(
                 new SandboxResult.TestCase("backend: ESC_05_x", "PASSED"), new SandboxResult.TestCase("ESC-05 app", "FAILED")));

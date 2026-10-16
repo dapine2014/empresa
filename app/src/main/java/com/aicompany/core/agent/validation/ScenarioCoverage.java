@@ -37,7 +37,12 @@ public final class ScenarioCoverage {
             var failing = new ArrayList<String>();
             for (var test : tests) {
                 if (ScenarioIds.inTestName(test.name()).contains(scenario.id())) {
-                    ("PASSED".equals(test.outcome()) ? passing : failing).add(test.name());
+                    if ("PASSED".equals(test.outcome())) {
+                        passing.add(test.name());
+                    } else {
+                        // Verificado en vivo (Pong, 2026-10-15): sin el paso y el motivo la corrección iba a ciegas.
+                        failing.add(test.detail() == null ? test.name() : test.name() + " (" + test.detail() + ")");
+                    }
                 }
             }
             rows.add(new Row(scenario, passing, failing));
@@ -67,7 +72,7 @@ public final class ScenarioCoverage {
             var slash = step.name() == null ? -1 : step.name().lastIndexOf('/');
             var component = slash < 0 ? "" : "[" + step.name().substring(0, slash) + "] ";
             return step.tests().stream().map(t -> component.isEmpty() ? t
-                    : new SandboxResult.TestCase(component + t.name(), t.outcome()));
+                    : new SandboxResult.TestCase(component + t.name(), t.outcome(), t.detail()));
         }).toList();
     }
 

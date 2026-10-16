@@ -116,8 +116,11 @@ public class VerifyJobRunner {
         var counts = "test".equals(step.name())
                 ? TestReportParser.parse(jobDir) : new TestReportParser.TestCounts(0, 0);
 
+        // Verificado en vivo (Pong, 2026-10-15): el paso y el motivo de cada partida fallida van al final de la salida,
+        // que es lo que la corrección le muestra al equipo.
+        var output = (execution.output() == null ? "" : execution.output()) + TestReportParser.failureDetails(counts.tests());
         return new SandboxResult.StepResult(step.name(), status, execution.exitCode(), duration,
-                tail(execution.output(), OUTPUT_TAIL_CHARS), counts.passed(), counts.failed(), counts.tests());
+                tail(output, OUTPUT_TAIL_CHARS), counts.passed(), counts.failed(), counts.tests());
     }
 
     static String tail(String output, int maxChars) {
