@@ -98,4 +98,19 @@ class InteractionDesignWriterTest {
         verify(ceo).writeAppDesign(anyString(), argThat(p -> !p.contains("DISEÑO ANTERIOR") && !p.contains("PLAYING")
                 && p.contains("más simple")), anyString(), anyString());
     }
+
+    @Test void theGamePromptListsTheLevelsAndScenesOfTheContract() {
+        var spec = new RequirementsSpec("Pong", List.of(), List.of(), List.of(new RequirementsSpec.Role("jugador", "d")),
+                List.of(new RequirementsSpec.UserStory("HU-01", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-01"),
+                        new RequirementsSpec.UserStory("HU-02", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-02")),
+                List.of(new RequirementsSpec.Increment(1, "N1", List.of("HU-01")),
+                        new RequirementsSpec.Increment(2, "Fin", List.of("HU-02"))), "GAME",
+                List.of(new com.aicompany.core.agent.model.ClientContract.Item("MOD-01", "LEVEL", "Nivel 1", "x"),
+                        new com.aicompany.core.agent.model.ClientContract.Item("MOD-02", "SCENE", "Game over", "x")), true);
+        when(ceo.writeGameDesign(anyString(), anyString(), anyString(), anyString()))
+                .thenThrow(new IllegalStateException("x"));
+        assertThrows(IllegalStateException.class, () -> writer.write("M-1", spec, 1, Optional.empty(), null));
+        verify(ceo, atLeastOnce()).writeGameDesign(anyString(), argThat(p -> p.contains("- MOD-01 [LEVEL] Nivel 1: x")
+                && p.contains("- MOD-02 [SCENE] Game over: x")), anyString(), anyString());
+    }
 }

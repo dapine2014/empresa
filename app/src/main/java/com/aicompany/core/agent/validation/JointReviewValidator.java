@@ -48,7 +48,7 @@ public final class JointReviewValidator {
                 errors.add(c.id() + " está repetida.");
             }
             if (c.requirementRefs().isEmpty()) {
-                errors.add(label + ": requirementRefs necesita al menos una HU-NN o ESC-NN.");
+                errors.add(label + ": requirementRefs necesita al menos una HU-NN, ESC-NN o MOD-NN.");
             }
             for (var ref : c.requirementRefs()) {
                 if (ref == null) {
@@ -128,6 +128,9 @@ public final class JointReviewValidator {
                 if (s.id() != null) ids.add(s.id());
             });
         }
+        spec.gameLevels().forEach(l -> {
+            if (l.id() != null) ids.add(l.id());
+        });
         return ids;
     }
 
@@ -144,6 +147,12 @@ public final class JointReviewValidator {
             });
             design.game().entities().forEach(e -> {
                 if (e.id() != null) ids.add(e.id());
+            });
+            design.game().scenes().forEach(s -> {
+                if (s.id() != null) ids.add(s.id());
+            });
+            design.game().levels().forEach(l -> {
+                if (l.item() != null) ids.add(l.item());
             });
         }
         return ids;

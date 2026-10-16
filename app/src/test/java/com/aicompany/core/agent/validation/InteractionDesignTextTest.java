@@ -60,4 +60,23 @@ class InteractionDesignTextTest {
         assertTrue(block.contains("No uses GetTree().Quit(), ChangeSceneToFile ni ReloadCurrentScene"), block);
         assertTrue(block.contains("como propiedades públicas, el estado que se verifica"), block);
     }
+
+    // Juegos por niveles (spec 2026-10-16 contrato §3-§4): Kael, Iris y Vera ven las escenas y los niveles del incremento.
+    @Test void theGameBlockListsTheScenesAndTheLevelsOfTheIncrement() {
+        var design = new InteractionDesign("GAME", null, GameScenesTest.GAME);
+        var block = InteractionDesignText.incrementBlock(design, GameScenesTest.SPEC, 1);
+        assertTrue(block.contains("Escenas (Forjai ya creó cada game/<script>.tscn con el script en el nodo raíz; no las escribas):"), block);
+        assertTrue(block.contains("- ESCENA-01 Cancha → game/Main.tscn + game/Main.cs (clase Main, escena principal)"), block);
+        assertFalse(block.contains("ESCENA-02 Fin"), block);
+        assertTrue(block.contains("- MOD-01 en ESCENA-01: {} — pasa al siguiente con REGLA-01"), block);
+        assertTrue(block.contains("public partial class <script> : Node2D"), block);
+        assertTrue(block.contains("public int Level { get; }"), block);
+        assertTrue(block.contains("run/main_scene=\"res://Main.tscn\""), block);
+    }
+
+    @Test void theSummaryShowsScenesAndLevels() {
+        var summary = InteractionDesignText.summary(new InteractionDesign("GAME", null, GameScenesTest.GAME));
+        assertTrue(summary.contains("Escenas: ESCENA-01 Cancha (Main), ESCENA-02 Fin (GameOver), ESCENA-03 Créditos (Credits)"), summary);
+        assertTrue(summary.contains("Niveles: MOD-01 en ESCENA-01 {} → REGLA-01; MOD-02 en ESCENA-02 {}"), summary);
+    }
 }

@@ -130,4 +130,11 @@ public class JointReviewValidatorTest {
         var errors = String.join("\n", JointReviewValidator.validateDetection(d, SPEC, GAME));
         assertTrue(errors.contains("designRefs tiene un elemento vacío"), errors);
     }
+
+    // Juegos por niveles: MOD-NN es referencia de requisitos; ESCENA-NN y MOD-NN del diseño, de diseño.
+    @Test void levelsAndScenesAreValidReferences() {
+        var design = new InteractionDesign("GAME", null, GameScenesTest.GAME);
+        assertTrue(JointReviewValidator.requirementIds(GameScenesTest.SPEC).contains("MOD-02"));
+        assertTrue(JointReviewValidator.designIds(design).containsAll(List.of("ESCENA-01", "MOD-01")));
+    }
 }

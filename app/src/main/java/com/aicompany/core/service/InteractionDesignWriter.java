@@ -149,15 +149,25 @@ public class InteractionDesignWriter {
                 - win/lose: ids de reglas. difficulty: escalado con números.
                 - scenarioRules: CADA escenario ESC-NN → la REGLA-NN o la action que lo cumple.
                 - balanceHypotheses: hipótesis de balance (no afirmes que algo es divertido).
+                - Si hay NIVELES Y ESCENAS DEL CONTRATO (arriba): scenes ESCENA-01, ESCENA-02… (máximo 8) con name,
+                  script (nombre de la clase C# y de sus archivos: empieza en mayúscula, sin espacios, p. ej. Main, Menu;
+                  nunca Playthrough ni PlaythroughRunner) y purpose; ESCENA-01 es la escena principal. levels: uno por
+                  cada MOD-NN de esa lista con item (el MOD-NN), la escena donde ocurre (scene), sus parameters numéricos (p. ej.
+                  velocidad_pelota=200, pelotas=1, puntaje_meta=50) y advanceRule (la REGLA-NN que pasa al siguiente
+                  nivel; vacía en el último LEVEL y en las SCENE).
                 Responde SOLO este JSON: {"states":["START"],"transitions":[{"from":"START","to":"PLAYING","trigger":"..."}],
                  "entities":[{"id":"...","name":"...","properties":[{"name":"...","value":1}]}],
                  "controls":[{"action":"move_left","key":"Left","effect":"..."}],
                  "rules":[{"id":"REGLA-01","condition":"...","effect":"..."}],"win":[],"lose":["REGLA-02"],
                  "difficulty":[{"name":"...","value":1.1}],"scenarioRules":[{"scenario":"ESC-01","target":"REGLA-01"}],
-                 "balanceHypotheses":["..."]}
+                 "balanceHypotheses":["..."],
+                 "scenes":[{"id":"ESCENA-01","name":"...","script":"Main","purpose":"..."}],"levels":[{"item":"MOD-01","scene":"ESCENA-01","parameters":[{"name":"...","value":1}],"advanceRule":"REGLA-03"}]}
                 """;
+        var levels = spec.gameLevels().isEmpty() ? "" : "\nNIVELES Y ESCENAS DEL CONTRATO (cada uno lleva su entrada en levels):\n"
+                + spec.gameLevels().stream().map(i -> "- " + i.id() + " [" + i.kind() + "] " + i.name() + ": " + i.description())
+                .collect(Collectors.joining("\n")) + "\n";
         var base = "Eres Kael, Interactive Logic & Product Designer del Development Group de Forjai.\n\n"
-                + "HISTORIAS DE USUARIO DE ARIA (todas las del producto):\n" + allStories + "\n" + rules;
+                + "HISTORIAS DE USUARIO DE ARIA (todas las del producto):\n" + allStories + levels + "\n" + rules;
         if (previous.isEmpty()) {
             return adjustment == null || adjustment.isBlank() ? base : base + "\nAJUSTE DEL FUNDADOR:\n" + adjustment;
         }

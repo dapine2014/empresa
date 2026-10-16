@@ -52,8 +52,8 @@ public class JointReviewWriter {
                 cumplir un escenario (p. ej. el game over por un borde donde no está la paleta); y, en un juego, una
                 regla de colisión o rebote sin condición de dirección (la pelota invierte cada frame y se queda pegada).
                 NO es contradicción: estilo, nombres o preferencias.
-                Para cada una: id CONTRA-01, CONTRA-02… en orden; requirementRefs (HU-NN/ESC-NN) y designRefs (ids del
-                diseño: PANT-NN en apps; REGLA-NN o el id de una entidad en juegos); qué dice cada lado; y tu propuesta:
+                Para cada una: id CONTRA-01, CONTRA-02… en orden; requirementRefs (HU-NN/ESC-NN/MOD-NN) y designRefs (ids del
+                diseño: PANT-NN en apps; REGLA-NN, ESCENA-NN, MOD-NN o el id de una entidad en juegos); qué dice cada lado; y tu propuesta:
                 side DESIGN (cambiar el diseño) o REQUIREMENTS (cambiar las HU) y el cambio concreto (con números).
                 Máximo 10. Si no hay ninguna, responde {"contradictions": []}.
                 """ + founder(founderAdjustments);

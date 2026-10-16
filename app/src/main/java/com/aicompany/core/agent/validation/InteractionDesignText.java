@@ -1,5 +1,6 @@
 package com.aicompany.core.agent.validation;
 
+import com.aicompany.core.agent.model.ClientContract;
 import com.aicompany.core.agent.model.InteractionDesign;
 import com.aicompany.core.agent.model.RequirementsSpec;
 
@@ -69,6 +70,28 @@ public final class InteractionDesignText {
         targets.forEach((scenario, target) -> (scenarios.contains(scenario) ? ownTargets : otherTargets).add(target));
         var winLose = new HashSet<String>(nn(game.win()));
         winLose.addAll(nn(game.lose()));
+        var sceneBlock = "";
+        if (!nn(game.scenes()).isEmpty()) {
+            var scenes = GameScenes.upTo(game, spec, increment);
+            var levels = spec.gameLevelsOf(increment).stream().map(ClientContract.Item::id).toList();
+            var main = GameScenes.main(game).map(InteractionDesign.Scene::script).orElse("Main");
+            sceneBlock = """
+                    Escenas (Forjai ya creó cada game/<script>.tscn con el script en el nodo raíz; no las escribas):
+                    %s
+                    Niveles de este incremento (parámetros y regla para pasar al siguiente):
+                    %s
+                    Cada escena es public partial class <script> : Node2D en game/<script>.cs y crea por código, en _Ready, TODOS los nodos que usa (AddChild): la .tscn no tiene hijos, nunca los esperes ni uses GetNode de hijos de la escena.
+                    Las escenas con niveles exponen public int Level { get; } y public void StartLevel(int level) (StartLevel deja el nivel listo para jugar; las partidas simuladas lo usan para arrancar directo en un nivel).
+                    game/project.godot declara run/main_scene="res://%s.tscn" (ESCENA-01).
+                    """.formatted(
+                    scenes.stream().map(s -> "- " + s.id() + " " + s.name() + " → " + GameScenes.scenePath(s.script())
+                                    + " + " + GameScenes.scriptPath(s.script()) + " (clase " + s.script()
+                                    + (GameScenes.MAIN.equals(s.id()) ? ", escena principal" : "") + "): " + s.purpose())
+                            .collect(Collectors.joining("\n")),
+                    nn(game.levels()).stream().filter(l -> levels.contains(l.item())).map(InteractionDesignText::level)
+                            .collect(Collectors.joining("\n")),
+                    main);
+        }
         return """
                 DISEÑO DE JUEGO APROBADO (Kael): INCREMENTO %d
                 Estados: %s
@@ -99,7 +122,13 @@ public final class InteractionDesignText {
                         .collect(Collectors.joining("\n")),
                 String.join(", ", nn(game.win())), String.join(", ", nn(game.lose())),
                 nn(game.difficulty()).stream().map(p -> p.name() + "=" + num(p.value())).collect(Collectors.joining(", ")),
-                scenarios.stream().map(id -> id + "→" + targets.get(id)).collect(Collectors.joining(", ")));
+                scenarios.stream().map(id -> id + "→" + targets.get(id)).collect(Collectors.joining(", "))) + sceneBlock;
+    }
+
+    private static String level(InteractionDesign.LevelDesign l) {
+        var rule = l.advanceRule() == null || l.advanceRule().isBlank() ? "" : " — pasa al siguiente con " + l.advanceRule().strip();
+        return "- " + l.item() + " en " + l.scene() + ": " + nn(l.parameters()).stream()
+                .map(p -> p.name() + "=" + num(p.value())).collect(Collectors.joining(", ", "{", "}")) + rule;
     }
 
     public static String summary(InteractionDesign design) {
@@ -110,11 +139,18 @@ public final class InteractionDesignText {
                     + ". Riesgos (hipótesis): " + String.join("; ", nn(design.app().frictionRisks())) + ".";
         }
         var g = design.game();
+        var scenes = nn(g.scenes()).isEmpty() ? "" : " Escenas: " + nn(g.scenes()).stream()
+                .map(s -> s.id() + " " + s.name() + " (" + s.script() + ")").collect(Collectors.joining(", "))
+                + ". Niveles: " + nn(g.levels()).stream().map(l -> l.item() + " en " + l.scene() + " "
+                        + nn(l.parameters()).stream().map(p -> p.name() + "=" + num(p.value()))
+                        .collect(Collectors.joining(", ", "{", "}"))
+                        + (l.advanceRule() == null || l.advanceRule().isBlank() ? "" : " → " + l.advanceRule().strip()))
+                .collect(Collectors.joining("; ")) + ".";
         return "Loop: " + String.join("→", nn(g.states())) + ". Controles: " + nn(g.controls()).stream()
                 .map(c -> c.action() + " [" + c.key() + "]").collect(Collectors.joining(", ")) + ". Reglas: "
                 + nn(g.rules()).stream().map(r -> r.id() + " " + r.effect()).collect(Collectors.joining("; "))
                 + ". Pierde: " + String.join(", ", nn(g.lose())) + ". Balance (hipótesis): "
-                + String.join("; ", nn(g.balanceHypotheses())) + ".";
+                + String.join("; ", nn(g.balanceHypotheses())) + "." + scenes;
     }
 
     /** Los modelos pueden dejar elementos nulos en las listas: se omiten. */
