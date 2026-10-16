@@ -927,6 +927,7 @@ class MissionExecutorTeamTest {
         when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
         var review = mock(JointReviewService.class);
         executor.setJointReview(review);
+        when(review.enabled()).thenReturn(true);
         when(review.review(eq("M-9"), any(), anyInt(), any(), eq(1), eq(1))).thenReturn(new JointReviewService.Outcome(
                 "RESOLVED", List.of(), List.of(), null, JointReviewService.PREFIX + "\n- CONTRA-01 (HU-01 ↔ REGLA-01): usar 800", ""));
         when(review.review(eq("M-9"), any(), anyInt(), any(), eq(2), eq(2))).thenReturn(new JointReviewService.Outcome(
@@ -946,6 +947,26 @@ class MissionExecutorTeamTest {
                 contains("Neo y Aria resolvieron 1 contradicción"));
         verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
                 contains("Kael diseñó el juego (versión 2)"));
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.PLANNING), anyInt(), eq("Revisión conjunta (Neo + Aria)"),
+                contains("ronda 1"));
+    }
+
+    // Ruling del controlador: con la policy en 0 no hay paso visible de revisión, pero el SKIPPED se registra (una llamada).
+    @Test
+    void withTheReviewOffThereIsNoReviewStepButItIsRecorded() throws Exception {
+        withKael();
+        when(companyPolicyService.activeValue(PolicyKey.SPEC_APPROVAL_REQUIRED)).thenReturn(1.0);
+        var review = mock(JointReviewService.class);
+        executor.setJointReview(review);
+        when(review.enabled()).thenReturn(false);
+        when(review.review(any(), any(), anyInt(), any(), anyInt(), anyInt())).thenReturn(new JointReviewService.Outcome(
+                "SKIPPED", List.of(), List.of(), null, null, "La revisión conjunta está apagada (policy)."));
+        when(review.founderNote(anyList())).thenReturn("");
+        executor.executeAsync("M-9", "Un CRM").get();
+        verify(review, times(1)).review(eq("M-9"), eq(GAME_SPEC), eq(1), eq(DESIGN), eq(1), eq(1));
+        verify(memory, never()).updateMission(any(), any(), anyInt(), eq("Revisión conjunta (Neo + Aria)"), anyString());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.AWAITING_SPEC_APPROVAL), anyInt(), anyString(),
+                contains("Kael diseñó el juego (versión 1)"));
     }
 
     // Revisión conjunta (spec 2026-10-15): una decisión sobre las HU hace que Aria reescriba y Kael rediseñe encima.

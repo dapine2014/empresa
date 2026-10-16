@@ -468,7 +468,10 @@ public class MissionRecoveryService {
             if (designForLatest && jointReview != null && jointReviews != null && jointReview.enabled()) {
                 var specVersion = latest.orElseThrow().version();
                 var designVersion = latestDesign.orElseThrow().version();
-                jointReviewPending = jointReviews.closedFor(missionId, specVersion, designVersion).isEmpty();
+                // Una RESOLVED no cierra el par: si el reinicio cortó entre la ronda RESOLVED y la versión nueva de
+                // Aria/Kael, la decisión aún no se aplicó y la revisión de ese par se repite completa.
+                jointReviewPending = jointReviews.closedFor(missionId, specVersion, designVersion)
+                        .filter(r -> !"RESOLVED".equals(r.status())).isEmpty();
             }
         }
         return new MissionSnapshot(missionId, mission.teamId(), round, increment, correction,

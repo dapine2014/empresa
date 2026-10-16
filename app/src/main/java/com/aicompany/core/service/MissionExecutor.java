@@ -305,8 +305,11 @@ public class MissionExecutor {
         }
         var outcomes = new java.util.ArrayList<JointReviewService.Outcome>();
         for (int round = 1; round <= JointReviewService.ROUNDS; round++) {
-            advanceMission(missionId, MissionStatus.PLANNING, 7, "Revisión conjunta (Neo + Aria)",
-                    "Neo y Aria revisan que las HU y el diseño no se contradigan (ronda " + round + ").");
+            // Con la policy en 0 el flujo es el de hoy (sin paso visible); review() igual registra el SKIPPED.
+            if (jointReview.enabled()) {
+                advanceMission(missionId, MissionStatus.PLANNING, 7, "Revisión conjunta (Neo + Aria)",
+                        "Neo y Aria revisan que las HU y el diseño no se contradigan (ronda " + round + ").");
+            }
             var outcome = jointReview.review(missionId, written.spec(), written.version(), designed.design(),
                     designed.version(), round);
             outcomes.add(outcome);
