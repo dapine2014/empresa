@@ -26,6 +26,9 @@ public final class GameRunnerFiles {
                 /// <param name="main">La instancia nueva de la escena principal (run/main_scene), ya en el árbol.</param>
                 public abstract IEnumerable<Step> Steps(Node main);
 
+                /// <summary>La escena que carga la partida (el script de una escena del diseño); null = la principal.</summary>
+                public virtual string? Scene => null;
+
                 /// <summary>Mantiene apretada la acción de input durante frames (a 60 fps fijos).</summary>
                 protected static Step Press(string action, int frames) => new(StepKind.Press, action, frames, null, null);
 
@@ -33,11 +36,15 @@ public final class GameRunnerFiles {
 
                 protected static Step Assert(Func<bool> check, string description) =>
                     new(StepKind.Assert, null, 0, check, description);
+
+                /// <summary>Prepara el estado antes de jugar, p. ej. Do(main => ((Main)main).StartLevel(2)).</summary>
+                protected static Step Do(Action<Node> prepare) => new(StepKind.Do, null, 0, null, "preparar", prepare);
             }
 
-            public enum StepKind { Press, Wait, Assert }
+            public enum StepKind { Press, Wait, Assert, Do }
 
-            public sealed record Step(StepKind Kind, string? Action, int Frames, Func<bool>? Check, string? Description);
+            public sealed record Step(StepKind Kind, string? Action, int Frames, Func<bool>? Check, string? Description,
+                Action<Node>? Prepare = null);
             """;
 
     static final String RUNNER = """
@@ -84,14 +91,19 @@ public final class GameRunnerFiles {
                     var frames = 0;
                     try
                     {
+                        var playthrough = (Playthrough)Activator.CreateInstance(type)!;
+                        var scenePath = playthrough.Scene == null ? mainPath : "res://" + playthrough.Scene + ".tscn";
+                        if (!ResourceLoader.Exists(scenePath))
+                        {
+                            return Fail(type, 0, "la escena " + scenePath + " no existe");
+                        }
                         // Cada partida arranca de la misma semilla, sin depender de las partidas anteriores.
                         GD.Seed(0);
-                        main = GD.Load<PackedScene>(mainPath).Instantiate();
-                        // Como en el juego real: la escena principal cuelga de la raíz y es la escena actual.
+                        main = GD.Load<PackedScene>(scenePath).Instantiate();
+                        // Como en el juego real: la escena cuelga de la raíz y es la escena actual.
                         GetTree().Root.AddChild(main);
                         GetTree().CurrentScene = main;
                         await NextFrame();
-                        var playthrough = (Playthrough)Activator.CreateInstance(type)!;
                         foreach (var s in playthrough.Steps(main))
                         {
                             step++;
@@ -108,6 +120,9 @@ public final class GameRunnerFiles {
                                     break;
                                 case StepKind.Wait:
                                     for (var i = 0; i < s.Frames; i++, frames++) await NextFrame();
+                                    break;
+                                case StepKind.Do:
+                                    s.Prepare!(main);
                                     break;
                                 case StepKind.Assert:
                                     if (!s.Check!())

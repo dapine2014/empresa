@@ -29,4 +29,21 @@ class GameRunnerFilesTest {
         assertTrue(GameRunnerFiles.RUNNER.contains("\"la acción \\\"\" + s.Action + \"\\\" no está en [input]"),
                 GameRunnerFiles.RUNNER);
     }
+
+    // Juegos por niveles (spec 2026-10-16 contrato §4): una partida puede cargar otra escena y preparar el nivel.
+    @Test void aPlaythroughCanChooseItsSceneAndPrepareTheLevel() {
+        var p = GameRunnerFiles.PLAYTHROUGH;
+        assertTrue(p.contains("public virtual string? Scene => null;"), p);
+        assertTrue(p.contains("protected static Step Do(Action<Node> prepare) => new(StepKind.Do, null, 0, null, \"preparar\", prepare);"), p);
+        assertTrue(p.contains("public enum StepKind { Press, Wait, Assert, Do }"), p);
+        assertTrue(p.contains("Action<Node>? Prepare = null"), p);
+        var run = GameRunnerFiles.RUNNER.substring(GameRunnerFiles.RUNNER.indexOf("private async Task<Result> Run("));
+        assertTrue(run.contains("var scenePath = playthrough.Scene == null ? mainPath : \"res://\" + playthrough.Scene + \".tscn\";"), run);
+        assertTrue(run.contains("ResourceLoader.Exists(scenePath)"), run);
+        assertTrue(run.contains("case StepKind.Do:"), run);
+        assertTrue(run.contains("s.Prepare!(main);"), run);
+        // La instancia de la partida se crea antes de cargar la escena (decide cuál).
+        assertTrue(run.indexOf("Activator.CreateInstance(type)") < run.indexOf("GD.Load<PackedScene>(scenePath)"), run);
+        assertTrue(run.indexOf("GD.Seed(0);") < run.indexOf("GD.Load<PackedScene>(scenePath)"), run);
+    }
 }
