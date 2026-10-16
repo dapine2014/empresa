@@ -98,6 +98,8 @@ remote-models:
   read-timeout: ${REMOTE_MODELS_READ_TIMEOUT:10m}
   # Plazo total por llamada (verificado en vivo 2026-10-03: una llamada quedó colgada 5 h con el read-timeout).
   total-timeout: ${REMOTE_MODELS_TOTAL_TIMEOUT:12m}
+  # Ping de salud y chequeo rápido de la cadena de modelos gratis (decisión del fundador 2026-10-15: 60 s, antes 20 s).
+  probe-timeout: ${REMOTE_MODELS_PROBE_TIMEOUT:60s}
   providers:
     nvidia:
       api-key: ${NVIDIA_API_KEY:}

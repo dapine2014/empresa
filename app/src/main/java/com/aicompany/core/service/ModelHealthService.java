@@ -161,6 +161,13 @@ public class ModelHealthService {
     // ---- Cadena de modelos gratis (decisión del fundador 2026-10-15). ----
 
     private FreeModelChainService freeChain;
+    private java.time.Duration probeTimeout = java.time.Duration.ofSeconds(60);
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setProbeTimeout(@org.springframework.beans.factory.annotation.Value("${remote-models.probe-timeout:60s}")
+                                java.time.Duration probeTimeout) {
+        this.probeTimeout = probeTimeout;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setFreeModelChain(FreeModelChainService freeChain) {
@@ -168,7 +175,7 @@ public class ModelHealthService {
     }
 
     /**
-     * "Validar primero": cada 60 s un ping corto (20 s) a cada modelo de la cadena que no esté caído. Así un gratis
+     * "Validar primero": cada 60 s un ping corto (remote-models.probe-timeout, 60 s) a cada modelo de la cadena que no esté caído. Así un gratis
      * saturado queda DOWN (2 fallos) antes de que una misión lo espere minutos; la vuelta la detecta probeDownModels.
      */
     @Scheduled(fixedDelay = 60_000, initialDelay = 45_000)
@@ -188,7 +195,7 @@ public class ModelHealthService {
             if (client.ping(remote.model())) {
                 recordSuccess(model);
             } else {
-                recordFailure(model, "no respondió el chequeo rápido (20 s)");
+                recordFailure(model, "no respondió el chequeo rápido (" + probeTimeout.toSeconds() + " s)");
             }
         }
     }

@@ -51,7 +51,8 @@ public class CoreConfig {
             org.springframework.core.env.Environment env,
             @Value("${remote-models.base-url:https://integrate.api.nvidia.com/v1}") String baseUrl,
             @Value("${remote-models.read-timeout:10m}") java.time.Duration readTimeout,
-            @Value("${remote-models.total-timeout:12m}") java.time.Duration totalTimeout) {
+            @Value("${remote-models.total-timeout:12m}") java.time.Duration totalTimeout,
+            @Value("${remote-models.probe-timeout:60s}") java.time.Duration probeTimeout) {
         var clients = new java.util.LinkedHashMap<String, com.aicompany.core.service.OpenAiCompatibleClient>();
         for (var provider : RemoteProviders.from(env, baseUrl)) {
             // Verificado en vivo (2026-10-03, llamada colgada 5 h): cliente HTTP del JDK, que aborta el envío cuando
@@ -59,10 +60,11 @@ public class CoreConfig {
             var factory = new org.springframework.http.client.JdkClientHttpRequestFactory(java.net.http.HttpClient
                     .newBuilder().connectTimeout(java.time.Duration.ofSeconds(15)).build());
             factory.setReadTimeout(readTimeout);
-            // Spec salud de modelos (2026-09-28): el ping de un modelo caído usa un timeout corto, no el de 10 minutos.
+            // Spec salud de modelos (2026-09-28): el ping usa un timeout corto, no el de 10 minutos. Decisión del fundador
+            // (2026-10-15): 60 s; con 20 s el chequeo descartaba a deepseek, que respondía llamadas reales en ~50 s.
             var probeFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
             probeFactory.setConnectTimeout(java.time.Duration.ofSeconds(10));
-            probeFactory.setReadTimeout(java.time.Duration.ofSeconds(20));
+            probeFactory.setReadTimeout(probeTimeout);
             var client = new com.aicompany.core.service.OpenAiCompatibleClient(
                     RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(factory).build(),
                     RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(probeFactory).build(),
