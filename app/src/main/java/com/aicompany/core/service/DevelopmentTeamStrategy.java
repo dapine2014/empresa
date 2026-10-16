@@ -189,6 +189,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var packagesByTask = new LinkedHashMap<PlannedTask, List<DevelopmentResult.PackageRequest>>();
         // Spec 2026-10-02 B1: archivos que escribe Java fuera del scaffold (api_routes.dart).
         var forjaiFiles = new ArrayList<String>();
+        // Juegos por niveles (spec 2026-10-16 contrato §4): las escenas del incremento, antes de que genere nadie.
+        var scenes = commitSceneSkeletons(context, generationHead);
+        if (scenes != null) {
+            committed.add(scenes);
+            generationHead = scenes.commitSha();
+        }
+        forjaiFiles.addAll(sceneSkeletonPaths(context));
 
         var routesCommitted = false;
         var appComponent = fullstackApp(plan);
@@ -1577,6 +1584,72 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setInteractionDesign(InteractionDesignMemoryService designs) {
         this.designs = designs;
+    }
+
+    /**
+     * Juegos por niveles (spec 2026-10-16 contrato §4): spec y diseño de juego aprobados con escenas. Vacío sin ellos (apps,
+     * juegos anteriores) o si no se pueden leer: en ese caso rigen las reglas de antes, como en {@link #scenarios}.
+     */
+    java.util.Optional<com.aicompany.core.agent.validation.GameScenes.Approved> approvedGameScenes(String missionId) {
+        if (designs == null || requirementsMemory == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var design = designs.approved(missionId);
+            var spec = requirementsMemory.approved(missionId);
+            if (design == null || design.isEmpty() || spec == null || spec.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            var game = jsonMapper.readValue(design.get().designJson(),
+                    com.aicompany.core.agent.model.InteractionDesign.class).game();
+            if (game == null || game.scenes().isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            return java.util.Optional.of(new com.aicompany.core.agent.validation.GameScenes.Approved(
+                    jsonMapper.readValue(spec.get().specJson(), com.aicompany.core.agent.model.RequirementsSpec.class),
+                    game, Math.max(1, requirementsMemory.currentIncrement(missionId))));
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the approved game scenes: {}", missionId, safeMessage(ex, "sin detalle"));
+            return java.util.Optional.empty();
+        }
+    }
+
+    /** Las escenas de los incrementos 1..N con el prefijo del componente del juego. */
+    private List<DevelopmentResult.GeneratedFile> sceneSkeletons(TeamMissionContext context) {
+        var component = context.plan().resolvedComponents().stream()
+                .filter(c -> c.profile() == StackProfile.GODOT_DOTNET_GAME).findFirst();
+        if (component.isEmpty()) {
+            return List.of();
+        }
+        return approvedGameScenes(context.missionId())
+                .map(a -> com.aicompany.core.agent.validation.GameScenes.upTo(a.game(), a.spec(), a.increment()))
+                .orElse(List.of()).stream()
+                .map(s -> com.aicompany.core.model.GameSceneFiles.skeleton(s.script()))
+                .map(f -> new DevelopmentResult.GeneratedFile(component.get().prefix(f.path()), f.content()))
+                .toList();
+    }
+
+    List<String> sceneSkeletonPaths(TeamMissionContext context) {
+        return sceneSkeletons(context).stream().map(DevelopmentResult.GeneratedFile::path).toList();
+    }
+
+    /** Commitea las escenas que faltan en el HEAD (nunca pisa una existente); null si no hay nada que commitear. */
+    private CommittedWork commitSceneSkeletons(TeamMissionContext context, String headSha) {
+        var skeletons = sceneSkeletons(context);
+        var missing = skeletons.stream()
+                .filter(f -> headSha == null || readOrNull(context.missionId(), headSha, f.path()) == null).toList();
+        if (missing.isEmpty()) {
+            return null;
+        }
+        var id = context.missionId() + "-SCENES" + (context.round() > 0 ? "-R" + context.round() : "");
+        try {
+            var record = workspace.commitAgentWork(context.missionId(), id, "forjai", "Forjai",
+                    new DevelopmentResult("Escenas de Godot generadas por Forjai (script en el nodo raíz)", missing));
+            return new CommittedWork(id, "forjai", record.sha(), record.files());
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudieron generar las escenas del juego: "
+                    + safeMessage(ex, "error de Git"), ex);
+        }
     }
 
     /** Spec 2026-10-14 Kael §1.4: con diseño aprobado, el chequeo DESIGN_CONFORMANCE junto a la cobertura. */

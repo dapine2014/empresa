@@ -2,7 +2,10 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.DevelopmentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.agent.model.ClientContract;
 import com.aicompany.core.agent.model.DevelopmentResult;
+import com.aicompany.core.agent.model.InteractionDesign;
+import com.aicompany.core.agent.model.RequirementsSpec;
 import com.aicompany.core.agent.model.DevelopmentResult.GeneratedFile;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
@@ -2118,5 +2121,68 @@ class DevelopmentTeamStrategyTest {
         var rule = DevelopmentTeamStrategy.qaScenarioRule(
                 List.of(new com.aicompany.core.agent.validation.ScenarioCoverage.Scenario("ESC-01", "mueve", 1)), false);
         assertFalse(rule.contains("Playthrough"), rule);
+    }
+
+    private static final RequirementsSpec LEVELED = new RequirementsSpec("Pong", List.of(), List.of(),
+            List.of(new RequirementsSpec.Role("jugador", "d")),
+            List.of(new RequirementsSpec.UserStory("HU-01", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-01"),
+                    new RequirementsSpec.UserStory("HU-02", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-02")),
+            List.of(new RequirementsSpec.Increment(1, "N1", List.of("HU-01")),
+                    new RequirementsSpec.Increment(2, "Fin", List.of("HU-02"))), "GAME",
+            List.of(new ClientContract.Item("MOD-01", "LEVEL", "Nivel 1", "x"),
+                    new ClientContract.Item("MOD-02", "SCENE", "Game over", "x")), true);
+
+    private static final InteractionDesign.GameDesign LEVELED_GAME = new InteractionDesign.GameDesign(List.of(),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            List.of(new InteractionDesign.Scene("ESCENA-01", "Cancha", "Main", "x"),
+                    new InteractionDesign.Scene("ESCENA-02", "Fin", "GameOver", "x")),
+            List.of(new InteractionDesign.LevelDesign("MOD-01", "ESCENA-01", List.of(), "REGLA-01"),
+                    new InteractionDesign.LevelDesign("MOD-02", "ESCENA-02", List.of(), "")));
+
+    private void withLeveledGame(int increment) throws Exception {
+        var mapper = JsonMapper.builder().build();
+        var requirements = mock(RequirementsMemoryService.class);
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                mapper.writeValueAsString(LEVELED), "APPROVED", "", java.time.Instant.now())));
+        when(requirements.currentIncrement("M-1")).thenReturn(increment);
+        strategy.setRequirements(requirements);
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                mapper.writeValueAsString(new InteractionDesign("GAME", null, LEVELED_GAME)), "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+    }
+
+    // Juegos por niveles (spec 2026-10-16 contrato §4): Forjai commitea la escena de cada nivel del incremento, antes de Kael.
+    @Test
+    void forjaiCommitsTheSceneSkeletonsOfTheIncrementBeforeTheAgents() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        // stubHappyPath devuelve "contenido" para cualquier ruta: la escena tiene que faltar en el HEAD.
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(null);
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var inOrder = inOrder(workspace, runtime);
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().map(GeneratedFile::path).toList().equals(List.of("game/Main.tscn"))));
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), any());
+    }
+
+    // Review Focus 2: sin escenas en el diseño (juego viejo) no hay commit de escenas.
+    @Test
+    void withoutScenesThereIsNoSceneCommit() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), anyString(), anyString(), any());
     }
 }
