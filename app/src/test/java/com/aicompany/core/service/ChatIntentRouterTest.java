@@ -2942,12 +2942,56 @@ class ChatIntentRouterTest {
     }
 
     @Test
-    void contradictionsQuestionAlsoShowsTheReviewAndSaysWhenThereIsNone() {
+    void theExplicitReviewQuestionSaysWhenThereIsNone() {
         when(missionService.jointReviews("MISSION-PONG-2")).thenReturn(List.of());
+
+        var response = router.route("muéstrame la revisión de MISSION-PONG-2");
+
+        assertTrue(response.contains("MISSION-PONG-2 no tiene revisión conjunta"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    // Revisión final (2): "contradicciones" sin revisión conjunta (p. ej. un discovery) sigue el ruteo normal (aquí, la
+    // consulta determinista del estado de la misión).
+    @Test
+    void aContradictionsQuestionWithoutJointReviewFallsThroughToTheNormalPath() {
+        when(missionService.jointReviews("MISSION-001")).thenReturn(List.of());
+        when(missionMemory.findByIds(List.of("MISSION-001"))).thenReturn(List.of(
+                new MissionResponse("MISSION-001", MissionStatus.AWAITING_INVESTOR, "TEST", 100, "x", "y", Instant.now(), null)));
+
+        var response = router.route("¿qué contradicciones encontró el CEO en MISSION-001?");
+
+        assertFalse(response.contains("no tiene revisión conjunta"), response);
+        verify(missionService, atLeastOnce()).jointReviews("MISSION-001");
+        verify(missionService, never()).decideRequirements(anyString(), any());
+    }
+
+    @Test
+    void aContradictionsQuestionWithAJointReviewShowsIt() {
+        when(missionService.jointReviews("MISSION-PONG-2")).thenReturn(List.of(new com.aicompany.core.model.JointReviewView(
+                1, 1, 1, 1, "COHERENT", List.of(), List.of(), "", "2026-10-15T20:00:00Z")));
 
         var response = router.route("¿qué contradicciones resolvieron en MISSION-PONG-2?");
 
-        assertTrue(response.contains("MISSION-PONG-2 no tiene revisión conjunta"), response);
+        assertTrue(response.contains("Revisión conjunta de MISSION-PONG-2") && response.contains("Ronda 1: COHERENT"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    // Revisión final (2): un ajuste a Aria que habla de contradicciones sigue siendo un ajuste, aunque haya revisión.
+    @Test
+    void anAriaAdjustmentAboutContradictionsIsStillAnAdjustment() {
+        var view = new RequirementsView("MISSION-9", "AWAITING_SPEC_APPROVAL", 1, "DRAFT", null, 0, 2, null, "x");
+        when(missionService.requirements("MISSION-9")).thenReturn(Optional.of(view));
+        when(missionService.decideRequirements(eq("MISSION-9"), any())).thenReturn(view);
+        when(missionService.jointReviews("MISSION-9")).thenReturn(List.of(new com.aicompany.core.model.JointReviewView(
+                1, 1, 1, 1, "UNRESOLVED", List.of(), List.of(), "", "2026-10-15T20:00:00Z")));
+
+        var response = router.route("para MISSION-9: hay contradicciones en el puntaje de MISSION-9, usa 10 puntos");
+
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST,
+                "hay contradicciones en el puntaje de MISSION-9, usa 10 puntos"));
+        assertTrue(response.contains("Le pasé el ajuste a Aria"), response);
         verifyNoInteractions(ceoService);
     }
 }

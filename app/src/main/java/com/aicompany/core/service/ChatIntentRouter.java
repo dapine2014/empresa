@@ -495,8 +495,8 @@ public class ChatIntentRouter {
         var normalized = normalize(message);
         return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
                 || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
-                || SHOW_DESIGN.matcher(normalized).find() || SHOW_REVIEW.matcher(normalized).find() || ADJUST_KAEL.matcher(message).find()
-                || requirementsAdjustment(message) != null;
+                || SHOW_DESIGN.matcher(normalized).find() || ADJUST_KAEL.matcher(message).find()
+                || requirementsAdjustment(message) != null || reviewQuery(normalized) != null;
     }
 
     /**
@@ -1161,10 +1161,15 @@ public class ChatIntentRouter {
     private static final Pattern SHOW_DESIGN = Pattern.compile(
             "(?i)^\\s*(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:el\\s+)?dise(?:n|ñ)o"
                     + "(?:\\s+(?:de\\s+kael|de\\s+interaccion|del\\s+juego|de\\s+pantallas))?\\s+de\\s+(" + MISSION_REF + ")");
-    /** Revisión conjunta (spec 2026-10-15): "muéstrame la revisión de MISSION-X", "¿qué contradicciones … MISSION-X?". */
+    /** Revisión conjunta (spec 2026-10-15): "muéstrame la revisión de MISSION-X" (responde aunque no haya revisión). */
     private static final Pattern SHOW_REVIEW = Pattern.compile(
-            "(?i)(?:\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:la\\s+)?revision(?:\\s+conjunta)?\\s+de\\s+"
-                    + "|\\bcontradicciones\\b.*?)(" + MISSION_REF + ")");
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:la\\s+)?revision(?:\\s+conjunta)?\\s+de\\s+("
+                    + MISSION_REF + ")");
+    /**
+     * Revisión conjunta: "¿qué contradicciones … MISSION-X?" se responde con la revisión solo si la misión tiene una; si
+     * no, sigue el ruteo normal (p. ej. las contradicciones del CEO en un discovery).
+     */
+    private static final Pattern REVIEW_CONTRADICTIONS = Pattern.compile("(?i)\\bcontradicciones\\b.*?(" + MISSION_REF + ")");
     private static final Pattern ADJUST_KAEL = Pattern.compile(
             "(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*,\\s*kael\\s*:\\s*(.+)$", Pattern.DOTALL);
     private static final Pattern APPROVE_STORIES = Pattern.compile(
@@ -1176,6 +1181,28 @@ public class ChatIntentRouter {
     private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos)\\b");
     private static final Pattern BUILD_INCREMENT = Pattern.compile(
             "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(" + MISSION_REF + ")");
+
+    private record ReviewQuery(String missionId, List<JointReviewView> reviews) {
+    }
+
+    /**
+     * Revisión conjunta: la consulta explícita ("muéstrame la revisión de MISSION-X") siempre; la de "contradicciones"
+     * solo si la misión tiene revisión conjunta (si no, null y el mensaje sigue a las reglas siguientes).
+     */
+    private ReviewQuery reviewQuery(String normalized) {
+        var explicit = SHOW_REVIEW.matcher(normalized);
+        if (explicit.find()) {
+            var missionId = explicit.group(1).toUpperCase(Locale.ROOT);
+            return new ReviewQuery(missionId, missionService.jointReviews(missionId));
+        }
+        var contradictions = REVIEW_CONTRADICTIONS.matcher(normalized);
+        if (contradictions.find()) {
+            var missionId = contradictions.group(1).toUpperCase(Locale.ROOT);
+            var reviews = missionService.jointReviews(missionId);
+            return reviews.isEmpty() ? null : new ReviewQuery(missionId, reviews);
+        }
+        return null;
+    }
 
     private static String formatReview(JointReviewView r) {
         var lines = new ArrayList<String>();
@@ -1208,16 +1235,6 @@ public class ChatIntentRouter {
                         RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjustKael.group(2).strip(),
                         RequirementsDecisionCommand.Target.KAEL));
                 return "Le pasé el ajuste a Kael; te aviso cuando el diseño de " + missionId + " esté listo.";
-            }
-            var showReview = SHOW_REVIEW.matcher(normalized);
-            if (showReview.find()) {
-                var missionId = showReview.group(1).toUpperCase(Locale.ROOT);
-                var reviews = missionService.jointReviews(missionId);
-                if (reviews.isEmpty()) {
-                    return missionId + " no tiene revisión conjunta de Neo y Aria.";
-                }
-                return "Revisión conjunta de " + missionId + ":\n" + reviews.stream().map(ChatIntentRouter::formatReview)
-                        .collect(Collectors.joining("\n"));
             }
             var showDesign = SHOW_DESIGN.matcher(normalized);
             if (showDesign.find()) {
@@ -1260,6 +1277,15 @@ public class ChatIntentRouter {
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjust.group(2).strip()));
                 return "Le pasé el ajuste a Aria; te aviso cuando las historias de " + missionId + " estén listas.";
+            }
+            // Revisión final (2): después de los comandos que deciden ("para MISSION-X: hay contradicciones …" es un ajuste).
+            var review = reviewQuery(normalized);
+            if (review != null) {
+                if (review.reviews().isEmpty()) {
+                    return review.missionId() + " no tiene revisión conjunta de Neo y Aria.";
+                }
+                return "Revisión conjunta de " + review.missionId() + ":\n" + review.reviews().stream()
+                        .map(ChatIntentRouter::formatReview).collect(Collectors.joining("\n"));
             }
         } catch (IllegalStateException | IllegalArgumentException ex) {
             return "No se pudo: " + ex.getMessage();
