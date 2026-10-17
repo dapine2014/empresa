@@ -49,4 +49,20 @@ class MissionEventDigestTest {
         assertEquals("", MissionEventDigest.digest(List.of(), 2));
         assertEquals("", MissionEventDigest.digest(List.of(e(0, "EMPRESA_INCREMENT_STARTED", "human", "x", 1, 3)), 2));
     }
+
+    @Test void relaunchedIncrementJoinsBothSpansAndStopsAtAnotherIncrement() {
+        var events = new ArrayList<>(List.of(
+                e(0, "EMPRESA_INCREMENT_STARTED", "human", "s", 1, 2),
+                e(1, "EMPRESA_REPAIR_REQUESTED", "Vera", "falla A: 1 en x.cs", 0, null),
+                e(2, "EMPRESA_INCREMENT_STARTED", "human", "s", 2, 2),
+                e(3, "EMPRESA_REPAIR_REQUESTED", "Vera", "falla A: 1 en x.cs", 0, null),
+                e(4, "EMPRESA_MISSION_CORRECTION_STARTED", "Forjai", "c", null, null),
+                e(5, "EMPRESA_INCREMENT_STARTED", "human", "s", 3, 3),
+                e(6, "EMPRESA_REPAIR_REQUESTED", "Iris", "del tres", 0, null)));
+        java.util.Collections.reverse(events);
+        var digest = MissionEventDigest.digest(events, 2);
+        assertTrue(digest.contains("2× falla A"), digest);
+        assertTrue(digest.contains("Rondas de corrección: 1"), digest);
+        assertFalse(digest.contains("null") || digest.contains("Iris"), digest);
+    }
 }

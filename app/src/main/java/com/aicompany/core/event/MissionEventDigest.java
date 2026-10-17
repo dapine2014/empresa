@@ -19,8 +19,10 @@ public final class MissionEventDigest {
     }
 
     public static String digest(List<MissionEventView> newestFirst, int increment) {
-        var ordered = newestFirst.stream().sorted(Comparator.comparing(MissionEventView::at)).toList();
-        // El tramo va del INCREMENT_STARTED de N hasta el siguiente; el 1 sin inicio propio cuenta desde el principio.
+        var ordered = newestFirst.stream()
+                .sorted(Comparator.comparing(MissionEventView::at, Comparator.nullsFirst(Comparator.naturalOrder()))).toList();
+        // El tramo de N va del PRIMER INCREMENT_STARTED de N hasta el primer inicio de un N distinto (los relanzamientos
+        // del mismo N se juntan); el 1 sin inicio propio cuenta desde el principio.
         int from = -1;
         for (int i = 0; i < ordered.size(); i++) {
             if (isStart(ordered.get(i)) && Integer.valueOf(increment).equals(ordered.get(i).increment())) {
@@ -35,17 +37,26 @@ public final class MissionEventDigest {
             from = 0;
         }
         var span = new ArrayList<MissionEventView>();
-        for (int i = from; i < ordered.size() && !isStart(ordered.get(i)); i++) {
-            span.add(ordered.get(i));
+        for (int i = from; i < ordered.size(); i++) {
+            var e = ordered.get(i);
+            if (isStart(e)) {
+                if (!Integer.valueOf(increment).equals(e.increment())) {
+                    break;
+                }
+                continue;
+            }
+            span.add(e);
         }
         if (span.isEmpty()) {
             return "";
         }
         var lines = new ArrayList<String>();
-        var rounds = span.stream().filter(e -> type(e, "MISSION_CORRECTION_STARTED")).map(MissionEventView::round)
+        var roundEvents = span.stream().filter(e -> type(e, "MISSION_CORRECTION_STARTED")).toList();
+        var rounds = roundEvents.stream().map(MissionEventView::round).filter(java.util.Objects::nonNull)
                 .map(String::valueOf).toList();
-        lines.add("Rondas de corrección: " + rounds.size() + (rounds.isEmpty() ? "" : " (" + String.join(", ", rounds) + ")"));
-        span.stream().filter(e -> type(e, "SANDBOX_VERIFICATION_COMPLETED")).reduce((a, b) -> b)
+        rounds = rounds.subList(Math.max(0, rounds.size() - 10), rounds.size());
+        lines.add("Rondas de corrección: " + roundEvents.size() + (rounds.isEmpty() ? "" : " (" + String.join(", ", rounds) + ")"));
+        span.stream().filter(e -> type(e, "SANDBOX_VERIFICATION_COMPLETED")).filter(e -> e.summary() != null).reduce((a, b) -> b)
                 .ifPresent(e -> lines.add("Resultado final: " + e.summary()));
         var byFingerprint = new LinkedHashMap<String, List<MissionEventView>>();
         span.stream().filter(e -> (type(e, "REPAIR_REQUESTED") || type(e, "SANDBOX_FINISHED")) && e.summary() != null)
@@ -56,7 +67,9 @@ public final class MissionEventDigest {
         if (!repeated.isEmpty()) {
             lines.add("Fallas repetidas:\n  - " + String.join("\n  - ", repeated));
         }
-        span.stream().filter(e -> type(e, "TEST_TRIAGE_COMPLETED")).forEach(e -> lines.add(e.summary()));
+        var triage = span.stream().filter(e -> type(e, "TEST_TRIAGE_COMPLETED") && e.summary() != null)
+                .map(MissionEventView::summary).toList();
+        lines.addAll(triage.subList(Math.max(0, triage.size() - 5), triage.size()));
         Map<String, Long> repairs = span.stream().filter(e -> type(e, "REPAIR_REQUESTED"))
                 .collect(Collectors.groupingBy(e -> e.agentName() == null ? "?" : e.agentName(), LinkedHashMap::new,
                         Collectors.counting()));
