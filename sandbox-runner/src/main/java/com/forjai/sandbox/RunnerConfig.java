@@ -15,10 +15,12 @@ public class RunnerConfig {
             @Value("${sandbox.work-root}") String workRoot,
             @Value("${sandbox.podman-url}") String podmanUrl,
             @Value("${sandbox.deps-root}") String depsRoot,
+            @Value("${sandbox.staging-root}") String stagingRoot,
             ProcessExecutor executor) {
         return new VerifyJobRunner(Path.of(productsRoot).toAbsolutePath().normalize(),
                 Path.of(workRoot).toAbsolutePath().normalize(),
-                new PodmanCommandBuilder(podmanUrl, Path.of(depsRoot).toAbsolutePath().normalize()), executor);
+                new PodmanCommandBuilder(podmanUrl, Path.of(depsRoot).toAbsolutePath().normalize()), executor,
+                Path.of(stagingRoot).toAbsolutePath().normalize());
     }
 
     @Bean

@@ -3,6 +3,9 @@ package com.forjai.sandbox;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Base64;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -22,7 +25,15 @@ public class VerifyJobRunner {
     private final PodmanCommandBuilder podman;
     private final ProcessExecutor executor;
 
+    private final Path stagingRoot;
+
     public VerifyJobRunner(Path productsRoot, Path workRoot, PodmanCommandBuilder podman, ProcessExecutor executor) {
+        this(productsRoot, workRoot, podman, executor, workRoot.resolve(".staging"));
+    }
+
+    public VerifyJobRunner(Path productsRoot, Path workRoot, PodmanCommandBuilder podman, ProcessExecutor executor,
+                           Path stagingRoot) {
+        this.stagingRoot = stagingRoot;
         this.productsRoot = productsRoot;
         this.workRoot = workRoot;
         this.podman = podman;
@@ -69,6 +80,129 @@ public class VerifyJobRunner {
             return new SandboxResult(SandboxResult.FAIL, steps);
         } finally {
             deleteQuietly(jobDir);
+        }
+    }
+
+    /**
+     * PACKAGE (entrega del producto, spec 2026-10-17 §1): mismo checkout y restore que VERIFY, luego el paso fijo
+     * {@code package} con los targets pedidos. La salida queda en {@code stagingRoot/<missionId>/incremento-<N>};
+     * la clave de publicación viaja por env file (permisos 600) y nunca se copia ni se loguea.
+     */
+    public SandboxResult pack(String missionId, String commitSha, ExecutionProfile profile, int increment,
+                              List<PackageTarget> targets, AndroidRelease release) {
+
+        var steps = new ArrayList<SandboxResult.StepResult>();
+        var jobDir = workRoot.resolve("job-" + UUID.randomUUID());
+        var envFile = workRoot.resolve("env-" + UUID.randomUUID());
+
+        try {
+            Files.createDirectories(jobDir);
+
+            var checkout = checkout(missionId, commitSha, "", jobDir);
+            steps.add(checkout);
+            if (!SandboxResult.PASS.equals(checkout.status())) {
+                steps.add(skipped("restore"));
+                targets.forEach(t -> steps.add(skipped("package:" + t.id())));
+                return new SandboxResult(SandboxResult.FAIL, steps);
+            }
+
+            var env = new StringBuilder("FORJAI_TARGETS=")
+                    .append(String.join(",", targets.stream().map(PackageTarget::id).toList())).append('\n');
+            if (release != null) {
+                var keystore = jobDir.resolve(".forjai/keystore/release.jks");
+                Files.createDirectories(keystore.getParent());
+                Files.write(keystore, Base64.getDecoder().decode(release.keystoreBase64()));
+                env.append("GODOT_ANDROID_KEYSTORE_RELEASE_PATH=/work/.forjai/keystore/release.jks\n")
+                        .append("GODOT_ANDROID_KEYSTORE_RELEASE_USER=").append(release.alias()).append('\n')
+                        .append("GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=").append(release.password()).append('\n');
+            }
+            Files.createFile(envFile);
+            try {
+                Files.setPosixFilePermissions(envFile, PosixFilePermissions.fromString("rw-------"));
+            } catch (UnsupportedOperationException ignored) {
+                // el sistema de archivos no tiene permisos POSIX
+            }
+            Files.writeString(envFile, env.toString());
+
+            var restore = runStep(profile, profile.steps().get(0), jobDir);
+            steps.add(restore);
+            if (!SandboxResult.PASS.equals(restore.status())) {
+                targets.forEach(t -> steps.add(skipped("package:" + t.id())));
+                return new SandboxResult(SandboxResult.FAIL, steps);
+            }
+
+            var step = ExecutionProfile.PACKAGE_STEP;
+            var started = System.currentTimeMillis();
+            var execution = executor.run(podman.run(profile, step, jobDir, envFile), jobDir, step.timeoutSeconds() + 30L);
+            var duration = System.currentTimeMillis() - started;
+            var stepTail = tail(execution.output(), OUTPUT_TAIL_CHARS);
+
+            var packageDir = jobDir.resolve(".forjai/package");
+            for (var target : targets) {
+                var name = "package:" + target.id();
+                if (execution.timedOut()) {
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.TIMEOUT, execution.exitCode(), duration,
+                            stepTail, 0, 0));
+                    continue;
+                }
+                var statusFile = packageDir.resolve("status").resolve(target.id());
+                var content = Files.exists(statusFile) ? Files.readString(statusFile).strip() : null;
+                if ("PASS".equals(content)) {
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.PASS, execution.exitCode(), duration,
+                            stepTail, 0, 0));
+                } else {
+                    var reason = content == null ? stepTail
+                            : content.startsWith("FAIL:") ? content.substring(5).strip() : content;
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.FAIL, execution.exitCode(), duration,
+                            tail(reason, OUTPUT_TAIL_CHARS), 0, 0));
+                }
+            }
+
+            deleteQuietly(packageDir.resolve("status"));
+            deleteQuietly(jobDir.resolve(".forjai/keystore"));
+
+            var destination = stagingRoot.resolve(missionId).resolve("incremento-" + increment).normalize();
+            if (!destination.startsWith(stagingRoot)) {
+                throw new IOException("missionId inválido para el staging.");
+            }
+            deleteQuietly(destination);
+            Files.createDirectories(destination);
+            if (Files.isDirectory(packageDir)) {
+                copyTree(packageDir, destination);
+            }
+
+            var overall = steps.stream().allMatch(s -> SandboxResult.PASS.equals(s.status()))
+                    ? SandboxResult.PASS : SandboxResult.FAIL;
+            return new SandboxResult(overall, steps);
+
+        } catch (IOException | IllegalArgumentException ex) {
+            steps.add(new SandboxResult.StepResult("package", SandboxResult.FAIL, -1, 0,
+                    "No se pudo empaquetar: " + ex.getMessage(), 0, 0));
+            return new SandboxResult(SandboxResult.FAIL, steps);
+        } finally {
+            deleteQuietly(jobDir);
+            try {
+                Files.deleteIfExists(envFile);
+            } catch (IOException ignored) {
+                // best-effort
+            }
+        }
+    }
+
+    private static SandboxResult.StepResult skipped(String name) {
+        return new SandboxResult.StepResult(name, SandboxResult.SKIPPED, 0, 0, "Omitido: un paso anterior falló.", 0, 0);
+    }
+
+    private static void copyTree(Path from, Path to) throws IOException {
+        try (var walk = Files.walk(from)) {
+            for (var source : walk.toList()) {
+                var dest = to.resolve(from.relativize(source).toString());
+                if (Files.isDirectory(source)) {
+                    Files.createDirectories(dest);
+                } else {
+                    Files.copy(source, dest, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
         }
     }
 

@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /** Única API del runner (spec §2): nunca acepta comandos; perfil y pasos salen del catálogo. */
@@ -16,7 +18,8 @@ import java.util.Map;
 public class JobController {
 
     public record JobRequest(String jobType, String missionId, String commitSha, String stackProfile,
-                             String componentDir, DependencyRequest dependencies) {
+                             String componentDir, DependencyRequest dependencies,
+                             Integer increment, List<String> targets, AndroidRelease androidRelease) {
     }
 
     private final VerifyJobRunner runner;
@@ -56,6 +59,10 @@ public class JobController {
             }
         }
 
+        if ("PACKAGE".equals(request.jobType())) {
+            return pack(request);
+        }
+
         if (!"VERIFY".equals(request.jobType())) {
             return ResponseEntity.badRequest().body(Map.of("error", "jobType no soportado: " + request.jobType()));
         }
@@ -72,5 +79,30 @@ public class JobController {
         }
 
         return ResponseEntity.ok(runner.verify(request.missionId(), request.commitSha(), profile.get(), componentDir));
+    }
+
+    /** Entrega del producto: perfil, incremento y targets salen de listas fijas; nunca un comando libre. */
+    private ResponseEntity<?> pack(JobRequest request) {
+        var profile = ExecutionProfile.parse(request.stackProfile());
+        if (profile.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "stackProfile desconocido: " + request.stackProfile()));
+        }
+        if (request.increment() == null || request.increment() < 1) {
+            return ResponseEntity.badRequest().body(Map.of("error", "increment inválido: " + request.increment()));
+        }
+        if (request.targets() == null || request.targets().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "targets vacío"));
+        }
+        var targets = new ArrayList<PackageTarget>();
+        for (var id : request.targets()) {
+            var target = PackageTarget.parse(id, profile.get());
+            if (target.isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                        Map.of("error", "target desconocido para " + profile.get().name() + ": " + id));
+            }
+            targets.add(target.get());
+        }
+        return ResponseEntity.ok(runner.pack(request.missionId(), request.commitSha(), profile.get(),
+                request.increment(), targets, request.androidRelease()));
     }
 }

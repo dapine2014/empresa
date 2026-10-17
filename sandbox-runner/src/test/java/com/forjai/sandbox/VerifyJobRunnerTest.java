@@ -137,4 +137,76 @@ class VerifyJobRunnerTest {
         assertEquals("FAIL", result.overall());
         assertTrue(result.steps().get(0).outputTail().contains("componentDir"), result.steps().get(0).outputTail());
     }
+
+    /** Fake de podman para PACKAGE: escribe los status y un archivo de salida en /work. */
+    private ProcessExecutor packFake(java.util.Map<String, String> statusByTarget) {
+        return packFake(statusByTarget, (args, workDir) -> { });
+    }
+
+    private ProcessExecutor packFake(java.util.Map<String, String> statusByTarget,
+                                     java.util.function.BiConsumer<List<String>, Path> hook) {
+        return (command, directory, timeout) -> {
+            if (command.get(0).equals("git") || command.get(0).equals("tar")) {
+                return new ProcessExecutor.Execution(0, "", false);
+            }
+            if (!command.get(command.size() - 1).equals("package")) {
+                return new ProcessExecutor.Execution(0, "", false);
+            }
+            var workDir = Path.of(command.stream().filter(a -> a.endsWith(":/work:Z")).findFirst().orElseThrow()
+                    .replace(":/work:Z", ""));
+            hook.accept(command, workDir);
+            try {
+                var pkg = workDir.resolve(".forjai/package");
+                Files.createDirectories(pkg.resolve("status"));
+                for (var e : statusByTarget.entrySet()) {
+                    Files.writeString(pkg.resolve("status").resolve(e.getKey()), e.getValue());
+                }
+                Files.createDirectories(pkg.resolve("juego/windows"));
+                Files.writeString(pkg.resolve("juego/windows/Juego.exe"), "exe");
+            } catch (java.io.IOException ex) {
+                throw new IllegalStateException(ex);
+            }
+            return new ProcessExecutor.Execution(0, "listo", false);
+        };
+    }
+
+    private static String readEnvFile(List<String> args) {
+        try {
+            return Files.readString(Path.of(args.get(args.indexOf("--env-file") + 1)));
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    @Test
+    void packCopiesTheOutputAndReportsEachTarget() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var runner = new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s", Path.of("/deps")), packFake(java.util.Map.of(
+                "windows", "PASS", "android-apk", "FAIL: falta el SDK")), staging);
+        var result = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 2,
+                List.of(PackageTarget.WINDOWS, PackageTarget.ANDROID_APK), null);
+        assertEquals(List.of("checkout", "restore", "package:windows", "package:android-apk"),
+                result.steps().stream().map(SandboxResult.StepResult::name).toList());
+        assertEquals("PASS", result.steps().get(2).status());
+        assertEquals("FAIL", result.steps().get(3).status());
+        assertTrue(result.steps().get(3).outputTail().contains("falta el SDK"));
+        assertEquals("FAIL", result.overall());
+        assertTrue(Files.exists(staging.resolve("M-1/incremento-2/juego/windows/Juego.exe")));
+        assertFalse(Files.exists(staging.resolve("M-1/incremento-2/status")));
+    }
+
+    @Test
+    void theReleaseKeyIsWrittenForTheJobAndNeverCopied() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var seen = new java.util.concurrent.atomic.AtomicReference<String>();
+        var runner = new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s", Path.of("/deps")), packFake(java.util.Map.of(
+                "android-aab", "PASS"), (args, workDir) -> seen.set(readEnvFile(args))), staging);
+        runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3, List.of(PackageTarget.ANDROID_AAB),
+                new AndroidRelease(java.util.Base64.getEncoder().encodeToString("jks".getBytes()), "forjai", "s3cr3t"));
+        assertTrue(seen.get().contains("GODOT_ANDROID_KEYSTORE_RELEASE_PATH=/work/.forjai/keystore/release.jks"));
+        assertTrue(seen.get().contains("GODOT_ANDROID_KEYSTORE_RELEASE_USER=forjai"));
+        assertTrue(seen.get().contains("FORJAI_TARGETS=android-aab"));
+        assertFalse(Files.exists(staging.resolve("M-1/incremento-3/keystore")));
+        try (var files = Files.list(work)) { assertEquals(0, files.count()); }
+    }
 }
