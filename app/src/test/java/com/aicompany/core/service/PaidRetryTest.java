@@ -16,39 +16,49 @@ class PaidRetryTest {
 
     @Test void emptyWithoutPaidFallback() {
         when(company.agentPaidFallbackModel("a")).thenReturn("");
-        assertEquals(Optional.empty(), PaidRetry.modelFor("a", "nvidia:x", false, company, health));
+        assertEquals(Optional.empty(), PaidRetry.modelFor("a", "nvidia:x", company, health));
         when(company.agentPaidFallbackModel("a")).thenReturn(null);
-        assertEquals(Optional.empty(), PaidRetry.modelFor("a", "nvidia:x", false, company, health));
+        assertEquals(Optional.empty(), PaidRetry.modelFor("a", "nvidia:x", company, health));
     }
 
     @Test void emptyWhenPaidIsTheUsedModel() {
         when(company.agentPaidFallbackModel("a")).thenReturn(PAID);
-        assertEquals(Optional.empty(), PaidRetry.modelFor("a", PAID, false, company, health));
+        assertEquals(Optional.empty(), PaidRetry.modelFor("a", PAID, company, health));
     }
 
-    @Test void emptyWhenTheUsedModelWasDown() {
+    @Test void theAgentsModelDownButAFreeAlternativeAnsweringStillGetsThePaidAttempt() {
         when(company.agentPaidFallbackModel("a")).thenReturn(PAID);
-        assertEquals(Optional.empty(), PaidRetry.modelFor("a", "nvidia:x", true, company, health));
+        when(health.isDown("nvidia:kimi")).thenReturn(true);
+        when(health.effectiveModel("a", "nvidia:kimi")).thenReturn("nvidia:nemotron");
+        var retry = PaidRetry.start("a", "nvidia:kimi", company, health);
+        assertEquals(Optional.of(PAID), retry.next("op"));
+    }
+
+    @Test void emptyWhenTheAttemptsAlreadyRanOnThePaidFallback() {
+        when(company.agentPaidFallbackModel("a")).thenReturn(PAID);
+        when(health.isDown("nvidia:kimi")).thenReturn(true);
+        when(health.effectiveModel("a", "nvidia:kimi")).thenReturn(PAID);
+        assertEquals(Optional.empty(), PaidRetry.start("a", "nvidia:kimi", company, health).next("op"));
     }
 
     @Test void emptyWhenPaidIsDown() {
         when(company.agentPaidFallbackModel("a")).thenReturn(PAID);
         when(health.isDown(PAID)).thenReturn(true);
-        assertEquals(Optional.empty(), PaidRetry.modelFor("a", "nvidia:x", false, company, health));
+        assertEquals(Optional.empty(), PaidRetry.modelFor("a", "nvidia:x", company, health));
     }
 
     @Test void presentInTheNormalCase() {
         when(company.agentPaidFallbackModel("a")).thenReturn(" " + PAID + " ");
-        assertEquals(Optional.of(PAID), PaidRetry.modelFor("a", "nvidia:x", false, company, health));
-        assertEquals(Optional.of(PAID), PaidRetry.modelFor("a", "nvidia:x", false, company, null));
+        assertEquals(Optional.of(PAID), PaidRetry.modelFor("a", "nvidia:x", company, health));
+        assertEquals(Optional.of(PAID), PaidRetry.modelFor("a", "nvidia:x", company, null));
     }
 
     @Test void theTrackerGivesOneExtraAttemptOnlyAndNeverAfterACancellation() {
         when(company.agentPaidFallbackModel("a")).thenReturn(PAID);
-        when(health.isDown("nvidia:x")).thenReturn(true);
-        var down = PaidRetry.start("a", "nvidia:x", company, health);
-        when(health.isDown("nvidia:x")).thenReturn(false);
-        assertEquals(Optional.empty(), down.next("op"), "el usado estaba DOWN al empezar");
+        when(health.effectiveModel("a", "nvidia:x")).thenReturn(PAID);
+        var onPaid = PaidRetry.start("a", "nvidia:x", company, health);
+        when(health.effectiveModel("a", "nvidia:x")).thenReturn("nvidia:x");
+        assertEquals(Optional.empty(), onPaid.next("op"), "los intentos ya corrieron en el respaldo al empezar");
 
         var retry = PaidRetry.start("a", "nvidia:x", company, health);
         assertEquals("", retry.suffix());

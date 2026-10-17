@@ -190,7 +190,26 @@ class DevelopmentRuntimeTest {
     }
 
     @Test
-    void thePaidFallbackIsNotRetriedWhenTheAgentsModelWasAlreadyDown() {
+    void theAgentsModelDownServedByTheFreeChainStillGetsThePaidAttempt() throws Exception {
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        runtime.setModelHealth(health);
+        when(health.isDown("qwen3:8b")).thenReturn(true);
+        when(health.effectiveModel(anyString(), anyString())).thenAnswer(inv ->
+                "qwen3:8b".equals(inv.getArgument(1)) ? "nvidia:nemotron" : inv.getArgument(1));
+        when(companyMemory.agentPaidFallbackModel("backend")).thenReturn("bedrock:kimi");
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("qwen3:8b")))
+                .thenReturn(dev("docs/notas.md"));
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("bedrock:kimi")))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(ceoService).generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("bedrock:kimi"));
+        verify(memory).setTaskModelUsed("T-1", "bedrock:kimi");
+    }
+
+    @Test
+    void thePaidFallbackIsNotRetriedWhenTheAttemptsAlreadyRanOnIt() {
         var health = mock(com.aicompany.core.service.ModelHealthService.class);
         runtime.setModelHealth(health);
         when(health.isDown("qwen3:8b")).thenReturn(true);
