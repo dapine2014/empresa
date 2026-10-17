@@ -348,7 +348,8 @@ public class ChatIntentRouter {
         }
 
         // Bitácora (spec 2026-10-17): «¿qué hace Iris?» sin @ lo responde Java, sin modelo.
-        if (mentions.agentIds().isEmpty() && STATUS_QUESTION.matcher(normalized).find()) {
+        if (mentions.agentIds().isEmpty() && !MISSION_ID.matcher(message).find()
+                && STATUS_QUESTION.matcher(normalized).find()) {
             var named = agents.stream().filter(a -> a.get("name") != null && Pattern.compile("\\b" + Pattern.quote(
                     normalize(String.valueOf(a.get("name")))) + "\\b").matcher(normalized).find()).toList();
             if (!named.isEmpty()) {
@@ -366,16 +367,22 @@ public class ChatIntentRouter {
         }
 
         // Bitácora (spec 2026-10-17): la bitácora de una misión y la de desarrollo las arma Java.
-        if (MISSION_LOG.matcher(normalized).find()) {
+        // Sin «¿¡» ni «?!.» de los bordes: normalize no los quita y «¿qué está pasando en desarrollo?» no matcheaba.
+        var bare = normalized.replaceAll("^[¿¡\\s]+|[?!.\\s]+$", "");
+        if (MISSION_LOG.matcher(bare).find()) {
             var id = MISSION_ID.matcher(message);
             if (id.find()) {
                 var missionId = id.group(1).toUpperCase(Locale.ROOT);
+                if (missionMemory.find(missionId).isEmpty()) {
+                    return List.of(ceoReply(missionId + " no existe."));
+                }
+                conversationMemory.setLastMentioned("MISSION", List.of(missionId));
                 var lines = events(missionId, 15).stream().map(AgentActivity::eventLine).toList();
                 return List.of(ceoReply(lines.isEmpty() ? missionId + ": sin bitácora (misión anterior al 2026-10-17)"
                         : "Bitácora de " + missionId + " (hora Colombia, más reciente primero):\n- " + String.join("\n- ", lines)));
             }
         }
-        if (DEVELOPMENT_LOG.matcher(normalized.strip()).matches()) {
+        if (DEVELOPMENT_LOG.matcher(bare).matches()) {
             var states = liveStates(true);
             return List.of(ceoReply(states.isEmpty() ? "No hay misiones activas en desarrollo."
                     : states.stream().map(s -> AgentActivity.missionBlock(s, 5)).collect(Collectors.joining("\n\n"))));
@@ -394,7 +401,7 @@ public class ChatIntentRouter {
 
     static final Pattern STATUS_QUESTION = Pattern.compile(
             "(que (estas|esta|estan) (haciendo|realizando|trabajando)|en que (estas|esta|andas|anda)\\b"
-                    + "|que (haces|hace)(\\s+@?[\\p{L}\\p{N}_-]+)?\\s*[?!.]*\\s*$)");
+                    + "|que (haces|hace)(?!\\s+falta\\b)(\\s+@?[\\p{L}\\p{N}_-]+)?\\s*[?!.]*\\s*$)");
     private static final Pattern MISSION_LOG = Pattern.compile("(que paso|bitacora|historial)( en| de)? mission-");
     private static final Pattern DEVELOPMENT_LOG = Pattern.compile("^(que (esta pasando|pasa) en desarrollo|bitacora)\\??$");
     static final String REAL_DATA_RULE = "Responde solo con lo que está en estos datos. No prometas tiempos, avisos ni pasos "

@@ -1350,7 +1350,6 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return out;
     }
 
-    /** El mismo error en el mismo archivo, aunque se haya corrido de línea. */
     /** Bitácora (spec 2026-10-17): resultado de una vuelta del sandbox, con el primer paso que falló (round -1 = final). */
     static Map<String, Object> sandboxData(SandboxResult result, int round) {
         var failed = result.stepsOrEmpty().stream()
@@ -1366,6 +1365,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return data;
     }
 
+    /** El mismo error en el mismo archivo, aunque se haya corrido de línea. */
     static String repairKey(CompilerErrorParser.CompilerError e) {
         return e.path() + "|" + e.code() + "|" + e.message();
     }

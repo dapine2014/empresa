@@ -130,3 +130,5 @@ Eventos que antes solo quedaban en el log. `MissionEventText` los resume en espa
 | `EMPRESA_MODEL_SWITCHED` | el actor | `operation`, `from`, `to`, `kind` (`FREE` \| `PAID` \| `LOCAL`); solo dentro de una misión |
 
 `EMPRESA_SANDBOX_VERIFICATION_COMPLETED` (resultado final, una sola vez) suma `round` (-1), `failedStep` y `compileErrors`.
+
+`EMPRESA_MODEL_SWITCHED` se deduplica por `missionId|actor|from|to|kind` (una vez cada 10 minutos). No hay `kind` `PAID_RETRY`: el reintento pago de `DevelopmentRuntime` queda como `EMPRESA_TASK_RETRY` con su motivo en el resumen.

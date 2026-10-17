@@ -41,7 +41,7 @@ public class MissionEventLog {
             return;
         }
         try {
-            var name = nameOf(agentNames(), event.agentId());
+            var name = displayName(agentNames(), event.agentId(), event.eventType());
             var params = new HashMap<String, Object>();
             params.put("mission", event.missionId());
             params.put("id", event.eventId());
@@ -59,7 +59,9 @@ public class MissionEventLog {
                             + "missionId:$mission, type:$type, at:$at, agentId:$agentId, taskId:$taskId, "
                             + "summary:$summary, round:$round, increment:$increment})", params).consume();
                     // Tope por misión, en la misma transacción.
-                    tx.run("MATCH (:Mission {id:$mission})-[:HAS_EVENT]->(e:MissionEvent) WITH e ORDER BY e.at DESC "
+                    // Los INCREMENT_STARTED nunca se borran por tope: el digest los necesita para acotar el incremento.
+                    tx.run("MATCH (:Mission {id:$mission})-[:HAS_EVENT]->(e:MissionEvent) "
+                            + "WHERE e.type <> 'EMPRESA_INCREMENT_STARTED' WITH e ORDER BY e.at DESC "
                             + "SKIP $max DETACH DELETE e", params).consume();
                     return null;
                 });
@@ -78,6 +80,16 @@ public class MissionEventLog {
         }
     }
 
+    /** Todos los EMPRESA_INCREMENT_STARTED de la misión (el tope de 500 no los borra), más reciente primero. */
+    public List<MissionEventView> incrementStarts(String missionId) {
+        var names = agentNames();
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_EVENT]->(e:MissionEvent "
+                    + "{type:'EMPRESA_INCREMENT_STARTED'}) RETURN e ORDER BY e.at DESC",
+                    Map.of("id", missionId)).list(r -> view(r, names));
+        }
+    }
+
     public List<MissionEventView> recentAll(int limit) {
         var names = agentNames();
         try (var session = driver.session()) {
@@ -90,7 +102,7 @@ public class MissionEventLog {
         var e = r.get("e");
         var agentId = e.get("agentId").isNull() ? null : e.get("agentId").asString();
         return new MissionEventView(e.get("id").asString(), e.get("type").asString(),
-                Instant.parse(e.get("at").asString()), agentId, nameOf(names, agentId),
+                Instant.parse(e.get("at").asString()), agentId, displayName(names, agentId, e.get("type").asString()),
                 e.get("taskId").isNull() ? null : e.get("taskId").asString(), e.get("summary").asString(),
                 e.get("round").isNull() ? null : e.get("round").asInt(),
                 e.get("increment").isNull() ? null : e.get("increment").asInt());
@@ -112,6 +124,18 @@ public class MissionEventLog {
     /** El nombre cae al id si no está en el mapa. */
     static String nameOf(Map<String, String> names, String agentId) {
         return agentId == null ? null : names.getOrDefault(agentId, agentId);
+    }
+
+    /** Bitácora (spec 2026-10-17): los ids que no son del roster (system, human, sandbox) y el ceo que actualiza la misión se muestran «Forjai». */
+    static String displayName(Map<String, String> names, String agentId, String eventType) {
+        if (agentId == null) {
+            return null;
+        }
+        if (java.util.Set.of("system", "human", "sandbox").contains(agentId)
+                || ("ceo".equals(agentId) && "EMPRESA_MISSION_UPDATED".equals(eventType))) {
+            return "Forjai";
+        }
+        return nameOf(names, agentId);
     }
 
     public static Integer roundOf(Map<String, Object> data) {

@@ -3093,6 +3093,8 @@ class ChatIntentRouterTest {
     void theLogOfAMissionIsAnsweredByJava() {
         stubAgents();
         router.setMissionEventLog(eventLog);
+        when(missionMemory.find("MISSION-PONG")).thenReturn(Optional.of(new MissionResponse("MISSION-PONG",
+                MissionStatus.EVALUATING, "TEST", 80, "Sandbox", "x", java.time.Instant.now(), null, "TEAM-DEVELOPMENT")));
         when(eventLog.recent(eq("MISSION-PONG"), eq(15))).thenReturn(List.of(new MissionEventView("e1",
                 "EMPRESA_MISSION_CORRECTION_STARTED", java.time.Instant.parse("2026-10-17T17:15:00Z"), "system", null, null,
                 "Corrección automática ronda 22", 22, null)));
@@ -3101,6 +3103,58 @@ class ChatIntentRouterTest {
 
         assertTrue(text.contains("12:15 Forjai: Corrección automática ronda 22"), text);
         verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    // Revisión final (I1): normalize no quita «¿», así que «¿qué está pasando en desarrollo?» no matcheaba.
+    @Test
+    void theDevelopmentLogIsAnsweredWithOpeningQuestionMarksAndBare() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+
+        assertEquals("No hay misiones activas en desarrollo.",
+                router.routeReplies("¿Qué está pasando en desarrollo?").get(0).text());
+        assertEquals("No hay misiones activas en desarrollo.", router.routeReplies("bitácora").get(0).text());
+        verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    // Revisión final (M1): una misión inexistente se dice; una existente queda como la última mencionada.
+    @Test
+    void theLogOfAMissingMissionSaysSoAndAnExistingOneIsRemembered() {
+        stubAgents();
+        router.setMissionEventLog(eventLog);
+        when(missionMemory.find("MISSION-NOPE")).thenReturn(Optional.empty());
+
+        assertEquals("MISSION-NOPE no existe.", router.routeReplies("bitácora de MISSION-NOPE").get(0).text());
+
+        when(missionMemory.find("MISSION-PONG")).thenReturn(Optional.of(new MissionResponse("MISSION-PONG",
+                MissionStatus.EVALUATING, "TEST", 80, "Sandbox", "x", java.time.Instant.now(), null, "TEAM-DEVELOPMENT")));
+        when(eventLog.recent(eq("MISSION-PONG"), eq(15))).thenReturn(List.of());
+        router.routeReplies("bitácora de MISSION-PONG");
+        verify(conversationMemory).setLastMentioned("MISSION", List.of("MISSION-PONG"));
+    }
+
+    // Revisión final (M2): con un MISSION-X en el mensaje no responde el describe del agente.
+    @Test
+    void aNamedStatusQuestionWithAMissionIdIsNotTheAgentDescribe() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+        when(ceoService.chat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+
+        var text = router.routeReplies("Kael, ¿en qué estás con MISSION-5?").get(0).text();
+
+        assertFalse(text.contains("libre"), text);
+    }
+
+    // Revisión final (M3): «qué hace falta» no es una pregunta de estado.
+    @Test
+    void whatIsNeededIsNotAStatusQuestion() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+
+        assertEquals("ok", router.routeReplies("@Aria ¿qué hace falta?").get(0).text());
+        assertFalse(ChatIntentRouter.STATUS_QUESTION.matcher("que hace falta?").find());
+        assertTrue(ChatIntentRouter.STATUS_QUESTION.matcher("que hace iris?").find());
     }
 
     @Test

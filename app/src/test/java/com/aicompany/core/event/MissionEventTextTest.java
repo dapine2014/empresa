@@ -74,4 +74,19 @@ class MissionEventTextTest {
         assertEquals("Misión → PLANNING", MissionEventText.summary("EMPRESA_MISSION_UPDATED", null,
                 Map.of("status", "PLANNING")));
     }
+
+    // Revisión final (M4): el genérico usa message, o result recortado, y todo colapsa espacios.
+    @Test void genericUsesMessageOrResultAndCollapsesWhitespace() {
+        assertEquals("TASK FAILED por Iris — se cayó el modelo",
+                MissionEventText.summary("EMPRESA_TASK_FAILED", "Iris", Map.of("status", "FAILED", "message", "se cayó el modelo",
+                        "result", "otro")));
+        assertEquals("TASK RETRY por Iris — reintento pago con kimi",
+                MissionEventText.summary("EMPRESA_TASK_RETRY", "Iris", Map.of("status", "RETRY", "result", "reintento\npago   con kimi")));
+        assertEquals("TASK FAILED por Iris", MissionEventText.summary("EMPRESA_TASK_FAILED", "Iris", Map.of("result", "")));
+        var longResult = MissionEventText.summary("EMPRESA_TASK_FAILED", "Iris", Map.of("result", "x".repeat(500)));
+        assertTrue(longResult.length() <= MissionEventText.MAX_SUMMARY, longResult);
+        assertEquals("Misión → X: paso — a b",
+                MissionEventText.summary("EMPRESA_MISSION_UPDATED", "Forjai", Map.of("status", "X", "currentStep", "paso",
+                        "message", "a\n\n   b")));
+    }
 }

@@ -134,4 +134,26 @@ class CeoServiceFreeChainTest {
 
         verify(events, never()).publish(eq("EMPRESA_MODEL_SWITCHED"), any(), any(), any(), any());
     }
+
+    // Bitácora (spec 2026-10-17): con un modelo caído cada llamada desvía; se publica una vez por clave cada 10 minutos.
+    @Test
+    void repeatedIdenticalSwitchesArePublishedOnce() throws Exception {
+        var publish = CeoService.class.getDeclaredMethod("publishSwitch", String.class, String.class, String.class,
+                String.class, String.class);
+        publish.setAccessible(true);
+        ModelCallContext.with("M-1", "T-1", () -> {
+            try {
+                publish.invoke(ceoService, "op", "engineering", KIMI, GLM, "FREE");
+                publish.invoke(ceoService, "op", "engineering", KIMI, GLM, "FREE");
+                publish.invoke(ceoService, "op", "engineering", KIMI, "otro:modelo", "FREE");
+            } catch (ReflectiveOperationException ex) {
+                throw new IllegalStateException(ex);
+            }
+        });
+
+        verify(events, times(1)).publish(eq("EMPRESA_MODEL_SWITCHED"), eq("M-1"), any(), any(),
+                argThat(d -> GLM.equals(d.get("to"))));
+        verify(events, times(1)).publish(eq("EMPRESA_MODEL_SWITCHED"), eq("M-1"), any(), any(),
+                argThat(d -> "otro:modelo".equals(d.get("to"))));
+    }
 }

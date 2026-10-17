@@ -358,7 +358,6 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
   )
 }
 
-/** Revisión conjunta (spec 2026-10-15): Neo detecta contradicciones entre HU y diseño, Aria decide, Java aplica. */
 const SANDBOX_TYPES = ['SANDBOX_', 'REPAIR_', 'TEST_TRIAGE_']
 
 /** Bitácora (spec 2026-10-17): lo que pasó en la misión, del más nuevo al más viejo. */
@@ -380,7 +379,11 @@ function MissionEventLog({ missionId, live }: { missionId: string; live: boolean
   return (
     <section>
       <h2>Bitácora</h2>
-      {events.length === 0 ? (
+      {query.isLoading ? (
+        <p className="hint">Cargando bitácora…</p>
+      ) : query.error ? (
+        <p className="error">No se pudo cargar la bitácora.</p>
+      ) : events.length === 0 ? (
         <p className="hint">Sin bitácora (misión anterior al 2026-10-17).</p>
       ) : (
         <>
@@ -398,6 +401,7 @@ function MissionEventLog({ missionId, live }: { missionId: string; live: boolean
               sandbox
             </label>
           </p>
+          {shown.length === 0 && <p className="hint">Sin eventos con este filtro.</p>}
           <ul className="activity-list">
             {shown.map((e) => (
               <li key={e.id}>
@@ -413,6 +417,7 @@ function MissionEventLog({ missionId, live }: { missionId: string; live: boolean
   )
 }
 
+/** Revisión conjunta (spec 2026-10-15): Neo detecta contradicciones entre HU y diseño, Aria decide, Java aplica. */
 function MissionJointReview({ missionId }: { missionId: string }) {
   const query = useQuery({
     queryKey: ['jointReview', missionId],

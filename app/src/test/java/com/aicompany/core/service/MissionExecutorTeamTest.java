@@ -458,6 +458,50 @@ class MissionExecutorTeamTest {
                 contains(com.aicompany.core.event.MissionEventDigest.HEADER + "1 (Java):"), any(), eq(2), any());
     }
 
+    // Bitácora (spec 2026-10-17): la ventana de 500 pudo dejar fuera el INCREMENT_STARTED; se pide aparte y se une sin duplicar.
+    @Test
+    void theDigestIsNotEmptyWhenTheWindowLostTheIncrementStart() throws Exception {
+        withAria();
+        var eventLog = mock(com.aicompany.core.event.MissionEventLog.class);
+        var t0 = java.time.Instant.parse("2026-10-17T15:00:00Z");
+        when(eventLog.recent(eq("M-9"), eq(500))).thenReturn(List.of(
+                new MissionEventView("e2", "EMPRESA_MISSION_CORRECTION_STARTED", t0.plusSeconds(60), null, "Forjai", null,
+                        "Corrección automática ronda 2", 2, null)));
+        when(eventLog.incrementStarts("M-9")).thenReturn(List.of(
+                new MissionEventView("e1", "EMPRESA_INCREMENT_STARTED", t0, null, "human", null, "x", 1, 1)));
+        executor.setMissionEventLog(eventLog);
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+
+        executor.buildIncrementAsync("M-9", 2, 2).get();
+
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"),
+                contains(com.aicompany.core.event.MissionEventDigest.HEADER + "1 (Java):"), any(), eq(2), any());
+    }
+
+    // Bitácora (spec 2026-10-17): en una ronda de evidencia con incremento en curso, la instrucción lleva el digest.
+    @Test
+    void anEvidenceRoundInstructionCarriesTheDigest() throws Exception {
+        withAria();
+        var eventLog = mock(com.aicompany.core.event.MissionEventLog.class);
+        var t0 = java.time.Instant.parse("2026-10-17T15:00:00Z");
+        when(eventLog.recent(eq("M-9"), eq(500))).thenReturn(List.of(
+                new MissionEventView("e2", "EMPRESA_MISSION_CORRECTION_STARTED", t0.plusSeconds(60), null, "Forjai", null,
+                        "Corrección automática ronda 2", 2, null),
+                new MissionEventView("e1", "EMPRESA_INCREMENT_STARTED", t0, null, "human", null, "x", 2, 2)));
+        executor.setMissionEventLog(eventLog);
+        when(requirements.currentIncrement("M-9")).thenReturn(2);
+        when(memory.tasks("M-9")).thenReturn(List.of());
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+        when(ceoService.routeInvestorFeedback(any(), any(), any(), anyList(), any())).thenReturn(java.util.Map.of());
+
+        executor.reexecuteAsync("M-9", "Un CRM", 3, "falta validar el monto").get();
+
+        verify(development).execute(argThat(c -> c.instruction().contains(
+                com.aicompany.core.event.MissionEventDigest.HEADER + "2 (Java):")), any());
+    }
+
     // Revisión final (2a/b): una ronda de evidencia de una misión con requisitos conserva el bloque del incremento en curso.
     @Test
     void anEvidenceRoundKeepsTheIncrementBlock() throws Exception {

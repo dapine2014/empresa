@@ -1884,12 +1884,28 @@ public class CeoService {
         }
     }
 
-    /** Una llamada a un modelo remoto, sin respaldo: un fallo de disponibilidad sale como RemoteUnavailableException. */
-    /** Bitácora (spec 2026-10-17): el cambio de modelo, solo si la llamada pertenece a una misión. */
+    private static final java.time.Duration SWITCH_DEDUP_TTL = java.time.Duration.ofMinutes(10);
+    private final java.util.concurrent.ConcurrentHashMap<String, java.time.Instant> recentSwitches =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Bitácora (spec 2026-10-17): el cambio de modelo, solo si la llamada pertenece a una misión. Con un modelo caído
+     * cada llamada vuelve a desviar: se publica una vez por misión|actor|from|to|kind cada 10 minutos.
+     */
     private void publishSwitch(String operation, String actor, String from, String to, String kind) {
         var context = ModelCallContext.current();
         if (context == null || context.missionId() == null || events == null) {
             return;
+        }
+        var now = java.time.Instant.now();
+        var key = context.missionId() + "|" + actor + "|" + from + "|" + to + "|" + kind;
+        var last = recentSwitches.get(key);
+        if (last != null && last.plus(SWITCH_DEDUP_TTL).isAfter(now)) {
+            return;
+        }
+        recentSwitches.put(key, now);
+        if (recentSwitches.size() > 500) {
+            recentSwitches.values().removeIf(t -> t.plus(SWITCH_DEDUP_TTL).isBefore(now));
         }
         try {
             var data = new java.util.LinkedHashMap<String, Object>();
@@ -1903,6 +1919,7 @@ public class CeoService {
         }
     }
 
+    /** Una llamada a un modelo remoto, sin respaldo: un fallo de disponibilidad sale como RemoteUnavailableException. */
     private ModelMessage callRemote(String operation, String actor, String model, List<Map<String, Object>> messages,
                                     Object format, List<Map<String, Object>> tools, long startedAt) {
         var remoteRef = remoteModel(model).orElseThrow();

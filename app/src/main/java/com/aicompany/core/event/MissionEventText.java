@@ -41,9 +41,20 @@ public final class MissionEventText {
             case "EMPRESA_MODEL_SWITCHED" -> "Modelo de " + who + ": " + str(d, "from") + " → " + str(d, "to")
                     + " (" + str(d, "kind") + ")";
             default -> (eventType == null ? "EVENTO" : eventType.replaceFirst("^EMPRESA_", "").replace('_', ' '))
-                    + " por " + who;
+                    + " por " + who + detail(d);
         };
+        text = text.replaceAll("\\s+", " ").strip();
         return text.length() <= MAX_SUMMARY ? text : text.substring(0, MAX_SUMMARY - 1) + "…";
+    }
+
+    /** Genérico: «message» si existe; si no, «result» (TASK_FAILED/TASK_RETRY lo publican vía publishTask), recortado. */
+    private static String detail(Map<String, Object> d) {
+        var text = !str(d, "message").isEmpty() ? str(d, "message") : str(d, "result");
+        if (text.isEmpty()) {
+            return "";
+        }
+        text = text.replaceAll("\\s+", " ");
+        return " — " + (text.length() <= 200 ? text : text.substring(0, 199) + "…");
     }
 
     private static String sandbox(Map<String, Object> d) {

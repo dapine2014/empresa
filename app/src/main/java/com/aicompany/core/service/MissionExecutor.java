@@ -334,7 +334,14 @@ public class MissionExecutor {
             return "";
         }
         try {
-            var digest = com.aicompany.core.event.MissionEventDigest.digest(missionEventLog.recent(missionId, 500), increment);
+            // Los INCREMENT_STARTED van aparte: si la ventana de 500 los dejó fuera, el digest quedaría vacío.
+            var events = new java.util.ArrayList<>(missionEventLog.recent(missionId, 500));
+            var seen = events.stream().map(com.aicompany.core.model.MissionEventView::id).collect(java.util.stream.Collectors.toSet());
+            var starts = missionEventLog.incrementStarts(missionId);
+            if (starts != null) {
+                starts.stream().filter(e -> seen.add(e.id())).forEach(events::add);
+            }
+            var digest = com.aicompany.core.event.MissionEventDigest.digest(events, increment);
             return digest.isEmpty() ? "" : "\n\n" + digest;
         } catch (Exception ex) {
             log.warn("MISSION {} - could not read the event log: {}", missionId, ex.getMessage());
