@@ -1148,3 +1148,17 @@ Decisión del fundador (aprobada 2026-10-17): «hay un historial de eventos que 
 Rulings del plan: (1) `MissionEvent.at` se guarda con formato fijo de 9 decimales UTC para que el orden y el tope de 500 sean cronológicos (`Instant.toString()` varía de largo). (2) Se agregó `EMPRESA_SANDBOX_FINISHED` por vuelta (el spec solo traía 5 eventos nuevos); el evento final `EMPRESA_SANDBOX_VERIFICATION_COMPLETED` sale una sola vez y suma `round` -1, `failedStep` y `compileErrors`. (3) La regla dura «Responde solo con lo que está en estos datos…» quedó solo para Neo y Aria; los demás agentes reciben su estado con una regla acotada a misiones y el CEO no recibe bloque. (4) `STATUS_QUESTION` se acotó tras la ronda de revisión (sin «estado de»; «qué hace/haces» solo al final; con `@` y `MISSION-X` va al modelo con los datos). (5) Con incrementos relanzados, el resumen para Neo junta todos los intentos del mismo N. (6) `MissionEventLog.record` es síncrono (sin executor nuevo).
 
 Pendiente: la verificación en vivo (preguntar a @Iris y @Neo con una misión en curso y ver la línea de tiempo en Missions); no se desplegó.
+
+## nemotron-3-super fuera de la cadena gratis para código (2026-10-17)
+
+En el incremento 3 del Pong, Iris (backend) cayó de kimi-k2.6 a `nvidia/nemotron-3-super-120b-a12b`, el modelo gratis de la cadena que seguía UP. Cada reparación reescribía entero `src/Pong.Domain/MotorPong.cs` (518 líneas, ~25.000 caracteres) y lo dejaba sin compilar. Los errores cambiaban de una ronda a otra: 53, 75, 7. Entre ellos había `.append` en minúscula (sintaxis de Java), saltos de línea sin escapar dentro de strings y un raw string sin cerrar, todo en un bloque de logging JSON que había pedido la corrección automática. Pasaron de R32 a R35 sin converger.
+
+kimi-k2.6 no es una caída pasajera: NVIDIA responde 404 «Function … Not found for account», es decir que está retirado de la cuenta.
+
+Decisión del fundador: nemotron-3-super está bien para planificar, clasificar, armar estrategias y hacer el triage (Neo), pero no para generar código. Para código el orden es kimi-k2.6 cuando esté arriba, después Bedrock kimi-k3 y, si Bedrock cae, el mejor modelo local (qwen3-coder:30b).
+
+Se aplicó en vivo, sin reiniciar:
+- La cadena gratis quedó en `kimi-k2.6, deepseek-v4.1-flash`, sin nemotron-3-super.
+- Neo (`engineering`) pasó a tener `nvidia:nvidia/nemotron-3-super-120b-a12b` como modelo principal.
+
+Como kimi-k2.6 está retirado, hoy los agentes que generan código trabajan con Bedrock, que es pago.
