@@ -97,6 +97,21 @@ class DevelopmentRuntimeTest {
                 anyString(), anyString());
     }
 
+    // Bitácora (spec 2026-10-17): el rechazo con reintento queda en la bitácora con sus motivos.
+    @Test
+    void aRejectedAttemptIsPublishedWithItsReasons() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("docs/notas.md"))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(events).publish(eq("EMPRESA_TASK_ATTEMPT_REJECTED"), eq("MISSION-1"), eq("T-1"), eq("backend"),
+                argThat(d -> Integer.valueOf(1).equals(d.get("attempt"))
+                        && d.get("reasons") instanceof List<?> l && !l.isEmpty() && l.size() <= 3
+                        && l.stream().allMatch(r -> String.valueOf(r).length() <= 200)));
+    }
+
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-5): Neo, dueño solo de Solution.sln, escribía todo el proyecto
     // y agotaba los 3 intentos. Lo ajeno pertenece a otro agente: se descarta (y se informa), no se reintenta.
     @Test

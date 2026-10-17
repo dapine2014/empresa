@@ -266,6 +266,11 @@ public class DevelopmentRuntime {
                     return result;
                 }
 
+                // Bitácora (spec 2026-10-17): el rechazo con reintento queda con sus motivos.
+                events.publish("EMPRESA_TASK_ATTEMPT_REJECTED", missionId, taskId, agentId, Map.of(
+                        "attempt", i + 1,
+                        "reasons", verdict.retryable().stream().limit(3)
+                                .map(r -> r.length() <= 200 ? r : r.substring(0, 199) + "…").toList()));
                 feedback = "- " + String.join("\n- ", verdict.retryable());
             }
 

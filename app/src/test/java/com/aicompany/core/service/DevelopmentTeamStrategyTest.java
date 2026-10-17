@@ -589,6 +589,37 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains("Rondas de corrección: 1"), result.verifiableState());
     }
 
+    // Bitácora (spec 2026-10-17): cada vuelta del sandbox y cada reparación quedan como evento.
+    @Test
+    void eachSandboxRoundAndEachRepairArePublished() throws Exception {
+        stubHappyPath();
+        var pass = Optional.of(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("build", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 3, 0),
+                new SandboxResult.StepResult("smoke", "PASS", 0, 1000, "", 0, 0))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")))
+                .thenReturn(pass);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(events).publish(eq("EMPRESA_SANDBOX_STARTED"), eq("M-1"), isNull(), eq("sandbox"),
+                argThat(d -> Integer.valueOf(0).equals(d.get("round"))));
+        verify(events).publish(eq("EMPRESA_SANDBOX_FINISHED"), eq("M-1"), isNull(), eq("sandbox"),
+                argThat(d -> "FAIL".equals(d.get("overall")) && "build".equals(d.get("failedStep"))
+                        && ((Integer) d.get("compileErrors")) >= 1));
+        verify(events).publish(eq("EMPRESA_REPAIR_REQUESTED"), eq("M-1"), anyString(), anyString(),
+                argThat(d -> ((Integer) d.get("errors")) >= 1 && Integer.valueOf(0).equals(d.get("repeated"))));
+        verify(events).publish(eq("EMPRESA_SANDBOX_STARTED"), eq("M-1"), isNull(), eq("sandbox"),
+                argThat(d -> Integer.valueOf(1).equals(d.get("round"))));
+        verify(events).publish(eq("EMPRESA_SANDBOX_VERIFICATION_COMPLETED"), eq("M-1"), anyString(), eq("sandbox"),
+                argThat(d -> Integer.valueOf(-1).equals(d.get("round")) && "".equals(d.get("failedStep"))));
+    }
+
     private static DevelopmentResult corrected(String path) {
         return new DevelopmentResult("corregido", List.of(new GeneratedFile(path, "corregido")));
     }
@@ -1442,6 +1473,10 @@ class DevelopmentTeamStrategyTest {
         var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
 
         verify(runtime).triage(anyString(), eq("M-1"), eq("engineering"), contains("Expected 201, Actual 500"), any());
+        // Bitácora (spec 2026-10-17): el veredicto del diagnóstico se publica.
+        verify(events).publish(eq("EMPRESA_TEST_TRIAGE_COMPLETED"), eq("M-1"), anyString(), eq("engineering"),
+                argThat(d -> d.get("verdicts") instanceof List<?> l && !l.isEmpty()
+                        && String.valueOf(l.get(0)).contains("CODE_WRONG")));
         verify(runtime, atLeastOnce()).generate(eq("M-1-BACKEND"), eq("M-1"), eq("backend"),
                 contains("Crear un cliente válido responde 201."), anyList(), anyList(), anyList(), any());
         verify(memory).recordStaticValidation(anyString(), eq("VERIFIED"), anyString());

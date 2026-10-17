@@ -1840,6 +1840,7 @@ public class CeoService {
                     continue;
                 }
                 log.warn("MODEL_FREE_FALLBACK operation={} actor={} model={} free={}", operation, actor, model, free);
+                publishSwitch(operation, actor, model, free, "FREE");
                 try {
                     return callRemote(operation, actor, free, messages, format, tools, System.nanoTime());
                 } catch (RemoteUnavailableException ex) {
@@ -1858,6 +1859,7 @@ public class CeoService {
         if (paid != null && !paid.isBlank() && !paid.equals(model) && remoteModel(paid).isPresent()
                 && !modelHealth.isDown(paid)) {
             log.warn("MODEL_PAID_FALLBACK operation={} actor={} model={} paid={}", operation, actor, model, paid);
+            publishSwitch(operation, actor, model, paid, "PAID");
             try {
                 return callModel(operation, actor, paid, messages, format, tools, think);
             } catch (RuntimeException ex) {
@@ -1873,6 +1875,7 @@ public class CeoService {
                     + " no tiene suplente disponible.", cause);
         }
         log.warn("MODEL_FALLBACK operation={} actor={} model={} fallback={}", operation, actor, model, fallback);
+        publishSwitch(operation, actor, model, fallback, "LOCAL");
         try {
             return callModel(operation, actor, fallback, messages, format, tools, think);
         } catch (RuntimeException ex) {
@@ -1882,6 +1885,24 @@ public class CeoService {
     }
 
     /** Una llamada a un modelo remoto, sin respaldo: un fallo de disponibilidad sale como RemoteUnavailableException. */
+    /** Bitácora (spec 2026-10-17): el cambio de modelo, solo si la llamada pertenece a una misión. */
+    private void publishSwitch(String operation, String actor, String from, String to, String kind) {
+        var context = ModelCallContext.current();
+        if (context == null || context.missionId() == null || events == null) {
+            return;
+        }
+        try {
+            var data = new java.util.LinkedHashMap<String, Object>();
+            data.put("operation", operation == null ? "" : operation);
+            data.put("from", from == null ? "" : from);
+            data.put("to", to == null ? "" : to);
+            data.put("kind", kind);
+            events.publish("EMPRESA_MODEL_SWITCHED", context.missionId(), context.taskId(), actor, data);
+        } catch (RuntimeException ex) {
+            log.warn("MODEL_SWITCH_EVENT_FAILED actor={} error={}", actor, ex.getMessage());
+        }
+    }
+
     private ModelMessage callRemote(String operation, String actor, String model, List<Map<String, Object>> messages,
                                     Object format, List<Map<String, Object>> tools, long startedAt) {
         var remoteRef = remoteModel(model).orElseThrow();

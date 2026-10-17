@@ -115,3 +115,18 @@ EMPRESA_CONTRACT_APPROVED (`MissionService`, `agentId="human"`, o `MissionExecut
 EMPRESA_CONTRACT_ADJUSTED (`MissionExecutor`, `agentId="human"`): el fundador pidió ajustar el contrato; Aria lo reescribe en una versión nueva. `data: {version, instruction}`.
 
 EMPRESA_CONTRACT_REJECTED (`MissionService`, `agentId="human"`): el fundador rechazó el contrato. `data: {version}`.
+
+## Bitácora (2026-10-17)
+
+Eventos que antes solo quedaban en el log. `MissionEventText` los resume en español y `MissionEventLog` los guarda por misión.
+
+| Tipo | agentId | data |
+|---|---|---|
+| `EMPRESA_SANDBOX_STARTED` | `sandbox` | `round` (int, vuelta del ciclo), `commitSha` |
+| `EMPRESA_SANDBOX_FINISHED` | `sandbox` | `round`, `overall`, `failedStep` (`""` si pasó), `testsPassed`, `testsFailed`, `compileErrors` (int) |
+| `EMPRESA_REPAIR_REQUESTED` | el agente dueño | `errors` (int), `repeated` (int), `files` (nombres de archivo, sin carpetas ni repetidos) |
+| `EMPRESA_TEST_TRIAGE_COMPLETED` | el líder | `verdicts` (lista `"<test> → <VERDICT>"`), o bien `error` (texto) |
+| `EMPRESA_TASK_ATTEMPT_REJECTED` | el agente de la tarea | `attempt` (int, 1-based), `reasons` (las 3 primeras, de 200 caracteres como máximo) |
+| `EMPRESA_MODEL_SWITCHED` | el actor | `operation`, `from`, `to`, `kind` (`FREE` \| `PAID` \| `LOCAL`); solo dentro de una misión |
+
+`EMPRESA_SANDBOX_VERIFICATION_COMPLETED` (resultado final, una sola vez) suma `round` (-1), `failedStep` y `compileErrors`.

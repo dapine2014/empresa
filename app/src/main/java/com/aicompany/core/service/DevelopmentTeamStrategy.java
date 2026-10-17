@@ -369,9 +369,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             progress.advance(MissionStatus.EVALUATING, 80, "Sandbox", round == 0
                     ? "Compilando, corriendo tests y arrancando el código en el sandbox."
                     : "Ronda de corrección " + round + ": verificando de nuevo en el sandbox.");
+            // Bitácora (spec 2026-10-17): cada vuelta del sandbox queda como evento (inicio y fin).
+            events.publish("EMPRESA_SANDBOX_STARTED", missionId, null, "sandbox",
+                    Map.of("round", round, "commitSha", headSha == null ? "" : headSha));
             var verified = verifyComponents(missionId, headSha, components);
             sandboxResult = verified.orElse(null);
             sandboxError = verified.isEmpty() ? (components.size() == 1 ? sandbox.lastError() : lastSandboxError) : null;
+            if (sandboxResult != null) {
+                events.publish("EMPRESA_SANDBOX_FINISHED", missionId, null, "sandbox", sandboxData(sandboxResult, round));
+            }
 
             if (sandboxResult == null || sandboxResult.passed()) {
                 break;
@@ -423,6 +429,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             for (var entry : errorsByTask.entrySet()) {
                 var task = entry.getKey();
                 var id = taskId(context, task.agentId());
+                // Bitácora (spec 2026-10-17): qué se le pide corregir a cada dueño.
+                var repeatedCount = (int) entry.getValue().stream()
+                        .filter(e -> previousCompileErrors.contains(repairKey(e))).count();
+                events.publish("EMPRESA_REPAIR_REQUESTED", missionId, id, task.agentId(), Map.of(
+                        "errors", entry.getValue().size(), "repeated", repeatedCount,
+                        "files", entry.getValue().stream()
+                                .map(e -> String.valueOf(e.path()).substring(String.valueOf(e.path()).lastIndexOf('/') + 1))
+                                .distinct().toList()));
                 try {
                     var current = currentContents(missionId, headSha, entry.getValue());
                     var required = task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
@@ -494,8 +508,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             memory.recordSandboxResult(validationTaskId, toJson(sandboxResult));
             memory.recordEvidence(validationTaskId, missionId, "sandbox", sandboxEvidence(missionId, headSha, sandboxResult));
             events.publish("EMPRESA_SANDBOX_VERIFICATION_COMPLETED", missionId, validationTaskId, "sandbox",
-                    Map.of("overall", sandboxResult.overall(), "testsPassed", sandboxResult.testsPassed(),
-                            "testsFailed", sandboxResult.testsFailed()));
+                    sandboxData(sandboxResult, -1));
         }
 
         StaticReviewResult review = null;
@@ -717,8 +730,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             memory.recordSandboxResult(validationTaskId, toJson(sandboxResult));
             memory.recordEvidence(validationTaskId, missionId, "sandbox", sandboxEvidence(missionId, headSha, sandboxResult));
             events.publish("EMPRESA_SANDBOX_VERIFICATION_COMPLETED", missionId, validationTaskId, "sandbox",
-                    Map.of("overall", sandboxResult.overall(), "testsPassed", sandboxResult.testsPassed(),
-                            "testsFailed", sandboxResult.testsFailed()));
+                    sandboxData(sandboxResult, -1));
         }
 
         var scenarios = scenarios(missionId);
@@ -1144,6 +1156,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             var triage = runtime.triage(triageId, missionId, leader,
                     triagePrompt(context, failing, evidence, headSha),
                     t -> com.aicompany.core.agent.validation.TestTriageValidator.validate(t, failing, repoFiles)).join();
+            // Bitácora (spec 2026-10-17): el dictamen del diagnóstico queda como evento.
+            events.publish("EMPRESA_TEST_TRIAGE_COMPLETED", missionId, triageId, leader, Map.of("verdicts",
+                    triage.verdictsOrEmpty().stream().filter(java.util.Objects::nonNull)
+                            .map(v -> v.test() + " → " + v.verdict()).toList()));
 
             var codeWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
             var testWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
@@ -1206,6 +1222,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return changed ? head : null;
         } catch (Exception ex) {
             triageNotes.add("no se completó (" + safeMessage(ex, "sin detalle") + ")");
+            events.publish("EMPRESA_TEST_TRIAGE_COMPLETED", missionId, triageId, leader,
+                    Map.of("error", String.valueOf(safeMessage(ex, "sin detalle"))));
             log.warn("MISSION {} - test triage failed: {}", missionId, ex.getMessage());
             return null;
         }
@@ -1333,6 +1351,21 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     /** El mismo error en el mismo archivo, aunque se haya corrido de línea. */
+    /** Bitácora (spec 2026-10-17): resultado de una vuelta del sandbox, con el primer paso que falló (round -1 = final). */
+    static Map<String, Object> sandboxData(SandboxResult result, int round) {
+        var failed = result.stepsOrEmpty().stream()
+                .filter(s -> "FAIL".equals(s.status()) || "TIMEOUT".equals(s.status()))
+                .map(s -> ComponentSandbox.stepName(s.name())).findFirst().orElse("");
+        var data = new LinkedHashMap<String, Object>();
+        data.put("round", round);
+        data.put("overall", result.overall() == null ? "" : result.overall());
+        data.put("failedStep", failed);
+        data.put("testsPassed", result.testsPassed());
+        data.put("testsFailed", result.testsFailed());
+        data.put("compileErrors", compileErrors(result).size());
+        return data;
+    }
+
     static String repairKey(CompilerErrorParser.CompilerError e) {
         return e.path() + "|" + e.code() + "|" + e.message();
     }

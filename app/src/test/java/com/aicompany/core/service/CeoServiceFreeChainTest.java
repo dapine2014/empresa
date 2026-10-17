@@ -29,8 +29,9 @@ class CeoServiceFreeChainTest {
     private final OpenAiCompatibleClient bedrock = mock(OpenAiCompatibleClient.class);
     private final ModelHealthService health = mock(ModelHealthService.class);
     private final FreeModelChainService chain = mock(FreeModelChainService.class);
+    private final CompanyEventPublisher events = mock(CompanyEventPublisher.class);
     private final CeoService ceoService = new CeoService(RestClient.builder().baseUrl("http://ollama").build(),
-            JsonMapper.builder().build(), mock(EvidenceAcquisitionService.class), mock(CompanyEventPublisher.class),
+            JsonMapper.builder().build(), mock(EvidenceAcquisitionService.class), events,
             new SimpleMeterRegistry(), Map.of("nvidia", nvidia, "bedrock", bedrock));
 
     {
@@ -108,5 +109,29 @@ class CeoServiceFreeChainTest {
 
         assertEquals("de bedrock", ceoService.planTeamWork("engineering", "prompt", "", other).summary());
         verifyNoInteractions(nvidia);
+    }
+
+    // Bitácora (spec 2026-10-17): el cambio de modelo dentro de una misión queda en la bitácora.
+    @Test
+    void aModelSwitchInsideAMissionIsPublished() {
+        when(nvidia.complete(eq("moonshotai/kimi-k2.6"), anyList(), any(), anyBoolean(), anyInt()))
+                .thenThrow(unavailable("HTTP 404 Not found for account"));
+        when(nvidia.complete(eq("z-ai/glm-5.3"), anyList(), any(), anyBoolean(), anyInt())).thenReturn(plan("de glm"));
+
+        ModelCallContext.with("M-1", "T-1", () -> ceoService.planTeamWork("engineering", "prompt", "", KIMI));
+
+        verify(events).publish(eq("EMPRESA_MODEL_SWITCHED"), eq("M-1"), eq("T-1"), anyString(),
+                argThat(d -> "FREE".equals(d.get("kind")) && KIMI.equals(d.get("from")) && GLM.equals(d.get("to"))));
+    }
+
+    @Test
+    void aModelSwitchOutsideAMissionIsNotPublished() {
+        when(nvidia.complete(eq("moonshotai/kimi-k2.6"), anyList(), any(), anyBoolean(), anyInt()))
+                .thenThrow(unavailable("HTTP 404 Not found for account"));
+        when(nvidia.complete(eq("z-ai/glm-5.3"), anyList(), any(), anyBoolean(), anyInt())).thenReturn(plan("de glm"));
+
+        ceoService.planTeamWork("engineering", "prompt", "", KIMI);
+
+        verify(events, never()).publish(eq("EMPRESA_MODEL_SWITCHED"), any(), any(), any(), any());
     }
 }
