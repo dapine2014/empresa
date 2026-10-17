@@ -29,6 +29,8 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 
 | | Pendiente | Origen | Notas |
 |---|---|---|---|
+| [ ] | **Ver el sandbox en el Command Center**: en la etapa Sandbox ningún agente trabaja y la pantalla no muestra que el sandbox corre ni en qué paso va (restore, build, test, partidas) | Pong de 3 niveles (2026-10-17, pedido del fundador) | Después de terminar con Kael; también consultable en el chat |
+| [ ] | **Base de datos transversal**: todo proyecto del Development Group necesita almacenar datos (Aria define qué se guarda en el contrato, Diego modela y migra) | Fundador (2026-10-17) | Hoy Diego solo entra si la misión declara `databases`. Diseñar después de Kael |
 | [ ] | **Tope global de llamadas al modelo por tarea** | Bloque 3 (revisión I-4) | Hoy un intento puede hacer hasta 8 lotes × 3 intentos, y más en las correcciones; sin presupuesto por misión. Se decide con el bloque 7 |
 | [ ] | **Nuevo dueño de `OFFER_DESIGN` en Discovery** | Bloque 1 | **Obligatorio antes de descongelar Forjai**: `MissionExecutor` y `ProductAutomation.PRODUCT_AGENT` siguen apuntando a Luna (`product`), que pasó al Development Group |
 | [ ] | Probar la migración `TEAM-ENGINEERING` → `TEAM-DEVELOPMENT` con test, incluido el caso con ambos equipos a la vez | Bloque 1 (m-1) | En vivo ya se verificó el caso normal (2026-10-01) |
