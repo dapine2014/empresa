@@ -3,6 +3,7 @@ import type {
   AdjustTarget,
   InteractionDesignView,
   JointReviewView,
+  MissionEventView,
   DatabaseConnectionForm,
   DatabaseConnectionInfo,
   MissionDatabaseStatus,
@@ -204,6 +205,8 @@ export const api = {
 
   interactionDesign: (missionId: string) =>
     request<InteractionDesignView>(`/api/company/missions/${missionId}/interaction-design`),
+  missionEvents: (missionId: string, limit = 100) =>
+    request<MissionEventView[]>(`/api/company/missions/${missionId}/events?limit=${limit}`),
   jointReview: (missionId: string) => request<JointReviewView[]>(`/api/company/missions/${missionId}/joint-review`),
 
   decideRequirements: (

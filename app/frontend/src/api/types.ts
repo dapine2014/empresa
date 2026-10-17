@@ -120,8 +120,20 @@ export interface TeamSnapshot {
   members: TeamMemberInfo[]
 }
 
+export interface MissionEventView {
+  id: string
+  type: string
+  at: string
+  agentId: string | null
+  agentName: string | null
+  taskId: string | null
+  summary: string
+  round: number | null
+  increment: number | null
+}
+
 export interface ActivityItem {
-  type: 'TASK' | 'MISSION' | 'EVIDENCE' | 'DECISION'
+  type: 'TASK' | 'MISSION' | 'EVIDENCE' | 'DECISION' | 'EVENT'
   missionId: string | null
   agentId: string | null
   description: string

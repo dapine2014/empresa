@@ -54,6 +54,12 @@ public class ActivityMemoryService {
                               RETURN 'DECISION' AS type, d.missionId AS missionId, 'human' AS agentId,
                                      (d.decision + ': ' + left(d.reasoning, 100)) AS description,
                                      d.decidedAt AS timestamp
+                              UNION ALL
+                              MATCH (ev:MissionEvent)
+                              OPTIONAL MATCH (a3:Agent {id: ev.agentId})
+                              RETURN 'EVENT' AS type, ev.missionId AS missionId, ev.agentId AS agentId,
+                                     (coalesce(a3.name, ev.agentId, 'Forjai') + ': ' + ev.summary) AS description,
+                                     ev.at AS timestamp
                             }
                             RETURN type, missionId, agentId, description, timestamp
                             ORDER BY timestamp DESC

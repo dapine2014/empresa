@@ -359,6 +359,60 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
 }
 
 /** Revisión conjunta (spec 2026-10-15): Neo detecta contradicciones entre HU y diseño, Aria decide, Java aplica. */
+const SANDBOX_TYPES = ['SANDBOX_', 'REPAIR_', 'TEST_TRIAGE_']
+
+/** Bitácora (spec 2026-10-17): lo que pasó en la misión, del más nuevo al más viejo. */
+function MissionEventLog({ missionId, live }: { missionId: string; live: boolean }) {
+  const [agent, setAgent] = useState('')
+  const [sandboxOnly, setSandboxOnly] = useState(false)
+  const query = useQuery({
+    queryKey: ['missionEvents', missionId],
+    queryFn: () => api.missionEvents(missionId, 200),
+    refetchInterval: live ? 5_000 : false,
+  })
+  const events = query.data ?? []
+  const agents = Array.from(new Set(events.map((e) => e.agentName ?? 'Forjai')))
+  const shown = events.filter(
+    (e) =>
+      (agent === '' || (e.agentName ?? 'Forjai') === agent) &&
+      (!sandboxOnly || SANDBOX_TYPES.some((p) => e.type.startsWith('EMPRESA_' + p))),
+  )
+  return (
+    <section>
+      <h2>Bitácora</h2>
+      {events.length === 0 ? (
+        <p className="hint">Sin bitácora (misión anterior al 2026-10-17).</p>
+      ) : (
+        <>
+          <p>
+            <select value={agent} onChange={(e) => setAgent(e.target.value)}>
+              <option value="">Todos los agentes</option>
+              {agents.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>{' '}
+            <label>
+              <input type="checkbox" checked={sandboxOnly} onChange={(e) => setSandboxOnly(e.target.checked)} /> solo
+              sandbox
+            </label>
+          </p>
+          <ul className="activity-list">
+            {shown.map((e) => (
+              <li key={e.id}>
+                <span className="activity-time">{new Date(e.at).toLocaleTimeString()}</span>
+                <span className="activity-type">{e.agentName ?? 'Forjai'}</span>
+                <span className="activity-desc">{e.summary}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  )
+}
+
 function MissionJointReview({ missionId }: { missionId: string }) {
   const query = useQuery({
     queryKey: ['jointReview', missionId],
@@ -581,6 +635,10 @@ export default function MissionDetailPage() {
       {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
       {mission.teamId && <MissionDesign missionId={mission.missionId} />}
       {mission.teamId && <MissionJointReview missionId={mission.missionId} />}
+      <MissionEventLog
+        missionId={mission.missionId}
+        live={!['COMPLETED', 'CANCELLED', 'FAILED', 'INTERRUPTED'].includes(mission.status)}
+      />
 
       {mission.teamId && <MissionDatabase missionId={mission.missionId} />}
 

@@ -28,6 +28,20 @@ class MissionServiceTest {
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
     private final DevelopmentWorkspaceService workspace = mock(DevelopmentWorkspaceService.class);
 
+    // Bitácora (spec 2026-10-17): la API acota el límite y sin bitácora devuelve vacío.
+    @Test
+    void eventsAreCappedAndEmptyWithoutLog() {
+        var service = new MissionService(mock(MissionMemoryService.class), mock(MissionExecutor.class),
+                mock(CompanyEventPublisher.class), teamMemory, workspace);
+        assertEquals(List.of(), service.events("M-1", 100));
+        var log = mock(com.aicompany.core.event.MissionEventLog.class);
+        service.setMissionEventLog(log);
+        service.events("M-1", 10_000);
+        verify(log).recent("M-1", 500);
+        service.events("M-1", 0);
+        verify(log).recent("M-1", 1);
+    }
+
     @Test
     void startPersistsMissionAndSubmitsItForAsynchronousExecution() {
         var memory = mock(MissionMemoryService.class);

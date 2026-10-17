@@ -6,6 +6,7 @@ const TYPE_LABEL: Record<string, string> = {
   MISSION: '🧭 Misión',
   EVIDENCE: '📄 Evidencia',
   DECISION: '✅ Decisión',
+  EVENT: '📝 Evento',
 }
 
 export default function ActivityPage() {

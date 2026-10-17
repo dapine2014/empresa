@@ -119,6 +119,13 @@ public class MissionController {
         return missionService.jointReviews(missionId);
     }
 
+    /** Bitácora (spec 2026-10-17): eventos de la misión, del más nuevo al más viejo. */
+    @GetMapping("/{missionId}/events")
+    public List<com.aicompany.core.model.MissionEventView> events(@PathVariable String missionId,
+                                                                  @RequestParam(name = "limit", defaultValue = "100") int limit) {
+        return missionService.events(missionId, limit);
+    }
+
     /** Spec 2026-10-14 Kael §3: diseño de Kael de la misión (404 = sin diseño). */
     @GetMapping("/{missionId}/interaction-design")
     public ResponseEntity<InteractionDesignView> interactionDesign(@PathVariable String missionId) {

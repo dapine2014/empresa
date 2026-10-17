@@ -760,4 +760,17 @@ public class MissionService {
             throw new IllegalArgumentException("financialCriteria.deadline no puede ser anterior a hoy");
         }
     }
+
+    private com.aicompany.core.event.MissionEventLog missionEventLog;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMissionEventLog(com.aicompany.core.event.MissionEventLog missionEventLog) {
+        this.missionEventLog = missionEventLog;
+    }
+
+    /** Bitácora (spec 2026-10-17): del más nuevo al más viejo; límite 1..500. */
+    public List<com.aicompany.core.model.MissionEventView> events(String missionId, int limit) {
+        return missionEventLog == null ? List.of()
+                : missionEventLog.recent(missionId, Math.max(1, Math.min(500, limit)));
+    }
 }
