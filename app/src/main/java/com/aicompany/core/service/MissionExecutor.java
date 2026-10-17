@@ -320,6 +320,28 @@ public class MissionExecutor {
         awaitApproval(missionId, reviewed.written(), reviewed.designed(), reviewed.note());
     }
 
+    private com.aicompany.core.event.MissionEventLog missionEventLog;
+
+    /** Bitácora (spec 2026-10-17): opcional (sin ella Neo planifica sin el resumen del incremento). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMissionEventLog(com.aicompany.core.event.MissionEventLog missionEventLog) {
+        this.missionEventLog = missionEventLog;
+    }
+
+    /** Bitácora (spec 2026-10-17): lo que pasó en el incremento, para el plan de Neo; "" si no hay bitácora. */
+    private String incrementDigest(String missionId, int increment) {
+        if (missionEventLog == null || increment < 1) {
+            return "";
+        }
+        try {
+            var digest = com.aicompany.core.event.MissionEventDigest.digest(missionEventLog.recent(missionId, 500), increment);
+            return digest.isEmpty() ? "" : "\n\n" + digest;
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the event log: {}", missionId, ex.getMessage());
+            return "";
+        }
+    }
+
     private JointReviewService jointReview;
 
     /** Revisión conjunta (spec 2026-10-15): opcional (sin ella, HU y diseño van al fundador sin revisar). */
@@ -467,6 +489,7 @@ public class MissionExecutor {
                 // Revisión final Aria (2a/b): la ronda corrige el incremento en curso, con su bloque.
                 instruction = withIncrement(missionId, jsonMapper.readValue(approved.get().specJson(),
                         com.aicompany.core.agent.model.RequirementsSpec.class), current, instruction);
+                instruction = instruction + incrementDigest(missionId, current);
             }
         }
 
@@ -733,7 +756,7 @@ public class MissionExecutor {
      */
     private void planAndRunIncrement(String missionId, String instruction, String teamId, TeamExecutionMode mode,
                                      com.aicompany.core.agent.model.RequirementsSpec spec, int increment, int round) {
-        var withIncrement = withIncrement(missionId, spec, increment, instruction);
+        var withIncrement = withIncrement(missionId, spec, increment, instruction) + incrementDigest(missionId, increment - 1);
         requirementsMemory.setBuildingIncrement(missionId, increment);
         advanceMission(missionId, MissionStatus.PLANNING, 5, "Planificación del equipo",
                 "Neo planifica el incremento " + increment + ".");

@@ -439,6 +439,25 @@ class MissionExecutorTeamTest {
         verify(requirements).setBuildingIncrement("M-9", 2);
     }
 
+    // Bitácora (spec 2026-10-17): Neo planifica el incremento 2 sabiendo lo que pasó en el 1.
+    @Test
+    void incrementTwoIsPlannedWithTheDigestOfIncrementOne() throws Exception {
+        withAria();
+        var eventLog = mock(com.aicompany.core.event.MissionEventLog.class);
+        var t0 = java.time.Instant.parse("2026-10-17T15:00:00Z");
+        when(eventLog.recent(eq("M-9"), eq(500))).thenReturn(List.of(
+                new MissionEventView("e2", "EMPRESA_MISSION_CORRECTION_STARTED", t0.plusSeconds(60), null, "Forjai", null,
+                        "Corrección automática ronda 2", 2, null),
+                new MissionEventView("e1", "EMPRESA_INCREMENT_STARTED", t0, null, "human", null, "x", 1, 1)));
+        executor.setMissionEventLog(eventLog);
+        when(planner.plan(eq("M-9"), eq("TEAM-DEVELOPMENT"), anyString(), any(), eq(2), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+
+        executor.buildIncrementAsync("M-9", 2, 2).get();
+
+        verify(planner).plan(eq("M-9"), eq("TEAM-DEVELOPMENT"),
+                contains(com.aicompany.core.event.MissionEventDigest.HEADER + "1 (Java):"), any(), eq(2), any());
+    }
+
     // Revisión final (2a/b): una ronda de evidencia de una misión con requisitos conserva el bloque del incremento en curso.
     @Test
     void anEvidenceRoundKeepsTheIncrementBlock() throws Exception {
