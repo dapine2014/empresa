@@ -502,10 +502,10 @@ public class MissionMemoryService {
                         params);
 
                 tx.run("OPTIONAL MATCH (m:Mission {id:$missionId}) " +
-                                // 2026-10-15: también las HU de Aria y los diseños de Kael (quedaban huérfanos); 2026-10-16: el contrato.
+                                // 2026-10-15: también las HU de Aria y los diseños de Kael (quedaban huérfanos); 2026-10-16: el contrato; 2026-10-17: la bitácora.
                                 // El costo de modelos (ModelUsage) se conserva: es gasto real del mes.
                                 "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY|HAS_REQUIREMENTS|HAS_CONTRACT"
-                                + "|HAS_INTERACTION_DESIGN|HAS_JOINT_REVIEW]->(n) " +
+                                + "|HAS_INTERACTION_DESIGN|HAS_JOINT_REVIEW|HAS_EVENT]->(n) " +
                                 "WITH m, collect(DISTINCT n) AS owned " +
                                 "FOREACH (n IN owned | DETACH DELETE n) " +
                                 "FOREACH (x IN CASE WHEN m IS NULL THEN [] ELSE [m] END | DETACH DELETE x)",
