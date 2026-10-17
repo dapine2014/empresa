@@ -71,6 +71,14 @@ public final class ContractValidator {
                         + "una épica.");
             }
         }
+        if (contract.deliveryOrNull() != null) {
+            for (var platform : contract.deliveryOrNull().platformsOrEmpty()) {
+                if (!ClientContract.PLATFORMS.contains(platform)) {
+                    errors.add("delivery.platforms solo admite " + String.join(", ", ClientContract.PLATFORMS)
+                            .replaceFirst(", ([A-Z]+)$", " o $1") + "; recibido: \"" + platform + "\".");
+                }
+            }
+        }
         return errors;
     }
 }

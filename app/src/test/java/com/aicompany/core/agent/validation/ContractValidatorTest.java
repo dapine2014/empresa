@@ -73,4 +73,14 @@ class ContractValidatorTest {
                 List.of(new Item("MOD-01", null, "Módulo", "x")), List.of(), true, "módulos")));
         assertTrue(errors.contains("kind debe ser"), errors);
     }
+
+    @Test void deliveryPlatformsMustBeKnown() {
+        var ok = new ClientContract("x", "GAME", PONG.items(), List.of(), true, "niveles",
+                new ClientContract.Delivery(List.of("WINDOWS", "WEB", "ANDROID")));
+        assertEquals(List.of(), ContractValidator.validate(ok));
+        var bad = new ClientContract("x", "GAME", PONG.items(), List.of(), true, "niveles",
+                new ClientContract.Delivery(List.of("WINDOWS", "PLAYSTATION")));
+        assertTrue(ContractValidator.validate(bad).contains("delivery.platforms solo admite WINDOWS, MACOS, LINUX, "
+                + "ANDROID, WEB o DOCKER; recibido: \"PLAYSTATION\"."), ContractValidator.validate(bad).toString());
+    }
 }

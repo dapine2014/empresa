@@ -138,12 +138,15 @@ public class ContractWriter {
                 - useEpics: true si varias historias van a tocar el mismo módulo, nivel o escena (cada ítem será una
                   épica que agrupa sus historias); false si el producto es pequeño y no hace falta agrupar. Un juego con
                   varios niveles o escenas siempre lleva épicas. epicsReason: por qué sí o por qué no.
+                - delivery (opcional): solo si el cliente pidió plataformas concretas, platforms con WINDOWS, MACOS,
+                  LINUX, ANDROID, WEB o DOCKER; si no las pidió, omite delivery.
                 - No inventes lo que el cliente no pidió. Español, frases cortas.
 
                 Responde SOLO este JSON, con exactamente estos nombres de campos:
                 {"summary": "...", "experience": "APP|GAME|NONE",
                  "items": [{"id": "MOD-01", "kind": "MODULE|SYSTEM|LEVEL|SCENE", "name": "...", "description": "..."}],
-                 "outOfScope": ["..."], "useEpics": true, "epicsReason": "..."}
+                 "outOfScope": ["..."], "useEpics": true, "epicsReason": "...",
+                 "delivery": {"platforms": ["..."]}}   (delivery es opcional)
                 """.formatted(instruction);
         if (previous.isEmpty()) {
             return base;

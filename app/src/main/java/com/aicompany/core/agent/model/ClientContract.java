@@ -13,9 +13,23 @@ import java.util.Objects;
  */
 public record ClientContract(String summary, String experience, List<Item> items,
                              @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> outOfScope,
-                             Boolean useEpics, String epicsReason) {
+                             Boolean useEpics, String epicsReason, Delivery delivery) {
+
+    public static final List<String> PLATFORMS = List.of("WINDOWS", "MACOS", "LINUX", "ANDROID", "WEB", "DOCKER");
 
     public record Item(String id, String kind, String name, String description) {
+    }
+
+    /** Plataformas que el cliente pidió expresamente (opcional; sin él, se entregan las del perfil). */
+    public record Delivery(List<String> platforms) {
+        public List<String> platformsOrEmpty() {
+            return platforms == null ? List.of() : platforms.stream().filter(Objects::nonNull).toList();
+        }
+    }
+
+    public ClientContract(String summary, String experience, List<Item> items, List<String> outOfScope,
+                          Boolean useEpics, String epicsReason) {
+        this(summary, experience, items, outOfScope, useEpics, epicsReason, null);
     }
 
     public ClientContract {
@@ -35,6 +49,10 @@ public record ClientContract(String summary, String experience, List<Item> items
         return Boolean.TRUE.equals(useEpics);
     }
 
+    public Delivery deliveryOrNull() {
+        return delivery;
+    }
+
     public RequirementsSpec.Experience experienceOrNull() {
         return RequirementsSpec.Experience.of(experience).orElse(null);
     }
@@ -51,6 +69,8 @@ public record ClientContract(String summary, String experience, List<Item> items
                             "required", List.of("id", "kind", "name", "description"))),
                     "outOfScope", Map.of("type", "array", "items", Map.of("type", "string")),
                     "useEpics", Map.of("type", "boolean"),
-                    "epicsReason", Map.of("type", "string")),
+                    "epicsReason", Map.of("type", "string"),
+                    "delivery", Map.of("type", "object", "properties", Map.of("platforms",
+                            Map.of("type", "array", "items", Map.of("type", "string", "enum", PLATFORMS))))),
             "required", List.of("summary", "experience", "items", "outOfScope", "useEpics", "epicsReason"));
 }
