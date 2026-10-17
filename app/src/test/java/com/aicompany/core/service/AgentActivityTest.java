@@ -93,4 +93,58 @@ class AgentActivityTest {
         assertTrue(AgentActivity.stopped(MissionStatus.AWAITING_INVESTOR));
         assertFalse(AgentActivity.stopped(MissionStatus.EVALUATING));
     }
+
+    @Test void currentStepNullDoesNotPrintNull() {
+        var state = new AgentActivity.MissionState(mission("MISSION-X", MissionStatus.PLANNING, null, "", NOW),
+                List.of(task("MISSION-X-BACKEND", "backend", "PENDING", NOW)), List.of());
+        var text = AgentActivity.describe("backend", "Iris", List.of(state), NOW);
+        assertFalse(text.contains("null"), text);
+        assertTrue(text.contains("MISSION-X (PLANNING)"), text);
+    }
+
+    @Test void neo4jSubstringDoesNotTriggerWorking() {
+        var pong = new AgentActivity.MissionState(mission("MISSION-PONG", MissionStatus.WAITING_AGENT_RESULTS,
+                "Paso", "Neo4j está corriendo mal", NOW),
+                List.of(task("MISSION-PONG-ENGINEERING", "engineering", "RUNNING", NOW)), List.of());
+        var text = AgentActivity.describe("engineering", "Neo", List.of(pong), NOW);
+        assertTrue(text.contains("en MISSION-PONG"), text);
+        assertFalse(text.contains("trabajando ahora"), text);
+    }
+
+    @Test void completedTaskDoesNotTriggerWorking() {
+        var pong = new AgentActivity.MissionState(mission("MISSION-PONG", MissionStatus.WAITING_AGENT_RESULTS,
+                "Paso", "Neo ha terminado todo", NOW),
+                List.of(task("MISSION-PONG-ENGINEERING", "engineering", "COMPLETED", NOW)), List.of());
+        var text = AgentActivity.describe("engineering", "Neo", List.of(pong), NOW);
+        assertTrue(text.contains("en MISSION-PONG"), text);
+        assertFalse(text.contains("trabajando ahora"), text);
+    }
+
+    @Test void eventLineOmitsTimeWhenAtIsNull() {
+        var event = new MissionEventView("e-1", "EMPRESA_TASK_COMMITTED", null, "backend", "Iris", null, "Hizo algo", null, null);
+        var line = AgentActivity.eventLine(event);
+        assertTrue(line.startsWith("Iris:"), line);
+        assertFalse(line.startsWith(" "), line);
+    }
+
+    @Test void eventLineSummaryNullBecomesEmpty() {
+        var event = new MissionEventView("e-1", "EMPRESA_TASK_COMMITTED", NOW, "backend", "Iris", null, null, null, null);
+        var line = AgentActivity.eventLine(event);
+        assertTrue(line.endsWith("Iris: "), line);
+    }
+
+    @Test void futureDurationBecomesZero() {
+        var pong = new AgentActivity.MissionState(mission("MISSION-PONG", MissionStatus.WAITING_AGENT_RESULTS,
+                "Paso", "Iris está aquí", NOW),
+                List.of(task("MISSION-PONG-BACKEND", "backend", "RUNNING", NOW.plusSeconds(60))), List.of());
+        var text = AgentActivity.describe("backend", "Iris", List.of(pong), NOW);
+        assertTrue(text.contains("hace 0 min"), text);
+    }
+
+    @Test void leaderWithNonDevTeamMissionIsFree() {
+        var mission = new MissionResponse("MISSION-OTHER", MissionStatus.EVALUATING, "TEST", 50, "Paso", "", NOW, null, "TEAM-SALES");
+        var state = new AgentActivity.MissionState(mission, List.of(task("MISSION-OTHER-QA", "qa", "RUNNING", NOW)), List.of());
+        var text = AgentActivity.describe("engineering", "Neo", List.of(state), NOW);
+        assertEquals("Neo — libre: sin tareas en misiones activas.", text);
+    }
 }

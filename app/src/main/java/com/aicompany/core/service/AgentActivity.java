@@ -12,6 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -36,6 +37,10 @@ public final class AgentActivity {
     private AgentActivity() {
     }
 
+    private static String stepOrEmpty(String step) {
+        return step == null || step.isBlank() ? "" : " · " + step;
+    }
+
     public static boolean live(MissionStatus s) {
         return s != null && !ENDED.contains(s);
     }
@@ -45,6 +50,7 @@ public final class AgentActivity {
     }
 
     public static String describe(String agentId, String agentName, List<MissionState> missions, Instant now) {
+        var displayName = agentName == null ? agentId : agentName;
         var live = missions.stream().filter(m -> live(m.mission().status()))
                 .sorted(Comparator.comparing((MissionState m) -> m.mission().updatedAt(),
                         Comparator.nullsLast(Comparator.reverseOrder())))
@@ -52,25 +58,34 @@ public final class AgentActivity {
         var own = live.stream().filter(m -> m.tasks().stream().anyMatch(t -> agentId.equals(t.agentId()))).toList();
         if (own.isEmpty()) {
             if (LEADER.equals(agentId) && !live.isEmpty()) {
-                return agentName + " — sin tareas abiertas; coordina como líder técnico " + live.stream()
-                        .map(m -> m.mission().missionId()).collect(Collectors.joining(", "))
+                var devMissions = live.stream()
+                        .filter(m -> "TEAM-DEVELOPMENT".equals(m.mission().teamId()))
+                        .map(m -> m.mission().missionId()).collect(Collectors.joining(", "));
+                if (devMissions.isEmpty()) {
+                    return displayName + " — libre: sin tareas en misiones activas.";
+                }
+                return displayName + " — sin tareas abiertas; coordina como líder técnico " + devMissions
                         + ": la corrección la reparte Java por dueño de archivo; Neo entra en el plan y en el triage de tests.";
             }
-            return agentName + " — libre: sin tareas en misiones activas.";
+            return displayName + " — libre: sin tareas en misiones activas.";
         }
         var lines = new java.util.ArrayList<String>();
         for (var m : own) {
             var mission = m.mission();
-            var working = !stopped(mission.status()) && mission.message() != null
-                    && mission.message().contains(agentName);
-            var head = (lines.isEmpty() ? agentName + " — " : "") + (working ? "trabajando ahora en "
+            var hasNonTerminalTask = m.tasks().stream()
+                    .filter(t -> agentId.equals(t.agentId()))
+                    .anyMatch(t -> "RUNNING".equals(t.status()) || "PENDING".equals(t.status()));
+            var agentNamePattern = Pattern.compile("(?<![\\p{L}\\p{N}])" + Pattern.quote(displayName) + "(?![\\p{L}\\p{N}])");
+            var working = !stopped(mission.status()) && hasNonTerminalTask
+                    && mission.message() != null && agentNamePattern.matcher(mission.message()).find();
+            var head = (lines.isEmpty() ? displayName + " — " : "") + (working ? "trabajando ahora en "
                     : stopped(mission.status()) ? "detenida, esperando al fundador: " : "en ") + mission.missionId()
-                    + " (" + mission.status() + " · " + mission.currentStep() + ")";
+                    + " (" + mission.status() + stepOrEmpty(mission.currentStep()) + ")";
             lines.add(head);
             m.tasks().stream().filter(t -> agentId.equals(t.agentId()))
                     .max(Comparator.comparing(AgentTask::updatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
                     .ifPresent(t -> lines.add("  Última tarea: " + t.taskId() + " (" + t.action() + ", " + t.status()
-                            + (t.updatedAt() == null ? "" : ", hace " + Duration.between(t.updatedAt(), now).toMinutes()
+                            + (t.updatedAt() == null ? "" : ", hace " + Math.max(0, Duration.between(t.updatedAt(), now).toMinutes())
                             + " min") + ")"));
             m.events().stream().filter(e -> agentId.equals(e.agentId())).findFirst()
                     .ifPresent(e -> lines.add("  Último evento: " + eventLine(e)));
@@ -82,12 +97,15 @@ public final class AgentActivity {
         var m = state.mission();
         var events = state.events().stream().limit(maxEvents).map(e -> "- " + eventLine(e))
                 .collect(Collectors.joining("\n"));
-        return m.missionId() + ": " + m.status() + " · " + m.currentStep()
+        return m.missionId() + ": " + m.status() + stepOrEmpty(m.currentStep())
                 + (m.message() == null || m.message().isBlank() ? "" : " — " + m.message())
                 + "\nBitácora (más reciente primero):\n" + (events.isEmpty() ? "- (sin bitácora: misión anterior al 2026-10-17)" : events);
     }
 
     public static String eventLine(MissionEventView e) {
-        return HOUR.format(e.at()) + " " + (e.agentName() == null ? "Forjai" : e.agentName()) + ": " + e.summary();
+        var time = e.at() == null ? "" : HOUR.format(e.at()) + " ";
+        var name = (e.agentName() == null ? "Forjai" : e.agentName()) + ": ";
+        var summary = e.summary() == null ? "" : e.summary();
+        return time + name + summary;
     }
 }
