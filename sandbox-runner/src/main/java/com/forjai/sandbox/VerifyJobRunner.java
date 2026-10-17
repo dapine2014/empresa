@@ -2,6 +2,7 @@ package com.forjai.sandbox;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -106,6 +107,12 @@ public class VerifyJobRunner {
                 return new SandboxResult(SandboxResult.FAIL, steps);
             }
 
+            if (release != null && (unsafeEnvValue(release.alias()) || unsafeEnvValue(release.password()))) {
+                targets.forEach(t -> steps.add(new SandboxResult.StepResult("package:" + t.id(), SandboxResult.FAIL, -1, 0,
+                        "clave de Android inválida (caracteres no permitidos)", 0, 0)));
+                return new SandboxResult(SandboxResult.FAIL, steps);
+            }
+
             var env = new StringBuilder("FORJAI_TARGETS=")
                     .append(String.join(",", targets.stream().map(PackageTarget::id).toList())).append('\n');
             if (release != null) {
@@ -116,11 +123,11 @@ public class VerifyJobRunner {
                         .append("GODOT_ANDROID_KEYSTORE_RELEASE_USER=").append(release.alias()).append('\n')
                         .append("GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=").append(release.password()).append('\n');
             }
-            Files.createFile(envFile);
             try {
-                Files.setPosixFilePermissions(envFile, PosixFilePermissions.fromString("rw-------"));
+                Files.createFile(envFile, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
             } catch (UnsupportedOperationException ignored) {
                 // el sistema de archivos no tiene permisos POSIX
+                Files.createFile(envFile);
             }
             Files.writeString(envFile, env.toString());
 
@@ -146,7 +153,14 @@ public class VerifyJobRunner {
                     continue;
                 }
                 var statusFile = packageDir.resolve("status").resolve(target.id());
-                var content = Files.exists(statusFile) ? Files.readString(statusFile).strip() : null;
+                if (Files.exists(statusFile, LinkOption.NOFOLLOW_LINKS)
+                        && !Files.isRegularFile(statusFile, LinkOption.NOFOLLOW_LINKS)) {
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.FAIL, execution.exitCode(), duration,
+                            "estado inválido", 0, 0));
+                    continue;
+                }
+                var content = Files.exists(statusFile, LinkOption.NOFOLLOW_LINKS)
+                        ? Files.readString(statusFile).strip() : null;
                 if ("PASS".equals(content)) {
                     steps.add(new SandboxResult.StepResult(name, SandboxResult.PASS, execution.exitCode(), duration,
                             stepTail, 0, 0));
@@ -167,7 +181,7 @@ public class VerifyJobRunner {
             }
             deleteQuietly(destination);
             Files.createDirectories(destination);
-            if (Files.isDirectory(packageDir)) {
+            if (Files.isDirectory(packageDir, LinkOption.NOFOLLOW_LINKS)) {
                 copyTree(packageDir, destination);
             }
 
@@ -193,17 +207,30 @@ public class VerifyJobRunner {
         return new SandboxResult.StepResult(name, SandboxResult.SKIPPED, 0, 0, "Omitido: un paso anterior falló.", 0, 0);
     }
 
+    /** Copia solo directorios y archivos regulares: la salida la escribió código generado, así que un symlink se omite. */
     private static void copyTree(Path from, Path to) throws IOException {
-        try (var walk = Files.walk(from)) {
-            for (var source : walk.toList()) {
-                var dest = to.resolve(from.relativize(source).toString());
-                if (Files.isDirectory(source)) {
-                    Files.createDirectories(dest);
-                } else {
-                    Files.copy(source, dest, StandardCopyOption.REPLACE_EXISTING);
-                }
+        Files.walkFileTree(from, new java.nio.file.SimpleFileVisitor<>() {
+            @Override
+            public java.nio.file.FileVisitResult preVisitDirectory(Path dir, java.nio.file.attribute.BasicFileAttributes attrs)
+                    throws IOException {
+                Files.createDirectories(to.resolve(from.relativize(dir).toString()));
+                return java.nio.file.FileVisitResult.CONTINUE;
             }
-        }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs)
+                    throws IOException {
+                if (attrs.isRegularFile() && !attrs.isSymbolicLink()) {
+                    Files.copy(file, to.resolve(from.relativize(file).toString()), StandardCopyOption.REPLACE_EXISTING,
+                            LinkOption.NOFOLLOW_LINKS);
+                }
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private static boolean unsafeEnvValue(String value) {
+        return value == null || value.contains("\n") || value.contains("\r") || value.contains("\0");
     }
 
     private SandboxResult.StepResult checkout(String missionId, String commitSha, String componentDir, Path jobDir) {

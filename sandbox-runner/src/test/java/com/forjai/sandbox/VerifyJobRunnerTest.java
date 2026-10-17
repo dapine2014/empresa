@@ -209,4 +209,43 @@ class VerifyJobRunnerTest {
         assertFalse(Files.exists(staging.resolve("M-1/incremento-3/keystore")));
         try (var files = Files.list(work)) { assertEquals(0, files.count()); }
     }
+
+    @Test
+    void packSkipsSymlinksPlantedByTheContainer() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var outside = Files.writeString(Files.createTempFile("host", ".txt"), "secreto del host");
+        var runner = new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s", Path.of("/deps")), packFake(java.util.Map.of(
+                "windows", "PASS"), (args, workDir) -> {
+            try {
+                var pkg = workDir.resolve(".forjai/package");
+                Files.createDirectories(pkg.resolve("status"));
+                Files.createDirectories(pkg.resolve("juego"));
+                Files.createSymbolicLink(pkg.resolve("juego/link"), outside);
+                Files.createSymbolicLink(pkg.resolve("status/linux"), outside);
+            } catch (java.io.IOException ex) {
+                throw new IllegalStateException(ex);
+            }
+        }), staging);
+        var result = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 1,
+                List.of(PackageTarget.WINDOWS, PackageTarget.LINUX), null);
+        assertFalse(Files.exists(staging.resolve("M-1/incremento-1/juego/link"), java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        assertTrue(Files.exists(staging.resolve("M-1/incremento-1/juego/windows/Juego.exe")));
+        assertEquals("FAIL", result.steps().get(3).status());
+        assertTrue(result.steps().get(3).outputTail().contains("estado inválido"));
+    }
+
+    @Test
+    void packRejectsAReleaseKeyThatCouldInjectEnvVariables() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var packed = new java.util.concurrent.atomic.AtomicBoolean();
+        var runner = new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s", Path.of("/deps")), packFake(java.util.Map.of(
+                "android-aab", "PASS"), (args, workDir) -> packed.set(true)), staging);
+        var result = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3, List.of(PackageTarget.ANDROID_AAB),
+                new AndroidRelease(java.util.Base64.getEncoder().encodeToString("jks".getBytes()), "forjai", "x\nFORJAI_TARGETS=linux"));
+        assertFalse(packed.get());
+        assertEquals("FAIL", result.overall());
+        assertEquals("package:android-aab", result.steps().get(1).name());
+        assertTrue(result.steps().get(1).outputTail().contains("clave de Android inválida"));
+        try (var files = Files.list(work)) { assertEquals(0, files.count()); }
+    }
 }
