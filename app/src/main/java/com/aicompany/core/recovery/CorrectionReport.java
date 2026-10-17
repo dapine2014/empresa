@@ -69,7 +69,7 @@ public record CorrectionReport(String text, int failing, List<String> failures, 
                             if (!errors.isEmpty()) {
                                 lines.add("- Paso del sandbox " + step.name() + " " + step.status() + ", " + errors.size()
                                         + " error(es) de compilación:");
-                                errors.forEach(e -> lines.add("  - " + e));
+                                errors.forEach(e -> lines.add(COMPILE_ITEM + e));
                                 failures.addAll(errors);
                                 failing += errors.size();
                                 continue;
@@ -94,6 +94,42 @@ public record CorrectionReport(String text, int failing, List<String> failures, 
         return new CorrectionReport(HEADER + ":\n" + String.join("\n", lines) + "\n" + RULE, failing, List.copyOf(failures),
                 lastValidation.isPresent());
     }
+
+    public static final String REPEATED_MARK = " ⚠ REPETIDO: ya fallaba igual en la ronda anterior y no se corrigió";
+
+    /**
+     * Pong de 3 niveles (2026-10-17): Vera y Kael dijeron haber corregido errores de compilación que siguieron idénticos
+     * en la ronda siguiente. Java marca cada error de compilación cuya huella ({@link #fingerprint}) ya estaba en las
+     * fallas de la ronda anterior; {@code failures} no cambia (el freno y la estrategia comparan las mismas huellas).
+     */
+    public CorrectionReport withRepeated(List<String> previousFailures) {
+        if (previousFailures == null || previousFailures.isEmpty()) {
+            return this;
+        }
+        var previous = previousFailures.stream().map(CorrectionReport::fingerprint).collect(java.util.stream.Collectors.toSet());
+        var repeated = 0;
+        var lines = new ArrayList<String>();
+        for (var line : text.split("\n", -1)) {
+            if (line.startsWith(COMPILE_ITEM) && previous.contains(fingerprint(line.substring(COMPILE_ITEM.length())))) {
+                lines.add(line + REPEATED_MARK);
+                repeated++;
+            } else {
+                lines.add(line);
+            }
+        }
+        if (repeated == 0) {
+            return this;
+        }
+        var marked = String.join("\n", lines);
+        var warning = "ATENCIÓN: " + repeated + " error(es) de compilación se repiten idénticos de la ronda anterior (marcados "
+                + "REPETIDO). Decir que se corrigieron no basta: el dueño de cada archivo debe cambiar ESAS líneas.\n";
+        marked = marked.startsWith(HEADER + ":\n")
+                ? HEADER + ":\n" + warning + marked.substring(HEADER.length() + 2) : warning + marked;
+        return new CorrectionReport(marked, failing, failures, fromValidation);
+    }
+
+    /** Así se lista cada error de compilación en {@link #text}. */
+    private static final String COMPILE_ITEM = "  - ";
 
     /**
      * Spec misiones durables §3 (revisión 2026-10-06): la huella de una falla para saber si es la misma de una ronda

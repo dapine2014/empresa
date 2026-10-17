@@ -344,6 +344,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var triageRounds = 0;
         var triageNotes = new ArrayList<String>();
         var autofixRounds = 0;
+        // Pong de 3 niveles (2026-10-17): los errores de la vuelta anterior, para marcar los que el dueño no corrigió.
+        var previousCompileErrors = new java.util.HashSet<String>();
 
         // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10): si no compila, los errores reales del compilador
         // vuelven al dueño de cada archivo, se commitea la corrección y se verifica de nuevo (hasta MAX_REPAIR_ROUNDS).
@@ -425,7 +427,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     var current = currentContents(missionId, headSha, entry.getValue());
                     var required = task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
                             .anyMatch(e -> OwnedPaths.coveredByAny(List.of(owned), e.path()))).toList();
-                    var basePrompt = buildWorkPrompt(context, task) + repairBlock(entry.getValue(), current)
+                    var basePrompt = buildWorkPrompt(context, task)
+                            + repairBlock(entry.getValue(), current, previousCompileErrors)
                             + (isQa(context, task.agentId()) ? sceneSheetBlock(context, headSha) : "")
                             + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
                             + "commit " + headSha + "); devuelve tus archivos corregidos y completos:",
@@ -468,6 +471,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     log.warn("MISSION {} - repair of {} failed: {}", missionId, task.agentId(), message);
                 }
             }
+
+            previousCompileErrors.clear();
+            errorsByTask.values().forEach(list -> list.forEach(e -> previousCompileErrors.add(repairKey(e))));
 
             if (!repaired) {
                 break;
@@ -1324,6 +1330,21 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
         }
         return out;
+    }
+
+    /** El mismo error en el mismo archivo, aunque se haya corrido de línea. */
+    static String repairKey(CompilerErrorParser.CompilerError e) {
+        return e.path() + "|" + e.code() + "|" + e.message();
+    }
+
+    static String repairBlock(List<CompilerErrorParser.CompilerError> errors, Map<String, String> current,
+                              java.util.Set<String> previous) {
+        var repeated = errors.stream().filter(e -> previous.contains(repairKey(e))).count();
+        var warning = repeated == 0 ? "" : "\nATENCIÓN: " + repeated + " de estos errores ya estaban en tu corrección "
+                + "anterior y siguen idénticos (marcados REPETIDO): no los corregiste. Cambia ESAS líneas.";
+        return repairBlock(errors.stream().map(e -> previous.contains(repairKey(e))
+                ? new CompilerErrorParser.CompilerError(e.path(), e.line(), e.column(), e.code(), e.message()
+                        + " [REPETIDO]") : e).toList(), current) + warning;
     }
 
     private static String repairBlock(List<CompilerErrorParser.CompilerError> errors, Map<String, String> current) {

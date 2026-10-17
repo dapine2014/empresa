@@ -349,6 +349,17 @@ public class MissionRecoveryService {
      * (el orquestador se entera mientras la misión termina) ni los agentes encendidos (si están apagados la corrección
      * espera a que vuelvan). Nunca lanza.
      */
+    /** Las fallas de la última ronda de corrección del incremento (vacío si no hay o no se pueden leer). */
+    private List<String> previousFailures(String missionId, int increment) {
+        try {
+            return recovery.correctionRounds(missionId).stream().filter(r -> r.increment() == increment)
+                    .max(java.util.Comparator.comparingInt(CorrectionRound::round))
+                    .map(CorrectionRound::failures).orElse(List.of());
+        } catch (Exception ex) {
+            return List.of();
+        }
+    }
+
     public boolean willCorrect(String missionId) {
         try {
             var mission = missions.find(missionId).orElse(null);
@@ -389,6 +400,7 @@ public class MissionRecoveryService {
                 return false;
             }
             var round = current + 1;
+            report = report.withRepeated(previousFailures(missionId, increment));
             // Revisión 2026-10-06 §2: sin avance, la ronda busca una estrategia nueva antes de correr. Se decide ANTES de
             // registrar la ronda: needsStrategy compara las rondas anteriores contra lo que falla ahora.
             // Revisión final (5): una falla que viene del mensaje de la misión (sin validación) no se busca en internet.

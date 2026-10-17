@@ -2363,4 +2363,23 @@ class DevelopmentTeamStrategyTest {
         assertTrue(errors.stream().anyMatch(e -> e.contains("game/Main.tscn es de Forjai")), errors.toString());
         assertTrue(errors.stream().anyMatch(e -> e.contains("Falta game/Main.cs")), errors.toString());
     }
+
+    // Pong de 3 niveles (2026-10-17): dentro de la ronda, el error que el dueño no corrigió vuelve marcado.
+    @Test
+    void repairBlockMarksTheErrorsThatSurvivedThePreviousRepair() {
+        var repeated = new com.aicompany.core.agent.validation.CompilerErrorParser.CompilerError(
+                "game/playthroughs/ESC_07.cs", 170, 22, "CS1501", "No overload for method 'Do' takes 2 arguments");
+        var fresh = new com.aicompany.core.agent.validation.CompilerErrorParser.CompilerError(
+                "game/playthroughs/ESC_07.cs", 12, 1, "CS0103", "The name 'x' does not exist");
+        var previous = java.util.Set.of(DevelopmentTeamStrategy.repairKey(new com.aicompany.core.agent.validation
+                .CompilerErrorParser.CompilerError("game/playthroughs/ESC_07.cs", 162, 22, "CS1501",
+                "No overload for method 'Do' takes 2 arguments")));
+
+        var block = DevelopmentTeamStrategy.repairBlock(List.of(repeated, fresh), Map.of(), previous);
+
+        assertTrue(block.contains("CS1501: No overload for method 'Do' takes 2 arguments [REPETIDO]"), block);
+        assertFalse(block.contains("does not exist [REPETIDO]"), block);
+        assertTrue(block.contains("ATENCIÓN: 1 de estos errores ya estaban en tu corrección anterior"), block);
+        assertFalse(DevelopmentTeamStrategy.repairBlock(List.of(fresh), Map.of(), java.util.Set.of()).contains("ATENCIÓN"));
+    }
 }

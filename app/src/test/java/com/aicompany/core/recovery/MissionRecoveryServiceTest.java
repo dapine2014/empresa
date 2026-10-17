@@ -372,6 +372,24 @@ class MissionRecoveryServiceTest {
                 "qa", "X", "COMPLETED", "x", Instant.now(), "VALIDATION", null, null, List.of(), "FAILED", "[]")));
     }
 
+    // Pong de 3 niveles (2026-10-17): el pedido de la ronda marca el error que la ronda anterior no corrigió.
+    @Test void theRoundRequestMarksCompileErrorsRepeatedFromThePreviousRound() {
+        realStore(List.of(new CorrectionRound(1, 1, "a", 1, false,
+                List.of("game/playthroughs/ESC_07.cs:162 CS1501 No overload for method 'Do' takes 2 arguments"))));
+        var tail = "/work/game/playthroughs/ESC_07.cs(162,22): error CS1501: No overload for method 'Do' takes 2 arguments "
+                + "[/work/game/Game.csproj]\n";
+        var sandbox = "{\"overall\":\"FAIL\",\"steps\":[{\"name\":\"build\",\"status\":\"FAIL\",\"exitCode\":1,"
+                + "\"durationMs\":1,\"outputTail\":" + tools.jackson.databind.json.JsonMapper.builder().build()
+                .writeValueAsString(tail) + ",\"testsPassed\":0,\"testsFailed\":0}]}";
+        when(missions.tasks("M-1")).thenReturn(List.of(new com.aicompany.core.model.AgentTask("M-1-QA-REVIEW", "M-1",
+                "qa", "X", "COMPLETED", "x", Instant.now(), "VALIDATION", null, null, List.of(), "FAILED", "[]", sandbox)));
+        service.recoverAll();
+        verify(executor).correctAsync(eq("M-1"), eq(2), contains(CorrectionReport.REPEATED_MARK), anyBoolean());
+        verify(recovery).addCorrectionRound(eq("M-1"), argThat(r -> r.round() == 2
+                && r.request().contains("ATENCIÓN: 1 error(es)") && r.failures().size() == 1
+                && !r.failures().get(0).contains("REPETIDO")));
+    }
+
     @Test void aSinglePriorRoundNeverLaunchesWithStrategy() {
         realStore(List.of(new CorrectionRound(1, 1, "a", 1, false)));
         service.recoverAll();

@@ -70,6 +70,38 @@ class CorrectionReportTest {
         assertFalse(report.text().contains("CS8618"), report.text());
     }
 
+    private static String buildFailure(String tail) {
+        return "{\"overall\":\"FAIL\",\"steps\":[{\"name\":\"build\",\"status\":\"FAIL\",\"exitCode\":1,\"durationMs\":1,"
+                + "\"outputTail\":" + tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(tail)
+                + ",\"testsPassed\":0,\"testsFailed\":0}]}";
+    }
+
+    // Pong de 3 niveles (2026-10-17): Vera dejó el mismo Do(...) de 2 argumentos de R16 a R17.
+    @Test void compileErrorsRepeatedFromThePreviousRoundAreMarked() {
+        var doError = "/work/game/playthroughs/ESC_07_Anotar.cs(162,22): error CS1501: No overload for method 'Do' takes 2 "
+                + "arguments [/work/game/Game.csproj]\n";
+        var previous = CorrectionReport.from(Optional.of(validation("[]", buildFailure(doError
+                + "/work/game/Main.cs(134,9): error CS0165: Use of unassigned local variable 'pelotasLista' [/work/game/Game.csproj]\n"),
+                "")), "");
+        // En la ronda siguiente el Do se corrió de línea (sigue igual) y aparece un error nuevo.
+        var current = CorrectionReport.from(Optional.of(validation("[]", buildFailure(doError.replace("162,22", "170,22")
+                + "/work/tests/Pong.Tests/ESC_08.cs(145,5): error CS1503: Argument 3: cannot convert from 'string' [/work/x.csproj]\n"),
+                "")), "");
+
+        var marked = current.withRepeated(previous.failures());
+
+        assertTrue(marked.text().startsWith(CorrectionReport.HEADER + ":\nATENCIÓN: 1 error(es) de compilación se repiten"),
+                marked.text());
+        assertTrue(marked.text().contains("ESC_07_Anotar.cs:170 CS1501 No overload for method 'Do' takes 2 arguments"
+                + CorrectionReport.REPEATED_MARK), marked.text());
+        assertFalse(marked.text().contains("CS1503 Argument 3: cannot convert from 'string'" + CorrectionReport.REPEATED_MARK),
+                marked.text());
+        assertEquals(current.failures(), marked.failures());
+        assertEquals(current.failing(), marked.failing());
+        assertSame(current, current.withRepeated(List.of()));
+        assertSame(current, current.withRepeated(List.of("otra cosa")));
+    }
+
     @Test void aFailedBuildWithoutReadableErrorsCountsAsOne() {
         var sandbox = "{\"overall\":\"FAIL\",\"steps\":[{\"name\":\"build\",\"status\":\"FAIL\",\"exitCode\":1,\"durationMs\":1,"
                 + "\"outputTail\":\"MSBUILD : error MSB1009: Project file does not exist.\",\"testsPassed\":0,\"testsFailed\":0}]}";
