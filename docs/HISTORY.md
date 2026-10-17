@@ -1139,3 +1139,12 @@ Incremento 2 (mismo día): el triage de tests (Neo decide si está mal el códig
 
 Incremento 3 (mismo día): R16 y R17 fallaron con los mismos errores en las mismas líneas (`Do(...)` de 2 argumentos en ESC-07/08 de Vera; `Main.cs:126` de Kael), aunque los dos dijeron haberlos corregido; Vera en R17 escribió tests nuevos sin tocar las partidas. Decisión del fundador («si implementa el ajuste»): Java marca los errores de compilación repetidos de la ronda anterior (`CorrectionReport.withRepeated`) y de la vuelta anterior de la reparación (`[REPETIDO]`).
 
+## Bitácora de misión (2026-10-17)
+
+Causa: en el Pong de 3 niveles el fundador preguntó «@Iris ¿qué está realizando?» y «@Neo …»; los dos respondieron sobre `MISSION-KAEL-CRM-1792045685` (ya borrada) y Neo inventó tiempos («finalizando la planificación del incremento 1», avisar a Aria «en ~10-15 minutos»): el modelo solo recibía el historial del chat y rellenaba lo que faltaba.
+
+Decisión del fundador (aprobada 2026-10-17): «hay un historial de eventos que Forjai debería leer… Neo debe saber todo lo que pasa a nivel de desarrollo junto con la Scrum (Aria); así el proyecto esté corriendo en el sandbox, uno de los dos debe saber». Además, las preguntas de estado las responde Java. Spec `2026-10-17-bitacora-de-mision-design.md`.
+
+Rulings del plan: (1) `MissionEvent.at` se guarda con formato fijo de 9 decimales UTC para que el orden y el tope de 500 sean cronológicos (`Instant.toString()` varía de largo). (2) Se agregó `EMPRESA_SANDBOX_FINISHED` por vuelta (el spec solo traía 5 eventos nuevos); el evento final `EMPRESA_SANDBOX_VERIFICATION_COMPLETED` sale una sola vez y suma `round` -1, `failedStep` y `compileErrors`. (3) La regla dura «Responde solo con lo que está en estos datos…» quedó solo para Neo y Aria; los demás agentes reciben su estado con una regla acotada a misiones y el CEO no recibe bloque. (4) `STATUS_QUESTION` se acotó tras la ronda de revisión (sin «estado de»; «qué hace/haces» solo al final; con `@` y `MISSION-X` va al modelo con los datos). (5) Con incrementos relanzados, el resumen para Neo junta todos los intentos del mismo N. (6) `MissionEventLog.record` es síncrono (sin executor nuevo).
+
+Pendiente: la verificación en vivo (preguntar a @Iris y @Neo con una misión en curso y ver la línea de tiempo en Missions); no se desplegó.
