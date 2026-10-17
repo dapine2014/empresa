@@ -39,12 +39,15 @@ public final class DesignConformance {
             }
         }
         if (design.game() != null) {
-            var declared = inputActions(files.entrySet().stream()
+            var projectGodot = files.entrySet().stream()
                     .filter(e -> e.getKey().endsWith("game/project.godot") && e.getValue() != null)
-                    .map(Map.Entry::getValue).findFirst().orElse(""));
+                    .map(Map.Entry::getValue).findFirst().orElse("");
+            var declared = inputActions(projectGodot);
             var designed = design.game().controls().stream().map(InteractionDesign.Control::action).toList();
             designed.stream().filter(a -> !declared.contains(a)).forEach(a ->
                     problems.add("la acción " + a + " no está en [input] de game/project.godot"));
+            GodotKeys.mismatches(projectGodot, design.game().controls()).forEach(p ->
+                    problems.add("game/project.godot: " + p));
             files.forEach((path, content) -> {
                 if (path.contains("game/playthroughs/") && content != null) {
                     var m = PRESS.matcher(content);

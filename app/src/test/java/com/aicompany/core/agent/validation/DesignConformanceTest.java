@@ -51,7 +51,8 @@ class DesignConformanceTest {
             List.of(new Rule("REGLA-01", "move_right", "avanza")), List.of(), List.of("REGLA-01"), List.of(),
             List.of(new ScenarioRule("ESC-01", "move_right")), List.of("h")));
 
-    static final String GODOT = "[application]\nrun/main_scene=\"res://Main.tscn\"\n[input]\nmove_right={\n\"deadzone\": 0.5\n}\n";
+    static final String GODOT = "[application]\nrun/main_scene=\"res://Main.tscn\"\n[input]\nmove_right={\n\"deadzone\": 0.5,\n"
+            + "\"events\": [Object(InputEventKey,\"keycode\":0,\"physical_keycode\":4194321,\"script\":null)]\n}\n";
 
     @Test void gameActionsMustBeDeclaredAndInteractionScenariosNeedAPassingPlaythrough() {
         var spec = InteractionDesignTextTest.SPEC;
@@ -87,6 +88,17 @@ class DesignConformanceTest {
                         "game-client/game/playthroughs/ESC_01_mueve.cs", "Press(\"move_right\", frames: 2)"),
                 List.of(new SandboxResult.TestCase("[game-client] [juego] ESC_01_mueve", "PASSED")));
         assertTrue(check.passed(), check.detail());
+    }
+
+    // Ajuste de Kael (Pong de 3 niveles, 2026-10-17): Kael puso 40 para Enter en project.godot.
+    @Test void anActionWithTheWrongKeyFails() {
+        var check = DesignConformance.check(GAME, InteractionDesignTextTest.SPEC, 1,
+                Map.of("game/project.godot", GODOT.replace("4194321", "39"),
+                        "game/playthroughs/ESC_01_mueve.cs", "Press(\"move_right\", frames: 2)"),
+                List.of(new SandboxResult.TestCase("[juego] ESC_01_mueve", "PASSED")));
+        assertFalse(check.passed());
+        assertTrue(check.detail().contains("move_right debe usar la tecla Right (\"physical_keycode\":4194321) y trae [39]"),
+                check.detail());
     }
 
     @Test void inputActionsOnlyComeFromTheInputSection() {

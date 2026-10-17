@@ -116,6 +116,10 @@ public final class InteractionDesignValidator {
                 continue;
             }
             actions.add(c.action());
+            if (GodotKeys.code(c.key()).isEmpty()) {
+                errors.add("El control " + c.action() + " usa la tecla \"" + c.key() + "\", que no reconozco: usa una "
+                        + "de " + GodotKeys.NAMES + ".");
+            }
             if (!usedIn(ruleText, c.action())) {
                 errors.add("El control " + c.action() + " no se usa en ninguna regla: nómbralo en la condition de la "
                         + "regla que dispara, o quítalo.");
@@ -136,12 +140,13 @@ public final class InteractionDesignValidator {
         if (nn(design.balanceHypotheses()).stream().allMatch(h -> h == null || h.isBlank())) {
             errors.add("balanceHypotheses necesita al menos una hipótesis de balance.");
         }
-        validateLevels(design, spec, rules, errors);
+        validateLevels(design, spec, rules, ruleText, errors);
         return errors;
     }
 
     /** Juegos por niveles (spec 2026-10-16 contrato §3): solo si el contrato tiene niveles o escenas. */
-    private static void validateLevels(GameDesign design, RequirementsSpec spec, Set<String> rules, List<String> errors) {
+    private static void validateLevels(GameDesign design, RequirementsSpec spec, Set<String> rules, String ruleText,
+                                       List<String> errors) {
         var levelItems = spec.gameLevels().stream().map(ClientContract.Item::id).filter(Objects::nonNull).toList();
         if (levelItems.isEmpty()) {
             return;
@@ -192,6 +197,7 @@ public final class InteractionDesignValidator {
                 errors.add(l.item() + ": advanceRule " + rule + " no está en rules.");
             }
         }
+        validateLevelDifferences(design, spec, ruleText, errors);
         for (var id : levelItems) {
             var n = designed.getOrDefault(id, 0);
             if (n == 0) {
@@ -225,6 +231,46 @@ public final class InteractionDesignValidator {
     }
 
     /** El nombre de la acción aparece como palabra completa (no como parte de move_left). */
+    /**
+     * Ajuste de Kael (Pong de 3 niveles, 2026-10-17): el nivel 2 («la pelota aumenta de velocidad») salió con los mismos
+     * parámetros que el 1 y ninguna regla lo usaba. Dos LEVEL del contrato son niveles distintos: algo en parameters los
+     * diferencia, y un parámetro que cambia entre niveles lo lee alguna regla.
+     */
+    private static void validateLevelDifferences(GameDesign design, RequirementsSpec spec, String ruleText,
+                                                 List<String> errors) {
+        var levels = new LinkedHashMap<String, Map<String, Double>>();
+        for (var item : spec.gameLevels().stream().filter(i -> "LEVEL".equals(i.kind())).toList()) {
+            nn(design.levels()).stream().filter(l -> item.id() != null && item.id().equals(l.item())).findFirst()
+                    .ifPresent(l -> levels.put(item.id(), new TreeMap<>(nn(l.parameters()).stream()
+                            .filter(p -> p.name() != null && p.value() != null)
+                            .collect(Collectors.toMap(p -> p.name().strip(), Property::value, (a, b) -> b)))));
+        }
+        var ids = new ArrayList<>(levels.keySet());
+        for (int i = 0; i < ids.size(); i++) {
+            for (int j = 0; j < i; j++) {
+                if (levels.get(ids.get(i)).equals(levels.get(ids.get(j)))) {
+                    errors.add(ids.get(i) + " tiene los mismos parameters que " + ids.get(j) + " " + levels.get(ids.get(j))
+                            + ", pero el contrato los describe distintos (" + description(spec, ids.get(j)) + " / "
+                            + description(spec, ids.get(i)) + "): agrega en parameters lo que cambia en " + ids.get(i)
+                            + " (p. ej. aceleracion_por_punto=0.01) y úsalo en una regla.");
+                }
+            }
+        }
+        var names = levels.values().stream().flatMap(m -> m.keySet().stream()).collect(Collectors.toCollection(TreeSet::new));
+        for (var name : names) {
+            var values = levels.values().stream().map(m -> m.getOrDefault(name, 0.0)).collect(Collectors.toSet());
+            if (values.size() > 1 && !usedIn(ruleText, name)) {
+                errors.add("El parámetro " + name + " cambia entre niveles y ninguna regla lo usa: nómbralo en la "
+                        + "condition o el effect de la regla que lo aplica (p. ej. pelota.velocidad *= 1 + " + name + ").");
+            }
+        }
+    }
+
+    private static String description(RequirementsSpec spec, String itemId) {
+        return spec.gameLevels().stream().filter(i -> itemId.equals(i.id())).findFirst()
+                .map(i -> i.name() + ": " + i.description()).orElse(itemId);
+    }
+
     private static boolean usedIn(String text, String action) {
         return Pattern.compile("(?<![a-z0-9_])" + Pattern.quote(action) + "(?![a-z0-9_])").matcher(text).find();
     }

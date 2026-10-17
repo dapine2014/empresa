@@ -69,7 +69,8 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 
 - [x] Juegos: niveles/escenas con HU propias en Aria y Kael, esqueletos `.tscn` generados por Forjai y contrato de escena Kael↔Vera con chequeo antes del sandbox (Pong 3 BLOCKED, 2026-10-16; hecho en código con el plan `2026-10-16-contrato-epicas-y-juegos`: `Main.tscn` sin script y contrato Kael↔Vera cubiertos por `GameSceneScriptsGate`, `GameMainSceneGate` y `PlaythroughSheetGate`; la parte en vivo sigue pendiente abajo).
 - [ ] Desplegar la revisión conjunta y la entrega A (contrato, épicas y juegos por niveles), con OK del fundador y sin misiones vivas.
-- [ ] Prueba en vivo del Pong de 3 niveles con contrato (Aria propone el contrato, el fundador lo aprueba, cada nivel en su incremento).
+- [ ] Prueba en vivo del Pong de 3 niveles con contrato (Aria propone el contrato, el fundador lo aprueba, cada nivel en su incremento). Incremento 1 `VERIFIED` y aprobado (2026-10-17); faltan el 2 y el 3.
+- [ ] Desplegar los ajustes de Kael (teclas de Godot por Java y niveles distintos, 2026-10-17) cuando no haya misión viva, con OK del fundador; el diseño aprobado del Pong no los tiene (el incremento 3 corre la conformidad nueva sobre el `project.godot` con Enter=40).
 - [ ] **Entrega B** del contrato: refinar HU tras cada entrega, ajustar lo construido y cambiar un contrato aprobado. Es el pendiente de Aria «HU nuevas después de aprobar».
 - [ ] `systemd-inhibit` de las pruebas en vivo con `--what=sleep:idle:handle-lid-switch` (GNOME suspendió por inactividad, 2026-10-15).
 

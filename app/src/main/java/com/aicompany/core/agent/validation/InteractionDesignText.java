@@ -100,6 +100,8 @@ public final class InteractionDesignText {
                 Entidades: %s
                 Controles (acciones de input de Godot; decláralas en [input] de game/project.godot):
                 %s
+                Bloque [input] de game/project.godot (Java ya tradujo las teclas a sus códigos de Godot; cópialo tal cual):
+                %s
                 Reglas:
                 %s
                 Gana: %s · Pierde: %s
@@ -117,6 +119,7 @@ public final class InteractionDesignText {
                         .collect(Collectors.joining("; ")),
                 nn(game.controls()).stream().map(c -> "- " + c.action() + " [" + c.key() + "]: " + c.effect())
                         .collect(Collectors.joining("\n")),
+                GodotKeys.inputBlock(nn(game.controls())).strip(),
                 nn(game.rules()).stream().filter(r -> winLose.contains(r.id()) || ownTargets.contains(r.id())
                                 || !otherTargets.contains(r.id()))
                         .map(r -> "- " + r.id() + ": SI " + r.condition() + " ENTONCES " + r.effect())

@@ -184,10 +184,37 @@ class InteractionDesignValidatorTest {
     static GameDesign pongDesign(List<Scene> scenes, List<LevelDesign> levels) {
         return new GameDesign(List.of("PLAYING"), List.of(), List.of(), List.of(new Control("move_up", "Up", "sube")),
                 List.of(new Rule("REGLA-01", "move_up apretado", "la paleta sube"),
-                        new Rule("REGLA-02", "puntaje >= 50", "pasa al nivel 2")),
+                        new Rule("REGLA-02", "puntaje >= 50", "pasa al nivel 2 con pelota.velocidad = velocidad_pelota")),
                 List.of("REGLA-02"), List.of(), List.of(),
                 List.of(new ScenarioRule("ESC-01", "REGLA-01"), new ScenarioRule("ESC-02", "REGLA-01")),
                 List.of("hipótesis"), scenes, levels);
+    }
+
+    // Ajuste de Kael (Pong de 3 niveles, 2026-10-17).
+    @Test void twoLevelsWithTheSameParametersAreRejected() {
+        var same = new LevelDesign("MOD-02", "ESCENA-01", List.of(new Property("velocidad_pelota", 200.0)), "");
+        var all = String.join("\n", InteractionDesignValidator.validateGame(pongDesign(List.of(MAIN), List.of(N1, same)), PONG));
+        assertTrue(all.contains("MOD-02 tiene los mismos parameters que MOD-01"), all);
+        assertTrue(all.contains("Nivel 2: rápida"), all);
+    }
+
+    @Test void aParameterThatChangesBetweenLevelsMustBeUsedByARule() {
+        var n1 = new LevelDesign("MOD-01", "ESCENA-01", List.of(new Property("velocidad_pelota", 200.0)), "REGLA-02");
+        var n2 = new LevelDesign("MOD-02", "ESCENA-01", List.of(new Property("velocidad_pelota", 200.0),
+                new Property("aceleracion_por_punto", 0.01)), "");
+        var all = String.join("\n", InteractionDesignValidator.validateGame(pongDesign(List.of(MAIN), List.of(n1, n2)), PONG));
+        assertTrue(all.contains("El parámetro aceleracion_por_punto cambia entre niveles y ninguna regla lo usa"), all);
+        assertFalse(all.contains("mismos parameters"), all);
+        assertFalse(all.contains("El parámetro velocidad_pelota"), all);
+    }
+
+    @Test void controlKeysMustBeKnownGodotKeys() {
+        var game = pongDesign(List.of(MAIN), List.of(N1, N2));
+        var unknown = new GameDesign(game.states(), game.transitions(), game.entities(),
+                List.of(new Control("move_up", "Rueda del mouse", "sube")), game.rules(), game.win(), game.lose(),
+                game.difficulty(), game.scenarioRules(), game.balanceHypotheses(), game.scenes(), game.levels());
+        var all = String.join("\n", InteractionDesignValidator.validateGame(unknown, PONG));
+        assertTrue(all.contains("usa la tecla \"Rueda del mouse\", que no reconozco"), all);
     }
 
     static final Scene MAIN = new Scene("ESCENA-01", "Cancha", "Main", "donde se juega");

@@ -165,7 +165,8 @@ public class InteractionDesignWriter {
                 Diseña la MECÁNICA del juego 2D (no el código). Sin assets externos: todo se dibuja con formas y texto.
                 - states del loop (p. ej. START, PLAYING, GAME_OVER) y transitions {from,to,trigger}.
                 - entities con properties numéricas (value es un NÚMERO: velocidad en px/s, tamaño en px, vidas).
-                - controls: action (nombre de acción de Godot en minúsculas, p. ej. move_left), key y effect (máximo 8).
+                - controls: action (nombre de acción de Godot en minúsculas, p. ej. move_left), key (una de: A-Z, 0-9,
+                  Space, Enter, Escape, Tab, Backspace, Up, Down, Left, Right, Shift, Ctrl, Alt) y effect (máximo 8).
                 - rules: REGLA-01… con condition y effect (máximo 20); cada control aparece en la condition de una regla.
                 - win/lose: ids de reglas. difficulty: escalado con números.
                 - scenarioRules: CADA escenario ESC-NN → la REGLA-NN o la action que lo cumple.
@@ -175,7 +176,10 @@ public class InteractionDesignWriter {
                   nunca Playthrough ni PlaythroughRunner) y purpose; ESCENA-01 es la escena principal. levels: uno por
                   cada MOD-NN de esa lista con item (el MOD-NN), la escena donde ocurre (scene), sus parameters numéricos (p. ej.
                   velocidad_pelota=200, pelotas=1, puntaje_meta=50) y advanceRule (la REGLA-NN que pasa al siguiente
-                  nivel; vacía en el último LEVEL y en las SCENE).
+                  nivel; vacía en el último LEVEL y en las SCENE). Cada LEVEL es distinto: lo que el contrato y las HU
+                  cambian en ese nivel (más velocidad, más pelotas…) va como parámetro propio (p. ej.
+                  aceleracion_por_punto=0.01) y una regla lo usa por su nombre; las reglas leen los parámetros del
+                  nivel en curso, sin repetir sus números.
                 Responde SOLO este JSON: {"states":["START"],"transitions":[{"from":"START","to":"PLAYING","trigger":"..."}],
                  "entities":[{"id":"...","name":"...","properties":[{"name":"...","value":1}]}],
                  "controls":[{"action":"move_left","key":"Left","effect":"..."}],

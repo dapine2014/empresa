@@ -59,6 +59,9 @@ class InteractionDesignTextTest {
         assertTrue(block.contains("Lee el input SOLO con las acciones de [input]"), block);
         assertTrue(block.contains("No uses GetTree().Quit(), ChangeSceneToFile ni ReloadCurrentScene"), block);
         assertTrue(block.contains("como propiedades públicas, el estado que se verifica"), block);
+        // Ajuste de Kael (2026-10-17): el bloque [input] con los códigos que tradujo Java.
+        assertTrue(block.contains("cópialo tal cual):\n[input]"), block);
+        assertTrue(block.contains("jump={") && block.contains("\"physical_keycode\":32"), block);
     }
 
     // Juegos por niveles (spec 2026-10-16 contrato §3-§4): Kael, Iris y Vera ven las escenas y los niveles del incremento.

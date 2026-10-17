@@ -2200,6 +2200,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         var forjaiScenes = java.util.Set.copyOf(sceneSkeletonPaths(context));
         var expectedMain = mainScene;
+        var controls = approved.map(a -> a.game().controls())
+                .orElse(List.<com.aicompany.core.agent.model.InteractionDesign.Control>of());
         var qa = isQa(context, agentId);
         var contracts = qa ? sceneContracts(context, headSha)
                 : Map.<String, List<com.aicompany.core.agent.validation.SceneSheet.Member>>of();
@@ -2207,6 +2209,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             var errors = new ArrayList<String>();
             errors.addAll(com.aicompany.core.agent.validation.GameAssetGate.check(result.files()));
             errors.addAll(com.aicompany.core.agent.validation.GameMainSceneGate.check(result.files(), existing, expectedMain));
+            errors.addAll(com.aicompany.core.agent.validation.GameInputMapGate.check(result.files(), controls));
             errors.addAll(com.aicompany.core.agent.validation.InjectableRandomGate.check(result.files(), rulesRoots));
             errors.addAll(com.aicompany.core.agent.validation.ReservedGamePathsGate.check(result.files(), qa, forjaiScenes));
             if (qa && !contracts.isEmpty()) {
