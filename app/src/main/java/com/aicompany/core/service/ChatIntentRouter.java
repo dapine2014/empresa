@@ -341,20 +341,24 @@ public class ChatIntentRouter {
         var mentions = MentionResolver.resolve(message, agents);
         var normalized = normalize(message);
 
+        if (!mentions.unknown().isEmpty()) {
+            var known = agents.stream().map(a -> a.get("name") + " (" + a.get("id") + ")")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            return List.of(ceoReply("No conozco a " + mentions.unknown() + " en Forjai. Agentes: " + known + "."));
+        }
+
         // Bitácora (spec 2026-10-17): «¿qué hace Iris?» sin @ lo responde Java, sin modelo.
         if (mentions.agentIds().isEmpty() && STATUS_QUESTION.matcher(normalized).find()) {
             var named = agents.stream().filter(a -> a.get("name") != null && Pattern.compile("\\b" + Pattern.quote(
                     normalize(String.valueOf(a.get("name")))) + "\\b").matcher(normalized).find()).toList();
             if (!named.isEmpty()) {
-                return named.stream().map(a -> new ChatReply(String.valueOf(a.get("id")), String.valueOf(a.get("name")),
-                        describe(String.valueOf(a.get("id")), String.valueOf(a.get("name"))))).toList();
+                return named.stream().map(a -> {
+                    var id = String.valueOf(a.get("id"));
+                    var name = String.valueOf(a.get("name"));
+                    var off = disabledReply(a, id, name);
+                    return off != null ? off : new ChatReply(id, name, describe(id, name));
+                }).toList();
             }
-        }
-
-        if (!mentions.unknown().isEmpty()) {
-            var known = agents.stream().map(a -> a.get("name") + " (" + a.get("id") + ")")
-                    .collect(java.util.stream.Collectors.joining(", "));
-            return List.of(ceoReply("No conozco a " + mentions.unknown() + " en Forjai. Agentes: " + known + "."));
         }
 
         if (!mentions.agentIds().isEmpty()) {
@@ -389,11 +393,14 @@ public class ChatIntentRouter {
     }
 
     static final Pattern STATUS_QUESTION = Pattern.compile(
-            "(que (estas|esta|estan) (haciendo|realizando|trabajando)|en que (estas|esta|andas|anda)|que (haces|hace)\\b|estado de)");
+            "(que (estas|esta|estan) (haciendo|realizando|trabajando)|en que (estas|esta|andas|anda)\\b"
+                    + "|que (haces|hace)(\\s+@?[\\p{L}\\p{N}_-]+)?\\s*[?!.]*\\s*$)");
     private static final Pattern MISSION_LOG = Pattern.compile("(que paso|bitacora|historial)( en| de)? mission-");
     private static final Pattern DEVELOPMENT_LOG = Pattern.compile("^(que (esta pasando|pasa) en desarrollo|bitacora)\\??$");
     static final String REAL_DATA_RULE = "Responde solo con lo que está en estos datos. No prometas tiempos, avisos ni pasos "
             + "que no figuren aquí; si algo no está, di que no lo sabes. Las misiones que no aparecen aquí no están activas.";
+    static final String STATE_RULE = "Sobre misiones y trabajo en curso responde solo con este estado; no prometas tiempos "
+            + "ni avisos; las misiones que no aparecen aquí no están activas.";
     private static final java.util.Set<String> LOG_READERS = java.util.Set.of("engineering", "product-owner");
 
     /** Misiones vivas con sus tareas y eventos; nunca lanza si la memoria devuelve null o vacío. */
@@ -430,22 +437,34 @@ public class ChatIntentRouter {
     /** Bitácora (spec 2026-10-17): Neo y Aria leen la bitácora; los demás, su estado real. Nunca el historial solo. */
     private MissionData withRealState(MissionData data, String message, String agentId, String name) {
         String block;
+        String rule = REAL_DATA_RULE;
+        if ("ceo".equals(agentId)) {
+            return data;
+        }
         if (LOG_READERS.contains(agentId)) {
             var id = MISSION_ID.matcher(message);
-            var states = id.find()
-                    ? missionMemory.find(id.group(1).toUpperCase(Locale.ROOT)).map(m -> List.of(stateOf(m, 20))).orElse(List.of())
-                    : liveStates(true).stream().limit(3).toList();
-            block = "BITÁCORA REAL DE DESARROLLO (Java):\n" + (states.isEmpty() ? "No hay misiones activas en desarrollo."
+            String empty = "No hay misiones activas en desarrollo.";
+            List<AgentActivity.MissionState> states;
+            if (id.find()) {
+                var missionId = id.group(1).toUpperCase(Locale.ROOT);
+                var found = missionMemory.find(missionId);
+                states = found == null || found.isEmpty() ? List.of() : List.of(stateOf(found.get(), 20));
+                empty = missionId + ": no existe.";
+            } else {
+                states = liveStates(true).stream().limit(3).toList();
+            }
+            block = "BITÁCORA REAL DE DESARROLLO (Java):\n" + (states.isEmpty() ? empty
                     : states.stream().map(s -> AgentActivity.missionBlock(s, 20)).collect(Collectors.joining("\n\n")));
         } else if (!MISSION_ID.matcher(message).find()) {
             block = "ESTADO REAL (Java):\n" + describe(agentId, name);
+            rule = STATE_RULE;
         } else {
             return data;
         }
         var body = data.injected() && data.message().startsWith(CeoService.JAVA_MEMORY_DATA_MARKER)
                 ? data.message().substring(CeoService.JAVA_MEMORY_DATA_MARKER.length()).strip()
                 : "MENSAJE DEL FUNDADOR:\n" + message;
-        return new MissionData(CeoService.JAVA_MEMORY_DATA_MARKER + "\n" + block + "\n" + REAL_DATA_RULE + "\n\n" + body,
+        return new MissionData(CeoService.JAVA_MEMORY_DATA_MARKER + "\n" + block + "\n" + rule + "\n\n" + body,
                 true, data.anyValidated());
     }
 
@@ -621,19 +640,27 @@ public class ChatIntentRouter {
         return new ChatReply("ceo", companyMemory.agentName("ceo").orElse("CEO"), text);
     }
 
+    /** Decisión del fundador (2026-10-01): un agente apagado no responde y su modelo no se llama. */
+    private ChatReply disabledReply(Map<String, Object> agent, String agentId, String name) {
+        if (Boolean.FALSE.equals(agent.get("enabled"))) {
+            return new ChatReply(agentId, name, name + " está apagada/o: mientras Forjai se entrena solo trabajan Alex "
+                    + "y el Development Group. Se activa en Agents.");
+        }
+        return null;
+    }
+
     private ChatReply agentReply(String agentId, String message, List<Map<String, Object>> agents) {
 
         var agent = agents.stream().filter(a -> agentId.equals(a.get("id"))).findFirst().orElseThrow();
         var name = String.valueOf(agent.get("name"));
 
-        // Decisión del fundador (2026-10-01): un agente apagado no responde y su modelo no se llama.
-        if (Boolean.FALSE.equals(agent.get("enabled"))) {
-            return new ChatReply(agentId, name, name + " está apagada/o: mientras Forjai se entrena solo trabajan Alex "
-                    + "y el Development Group. Se activa en Agents.");
+        var off = disabledReply(agent, agentId, name);
+        if (off != null) {
+            return off;
         }
 
         // Bitácora (spec 2026-10-17): el estado lo responde Java, sin modelo.
-        if (STATUS_QUESTION.matcher(normalize(message)).find()) {
+        if (STATUS_QUESTION.matcher(normalize(message)).find() && !MISSION_ID.matcher(message).find()) {
             return new ChatReply(agentId, name, describe(agentId, name));
         }
 

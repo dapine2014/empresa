@@ -3102,4 +3102,65 @@ class ChatIntentRouterTest {
         assertTrue(text.contains("12:15 Forjai: Corrección automática ronda 22"), text);
         verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
     }
+
+    @Test
+    void aQuestionThatIsNotAStatusQuestionGoesToTheModel() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+
+        assertEquals("ok", router.routeReplies("@Aria qué hace falta para aprobar las HU").get(0).text());
+    }
+
+    @Test
+    void aStatusWordWithAMissionIdGoesToTheModelWithTheMissionBlock() {
+        stubAgents();
+        var pong = new MissionResponse("MISSION-PONG", MissionStatus.EVALUATING, "TEST", 80, "Sandbox", "Compilando",
+                java.time.Instant.now(), null, "TEAM-DEVELOPMENT");
+        when(missionMemory.find("MISSION-PONG")).thenReturn(Optional.of(pong));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-PONG")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.tasks("MISSION-PONG")).thenReturn(List.of());
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of(pong));
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+
+        assertEquals("ok", router.routeReplies("@Neo estado de MISSION-PONG").get(0).text());
+        verify(ceoService).agentChat(any(), any(), anyList(), argThat(m -> m.startsWith(CeoService.JAVA_MEMORY_DATA_MARKER)
+                && m.indexOf(CeoService.JAVA_MEMORY_DATA_MARKER, 1) < 0 && m.contains("MISSION-PONG: EVALUATING · Sandbox")
+                && m.endsWith("@Neo estado de MISSION-PONG")), any(), any(), any());
+    }
+
+    @Test
+    void otherAgentsGetTheScopedRuleAndTheCeoGetsNothing() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+        when(ceoService.chat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+
+        router.routeReplies("@Kira ideas");
+        verify(ceoService).agentChat(any(), any(), anyList(), argThat(m -> m.contains("no prometas tiempos ni avisos")
+                && !m.contains("Responde solo con lo que está en estos datos")), any(), any(), any());
+
+        router.routeReplies("@Alex hola");
+        verify(ceoService).chat(any(), any(), anyList(), argThat(m -> !m.contains("ESTADO REAL")), any(), any(), any());
+    }
+
+    @Test
+    void aMissingMissionIsSaidToNotExistForNeo() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+        when(missionMemory.find("MISSION-NADA")).thenReturn(Optional.empty());
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+
+        router.routeReplies("@Neo como va MISSION-NADA");
+        verify(ceoService).agentChat(any(), any(), anyList(), argThat(m -> m.contains("MISSION-NADA: no existe.")), any(), any(), any());
+    }
+
+    @Test
+    void anUnknownMentionBeatsTheNameStatusRule() {
+        stubAgents();
+        var text = router.routeReplies("@Zed qué hace Iris").get(0).text();
+        assertTrue(text.contains("No conozco a"), text);
+        assertTrue(text.contains("Zed"), text);
+    }
 }
