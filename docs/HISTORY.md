@@ -1162,3 +1162,26 @@ Se aplicó en vivo, sin reiniciar:
 - Neo (`engineering`) pasó a tener `nvidia:nvidia/nemotron-3-super-120b-a12b` como modelo principal.
 
 Como kimi-k2.6 está retirado, hoy los agentes que generan código trabajan con Bedrock, que es pago.
+
+## Pong de 3 niveles: incremento 3 VERIFIED (2026-10-17)
+
+A las 21:11 UTC el incremento 3 llegó a BLOCKED después de agotar las 20 correcciones automáticas. En ese punto ya solo quedaban 2 errores CS0120 en un test de Vera (`Pelota.Radio` usado como estático). Se desplegó todo lo que había en la rama: los ajustes de Kael, el triage, el marcado REPETIDO y la bitácora. Se verificó en vivo:
+- «@Iris ¿qué estás haciendo?» lo responde Java y nombra solo las misiones reales;
+- la bitácora registra los eventos desde ese momento.
+
+El costo de la misión iba en US$ 9,07, con el tope en US$ 10. El fundador subió `MAX_MISSION_COST_USD` a US$ 20 (versión 2). La corrección se relanzó con `REQUEST_MORE_EVIDENCE` y una indicación concreta: corregir solo esas líneas y no agregar logging ni JSON en el dominio.
+
+En la bitácora se ve cómo fueron bajando los tests en rojo, ronda por ronda:
+
+| Ronda | Tests OK | Tests en rojo |
+|---|---|---|
+| R37 | 26 | 6 |
+| R38 | 30 | 2 |
+| R39 | 39 | 2 |
+| R40 | 44 | 1 |
+| R41 | 45 | 1 |
+| R42 | 47 | 0 (PASS) |
+
+Quedó VERIFIED a las 21:52 UTC con 47/47 tests y 8/8 escenarios. La suite pasó de 25 a 47 tests. La misión costó en total US$ 15,27.
+
+Pendiente: el triage de Neo con nemotron-3-super falló en R37 y R39 porque no produjo un JSON válido, ni siquiera en el intento extra con Bedrock.
