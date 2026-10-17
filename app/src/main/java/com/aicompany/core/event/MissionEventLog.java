@@ -41,7 +41,7 @@ public class MissionEventLog {
             return;
         }
         try {
-            var name = agentName(event.agentId());
+            var name = nameOf(agentNames(), event.agentId());
             var params = new HashMap<String, Object>();
             params.put("mission", event.missionId());
             params.put("id", event.eventId());
@@ -71,39 +71,47 @@ public class MissionEventLog {
     }
 
     public List<MissionEventView> recent(String missionId, int limit) {
+        var names = agentNames();
         try (var session = driver.session()) {
             return session.run("MATCH (:Mission {id:$id})-[:HAS_EVENT]->(e:MissionEvent) RETURN e ORDER BY e.at DESC "
-                    + "LIMIT $limit", Map.of("id", missionId, "limit", limit)).list(this::view);
+                    + "LIMIT $limit", Map.of("id", missionId, "limit", limit)).list(r -> view(r, names));
         }
     }
 
     public List<MissionEventView> recentAll(int limit) {
+        var names = agentNames();
         try (var session = driver.session()) {
             return session.run("MATCH (e:MissionEvent) RETURN e ORDER BY e.at DESC LIMIT $limit",
-                    Map.of("limit", limit)).list(this::view);
+                    Map.of("limit", limit)).list(r -> view(r, names));
         }
     }
 
-    private MissionEventView view(Record r) {
+    private MissionEventView view(Record r, Map<String, String> names) {
         var e = r.get("e");
         var agentId = e.get("agentId").isNull() ? null : e.get("agentId").asString();
         return new MissionEventView(e.get("id").asString(), e.get("type").asString(),
-                Instant.parse(e.get("at").asString()), agentId, agentName(agentId),
+                Instant.parse(e.get("at").asString()), agentId, nameOf(names, agentId),
                 e.get("taskId").isNull() ? null : e.get("taskId").asString(), e.get("summary").asString(),
                 e.get("round").isNull() ? null : e.get("round").asInt(),
                 e.get("increment").isNull() ? null : e.get("increment").asInt());
     }
 
-    private String agentName(String agentId) {
-        if (agentId == null) {
-            return null;
-        }
+    /** Una sola consulta por llamada; nunca lanza (vacío si Neo4j falla). */
+    private Map<String, String> agentNames() {
         try {
-            return companyMemory.agents().stream().filter(a -> agentId.equals(a.get("id")))
-                    .map(a -> String.valueOf(a.get("name"))).findFirst().orElse(agentId);
+            var names = new HashMap<String, String>();
+            for (var a : companyMemory.agents()) {
+                names.put(String.valueOf(a.get("id")), String.valueOf(a.get("name")));
+            }
+            return names;
         } catch (Exception ex) {
-            return agentId;
+            return Map.of();
         }
+    }
+
+    /** El nombre cae al id si no está en el mapa. */
+    static String nameOf(Map<String, String> names, String agentId) {
+        return agentId == null ? null : names.getOrDefault(agentId, agentId);
     }
 
     public static Integer roundOf(Map<String, Object> data) {

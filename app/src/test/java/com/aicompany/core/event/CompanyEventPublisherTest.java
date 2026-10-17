@@ -50,4 +50,10 @@ class CompanyEventPublisherTest {
         assertEquals(2, MissionEventLog.incrementOf(Map.of("increment", 2)));
         assertNull(MissionEventLog.incrementOf(Map.of("increment", "x")));
     }
+
+    @Test void agentNameFallsBackToTheId() {
+        assertEquals("Neo", MissionEventLog.nameOf(Map.of("engineering", "Neo"), "engineering"));
+        assertEquals("qa", MissionEventLog.nameOf(Map.of(), "qa"));
+        assertNull(MissionEventLog.nameOf(Map.of(), null));
+    }
 }
