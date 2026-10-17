@@ -26,6 +26,19 @@ class TestTriageValidatorTest {
                 "El repositorio reconstruye el turno sin sus reservas.", code, tests);
     }
 
+    // Pong de 3 niveles (2026-10-17): un veredicto sin verdict tumbaba el triage con NPE (Set.of().contains(null)).
+    @Test
+    void aVerdictWithoutVerdictOrWithNullFilesIsRejectedNotThrown() {
+        var errors = TestTriageValidator.validate(new TestTriage(java.util.Arrays.asList(
+                v(CANCELAR.name(), null, List.of(), List.of()),
+                v(CANCELAR.name(), "BOTH", java.util.Arrays.asList((String) null), java.util.Arrays.asList((String) null)),
+                null)), List.of(CANCELAR), new java.util.HashSet<>(REPO));
+        var all = String.join("\n", errors);
+        assertTrue(all.contains("verdict \"null\" de " + CANCELAR.name() + " no es válido"), all);
+        assertTrue(all.contains("codeFiles \"null\" no es un archivo de código"), all);
+        assertTrue(all.contains("testFiles \"null\" no es un archivo de tests"), all);
+    }
+
     @Test
     void aValidVerdictForEveryFailingTestPasses() {
         var triage = new TestTriage(List.of(v(CANCELAR.name(), "CODE_WRONG",

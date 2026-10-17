@@ -39,7 +39,7 @@ public final class TestTriageValidator {
             if (!names.contains(verdict.test())) {
                 errors.add("\"" + verdict.test() + "\" no es un test que falló. Tests que fallaron: " + names + ".");
             }
-            if (!VERDICTS.contains(verdict.verdict())) {
+            if (verdict.verdict() == null || !VERDICTS.contains(verdict.verdict())) {
                 errors.add("verdict \"" + verdict.verdict() + "\" de " + verdict.test() + " no es válido: usa "
                         + TestTriage.CODE_WRONG + ", " + TestTriage.TEST_WRONG + " o " + TestTriage.BOTH + ".");
                 continue;
