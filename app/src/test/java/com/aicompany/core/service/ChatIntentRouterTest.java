@@ -17,6 +17,7 @@ import com.aicompany.core.model.TeamSnapshot;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.LastMentioned;
 import com.aicompany.core.model.MissionResponse;
+import com.aicompany.core.model.MissionEventView;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
 import com.aicompany.core.model.PolicyKey;
@@ -66,6 +67,7 @@ class ChatIntentRouterTest {
     private final com.aicompany.core.outreach.OutreachMemoryService outreachMemory =
             mock(com.aicompany.core.outreach.OutreachMemoryService.class);
     private final ApiKeyService apiKeys = mock(ApiKeyService.class);
+    private final com.aicompany.core.event.MissionEventLog eventLog = mock(com.aicompany.core.event.MissionEventLog.class);
     private final ChatIntentRouter router = new ChatIntentRouter(
             missionService, ceoService, missionMemory, opportunityMemory, customerMemory, companyMemory,
             conversationMemory, companyPolicyService, customerService, productStatusService,
@@ -1252,7 +1254,10 @@ class ChatIntentRouterTest {
     private static final List<Map<String, Object>> AGENTS = List.of(
             Map.of("id", "ceo", "name", "Alex", "role", "CEO", "personality", "Estratégico"),
             Map.of("id", "growth-content", "name", "Kira", "role", "Growth", "personality", "Curiosa"),
-            Map.of("id", "sales", "name", "Sofia", "role", "Sales", "personality", "Directa"));
+            Map.of("id", "sales", "name", "Sofia", "role", "Sales", "personality", "Directa"),
+            Map.of("id", "backend", "name", "Iris", "role", "Backend", "personality", "Precisa"),
+            Map.of("id", "engineering", "name", "Neo", "role", "Líder técnico", "personality", "Sereno"),
+            Map.of("id", "product-owner", "name", "Aria", "role", "Product Owner", "personality", "Clara"));
 
     private void stubAgents() {
         when(companyMemory.agents()).thenReturn(AGENTS);
@@ -1285,7 +1290,7 @@ class ChatIntentRouterTest {
     void aMentionIsAnsweredByThatAgentAndRecordedWithItsId() {
         stubAgents();
         when(ceoService.agentChat(argThat(s -> s != null && s.agentId().equals("growth-content")), any(), anyList(),
-                eq("@Kira ideas"), any(), any(), any())).thenReturn("respuesta de Kira");
+                argThat(m -> m != null && m.endsWith("@Kira ideas") && m.contains("ESTADO REAL (Java)")), any(), any(), any())).thenReturn("respuesta de Kira");
 
         var replies = router.routeReplies("@Kira ideas");
 
@@ -3016,5 +3021,85 @@ class ChatIntentRouterTest {
                 "AWAITING_SPEC_APPROVAL", null, null, null, 0, 0, null, "", contract)));
 
         assertTrue(router.route("para MISSION-X: el nivel 3 tiene dos pelotas").contains("contrato de MISSION-X"));
+    }
+
+    // Bitácora (spec 2026-10-17): «¿qué está realizando?» lo responde Java, nunca el modelo.
+    @Test
+    void aStatusQuestionToAnAgentIsAnsweredByJava() {
+        stubAgents();
+        var pong = new MissionResponse("MISSION-PONG", MissionStatus.WAITING_AGENT_RESULTS, "TEST", 56,
+                "Desarrollo por capas", "Kael (2/3) está generando [game]", java.time.Instant.now(), null, "TEAM-DEVELOPMENT");
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of(pong));
+        when(missionMemory.tasks("MISSION-PONG")).thenReturn(List.of(new AgentTask("MISSION-PONG-BACKEND-R18",
+                "MISSION-PONG", "backend", "WORK", "COMPLETED", "", java.time.Instant.now(), "WORK", null, null, List.of(),
+                null, null)));
+
+        var replies = router.routeReplies("@Iris que esta realizando");
+
+        assertEquals("backend", replies.get(0).agentId());
+        assertTrue(replies.get(0).text().contains("MISSION-PONG-BACKEND-R18"), replies.get(0).text());
+        verify(ceoService, never()).agentChat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aStatusQuestionWithTheNameAloneIsAnsweredByJava() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+
+        var replies = router.routeReplies("¿qué hace Iris?");
+
+        assertEquals("Iris — libre: sin tareas en misiones activas.", replies.get(0).text());
+        verify(ceoService, never()).agentChat(any(), any(), anyList(), any(), any(), any(), any());
+        verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    @Test
+    void withNoLiveMissionTheAgentIsFreeEvenIfTheHistoryNamesAnOldMission() {
+        stubAgents();
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of());
+        when(conversationMemory.recentMessages(anyInt())).thenReturn(List.of(
+                new ConversationTurn("backend", "Trabajo en MISSION-KAEL-CRM-1792045685")));
+
+        var text = router.routeReplies("@Iris que estas haciendo").get(0).text();
+
+        assertFalse(text.contains("MISSION-KAEL-CRM"), text);
+        assertTrue(text.contains("libre"), text);
+    }
+
+    @Test
+    void neoGetsTheRealLogOfTheLiveDevelopmentMissions() {
+        stubAgents();
+        var pong = new MissionResponse("MISSION-PONG", MissionStatus.EVALUATING, "TEST", 80, "Sandbox", "Compilando",
+                java.time.Instant.now(), null, "TEAM-DEVELOPMENT");
+        when(missionMemory.findAll(anyInt())).thenReturn(List.of(pong));
+        when(missionMemory.tasks("MISSION-PONG")).thenReturn(List.of());
+        router.setMissionEventLog(eventLog);
+        when(eventLog.recent(eq("MISSION-PONG"), anyInt())).thenReturn(List.of(new MissionEventView("e1",
+                "EMPRESA_SANDBOX_FINISHED", java.time.Instant.parse("2026-10-17T16:00:00Z"), "sandbox", "sandbox", null,
+                "Sandbox FAIL en build: 7 errores de compilación", 0, null)));
+        when(ceoService.agentChat(any(), any(), anyList(), any(), any(), any(), any())).thenReturn("ok");
+
+        router.routeReplies("@Neo como vamos con el pong");
+
+        verify(ceoService).agentChat(argThat(s -> s.agentId().equals("engineering")), any(), anyList(),
+                argThat(m -> m.startsWith(CeoService.JAVA_MEMORY_DATA_MARKER)
+                        && m.contains("MISSION-PONG: EVALUATING · Sandbox")
+                        && m.contains("11:00 sandbox: Sandbox FAIL en build: 7 errores de compilación")
+                        && m.contains("No prometas tiempos, avisos ni pasos que no figuren aquí")
+                        && m.endsWith("@Neo como vamos con el pong")), any(), any(), any());
+    }
+
+    @Test
+    void theLogOfAMissionIsAnsweredByJava() {
+        stubAgents();
+        router.setMissionEventLog(eventLog);
+        when(eventLog.recent(eq("MISSION-PONG"), eq(15))).thenReturn(List.of(new MissionEventView("e1",
+                "EMPRESA_MISSION_CORRECTION_STARTED", java.time.Instant.parse("2026-10-17T17:15:00Z"), "system", null, null,
+                "Corrección automática ronda 22", 22, null)));
+
+        var text = router.routeReplies("¿qué pasó en MISSION-PONG?").get(0).text();
+
+        assertTrue(text.contains("12:15 Forjai: Corrección automática ronda 22"), text);
+        verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
     }
 }

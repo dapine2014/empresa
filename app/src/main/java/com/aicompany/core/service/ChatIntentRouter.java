@@ -339,6 +339,17 @@ public class ChatIntentRouter {
 
         var agents = companyMemory.agents();
         var mentions = MentionResolver.resolve(message, agents);
+        var normalized = normalize(message);
+
+        // Bitácora (spec 2026-10-17): «¿qué hace Iris?» sin @ lo responde Java, sin modelo.
+        if (mentions.agentIds().isEmpty() && STATUS_QUESTION.matcher(normalized).find()) {
+            var named = agents.stream().filter(a -> a.get("name") != null && Pattern.compile("\\b" + Pattern.quote(
+                    normalize(String.valueOf(a.get("name")))) + "\\b").matcher(normalized).find()).toList();
+            if (!named.isEmpty()) {
+                return named.stream().map(a -> new ChatReply(String.valueOf(a.get("id")), String.valueOf(a.get("name")),
+                        describe(String.valueOf(a.get("id")), String.valueOf(a.get("name"))))).toList();
+            }
+        }
 
         if (!mentions.unknown().isEmpty()) {
             var known = agents.stream().map(a -> a.get("name") + " (" + a.get("id") + ")")
@@ -350,7 +361,92 @@ public class ChatIntentRouter {
             return mentions.agentIds().stream().map(id -> agentReply(id, message, agents)).toList();
         }
 
+        // Bitácora (spec 2026-10-17): la bitácora de una misión y la de desarrollo las arma Java.
+        if (MISSION_LOG.matcher(normalized).find()) {
+            var id = MISSION_ID.matcher(message);
+            if (id.find()) {
+                var missionId = id.group(1).toUpperCase(Locale.ROOT);
+                var lines = events(missionId, 15).stream().map(AgentActivity::eventLine).toList();
+                return List.of(ceoReply(lines.isEmpty() ? missionId + ": sin bitácora (misión anterior al 2026-10-17)"
+                        : "Bitácora de " + missionId + " (hora Colombia, más reciente primero):\n- " + String.join("\n- ", lines)));
+            }
+        }
+        if (DEVELOPMENT_LOG.matcher(normalized.strip()).matches()) {
+            var states = liveStates(true);
+            return List.of(ceoReply(states.isEmpty() ? "No hay misiones activas en desarrollo."
+                    : states.stream().map(s -> AgentActivity.missionBlock(s, 5)).collect(Collectors.joining("\n\n"))));
+        }
+
         return List.of(ceoReply(resolve(message)));
+    }
+
+    private com.aicompany.core.event.MissionEventLog missionEventLog;
+
+    /** Bitácora (spec 2026-10-17). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMissionEventLog(com.aicompany.core.event.MissionEventLog missionEventLog) {
+        this.missionEventLog = missionEventLog;
+    }
+
+    static final Pattern STATUS_QUESTION = Pattern.compile(
+            "(que (estas|esta|estan) (haciendo|realizando|trabajando)|en que (estas|esta|andas|anda)|que (haces|hace)\\b|estado de)");
+    private static final Pattern MISSION_LOG = Pattern.compile("(que paso|bitacora|historial)( en| de)? mission-");
+    private static final Pattern DEVELOPMENT_LOG = Pattern.compile("^(que (esta pasando|pasa) en desarrollo|bitacora)\\??$");
+    static final String REAL_DATA_RULE = "Responde solo con lo que está en estos datos. No prometas tiempos, avisos ni pasos "
+            + "que no figuren aquí; si algo no está, di que no lo sabes. Las misiones que no aparecen aquí no están activas.";
+    private static final java.util.Set<String> LOG_READERS = java.util.Set.of("engineering", "product-owner");
+
+    /** Misiones vivas con sus tareas y eventos; nunca lanza si la memoria devuelve null o vacío. */
+    private List<AgentActivity.MissionState> liveStates(boolean developmentOnly) {
+        var all = missionMemory.findAll(200);
+        if (all == null) {
+            return List.of();
+        }
+        return all.stream()
+                .filter(m -> m != null && AgentActivity.live(m.status()))
+                .filter(m -> !developmentOnly || "TEAM-DEVELOPMENT".equals(m.teamId()))
+                .map(m -> stateOf(m, 20))
+                .toList();
+    }
+
+    private AgentActivity.MissionState stateOf(MissionResponse mission, int maxEvents) {
+        var tasks = missionMemory.tasks(mission.missionId());
+        return new AgentActivity.MissionState(mission, tasks == null ? List.of() : tasks, events(mission.missionId(), maxEvents));
+    }
+
+    private List<com.aicompany.core.model.MissionEventView> events(String missionId, int limit) {
+        try {
+            var found = missionEventLog == null ? null : missionEventLog.recent(missionId, limit);
+            return found == null ? List.of() : found;
+        } catch (Exception ex) {
+            return List.of();
+        }
+    }
+
+    private String describe(String agentId, String name) {
+        return AgentActivity.describe(agentId, name, liveStates(false), Instant.now());
+    }
+
+    /** Bitácora (spec 2026-10-17): Neo y Aria leen la bitácora; los demás, su estado real. Nunca el historial solo. */
+    private MissionData withRealState(MissionData data, String message, String agentId, String name) {
+        String block;
+        if (LOG_READERS.contains(agentId)) {
+            var id = MISSION_ID.matcher(message);
+            var states = id.find()
+                    ? missionMemory.find(id.group(1).toUpperCase(Locale.ROOT)).map(m -> List.of(stateOf(m, 20))).orElse(List.of())
+                    : liveStates(true).stream().limit(3).toList();
+            block = "BITÁCORA REAL DE DESARROLLO (Java):\n" + (states.isEmpty() ? "No hay misiones activas en desarrollo."
+                    : states.stream().map(s -> AgentActivity.missionBlock(s, 20)).collect(Collectors.joining("\n\n")));
+        } else if (!MISSION_ID.matcher(message).find()) {
+            block = "ESTADO REAL (Java):\n" + describe(agentId, name);
+        } else {
+            return data;
+        }
+        var body = data.injected() && data.message().startsWith(CeoService.JAVA_MEMORY_DATA_MARKER)
+                ? data.message().substring(CeoService.JAVA_MEMORY_DATA_MARKER.length()).strip()
+                : "MENSAJE DEL FUNDADOR:\n" + message;
+        return new MissionData(CeoService.JAVA_MEMORY_DATA_MARKER + "\n" + block + "\n" + REAL_DATA_RULE + "\n\n" + body,
+                true, data.anyValidated());
     }
 
     private boolean isGovernance(String message) {
@@ -536,7 +632,13 @@ public class ChatIntentRouter {
                     + "y el Development Group. Se activa en Agents.");
         }
 
-        var data = missionData(message, agentId);
+        // Bitácora (spec 2026-10-17): el estado lo responde Java, sin modelo.
+        if (STATUS_QUESTION.matcher(normalize(message)).find()) {
+            return new ChatReply(agentId, name, describe(agentId, name));
+        }
+
+        var missionData = missionData(message, agentId);
+        var data = withRealState(missionData, message, agentId, name);
 
         try {
             String text;
@@ -551,7 +653,7 @@ public class ChatIntentRouter {
                         data.message(), this::answerMemoryTopic, promptMemory.activePrompt(agentId),
                         companyMemory.agentModel(agentId, defaultCeoModel));
             }
-            return new ChatReply(agentId, name, flagValidationOverclaim("ceo".equals(agentId) ? text : cutForeignSpeakers(text, agentId, agents), data));
+            return new ChatReply(agentId, name, flagValidationOverclaim("ceo".equals(agentId) ? text : cutForeignSpeakers(text, agentId, agents), missionData));
         } catch (Exception ex) {
             return new ChatReply(agentId, name, name + " no pudo responder: "
                     + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
