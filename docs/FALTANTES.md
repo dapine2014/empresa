@@ -56,8 +56,8 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | iOS | Entrega del producto (2026-10-17) | Fuera de alcance |
 | [ ] | `.aab` sin red: precargar Gradle 8.2 y la caché de AGP en la imagen `godot-dotnet-game` | Entrega del producto (2026-10-17) | Hoy `android-aab` falla de forma controlada (el AAB necesita Gradle y el sandbox no tiene red); el `.apk` sale bien |
 | [ ] | Nombre del producto en el contrato | Entrega del producto (2026-10-17) | El título de `ENTREGA.md` es el `missionId` porque el contrato no tiene ese campo |
-| [ ] | Validar los nombres de entrada del zip (zip-slip y duplicados) que vienen del staging | Entrega del producto (revisión) | Menor, diferido |
-| [ ] | El timeout por target del runner puede sumar más que el paso `package` de 1200 s | Entrega del producto (revisión) | Menor, diferido |
+| [x] | Validar los nombres de entrada del zip (zip-slip y duplicados) que vienen del staging | Entrega del producto (revisión) | Hecho (revisión final, 2026-10-18): solo `juego/**` y `app/**`, nombres peligrosos y repetidos se omiten |
+| [x] | El timeout por target del runner puede sumar más que el paso `package` de 1200 s | Entrega del producto (revisión) | Hecho (revisión final, 2026-10-18): paso de 1800 s, 300 s por target y tope global de 1700 s |
 | [ ] | Juegos 3D | Kael híbrido (fuera de alcance) | Orion (`SPECIALIST_3D`) sigue sin habilitar |
 | [ ] | Juego + backend en una misión | Kael híbrido (fuera de alcance) | Un juego usa solo `GODOT_DOTNET_GAME` |
 | [ ] | Verificar balance y engagement con datos reales (Gael, telemetría) | Kael híbrido (fuera de alcance) | Hoy quedan como hipótesis en el reporte |
