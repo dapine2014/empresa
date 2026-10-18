@@ -3117,6 +3117,81 @@ class ChatIntentRouterTest {
         verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
     }
 
+    private com.aicompany.core.delivery.DeliveryService deliveryWired() {
+        stubAgents();
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        router.setDeliveryService(delivery);
+        router.setDeliveryPaths(new com.aicompany.core.delivery.DeliveryPaths("/data/entregas-forja", "~/entregas-forja"));
+        when(missionMemory.find("MISSION-PONG-1")).thenReturn(Optional.of(new MissionResponse("MISSION-PONG-1",
+                MissionStatus.AWAITING_INVESTOR, "TEST", 80, "x", "x", java.time.Instant.now(), null, "TEAM-DEVELOPMENT")));
+        return delivery;
+    }
+
+    private static com.aicompany.core.delivery.DeliveryRecord partial() {
+        return new com.aicompany.core.delivery.DeliveryRecord("MISSION-PONG-1", 3, "PARTIAL",
+                "/data/entregas-forja/MISSION-PONG-1/incremento-3.zip", 1000L, List.of(
+                new com.aicompany.core.delivery.DeliveryFacts.TargetResult("web", "PASS", ""),
+                new com.aicompany.core.delivery.DeliveryFacts.TargetResult("android-apk", "FAIL", "falta el SDK")),
+                "", "2026-10-17T10:00:00Z");
+    }
+
+    @Test
+    void theDeliveryOfAMissionIsAnsweredByJavaWithTheHostPath() {
+        var delivery = deliveryWired();
+        when(delivery.list("MISSION-PONG-1")).thenReturn(List.of(partial()));
+
+        for (var q : List.of("entrega de MISSION-PONG-1", "¿dónde está MISSION-PONG-1?")) {
+            var text = router.routeReplies(q).get(0).text();
+            assertTrue(text.contains("incremento 3 (PARTIAL): ~/entregas-forja/MISSION-PONG-1/incremento-3.zip"), text);
+            assertTrue(text.contains("android-apk (FAIL): falta el SDK"), text);
+            assertFalse(text.contains("/data/"), text);
+        }
+        verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aMissionWithoutDeliveriesExplainsHowToGenerateOne() {
+        var delivery = deliveryWired();
+        when(delivery.list("MISSION-PONG-1")).thenReturn(List.of());
+
+        assertEquals("MISSION-PONG-1: sin entrega todavía. Si tiene un incremento VERIFIED, usa «Generar entrega» en la "
+                        + "misión o escribe «genera la entrega de MISSION-PONG-1».",
+                router.routeReplies("entrega de MISSION-PONG-1").get(0).text());
+    }
+
+    @Test
+    void generatingTheDeliveryRunsItAndRepliesThePath() {
+        var delivery = deliveryWired();
+        when(delivery.deliverVerified("MISSION-PONG-1")).thenReturn(partial());
+
+        var text = router.routeReplies("genera la entrega de MISSION-PONG-1").get(0).text();
+
+        verify(delivery).deliverVerified("MISSION-PONG-1");
+        assertTrue(text.contains("~/entregas-forja/MISSION-PONG-1/incremento-3.zip"), text);
+        verify(ceoService, never()).chat(any(), any(), anyList(), any(), any(), any(), any());
+    }
+
+    @Test
+    void generatingWithoutAVerifiedIncrementRepliesTheReason() {
+        var delivery = deliveryWired();
+        when(delivery.deliverVerified("MISSION-PONG-1")).thenThrow(new IllegalStateException(
+                "MISSION-PONG-1 no tiene un incremento VERIFIED para entregar."));
+
+        assertEquals("MISSION-PONG-1 no tiene un incremento VERIFIED para entregar.",
+                router.routeReplies("genera la entrega de MISSION-PONG-1").get(0).text());
+    }
+
+    @Test
+    void onlyEntregasListsTheLastFive() {
+        var delivery = deliveryWired();
+        when(delivery.recent(5)).thenReturn(List.of(partial()));
+
+        var text = router.routeReplies("entregas").get(0).text();
+
+        assertTrue(text.contains("MISSION-PONG-1: incremento 3 (PARTIAL): ~/entregas-forja/"), text);
+        verify(delivery).recent(5);
+    }
+
     // Revisión final (M1): una misión inexistente se dice; una existente queda como la última mencionada.
     @Test
     void theLogOfAMissingMissionSaysSoAndAnExistingOneIsRemembered() {

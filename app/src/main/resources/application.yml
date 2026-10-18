@@ -59,6 +59,8 @@ ollama:
 products:
   workspace-root: ${PRODUCTS_WORKSPACE_ROOT:${user.home}/forjai-products}
   deliveries-root: ${DELIVERIES_ROOT:${user.home}/entregas-forja}
+  # Solo para mostrar: la ruta de deliveries-root vista desde el equipo del fundador.
+  deliveries-host-path: ${DELIVERIES_HOST_PATH:~/entregas-forja}
 
 evidence:
   web-search:

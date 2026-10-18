@@ -369,6 +369,13 @@ public class ChatIntentRouter {
         // Bitácora (spec 2026-10-17): la bitácora de una misión y la de desarrollo las arma Java.
         // Sin «¿¡» ni «?!.» de los bordes: normalize no los quita y «¿qué está pasando en desarrollo?» no matcheaba.
         var bare = normalized.replaceAll("^[¿¡\\s]+|[?!.\\s]+$", "");
+        // Entrega del producto (spec 2026-10-17): dónde está el zip, generarlo y las últimas entregas, todo en Java.
+        if (deliveryService != null) {
+            var delivery = deliveryReply(message, bare);
+            if (delivery != null) {
+                return List.of(delivery);
+            }
+        }
         if (MISSION_LOG.matcher(bare).find()) {
             var id = MISSION_ID.matcher(message);
             if (id.find()) {
@@ -389,6 +396,82 @@ public class ChatIntentRouter {
         }
 
         return List.of(ceoReply(resolve(message)));
+    }
+
+    private com.aicompany.core.delivery.DeliveryService deliveryService;
+    private com.aicompany.core.delivery.DeliveryPaths deliveryPaths;
+
+    /** Entrega del producto (spec 2026-10-17). Sin el bean, las reglas de entrega no aplican. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeliveryService(com.aicompany.core.delivery.DeliveryService deliveryService) {
+        this.deliveryService = deliveryService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeliveryPaths(com.aicompany.core.delivery.DeliveryPaths deliveryPaths) {
+        this.deliveryPaths = deliveryPaths;
+    }
+
+    private static final Pattern DELIVERY_QUERY = Pattern.compile("(entregas?|donde esta|descargar)( de| la)? mission-");
+    private static final Pattern DELIVERY_MAKE = Pattern.compile("genera(r)? (la )?entrega( de)? mission-");
+    private static final Pattern DELIVERY_LIST = Pattern.compile("^entregas$");
+
+    private ChatReply deliveryReply(String message, String bare) {
+        var make = DELIVERY_MAKE.matcher(bare).find();
+        if (!make && !DELIVERY_QUERY.matcher(bare).find()) {
+            if (!DELIVERY_LIST.matcher(bare).matches()) {
+                return null;
+            }
+            var recent = deliveryService.recent(5);
+            return ceoReply(recent == null || recent.isEmpty() ? "Todavía no hay entregas."
+                    : "Últimas entregas:\n- " + recent.stream().map(r -> r.missionId() + ": " + deliveryLine(r))
+                    .collect(Collectors.joining("\n- ")));
+        }
+        var id = MISSION_ID.matcher(message);
+        if (!id.find()) {
+            return null;
+        }
+        var missionId = id.group(1).toUpperCase(Locale.ROOT);
+        if (missionMemory.find(missionId).isEmpty()) {
+            return ceoReply(missionId + " no existe.");
+        }
+        conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+        if (make) {
+            try {
+                var made = deliveryService.deliverVerified(missionId);
+                return ceoReply(missionId + ": " + deliveryDetail(made));
+            } catch (IllegalStateException ex) {
+                return ceoReply(ex.getMessage());
+            }
+        }
+        var found = deliveryService.list(missionId);
+        if (found == null || found.isEmpty()) {
+            return ceoReply(missionId + ": sin entrega todavía. Si tiene un incremento VERIFIED, usa «Generar entrega» en "
+                    + "la misión o escribe «genera la entrega de " + missionId + "».");
+        }
+        return ceoReply(missionId + ": " + deliveryDetail(found.get(0)));
+    }
+
+    private String deliveryLine(com.aicompany.core.delivery.DeliveryRecord r) {
+        var where = r.path() == null || r.path().isBlank() ? "sin archivo" : displayPath(r.path());
+        return "incremento " + r.increment() + " (" + r.status() + "): " + where;
+    }
+
+    private String deliveryDetail(com.aicompany.core.delivery.DeliveryRecord r) {
+        var sb = new StringBuilder(deliveryLine(r));
+        if (r.error() != null && !r.error().isBlank()) {
+            sb.append("\nMotivo: ").append(r.error());
+        }
+        if (r.targets() != null) {
+            r.targets().stream().filter(t -> !"PASS".equals(t.status())).forEach(t -> sb.append("\n- ").append(t.name())
+                    .append(" (").append(t.status()).append(")")
+                    .append(t.reason() == null || t.reason().isBlank() ? "" : ": " + t.reason()));
+        }
+        return sb.toString();
+    }
+
+    private String displayPath(String path) {
+        return deliveryPaths == null ? path : deliveryPaths.display(path);
     }
 
     private com.aicompany.core.event.MissionEventLog missionEventLog;
