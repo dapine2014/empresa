@@ -2432,4 +2432,36 @@ class ChatIntentRouterTest {
 
         assertTrue(response.contains("ronda 2 de 2"), response);
     }
+
+    // QA casos de uso (spec 2026-10-05 §6): el chat muestra la cobertura de escenarios (Java, sin modelo).
+    @Test
+    void theScenarioCoverageOfAMissionIsAnsweredInJava() {
+        when(missionMemory.tasks("MISSION-9")).thenReturn(List.of(new AgentTask("MISSION-9-QA-REVIEW", "MISSION-9", "qa",
+                "CODE_REVIEW", "COMPLETED", "Reporte de cobertura de escenarios (Java, QA casos de uso):\n✅ ESC-01 (incremento 1) alta: Crm.ESC_01",
+                Instant.now(), "VALIDATION", null, null, List.of(), "VERIFIED",
+                "[{\"check\":\"SCENARIO_COVERAGE\",\"status\":\"PASS\",\"detail\":\"1/1 escenarios con test aprobado.\"}]", null)));
+
+        var response = router.route("¿qué escenarios cubre MISSION-9?");
+
+        assertTrue(response.contains("1/1 escenarios con test aprobado") && response.contains("✅ ESC-01"), response);
+        verifyNoInteractions(ceoService);
+
+        when(missionMemory.tasks("MISSION-8")).thenReturn(List.of());
+        assertTrue(router.route("¿qué escenarios cubre MISSION-8?").contains("no tiene cobertura de escenarios"));
+        assertTrue(router.route("dame la cobertura de escenarios de MISSION-9").contains("1/1"));
+    }
+
+    // Revisión final (I2): la gobernanza va primero; la pregunta de cobertura no se roba una decisión.
+    @Test
+    void aDecisionThatMentionsCoverageIsStillADecision() {
+        when(missionService.recordDecision(eq("MISSION-12"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-12", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 1)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-12")).thenReturn(Optional.empty());
+
+        router.route("revisé la cobertura de escenarios de MISSION-12: pide más evidencia sobre MISSION-12");
+
+        verify(missionService).recordDecision(eq("MISSION-12"),
+                argThat(c -> c.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE));
+    }
 }

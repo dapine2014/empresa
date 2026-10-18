@@ -293,6 +293,16 @@ public class MissionMemoryService {
         }
     }
 
+    /** QA casos de uso (spec 2026-10-05 §4): el resultado del sandbox de la última validación VERIFIED de la misión. */
+    public Optional<String> lastVerifiedSandboxJson(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_TASK]->(t:AgentTask {kind:'VALIDATION', validationStatus:'VERIFIED'}) "
+                            + "WHERE t.sandboxResult IS NOT NULL RETURN t.sandboxResult AS r ORDER BY t.updatedAt DESC LIMIT 1",
+                            Map.of("id", missionId))
+                    .list(r -> r.get("r").asString()).stream().findFirst();
+        }
+    }
+
     /** Spec salud de modelos (2026-09-28): la tarea se hizo con el suplente local porque el modelo del agente cayó. */
     public void setTaskModelUsed(String taskId, String model) {
         try (var session = driver.session()) {

@@ -657,6 +657,12 @@ public class ChatIntentRouter {
             return handleDecision(decision, message);
         }
 
+        // Revisión final QA (I2): la gobernanza va primero; la cobertura es una consulta.
+        var coverageReply = handleScenarioCoverage(message);
+        if (coverageReply != null) {
+            return coverageReply;
+        }
+
         var missionStatusId = detectMissionStatusQuery(message);
 
         var isFocusGovernanceCommand = detectReferenceCommand(normalize(message)) != null
@@ -760,6 +766,42 @@ public class ChatIntentRouter {
             "(?i)\\bcuanto\\s+(?:costo|cuesta|ha\\s+costado|gasto|se\\s+gasto\\s+en)\\b.*?(MISSION-[A-Za-z0-9-]+)");
     private static final Pattern MONTH_COST = Pattern.compile(
             "(?i)\\bcuanto\\s+(?:hemos\\s+gastado|se\\s+ha\\s+gastado|gastamos|llevamos(?:\\s+gastado)?|cuestan?)\\b.*\\bmodelos?\\b");
+
+    private static final Pattern SCENARIO_COVERAGE = Pattern.compile(
+            "(?i)(?:\\b(?:que|cuales)\\s+escenarios\\b|\\bcobertura\\s+de\\s+(?:escenarios|tests|pruebas)\\b"
+                    + "|\\bescenarios\\s+(?:cubre|cubiertos|faltan|fallan)\\b)[^.;]*?(MISSION-[A-Za-z0-9-]+)");
+    private static final tools.jackson.databind.json.JsonMapper CHECKS_JSON = tools.jackson.databind.json.JsonMapper.builder().build();
+
+    /** QA casos de uso (spec 2026-10-05 §6): la cobertura de escenarios de la última validación, armada en Java. */
+    private String handleScenarioCoverage(String message) {
+        var m = SCENARIO_COVERAGE.matcher(normalize(message));
+        if (!m.find()) {
+            return null;
+        }
+        var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        var latest = missionMemory.tasks(missionId).stream()
+                .filter(t -> "VALIDATION".equals(t.kind()) && t.staticChecks() != null
+                        && t.staticChecks().contains("SCENARIO_COVERAGE"))
+                .max(java.util.Comparator.comparing(AgentTask::updatedAt, java.util.Comparator.nullsFirst(
+                        java.util.Comparator.naturalOrder())));
+        if (latest.isEmpty()) {
+            return missionId + " no tiene cobertura de escenarios (misión sin requisitos de Aria o sin validar).";
+        }
+        var detail = "";
+        try {
+            for (var node : CHECKS_JSON.readTree(latest.get().staticChecks())) {
+                if ("SCENARIO_COVERAGE".equals(node.path("check").asString())) {
+                    detail = node.path("detail").asString();
+                }
+            }
+        } catch (Exception ex) {
+            detail = "(no se pudo leer el detalle)";
+        }
+        var report = latest.get().result() == null ? "" : latest.get().result()
+                .replace(DevelopmentTeamStrategy.COVERAGE_REPORT, "");
+        return "Cobertura de escenarios de " + missionId + " (validación " + latest.get().validationStatus() + "): "
+                + detail + (report.isBlank() ? "" : "\n" + report);
+    }
 
     /** Costo real por misión (2026-10-04): respuesta armada en Java desde (:ModelUsage). */
     private String handleModelCost(String message) {

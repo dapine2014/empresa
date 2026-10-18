@@ -117,7 +117,7 @@ public class VerifyJobRunner {
                 ? TestReportParser.parse(jobDir) : new TestReportParser.TestCounts(0, 0);
 
         return new SandboxResult.StepResult(step.name(), status, execution.exitCode(), duration,
-                tail(execution.output(), OUTPUT_TAIL_CHARS), counts.passed(), counts.failed());
+                tail(execution.output(), OUTPUT_TAIL_CHARS), counts.passed(), counts.failed(), counts.tests());
     }
 
     static String tail(String output, int maxChars) {

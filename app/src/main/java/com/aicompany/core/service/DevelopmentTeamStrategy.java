@@ -423,7 +423,25 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         String reviewError = null;
         var reviewStarted = false;
 
-        try {
+        // QA casos de uso (spec 2026-10-05 §3 y §5): con escenarios de Aria, VERIFIED lo decide la cobertura y la
+        // revisión de Vera la reemplaza un reporte armado por Java (sin llamar al modelo).
+        var scenarios = scenarios(missionId);
+        var coverageMode = !scenarios.isEmpty();
+        // Revisión final (I1): sin sandbox (dependencias pendientes, runner caído) no hay cobertura que medir: UNVALIDATED.
+        if (coverageMode && sandboxResult != null) {
+            var tests = sandboxResult.allTests();
+            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios, tests);
+            checks = new ArrayList<>(checks);
+            checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
+            checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId), tests));
+            var report = com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
+            reviewError = COVERAGE_REPORT + report;
+            memory.updateTask(validationTaskId, "COMPLETED", COVERAGE_REPORT + report);
+            events.publishTask("EMPRESA_TASK_COMPLETED", validationTaskId, missionId, validation.agentId(), "COMPLETED",
+                    "Reporte de cobertura de escenarios.");
+        }
+
+        if (!coverageMode) try {
 
             var filesBySha = new LinkedHashMap<String, Set<String>>();
 
@@ -463,7 +481,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         generatedByForjai.addAll(forjaiFiles);
         review = withoutFindingsOn(review, generatedByForjai);
 
-        var status = StaticValidationStatus.compute(checks, review, sandboxResult);
+        var status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
+                : StaticValidationStatus.compute(checks, review, sandboxResult);
         if (status == StaticValidationStatus.VERIFIED) {
             // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
             memory.recordVerifiedCommit(missionId, headSha);
@@ -1259,6 +1278,103 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return com.aicompany.core.database.ConnectionContract.variables(connection == null ? "app" : connection.name());
     }
 
+    private RequirementsMemoryService requirementsMemory;
+
+    static final String COVERAGE_REPORT = "Reporte de cobertura de escenarios (Java, QA casos de uso):\n";
+
+    /** Spec QA §4: los tests del último sandbox VERIFIED de la misión (vacío si no hubo). */
+    private List<SandboxResult.TestCase> previousVerifiedTests(String missionId) {
+        try {
+            return memory.lastVerifiedSandboxJson(missionId)
+                    .map(json -> jsonMapper.readValue(json, SandboxResult.class).allTests()).orElse(List.of());
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the last verified sandbox: {}", missionId, ex.getMessage());
+            return List.of();
+        }
+    }
+
+    /** QA casos de uso (spec 2026-10-05): escenarios aprobados de Aria. Opcional: sin él, reglas anteriores. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRequirements(RequirementsMemoryService requirementsMemory) {
+        this.requirementsMemory = requirementsMemory;
+    }
+
+    /** Escenarios de los incrementos 1..N (N = el que se construye o el último construido); vacío sin requisitos. */
+    List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios(String missionId) {
+        if (requirementsMemory == null) {
+            return List.of();
+        }
+        try {
+            var approved = requirementsMemory.approved(missionId);
+            if (approved == null || approved.isEmpty()) {
+                return List.of();
+            }
+            var spec = jsonMapper.readValue(approved.get().specJson(), com.aicompany.core.agent.model.RequirementsSpec.class);
+            var upTo = Math.max(1, requirementsMemory.currentIncrement(missionId));
+            var out = new ArrayList<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario>();
+            for (int n = 1; n <= upTo; n++) {
+                for (var story : spec.storiesOf(n)) {
+                    for (var scenario : story.scenariosOrEmpty()) {
+                        out.add(new com.aicompany.core.agent.validation.ScenarioCoverage.Scenario(scenario.id(),
+                                scenario.title(), n));
+                    }
+                }
+            }
+            return out;
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the approved scenarios: {}", missionId, ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private static boolean isQa(TeamMissionContext context, String agentId) {
+        return context.team() != null && context.team().members().stream()
+                .anyMatch(m -> m.agentId().equals(agentId) && "QA".equals(m.roleCode()));
+    }
+
+    private Map<String, String> testFiles(String missionId, String sha) {
+        var files = new LinkedHashMap<String, String>();
+        if (sha == null) {
+            return files;
+        }
+        try {
+            for (var path : workspace.filesAtCommit(missionId, sha)) {
+                if (com.aicompany.core.agent.validation.TestInventory.isTestFile(path)) {
+                    var content = readOrNull(missionId, sha, path);
+                    if (content != null) {
+                        files.put(path, content);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the tests at {}: {}", missionId, sha, ex.getMessage());
+        }
+        return files;
+    }
+
+    private static Map<String, String> withReturned(Map<String, String> head, DevelopmentResult result) {
+        var files = new LinkedHashMap<>(head);
+        if (result.files() != null) {
+            result.files().stream().filter(f -> f != null && f.path() != null
+                            && com.aicompany.core.agent.validation.TestInventory.isTestFile(f.path()))
+                    .forEach(f -> files.put(f.path(), f.content()));
+        }
+        return files;
+    }
+
+    /** Spec QA §1: la regla de trazabilidad que recibe Vera. */
+    static String qaScenarioRule(List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios) {
+        if (scenarios.isEmpty()) {
+            return "";
+        }
+        return "\n\nESCENARIOS A CUBRIR (QA, obligatorio): escribe al menos un test automatizado por escenario, con el id "
+                + "en el NOMBRE del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 descripción') o "
+                + "testWidgets('ESC-03 …')); un Trait o un comentario no cuentan. Cada test verifica el dado/cuando/entonces del "
+                + "escenario. No borres, renombres ni saltes tests que ya existen: la suite solo crece.\n"
+                + scenarios.stream().map(sc -> "- " + sc.id() + " " + sc.title() + " (incremento " + sc.increment() + ")")
+                .collect(Collectors.joining("\n")) + "\n";
+    }
+
     /**
      * Los chequeos de base de datos (spec 2026-10-02 §2.4) solo aplican si el plan declara base: en ese caso se usa
      * la variante de generate con chequeos extra; si no, las mismas llamadas de siempre. requiredPaths null = las
@@ -1278,6 +1394,23 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var layers = layerChecks(context, owned, headSha);
         if (layers != null) {
             checks.add(layers);
+        }
+        // QA casos de uso (spec 2026-10-05 §1 y §4): cobertura de escenarios en la tarea de Vera; la suite no decrece.
+        var scenarios = scenarios(missionId);
+        if (!scenarios.isEmpty() && isQa(context, agentId)) {
+            var headTests = testFiles(missionId, headSha);
+            checks.add(result -> com.aicompany.core.agent.validation.ScenarioCoverage.sourceErrors(scenarios,
+                    withReturned(headTests, result), withReturned(Map.of(), result)));
+        }
+        // Revisión final (spec §3): sin requisitos de Aria, reglas anteriores (sin gate de crecimiento).
+        var verified = scenarios.isEmpty() ? null : memory.verifiedCommit(missionId).orElse(null);
+        if (verified != null) {
+            var before = com.aicompany.core.agent.validation.TestInventory.of(testFiles(missionId, verified));
+            if (!before.isEmpty()) {
+                var headTests = testFiles(missionId, headSha);
+                checks.add(result -> com.aicompany.core.agent.validation.TestSuiteGrowthGate.errors(before,
+                        com.aicompany.core.agent.validation.TestInventory.of(withReturned(headTests, result))));
+            }
         }
         if (checks.isEmpty()) {
             return requiredPaths == null
@@ -1558,7 +1691,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
-        return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task);
+        return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task)
+                + (isQa(context, task.agentId()) ? qaScenarioRule(scenarios(context.missionId())) : "");
     }
 
     private String buildWorkPromptBase(TeamMissionContext context, PlannedTask task) {
@@ -1731,7 +1865,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("\nSANDBOX (ejecución real): ").append(sandboxSummary).append("\n");
 
         out.append("\nREVISIÓN ESTÁTICA: ");
-        if (review == null) {
+        if (review == null && reviewError != null && reviewError.startsWith(COVERAGE_REPORT)) {
+            out.append(reviewError).append("\n");
+        } else if (review == null) {
             out.append("no se completó (").append(reviewError).append(")\n");
         } else {
             out.append(review.verdict()).append("\n");

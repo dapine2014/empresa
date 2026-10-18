@@ -10,7 +10,20 @@ public record SandboxResult(String overall, List<StepResult> steps) {
     public static final String TIMEOUT = "TIMEOUT";
     public static final String SKIPPED = "SKIPPED";
 
+    /** QA casos de uso (2026-10-05): un test con su nombre y resultado ({@code PASSED|FAILED|SKIPPED}). */
+    public record TestCase(String name, String outcome) {
+    }
+
     public record StepResult(String name, String status, int exitCode, long durationMs, String outputTail,
-                             int testsPassed, int testsFailed) {
+                             int testsPassed, int testsFailed, List<TestCase> tests) {
+
+        public StepResult {
+            tests = tests == null ? List.of() : List.copyOf(tests);
+        }
+
+        public StepResult(String name, String status, int exitCode, long durationMs, String outputTail,
+                          int testsPassed, int testsFailed) {
+            this(name, status, exitCode, durationMs, outputTail, testsPassed, testsFailed, List.of());
+        }
     }
 }

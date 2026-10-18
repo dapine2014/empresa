@@ -36,6 +36,24 @@ public enum StaticValidationStatus {
      * hay un BLOCKER o 0 tests pasados (un MAJOR ya no, decisión del fundador); UNVALIDATED si el sandbox no corrió o
      * no hubo revisión; VERIFIED si todo pasa con ≥1 test.
      */
+    /**
+     * QA casos de uso (spec 2026-10-05 §3): con escenarios de Aria la cobertura es un chequeo más y no hay revisión de
+     * Vera: VERIFIED si pasan todos los chequeos (incluida la cobertura) y el sandbox con ≥1 test.
+     */
+    public static StaticValidationStatus compute(List<StaticCheck> checks, StaticReviewResult review, SandboxResult sandbox,
+                                                 boolean coverageMode) {
+        if (!coverageMode) {
+            return compute(checks, review, sandbox);
+        }
+        if (checks == null || checks.isEmpty() || checks.stream().anyMatch(c -> !c.passed())) {
+            return FAILED;
+        }
+        if (sandbox == null) {
+            return UNVALIDATED;
+        }
+        return sandbox.passed() && sandbox.testsPassed() > 0 ? VERIFIED : FAILED;
+    }
+
     public static StaticValidationStatus compute(List<StaticCheck> checks, StaticReviewResult review, SandboxResult sandbox) {
 
         if (checks == null || checks.isEmpty() || checks.stream().anyMatch(c -> !c.passed())) {
