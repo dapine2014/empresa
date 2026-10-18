@@ -5,8 +5,13 @@ cd /work
 mkdir -p .forjai
 case "$1" in
   restore) flutter pub get --offline ;;
-  build)   flutter build web --release --no-web-resources-cdn ;;  # sin red: CanvasKit empaquetado, no desde el CDN
-  test)    flutter test --machine > /work/.forjai/results.json || true
+  # Sin red: CanvasKit empaquetado, no desde el CDN. --no-pub: las dependencias ya las resolvió restore y cada paso es
+  # un contenedor nuevo (la caché pub en overlay se descarta); verificado en vivo con Flutter 3.41, el pub get implícito
+  # intentaba descargar y colgaba el paso hasta el timeout. --no-wasm-dry-run: solo web JS (ahorra una compilación).
+  build)   flutter build web --release --no-web-resources-cdn --no-pub --no-wasm-dry-run ;;
+  test)    flutter test --no-pub --machine > /work/.forjai/results.json || true
+           # Diagnóstico 360: los tests que fallan, en el formato de dotnet test (Java los lee de la salida).
+           python3 /forjai/failing_tests.py /work/.forjai/results.json || true
            grep -q '"success":true' /work/.forjai/results.json ;;
   smoke)
     python3 -m http.server --directory /work/build/web 8080 --bind 127.0.0.1 > /tmp/http.log 2>&1 &

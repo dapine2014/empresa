@@ -59,4 +59,26 @@ class DependencyManifestTest {
     void aNameThatIsARelativePathIsInvalid() {
         assertEquals(1, DependencyManifest.validateRequests(List.of(new PackageRequest("..", "1.0.0"))).size());
     }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790975402): "description: App … del CRM de Forjai: registro …" (un ": " sin
+    // comillas) rompió el restore; el error de restore no vuelve a la dueña, así que se rechaza al generar.
+    @Test
+    void invalidYamlIsRejectedWithTheLine() {
+        var parsed = DependencyManifest.pubspec("name: app\ndescription: App del CRM de Forjai: registro de clientes\n"
+                + "dependencies:\n  http: 1.2.2\n");
+        assertEquals(1, parsed.errors().size(), parsed.errors().toString());
+        assertTrue(parsed.errors().get(0).contains("línea 2"), parsed.errors().get(0));
+        assertTrue(parsed.errors().get(0).contains("comillas"), parsed.errors().get(0));
+        assertTrue(DependencyManifest.pubspec("name: app\ndescription: \"App del CRM: clientes\"\n").errors().isEmpty());
+    }
+
+    // Verificado en vivo (MISSION-B1-AGENDA-1791057420): sin environment.sdk, pub get falla en el sandbox.
+    @Test
+    void pubspecNeedsAnSdkConstraint() {
+        var errors = DependencyManifest.pubspecGateErrors("name: app\ndependencies:\n  http: 1.2.2\n");
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("environment"), errors.get(0));
+        assertTrue(DependencyManifest.pubspecGateErrors(
+                "name: app\nenvironment:\n  sdk: ^3.11.0\ndependencies:\n  http: 1.2.2\n").isEmpty());
+    }
 }

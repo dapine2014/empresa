@@ -169,6 +169,9 @@ public class TeamWorkPlanner {
 
                 var errors = new ArrayList<String>(validator.validate(plan, team, mode, connections));
                 resolverErrors.stream().filter(error -> !errors.contains(error)).forEach(errors::add);
+                if (mode == TeamExecutionMode.DEVELOPMENT) {
+                    errors.addAll(com.aicompany.core.agent.validation.RequestedComponents.errors(instruction, plan));
+                }
 
                 if (errors.isEmpty()) {
 
@@ -270,10 +273,17 @@ public class TeamWorkPlanner {
                 - ownedPaths y assignments los calcula Forjai: pon kind "WORK", ownedPaths [] y assignments [] en todas
                   las tareas.
                 - Metodología obligatoria: DDD.
-                - stackProfile: elige EXACTAMENTE uno de estos perfiles del catálogo (no existen otros):
+                - stackProfile: el perfil principal de la aplicación, EXACTAMENTE uno de este catálogo (no existen otros):
                 %s
-                - boundedContexts: los bounded contexts del producto, cada uno con name (en el formato del perfil) y
-                  description. El name define las rutas de sus capas. Para un producto chico, UN solo contexto.
+                - components: TODAS las partes que necesita el producto, con ids del mismo catálogo. Una app con pantallas
+                  y datos guardados en un servidor es ["DOTNET_APP", "FLUTTER_WEB_APP"] (API .NET + app Flutter, que
+                  sirve igual para web, Android e iOS); solo una API es ["DOTNET_APP"]; solo una app sin servidor es
+                  ["FLUTTER_WEB_APP"]. Forjai decide las carpetas (backend/, app/): no las pongas en ninguna ruta.
+                  Si personas usan el producto directamente (ven, consultan, cargan, reservan, compran), lleva app
+                  aunque el pedido no diga "pantallas"; solo API cuando lo usan otros sistemas o el pedido lo dice.
+                - boundedContexts: los bounded contexts del producto, cada uno con name y description. Con DOTNET_APP en
+                  components, el name va en PascalCase (p. ej. Clientes); si no, en el formato del perfil. El name
+                  define las rutas de sus capas. Para un producto chico, UN solo contexto.
                 - ubiquitousLanguage: al menos 3 términos del dominio, cada uno con term y definition.
                 - requiredCapabilities: solo capabilities que figuren en la lista de ESE agente, una por elemento.
                 - Reglas de capas: domain no depende de nada fuera de su domain ni de frameworks; application solo de
@@ -312,7 +322,7 @@ public class TeamWorkPlanner {
                 : plan.summary();
 
         return new TeamPlan(summary, plan.techStack(), plan.entryPoint(), tasks, plan.participationConflicts(),
-                plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(), plan.database());
+                plan.stackProfile(), plan.boundedContexts(), plan.ubiquitousLanguage(), plan.database(), plan.components());
     }
 
     private static String normalizeAction(String action) {

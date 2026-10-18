@@ -112,12 +112,12 @@ function ModelEditor({ agentId }: { agentId: string }) {
       {down && (
         <p className="error">
           ⚠ Su modelo no responde desde {down.since?.slice(0, 16).replace('T', ' ')} UTC: trabaja con su suplente{' '}
-          <code>{currentFallback || 'ninguno (sus tareas fallan hasta que vuelva)'}</code>.
+          <code>{currentFallback || 'qwen3-coder:30b'}</code>.
         </p>
       )}
       <h3>Suplente local</h3>
       <p className="hint">
-        Si su modelo remoto cae, Forjai usa este (por defecto qwen3-coder:30b). Vacío = sin suplente.
+        Si su modelo remoto cae, Forjai usa este. Obligatorio y local de Ollama (por defecto qwen3-coder:30b): un modelo remoto o vacío se rechaza.
       </p>
       <input value={displayedFallback} onChange={(e) => setFallback(e.target.value)} placeholder="p. ej. qwen3-coder:30b" />
       <button disabled={displayedFallback === currentFallback || fallbackMutation.isPending} onClick={() => fallbackMutation.mutate()}>

@@ -218,19 +218,23 @@ class CompanyControllerTest {
         assertEquals("llama3:8b", response.model());
     }
 
-    // Spec salud de modelos (2026-09-28): suplente editable en Agents, con la misma validación que el modelo.
+    // Decisión del fundador (2026-10-03): todo agente tiene suplente y es local; uno vacío o remoto (verificado: Iris,
+    // Diego, Neo, Mila y Vera tenían glm-5.3 en el mismo proveedor que se caía) no sirve de respaldo.
     @Test
-    void theFallbackModelIsValidatedAndCanBeCleared() {
-        doThrow(new IllegalArgumentException("Proveedor remoto desconocido")).when(ceoService).checkModel("anthropic:x/y");
+    void theFallbackModelMustBeLocalAndNeverEmpty() {
+        doThrow(new IllegalArgumentException("El suplente debe ser local")).when(ceoService).checkFallbackModel("");
+        doThrow(new IllegalArgumentException("El suplente debe ser local")).when(ceoService)
+                .checkFallbackModel("nvidia:z-ai/glm-5.3");
 
         assertThrows(IllegalArgumentException.class,
-                () -> controller.updateAgentFallbackModel("sales", new AgentModelCommand("anthropic:x/y")));
-        controller.updateAgentFallbackModel("sales", new AgentModelCommand("nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b"));
-        controller.updateAgentFallbackModel("qa", new AgentModelCommand(""));
+                () -> controller.updateAgentFallbackModel("qa", new AgentModelCommand("")));
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.updateAgentFallbackModel("qa", new AgentModelCommand("nvidia:z-ai/glm-5.3")));
+        controller.updateAgentFallbackModel("qa", new AgentModelCommand("qwen3-coder:30b"));
 
-        verify(memory).setAgentFallbackModel("sales", "nvidia-ceo:nvidia/nemotron-3-ultra-550b-a55b");
-        verify(memory).setAgentFallbackModel("qa", "");
-        verify(memory, never()).setAgentFallbackModel(eq("sales"), eq("anthropic:x/y"));
+        verify(memory).setAgentFallbackModel("qa", "qwen3-coder:30b");
+        verify(memory, never()).setAgentFallbackModel(eq("qa"), eq(""));
+        verify(memory, never()).setAgentFallbackModel(eq("qa"), eq("nvidia:z-ai/glm-5.3"));
     }
 
     @Test

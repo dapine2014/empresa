@@ -28,11 +28,15 @@ public final class ProjectScaffold {
             Layer.API, List.of(Layer.DOMAIN, Layer.APPLICATION, Layer.INFRASTRUCTURE),
             Layer.TESTS, List.of(Layer.DOMAIN, Layer.APPLICATION, Layer.INFRASTRUCTURE));
 
+    /** Verificado en vivo (MISSION-B1-CRM-1790971185): como dotnet new xunit, Xunit es un using global de los tests. */
     private static final String TEST_PACKAGES = """
               <ItemGroup>
                 <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
                 <PackageReference Include="xunit" Version="2.5.3" />
                 <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+              </ItemGroup>
+              <ItemGroup>
+                <Using Include="Xunit" />
               </ItemGroup>
             """;
 

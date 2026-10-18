@@ -94,13 +94,11 @@ public class CompanyController {
         return new AgentModelResponse(id, command.model());
     }
 
-    /** Spec salud de modelos (2026-09-28): suplente local del agente; vacío = sin suplente. */
+    /** Spec salud de modelos (2026-09-28) + decisión del fundador (2026-10-03): suplente local obligatorio. */
     @PutMapping("/agents/{id}/fallback-model")
     public AgentModelResponse updateAgentFallbackModel(@PathVariable("id") String id, @RequestBody AgentModelCommand command) {
         var model = command.model() == null ? "" : command.model().strip();
-        if (!model.isEmpty()) {
-            ceoService.checkModel(model);
-        }
+        ceoService.checkFallbackModel(model);
         memoryService.setAgentFallbackModel(id, model);
         return new AgentModelResponse(id, model);
     }

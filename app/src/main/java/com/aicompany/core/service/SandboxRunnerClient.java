@@ -29,12 +29,21 @@ public class SandboxRunnerClient {
     }
 
     public Optional<SandboxResult> verify(String missionId, String commitSha, String stackProfile) {
+        return verify(missionId, commitSha, stackProfile, "");
+    }
+
+    /** Spec 2026-10-02 B1 §3: VERIFY de la carpeta de un componente ("" = raíz). */
+    public Optional<SandboxResult> verify(String missionId, String commitSha, String stackProfile, String componentDir) {
         try {
             lastError = null;
+            var body = new java.util.LinkedHashMap<String, Object>(Map.of("jobType", "VERIFY", "missionId", missionId,
+                    "commitSha", commitSha, "stackProfile", stackProfile));
+            if (componentDir != null && !componentDir.isEmpty()) {
+                body.put("componentDir", componentDir);
+            }
             var result = client.post().uri("/jobs")
                     .header("X-Sandbox-Token", token == null ? "" : token)
-                    .body(Map.of("jobType", "VERIFY", "missionId", missionId, "commitSha", commitSha,
-                            "stackProfile", stackProfile))
+                    .body(body)
                     .retrieve()
                     .body(SandboxResult.class);
             if (result == null) {

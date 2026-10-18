@@ -14,7 +14,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | **Corrección hasta cero errores** | Hoy solo se corrigen errores de compilación, en 2 rondas; un test que falla deja la misión en `FAILED` | Bloque 7 |
 | [ ] | **Escenarios BDD trazables** | `VERIFIED` solo exige que compile y pase al menos 1 test, no que se cumplan los criterios de aceptación | Bloques 5 y 6 |
 | [ ] | **Sandbox con 6 pasos y tests con nombre** | El arranque está mezclado con el smoke y los tests solo se cuentan, no se identifican | Bloque 2 |
-| [ ] | **Varios stacks en una misión** | Una misión usa un solo perfil: Flutter + .NET + PostgreSQL juntos no existe (Neo eligió solo Flutter en el intento de psicología) | Fase 2 |
+| [x] | **Varios stacks en una misión** (B1, rama `apps-completas-b1`) | Una misión usa un solo perfil: Flutter + .NET + PostgreSQL juntos no existe (Neo eligió solo Flutter en el intento de psicología) | Fase 2 |
 | [ ] | **PostgreSQL en el sandbox** | Un producto con base de datos no tiene dónde probarse | Fase 2 |
 | [ ] | **Entrega y DevOps (Andrea)** | No hay Dockerfile ni CI del producto generado | Fase 2 |
 | [x] | **Diego como DBA: conexiones y PostgreSQL** (incluido AWS RDS) | Diego no puede crear bases reales ni hay dónde cargar credenciales | Spec `2026-10-02-diego-dba-postgresql-design.md` |
@@ -33,7 +33,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | **Nuevo dueño de `OFFER_DESIGN` en Discovery** | Bloque 1 | **Obligatorio antes de descongelar Forjai**: `MissionExecutor` y `ProductAutomation.PRODUCT_AGENT` siguen apuntando a Luna (`product`), que pasó al Development Group |
 | [ ] | Probar la migración `TEAM-ENGINEERING` → `TEAM-DEVELOPMENT` con test, incluido el caso con ambos equipos a la vez | Bloque 1 (m-1) | En vivo ya se verificó el caso normal (2026-10-01) |
 | [ ] | Rondas de evidencia de misiones viejas reusan el plan viejo sin revalidarlo | Bloque 1 (m-2) | Neo volvería a escribir código en esas rondas |
-| [ ] | "Stacks disponibles" escrito a mano en el error del validador | Bloque 1 (m-3) | Debería salir de `StackProfile.enabledNow()` |
+| [x] | "Stacks disponibles" escrito a mano en el error del validador (B1) | Bloque 1 (m-3) | Debería salir de `StackProfile.enabledNow()` |
 | [ ] | Rama sin uso en `TeamPlanValidator.capabilityError` (lista concatenada) | Bloque 1 (m-4) | Limpieza |
 | [ ] | Javadoc de `StackProfile.layers()` desplazado | Bloque 1 (m-5) | Limpieza |
 | [ ] | `CeoService` describe `TEAM-DEVELOPMENT` con "juegos" (son fase 3) | Bloque 1 (m-6) | Texto para el modelo |

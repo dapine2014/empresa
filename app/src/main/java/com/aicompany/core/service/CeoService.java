@@ -293,6 +293,24 @@ public class CeoService {
         }
     }
 
+    /**
+     * Decisión del fundador (2026-10-03): todo agente tiene suplente y es un modelo local de Ollama. Verificado: Iris,
+     * Diego, Neo, Mila y Vera tenían de suplente glm-5.3 en el mismo proveedor (NVIDIA) que se caía.
+     */
+    public void checkFallbackModel(String model) {
+        if (model == null || model.isBlank()) {
+            throw new IllegalArgumentException("Todo agente necesita un suplente local (p. ej. "
+                    + CompanyMemoryService.DEFAULT_FALLBACK_MODEL + "): no puede quedar vacío.");
+        }
+        var candidate = model.strip();
+        if (remoteModel(candidate).isPresent() || PROVIDER_PREFIXED.matcher(candidate).matches()) {
+            throw new IllegalArgumentException("El suplente debe ser un modelo local de Ollama (p. ej. "
+                    + CompanyMemoryService.DEFAULT_FALLBACK_MODEL + "), no \"" + candidate + "\": si el proveedor "
+                    + "remoto se cae, el suplente no puede depender de él.");
+        }
+        checkModel(candidate);
+    }
+
     static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
         if (agentModel == null) {
             return java.util.Optional.empty();
@@ -1219,6 +1237,13 @@ public class CeoService {
     public DevelopmentResult generateDevelopmentArtifact(String agentId, String prompt, String agentPrompt, String model) {
         return callStructured("DEVELOPMENT_TASK", agentId, prompt, agentPrompt, model,
                 DevelopmentResultSchema.SCHEMA, DevelopmentResult.class);
+    }
+
+    /** Diagnóstico 360 (decisión del fundador 2026-10-03): Neo dice si falla el test, la lógica o ambos. Sin tools. */
+    public com.aicompany.core.agent.model.TestTriage triageFailingTests(String agentId, String prompt, String agentPrompt,
+                                                                       String model) {
+        return callStructured("TEST_TRIAGE", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.TestTriage.SCHEMA, com.aicompany.core.agent.model.TestTriage.class);
     }
 
     /** Revisión estática del repo (spec §7, capa 2): format StaticReviewResultSchema, sin tools. */

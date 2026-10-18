@@ -94,6 +94,55 @@ class StackProfileTest {
     @Test
     void theDotnetContractExplainsHowToRequestAPackage() {
         assertTrue(StackProfile.DOTNET_APP.executionContract().contains("\"packages\""));
+        // Verificado en vivo (MISSION-DBA-1790955204): Mvc.Testing trajo 35 paquetes pendientes y System.Text.Json
+        // vulnerable; el sandbox no corrió.
+        assertTrue(StackProfile.DOTNET_APP.executionContract().contains("NO usan Microsoft.AspNetCore.Mvc.Testing"));
         assertTrue(StackProfile.FLUTTER_WEB_APP.executionContract().contains("versión exacta"));
+    }
+
+    @Test
+    void flutterContractOffersHttpAndForbidsWebOnlyLibraries() {
+        var contract = StackProfile.FLUTTER_WEB_APP.executionContract();
+        assertTrue(contract.contains("http 1.2.2"), contract);
+        assertTrue(contract.contains("dart:html"), contract);
+        assertTrue(StackProfile.FULLSTACK_API_RULE.contains("MapGet"), StackProfile.FULLSTACK_API_RULE);
+        assertTrue(StackProfile.FULLSTACK_API_RULE.contains("CORS_ORIGINS"), StackProfile.FULLSTACK_API_RULE);
+        assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("API_BASE_URL"), StackProfile.FULLSTACK_APP_RULE);
+    }
+
+    // Revisión final I5: en el sandbox no hay red ni API_BASE_URL; la app tiene que arrancar y renderizar igual.
+    @Test
+    void fullstackAppMustStartWithoutTheApi() {
+        assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("sin red"), StackProfile.FULLSTACK_APP_RULE);
+        assertTrue(StackProfile.FULLSTACK_APP_RULE.contains("captura"), StackProfile.FULLSTACK_APP_RULE);
+    }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790978221, MISSION-B1-AGENDA-1790981861): dos veces la capa application de la
+    // app importó el cliente HTTP de infrastructure. La regla dice dónde va cada pieza.
+    @Test
+    void fullstackAppRuleSaysWhereTheHttpClientGoes() {
+        var rule = StackProfile.FULLSTACK_APP_RULE;
+        assertTrue(rule.contains("interfaz del repositorio"), rule);
+        assertTrue(rule.contains("nunca lo importa application"), rule);
+        assertTrue(rule.contains("lib/main.dart"), rule);
+    }
+
+    // Diagnóstico 2026-10-02: el modelo escribía APIs de Flutter más nuevas (Color.withValues) que el SDK 3.24 del
+    // sandbox no tenía. El contrato dice la versión real de la imagen.
+    @Test
+    void flutterContractMatchesTheSandboxImage() {
+        var contract = StackProfile.FLUTTER_WEB_APP.executionContract();
+        assertTrue(contract.contains("Flutter 3.41.9 (Dart 3.11)"), contract);
+        assertTrue(contract.contains("cupertino_icons 1.0.9 y flutter_lints 6.0.0"), contract);
+        assertTrue(BaselineDependencies.contains(new DependencyRef("PUB", "cupertino_icons", "1.0.9")));
+        assertTrue(BaselineDependencies.contains(new DependencyRef("PUB", "flutter_lints", "6.0.0")));
+    }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790971185 y -1790975402): Diego empezó con EF Core, que el sandbox no trae,
+    // y gastó una ronda de corrección cada vez.
+    @Test
+    void dotnetContractSaysEfCoreIsNotAvailable() {
+        var contract = StackProfile.DOTNET_APP.executionContract();
+        assertTrue(contract.contains("Entity Framework Core NO está disponible"), contract);
     }
 }

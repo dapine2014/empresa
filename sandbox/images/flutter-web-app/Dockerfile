@@ -1,4 +1,4 @@
-FROM ghcr.io/cirruslabs/flutter:3.24.3
+FROM ghcr.io/cirruslabs/flutter:3.41.9
 RUN apt-get update && apt-get install -y --no-install-recommends wget gnupg python3 ca-certificates \
     && wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get install -y --no-install-recommends /tmp/chrome.deb \
@@ -14,10 +14,10 @@ RUN touch /tmp/antes-del-precache && sleep 1 \
     && mkdir -p /opt/pub-cache && flutter config --no-analytics \
     && cd /sdks/flutter/packages/flutter_tools && flutter pub get && cd / \
     && flutter precache --web \
-    && flutter create --platforms=web /opt/seed && cd /opt/seed && flutter pub get \
+    && flutter create --platforms=web /opt/seed && cd /opt/seed && flutter pub add http:1.2.2 && flutter pub get \
     && rm -rf /opt/seed && chown -R 1000:1000 /opt/pub-cache \
     && find /sdks/flutter \( -type d -o -newer /tmp/antes-del-precache \) -exec chown -h 1000:1000 {} + \
     && rm -f /tmp/antes-del-precache
-COPY run.sh /forjai/run.sh
-RUN chmod 0755 /forjai/run.sh
+COPY run.sh failing_tests.py /forjai/
+RUN chmod 0755 /forjai/run.sh /forjai/failing_tests.py
 USER 1000:1000

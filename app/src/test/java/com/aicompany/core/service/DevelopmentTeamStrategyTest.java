@@ -8,6 +8,7 @@ import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.AppComponent;
 import com.aicompany.core.model.*;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -17,6 +18,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -85,7 +87,7 @@ class DevelopmentTeamStrategyTest {
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
         when(workspace.filesAtCommit("M-1", "5".repeat(40))).thenReturn(List.of("game/Game.csproj", "Solution.sln"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
-        when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
+        when(validator.validate(eq("M-1"), anyList(), eq(List.of(new AppComponent(StackProfile.GODOT_DOTNET_GAME, ""))), eq(List.of("Combate")), anyList(), anyList()))
                 .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(
                 new SandboxResult("PASS", List.of(
@@ -304,7 +306,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void failedDeterministicChecksSkipTheSandbox() throws Exception {
         stubHappyPath();
-        when(validator.validate(eq("M-1"), anyList(), any(), anyList(), anyList()))
+        when(validator.validate(eq("M-1"), anyList(), anyList(), anyList(), anyList(), anyList()))
                 .thenReturn(List.of(StaticCheck.fail("DDD_LAYERS", "violación", null, List.of())));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -334,7 +336,7 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(new DependencyService.Outcome(List.of(), List.of(), null));
         when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("web/index.html", "web/ui/hud.js"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
-        when(validator.validate(eq("M-1"), anyList(), eq(StackProfile.GODOT_DOTNET_GAME), eq(List.of("Combate")), anyList()))
+        when(validator.validate(eq("M-1"), anyList(), eq(List.of(new AppComponent(StackProfile.GODOT_DOTNET_GAME, ""))), eq(List.of("Combate")), anyList(), anyList()))
                 .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -427,8 +429,8 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context(), progress);
 
-        verify(validator).validate(eq("M-1"), anyList(), any(), anyList(),
-                argThat(allowed -> allowed.contains("game/Game.csproj")));
+        verify(validator).validate(eq("M-1"), anyList(), anyList(), anyList(),
+                argThat(allowed -> allowed.contains("game/Game.csproj")), anyList());
     }
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): Vera marcó MAJOR un .csproj que genera Forjai; eso no es
@@ -703,21 +705,58 @@ class DevelopmentTeamStrategyTest {
 
     @Test
     void flutterDependenciesComeFromThePubspec() {
-        var refs = DevelopmentTeamStrategy.dependencyRefs(StackProfile.FLUTTER_WEB_APP, List.of(),
-                "dependencies:\n  flutter:\n    sdk: flutter\n  equatable: 2.0.5\n");
+        var flutter = List.of(new AppComponent(StackProfile.FLUTTER_WEB_APP, ""));
+        var refs = DevelopmentTeamStrategy.dependencyRefs(flutter, List.of(),
+                path -> "pubspec.yaml".equals(path) ? "dependencies:\n  flutter:\n    sdk: flutter\n  equatable: 2.0.5\n" : null);
         assertEquals(List.of(new DependencyRef("PUB", "equatable", "2.0.5")), refs);
         assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0")), DevelopmentTeamStrategy.dependencyRefs(
-                StackProfile.DOTNET_APP, List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")), null));
+                List.of(new AppComponent(StackProfile.DOTNET_APP, "")),
+                List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")), path -> null));
+    }
+
+    // Spec 2026-10-02 B1 §3: en una app completa, NuGet del backend y pub de app/pubspec.yaml en la misma misión.
+    @Test
+    void fullstackDependenciesComeFromBothEcosystems() {
+        var components = AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
+        var refs = DevelopmentTeamStrategy.dependencyRefs(components,
+                List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")),
+                path -> "app/pubspec.yaml".equals(path) ? "dependencies:\n  http: 1.2.2\n" : null);
+        assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0"), new DependencyRef("PUB", "http", "1.2.2")), refs);
     }
 
     // Verificado en vivo (MISSION-DEPS-VERIFY-4): Iris (Application + Infrastructure) pidió Newtonsoft y Forjai lo
     // agregó solo al primer .csproj; lo usaba en Infrastructure. Va a todos los proyectos de las capas del agente.
     @Test
     void requestedPackagesGoToEveryProjectOfTheAgentsLayers() {
-        var projects = DevelopmentTeamStrategy.projectsOf(StackProfile.DOTNET_APP, List.of("Tareas"),
+        var projects = DevelopmentTeamStrategy.projectsOf(List.of(new AppComponent(StackProfile.DOTNET_APP, "")), List.of("Tareas"),
                 List.of("src/Tareas.Application", "src/Tareas.Infrastructure"));
         assertEquals(List.of("src/Tareas.Application/Tareas.Application.csproj",
                 "src/Tareas.Infrastructure/Tareas.Infrastructure.csproj"), projects);
+    }
+
+    // Verificado en vivo (MISSION-DBA-1790955204): Diego e Iris usaron Npgsql sin pedirlo en "packages" y ningún
+    // .csproj lo traía. Java lo agrega al proyecto de cada archivo que lo usa, no a todas las capas del agente.
+    @Test
+    void npgsqlIsAddedToTheProjectsWhoseCodeUsesIt() {
+        var implied = DevelopmentTeamStrategy.impliedPackages(List.of(new AppComponent(StackProfile.DOTNET_APP, "")), List.of("Citas"), Map.of(
+                "src/Citas.Infrastructure/CitaRepositorio.cs", "using System;\nusing Npgsql;\n\npublic class A {}",
+                "src/Citas.Api/Program.cs", "var ds = new Npgsql.NpgsqlDataSourceBuilder(\"\").Build();",
+                "src/Citas.Application/Repositorios.cs", "/// La implementación vive en Infrastructure (Npgsql/PostgreSQL).",
+                "src/Citas.Domain/Cita.cs", "public class Cita {}"));
+        assertEquals(Map.of(
+                "src/Citas.Infrastructure/Citas.Infrastructure.csproj", List.of(DevelopmentTeamStrategy.NPGSQL),
+                "src/Citas.Api/Citas.Api.csproj", List.of(DevelopmentTeamStrategy.NPGSQL)), implied);
+        assertTrue(DevelopmentTeamStrategy.impliedPackages(List.of(new AppComponent(StackProfile.FLUTTER_WEB_APP, "")), List.of("Citas"),
+                Map.of("lib/main.dart", "using Npgsql;")).isEmpty());
+    }
+
+    @Test
+    void npgsqlGoesToTheBackendProjectOfAFullstackApp() {
+        var implied = DevelopmentTeamStrategy.impliedPackages(
+                AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP)), List.of("Clientes"),
+                Map.of("backend/src/Clientes.Infrastructure/Repo.cs", "using Npgsql;"));
+        assertEquals(Map.of("backend/src/Clientes.Infrastructure/Clientes.Infrastructure.csproj",
+                List.of(DevelopmentTeamStrategy.NPGSQL)), implied);
     }
 
     // Verificado en vivo (MISSION-DEPS-VERIFY-4): con kimi-k3, 24.000 caracteres dejaban archivos fuera y Vera marcaba
@@ -834,5 +873,276 @@ class DevelopmentTeamStrategyTest {
         var ordinary = new DevelopmentResult("r", List.of(new GeneratedFile("src/Citas.Api/Program.cs",
                 "app.MapGet(\"/health\", () => \"ok\"); // http://localhost:5000")));
         assertEquals(List.of(), checks.getValue().apply(ordinary));
+    }
+
+    // ---- Apps completas (spec 2026-10-02 B1) ----
+
+    private static final String SHA_BACKEND = "8".repeat(40);
+    private static final String SHA_APP = "9".repeat(40);
+    private static final String PROGRAM = "var app = builder.Build();\napp.MapGet(\"/clientes/{id}\", (Guid id) => Results.Ok());";
+
+    private static TeamPlan fullstackPlan() {
+        return new TeamPlan("CRM", null, null, List.of(
+                new PlannedTask("backend", "WORK", "API", "API", List.of("api"), List.of("backend/src/Clientes.Domain",
+                        "backend/src/Clientes.Application", "backend/src/Clientes.Api")),
+                new PlannedTask("frontend-ui", "WORK", "APP", "App", List.of("flutter"), List.of("app/lib/clientes/domain",
+                        "app/lib/clientes/presentation", "app/pubspec.yaml", "app/lib/main.dart", "app/web")),
+                new PlannedTask("qa", "VALIDATION", "CODE_REVIEW", "Revisar", List.of("qa"), List.of())),
+                List.of(), "DOTNET_APP", List.of(new TeamPlan.BoundedContext("Clientes", "Clientes del CRM")),
+                List.of(new TeamPlan.GlossaryTerm("Cliente", "Quien compra"),
+                        new TeamPlan.GlossaryTerm("Oportunidad", "Venta posible"),
+                        new TeamPlan.GlossaryTerm("Etapa", "Paso de la venta")),
+                null, List.of("DOTNET_APP", "FLUTTER_WEB_APP"));
+    }
+
+    private static PlannedTask task(TeamPlan plan, String agentId) {
+        return plan.workTasks().stream().filter(t -> t.agentId().equals(agentId)).findFirst().orElseThrow();
+    }
+
+    private static TeamMissionContext fullstackContext() {
+        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Development Group", "ACTIVE", "engineering", List.of(
+                new TeamMemberInfo("engineering", "Neo", "Líder", "TECH_LEAD", List.of("architecture"), "m"),
+                new TeamMemberInfo("backend", "Iris", "Backend", "BACKEND", List.of("api"), "m"),
+                new TeamMemberInfo("frontend-ui", "Mila", "UI", "UI_UX", List.of("flutter"), "m"),
+                new TeamMemberInfo("qa", "Vera", "QA", "QA", List.of("qa"), "m")));
+        return new TeamMissionContext("M-1", "un CRM simple", team, fullstackPlan());
+    }
+
+    private void stubFullstack() throws Exception {
+        for (var id : List.of("M-1-BACKEND", "M-1-FRONTEND-UI")) {
+            var result = CompletableFuture.completedFuture(id.endsWith("BACKEND")
+                    ? dev("backend/src/Clientes.Api/Program.cs") : dev("app/lib/main.dart"));
+            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList())).thenReturn(result);
+            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                    .thenReturn(result);
+        }
+        when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("5".repeat(40), List.of("backend/Solution.sln")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-BACKEND"), eq("backend"), eq("Iris"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_BACKEND, List.of("backend/src/Clientes.Api/Program.cs")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-API-ROUTES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("6".repeat(40), List.of("app/lib/api/api_routes.dart")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_APP, List.of("app/lib/main.dart")));
+        when(workspace.filesAtCommit(eq("M-1"), anyString()))
+                .thenReturn(List.of("backend/src/Clientes.Api/Program.cs", "app/lib/main.dart"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("backend/src/Clientes.Api/Program.cs"))).thenReturn(PROGRAM);
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("app/lib/main.dart"))).thenReturn("void main() {}");
+        when(dependencies.resolve(anyString(), anyString(), anyList()))
+                .thenReturn(new DependencyService.Outcome(List.of(), List.of(), null));
+        when(validator.validate(eq("M-1"), anyList(), anyList(), anyList(), anyList(), anyList()))
+                .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+        when(runtime.review(anyString(), eq("M-1"), eq("qa"), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+    }
+
+    // Review Focus 5: con dos componentes, si el runner cae en app/ la misión no queda VERIFIED.
+    @Test
+    void fullstackWithoutTheSecondSandboxResultIsUnvalidated() throws Exception {
+        stubFullstack();
+        when(sandbox.verify(eq("M-1"), anyString(), eq("DOTNET_APP"), eq("backend"))).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("FLUTTER_WEB_APP"), eq("app"))).thenReturn(Optional.empty());
+        when(sandbox.lastError()).thenReturn("sandbox-runner no disponible: timeout");
+
+        var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
+
+        verify(memory).recordStaticValidation(anyString(), eq("UNVALIDATED"), anyString());
+        assertTrue(result.verifiableState().contains("app/: sandbox-runner no disponible"), result.verifiableState());
+    }
+
+    // Spec 2026-10-02 B1 §2 + Review Focus 2: backend antes que app, tests al final, aunque Neo los liste al revés.
+    @Test
+    void fullstackTasksRunBackendThenAppThenTests() {
+        var plan = fullstackPlan();
+        var devops = new PlannedTask("devops", "WORK", "DATA", "Datos", List.of("persistence"),
+                List.of("backend/src/Clientes.Infrastructure", "db/postgres/migrations"));
+        var qa = new PlannedTask("qa", "WORK", "TESTS", "Tests", List.of("tests"),
+                List.of("backend/tests/Clientes.Tests", "app/test/clientes"));
+        var ordered = DevelopmentTeamStrategy.orderTasks(List.of(qa, task(plan, "frontend-ui"), devops,
+                task(plan, "backend")), plan);
+        assertEquals(List.of("backend", "devops", "frontend-ui", "qa"),
+                ordered.stream().map(PlannedTask::agentId).toList());
+    }
+
+    @Test
+    void apiRoutesAreCommittedByForjaiBeforeTheApp() throws Exception {
+        stubFullstack();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        strategy.execute(fullstackContext(), progress);
+
+        InOrder inOrder = inOrder(workspace);
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-BACKEND"), eq("backend"), anyString(), any());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-API-ROUTES"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().get(0).path().equals("app/lib/api/api_routes.dart")
+                        && r.files().get(0).content().contains("obtenerClientes(String id)")));
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), anyString(), any());
+    }
+
+    @Test
+    void fullstackVerifiableStateListsComponentsRoutesAndTheJsonWarning() throws Exception {
+        stubFullstack();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
+
+        assertTrue(result.verifiableState().contains("Componentes: backend/ (DOTNET_APP), app/ (FLUTTER_WEB_APP)"),
+                result.verifiableState());
+        assertTrue(result.verifiableState().contains("Contrato de rutas: 1 ruta(s)"), result.verifiableState());
+        assertTrue(result.verifiableState().contains(DevelopmentTeamStrategy.FULLSTACK_JSON_WARNING),
+                result.verifiableState());
+        assertTrue(result.verifiableState().contains("backend Tests PASS 3/3"), result.verifiableState());
+    }
+
+    // Revisión final C1 + I3: el dueño de la API reintenta si no hay rutas del producto o si un prefijo no se resuelve.
+    @Test
+    void apiOwnerIsAskedForResolvableProductRoutes() {
+        assertEquals(1, DevelopmentTeamStrategy.apiOwnerErrors(Map.of("backend/src/X.Api/Program.cs",
+                "app.MapGet(\"/health\", () => Results.Ok());")).size());
+        var unresolved = DevelopmentTeamStrategy.apiOwnerErrors(Map.of("backend/src/X.Api/E.cs",
+                "public static void M(this RouteGroupBuilder grupo) { grupo.MapGet(\"/{id}\", () => 1); }\n"
+                        + "app.MapGet(\"/clientes\", () => 1);"));
+        assertEquals(1, unresolved.size());
+        assertTrue(unresolved.get(0).contains("grupo"), unresolved.get(0));
+        assertEquals(List.of(), DevelopmentTeamStrategy.apiOwnerErrors(Map.of("backend/src/X.Api/Program.cs",
+                "var g = app.MapGroup(\"/clientes\").WithTags(\"C\");\ng.MapGet(\"/{id}\", () => 1);")));
+    }
+
+    // Revisión final I6: en una ronda nueva, regenerar el .csproj por Npgsql no borra Dapper, aprobado en la ronda 0.
+    @Test
+    void regeneratedProjectsKeepThePackagesAlreadyInHead() {
+        var components = List.of(new AppComponent(StackProfile.DOTNET_APP, ""));
+        var project = "src/Clientes.Infrastructure/Clientes.Infrastructure.csproj";
+        var head = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <PackageReference Include="Npgsql" Version="8.0.5" />
+                    <PackageReference Include="Dapper" Version="2.1.35" />
+                  </ItemGroup>
+                </Project>
+                """;
+        var merged = DevelopmentTeamStrategy.withPackagesInHead(
+                Map.of(project, List.of(DevelopmentTeamStrategy.NPGSQL)), Map.of(project, head), components,
+                List.of("Clientes"));
+        assertEquals(List.of(DevelopmentTeamStrategy.NPGSQL, new DependencyRef("NUGET", "Dapper", "2.1.35")),
+                merged.get(project));
+
+        var tests = "tests/Clientes.Tests/Clientes.Tests.csproj";
+        var testsHead = "<PackageReference Include=\"xunit\" Version=\"2.5.3\" />";
+        assertEquals(List.of(new DependencyRef("NUGET", "A", "1.0.0")), DevelopmentTeamStrategy.withPackagesInHead(
+                Map.of(tests, List.of(new DependencyRef("NUGET", "A", "1.0.0"))), Map.of(tests, testsHead), components,
+                List.of("Clientes")).get(tests));
+    }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790971185): el resumen decía "backend backend/checkout".
+    @Test
+    void sandboxSummaryNamesEachStepOnce() {
+        var summary = DevelopmentTeamStrategy.sandboxSummary(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("backend/checkout", "PASS", 0, 0, "", 0, 0),
+                new SandboxResult.StepResult("app/build", "PASS", 0, 2000, "", 0, 0))), null);
+        assertEquals("backend checkout PASS (0 s) · app Build PASS (2 s)", summary);
+    }
+
+    // Verificado en vivo (MISSION-B1-CRM-1790978221, MISSION-B1-AGENDA-1790981861): la violación de capas se detectaba
+    // recién en la validación final, sin volver a la dueña. Ahora es un reintento al generar, con el import exacto.
+    @Test
+    void layerViolationsInTheReturnedFilesAreRetryable() {
+        var components = AppComponent.of(List.of(StackProfile.DOTNET_APP, StackProfile.FLUTTER_WEB_APP));
+        var head = Map.of("app/pubspec.yaml", "name: forjai_crm\n",
+                "app/lib/crm/infrastructure/crm_api_client.dart", "class CrmApiClient {}");
+        var errors = DevelopmentTeamStrategy.layerErrors(components, List.of("Crm"), head, List.of(
+                new GeneratedFile("app/lib/crm/application/crm_service.dart",
+                        "import '../infrastructure/crm_api_client.dart';\nclass CrmService {}"),
+                new GeneratedFile("app/lib/crm/domain/cliente.dart", "class Cliente {}")));
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("app/lib/crm/application/crm_service.dart"), errors.get(0));
+        assertTrue(errors.get(0).contains("../infrastructure/crm_api_client.dart"), errors.get(0));
+
+        assertEquals(List.of(), DevelopmentTeamStrategy.layerErrors(components, List.of("Crm"), head, List.of(
+                new GeneratedFile("app/lib/crm/infrastructure/crm_api_client.dart",
+                        "import 'package:forjai_crm/crm/application/clientes_repository.dart';"))));
+    }
+
+    // Diagnóstico 360 (decisión del fundador 2026-10-03): un test rojo ya no deja la misión FAILED sin más. Neo arbitra
+    // (Vera no juzga sus propios tests), Java valida y la corrección va al dueño del código con la regla correcta.
+    @Test
+    void aFailingTestIsTriagedByNeoAndTheCodeOwnerFixesIt() throws Exception {
+        stubFullstack();
+        var failingRun = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("test", "FAIL", 1, 1, """
+                  Failed Clientes.Tests.ClienteTests.Crear [3 ms]
+                  Error Message:
+                   Assert.Equal() Failure: Expected 201, Actual 500
+                  Stack Trace:
+                     at Clientes.Api.Program.Crear() in /work/src/Clientes.Api/Program.cs:line 3
+                """, 2, 1)));
+        var passingRun = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("DOTNET_APP"), eq("backend"))).thenReturn(Optional.of(failingRun),
+                Optional.of(passingRun));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("FLUTTER_WEB_APP"), eq("app"))).thenReturn(Optional.of(passingRun));
+        when(runtime.triage(anyString(), eq("M-1"), eq("engineering"), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(new com.aicompany.core.agent.model.TestTriage(List.of(
+                        new com.aicompany.core.agent.model.TestTriage.Verdict("Clientes.Tests.ClienteTests.Crear",
+                                "CODE_WRONG", "Crear un cliente válido responde 201.", "Program.cs devuelve 500.",
+                                List.of("backend/src/Clientes.Api/Program.cs"), List.of())))));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-BACKEND"), eq("backend"), eq("Iris"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_BACKEND, List.of("backend/src/Clientes.Api/Program.cs")));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
+
+        verify(runtime).triage(anyString(), eq("M-1"), eq("engineering"), contains("Expected 201, Actual 500"), any());
+        verify(runtime, atLeastOnce()).generate(eq("M-1-BACKEND"), eq("M-1"), eq("backend"),
+                contains("Crear un cliente válido responde 201."), anyList(), anyList(), anyList(), any());
+        verify(memory).recordStaticValidation(anyString(), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Diagnóstico de tests (Neo): Clientes.Tests.ClienteTests.Crear → CODE_WRONG"),
+                result.verifiableState());
+    }
+
+    // Diagnóstico 360: si el test está mal, lo corrige QA y Java no le deja borrarlo (guarda anti-trampa).
+    @Test
+    void aWrongTestGoesBackToQaWithTheAntiCheatGuard() throws Exception {
+        stubFullstack();
+        var base = fullstackContext();
+        var tasks = new java.util.ArrayList<>(base.plan().tasksOrEmpty());
+        tasks.add(2, new PlannedTask("qa", "WORK", "TESTS", "Tests", List.of("qa"), List.of("backend/tests/Clientes.Tests")));
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, tasks, List.of(), p.stackProfile(), p.boundedContexts(),
+                p.ubiquitousLanguage(), null, p.components());
+        var context = new TeamMissionContext("M-1", base.instruction(), base.team(), plan);
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList()))
+                .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
+                        List.of("backend/tests/Clientes.Tests/ClienteTests.cs")));
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("backend/src/Clientes.Api/Program.cs",
+                "backend/tests/Clientes.Tests/ClienteTests.cs", "app/lib/main.dart"));
+        var failingRun = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("test", "FAIL", 1, 1, """
+                  Failed Clientes.Tests.ClienteTests.Crear [3 ms]
+                  Error Message:
+                   Expected 200, Actual 201
+                  Stack Trace:
+                     at Clientes.Tests.ClienteTests.Crear() in /work/tests/Clientes.Tests/ClienteTests.cs:line 9
+                """, 2, 1)));
+        var passingRun = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("DOTNET_APP"), eq("backend"))).thenReturn(Optional.of(failingRun),
+                Optional.of(passingRun));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("FLUTTER_WEB_APP"), eq("app"))).thenReturn(Optional.of(passingRun));
+        when(runtime.triage(anyString(), eq("M-1"), eq("engineering"), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(new com.aicompany.core.agent.model.TestTriage(List.of(
+                        new com.aicompany.core.agent.model.TestTriage.Verdict("Clientes.Tests.ClienteTests.Crear",
+                                "TEST_WRONG", "Crear un cliente responde 201 Created.", "El test espera 200.",
+                                List.of(), List.of("backend/tests/Clientes.Tests/ClienteTests.cs"))))));
+
+        strategy.execute(context, progress);
+
+        verify(runtime).generate(eq("M-1-QA"), eq("M-1"), eq("qa"), contains("No puedes tocar el código"), anyList(),
+                anyList(), eq(List.of("backend/tests/Clientes.Tests/ClienteTests.cs")), any());
+        verify(runtime, never()).generate(eq("M-1-BACKEND"), eq("M-1"), eq("backend"), contains("DIAGNÓSTICO"), anyList(),
+                anyList(), anyList(), any());
     }
 }

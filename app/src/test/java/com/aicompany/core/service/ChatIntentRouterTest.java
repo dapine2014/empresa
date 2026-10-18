@@ -2235,4 +2235,36 @@ class ChatIntentRouterTest {
         verify(missionService).start(anyString(), eq(message), eq("PRODUCTION"), isNull(), eq("TEAM-DEVELOPMENT"),
                 eq(List.of("citas-dev-aws")));
     }
+
+    // Spec 2026-10-02 B1 §4: "¿cómo va MISSION-X?" muestra el sandbox real por componente.
+    @Test
+    void teamExecutionShowsTheSandboxPerComponent() {
+        var sandbox = "{\"overall\":\"PASS\",\"steps\":["
+                + "{\"name\":\"backend/test\",\"status\":\"PASS\",\"exitCode\":0,\"durationMs\":2000,\"outputTail\":\"\",\"testsPassed\":3,\"testsFailed\":0},"
+                + "{\"name\":\"app/test\",\"status\":\"PASS\",\"exitCode\":0,\"durationMs\":1000,\"outputTail\":\"\",\"testsPassed\":2,\"testsFailed\":0}]}";
+        var mission = new MissionResponse("MISSION-9", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "Recomendación",
+                "", Instant.now(), null, "TEAM-DEVELOPMENT");
+        var task = new AgentTask("MISSION-9-QA-REVIEW", "MISSION-9", "qa", "CODE_REVIEW", "COMPLETED", "", Instant.now(),
+                "VALIDATION", null, null, List.of(), "VERIFIED", "[]", sandbox);
+
+        var text = ChatIntentRouter.formatTeamExecution(mission, List.of(task));
+
+        assertTrue(text.contains("backend Tests PASS 3/3"), text);
+        assertTrue(text.contains("app Tests PASS 2/2"), text);
+        assertFalse(text.contains("esta fase no ejecuta código"), text);
+    }
+
+    // Decisión del fundador (2026-10-03): el chat dice si los suplentes están disponibles.
+    @Test
+    void theModelsStatusWarnsWhenTheFallbackIsNotAvailable() {
+        kimiDown();
+        when(modelHealth.fallbackSnapshot()).thenReturn(List.of(new com.aicompany.core.model.ModelHealth("qwen3-coder:30b",
+                "DOWN", Instant.parse("2026-10-03T07:00:00Z"), "Ollama no responde", List.of("engineering", "qa"))));
+
+        var response = router.route("¿cuál es el estado de los modelos?");
+
+        assertTrue(response.contains("⚠ Suplente qwen3-coder:30b no disponible desde 2026-10-03 07:00 UTC (Ollama no responde)"),
+                response);
+        verifyNoInteractions(ceoService);
+    }
 }

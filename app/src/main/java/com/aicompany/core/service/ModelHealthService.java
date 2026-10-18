@@ -44,6 +44,103 @@ public class ModelHealthService {
         this.mail = mail;
     }
 
+    // ---- Suplentes (decisión del fundador 2026-10-03; verificado en vivo: Ollama quedó caído 10 h tras un reinicio). ----
+
+    private LocalModelProbe localModels;
+    private final Map<String, State> fallbackStates = new ConcurrentHashMap<>();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLocalModelProbe(LocalModelProbe localModels) {
+        this.localModels = localModels;
+    }
+
+    public boolean isFallbackDown(String model) {
+        return fallbackStates.getOrDefault(model, State.UP).down();
+    }
+
+    /** Suplentes de los agentes con los agentes que los usan, ordenados. */
+    private Map<String, List<String>> fallbacksInUse() {
+        var byModel = new java.util.TreeMap<String, List<String>>();
+        for (var agent : companyMemory.agents()) {
+            var model = String.valueOf(agent.getOrDefault("fallbackModel", ""));
+            if (!model.isBlank()) {
+                byModel.computeIfAbsent(model, k -> new ArrayList<>()).add(String.valueOf(agent.get("id")));
+            }
+        }
+        byModel.values().forEach(agents -> agents.sort(String::compareTo));
+        return byModel;
+    }
+
+    /** Cada 60 s: un suplente que Ollama no sirve (caído o sin el modelo) 2 veces seguidas queda DOWN y se avisa. */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 20_000)
+    public void probeFallbacks() {
+        if (localModels == null) {
+            return;
+        }
+        var installed = localModels.installedModels();
+        for (var entry : fallbacksInUse().entrySet()) {
+            var model = entry.getKey();
+            var available = installed.map(names -> names.contains(model)).orElse(false);
+            if (available) {
+                var cameBack = new boolean[1];
+                var since = new Instant[1];
+                fallbackStates.computeIfPresent(model, (k, s) -> {
+                    cameBack[0] = s.down();
+                    since[0] = s.since();
+                    return State.UP;
+                });
+                if (cameBack[0]) {
+                    announceFallbackUp(model, since[0]);
+                }
+                continue;
+            }
+            var error = installed.isEmpty() ? "Ollama no responde"
+                    : "el modelo no está instalado en Ollama (ollama pull " + model + ")";
+            var wentDown = new boolean[1];
+            fallbackStates.compute(model, (k, s) -> {
+                var current = s == null ? State.UP : s;
+                if (current.down()) {
+                    return new State(current.failures() + 1, true, current.since(), error);
+                }
+                var failures = current.failures() + 1;
+                if (failures >= FAILURES_TO_DOWN) {
+                    wentDown[0] = true;
+                    return new State(failures, true, Instant.now(), error);
+                }
+                return new State(failures, false, null, error);
+            });
+            if (wentDown[0]) {
+                announceFallbackDown(model, error, entry.getValue());
+            }
+        }
+    }
+
+    public List<ModelHealth> fallbackSnapshot() {
+        return fallbacksInUse().entrySet().stream().map(e -> {
+            var s = fallbackStates.getOrDefault(e.getKey(), State.UP);
+            return new ModelHealth(e.getKey(), s.down() ? "DOWN" : "UP", s.since(), s.lastError(), e.getValue());
+        }).toList();
+    }
+
+    private void announceFallbackDown(String model, String error, List<String> agents) {
+        log.warn("FALLBACK_DOWN model={} error={} agents={}", model, error, agents);
+        events.publish("EMPRESA_FALLBACK_DOWN", null, null, "system",
+                Map.of("model", model, "error", error, "affectedAgents", agents));
+        mail.send("⚠ Forjai: el suplente " + model + " no está disponible",
+                "El suplente local " + model + " no está disponible: " + error + ".\n\nSi un modelo remoto se cae, estos "
+                        + "agentes no tienen respaldo y sus tareas fallan:\n" + String.join(", ", agents)
+                        + "\n\nRevisa el contenedor de Ollama (docker start ollama). Forjai lo prueba cada minuto y te avisa "
+                        + "cuando vuelva.", true);
+    }
+
+    private void announceFallbackUp(String model, Instant since) {
+        log.info("FALLBACK_UP model={} downSince={}", model, since);
+        events.publish("EMPRESA_FALLBACK_UP", null, null, "system",
+                Map.of("model", model, "downSince", since == null ? "" : since.toString()));
+        mail.send("✅ Forjai: el suplente " + model + " volvió", "El suplente local " + model + " vuelve a estar "
+                + "disponible (no lo estaba desde " + since + ").", false);
+    }
+
     public boolean isDown(String model) {
         return states.getOrDefault(model, State.UP).down();
     }

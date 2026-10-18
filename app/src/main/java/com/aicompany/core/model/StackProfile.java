@@ -283,16 +283,41 @@ public enum StackProfile {
             + "\"packages\": [{\"name\": \"...\", \"version\": \"x.y.z\"}] con versión exacta; Forjai lo agrega a tu "
             + ".csproj si pasa los chequeos (vulnerabilidades, licencia, código en el build).";
 
+    /** Spec 2026-10-02 B1 §2: el backend de una app completa (Iris), para que Java lea sus rutas. */
+    public static final String FULLSTACK_API_RULE = "APP COMPLETA: una app Flutter consume esta API. Los endpoints "
+            + "van como minimal APIs con la ruta LITERAL en el código (app.MapGet(\"/clientes/{id}\", …), MapPost, MapPut, "
+            + "MapPatch, MapDelete; grupos con MapGroup(\"/…\")), nunca controllers ni rutas en variables: Forjai lee "
+            + "esas rutas y genera el contrato de la app. Habilita CORS para los orígenes de la variable de entorno "
+            + "CORS_ORIGINS (lista separada por comas); /health responde sin CORS ni base.";
+
+    /** Spec 2026-10-02 B1 §2: la app de una app completa (Mila). */
+    public static final String FULLSTACK_APP_RULE = "APP COMPLETA: la app consume la API del backend. Usa el paquete "
+            + "http y SOLO las rutas de ApiRoutes (lib/api/api_routes.dart, generado por Forjai desde el backend; "
+            + "impórtalo con package:<nombre de pubspec>/api/api_routes.dart y no lo escribas). La URL base sale de "
+            + "const String.fromEnvironment('API_BASE_URL'); nunca escribas rutas de la API ni localhost a mano. Los "
+            + "campos JSON siguen los nombres en camelCase de los tipos públicos del backend (contrato de abajo). La app "
+            + "arranca y renderiza sin red y sin API_BASE_URL (así corre en el sandbox): captura los errores de red de "
+            + "cada llamada y muéstralos en pantalla; un error sin capturar en la consola hace fallar el arranque. "
+            + "CAPAS (Forjai rechaza el repositorio si no): la interfaz del repositorio (p. ej. abstract class "
+            + "ClientesRepository) va en lib/<ctx>/domain o lib/<ctx>/application y los casos de uso dependen solo de "
+            + "ella; el cliente HTTP que la implementa va en lib/<ctx>/infrastructure y nunca lo importa application "
+            + "ni domain; lib/main.dart crea el cliente y lo pasa a los casos de uso (presentation recibe los casos de "
+            + "uso, no el cliente).";
+
     public String executionContract() {
         return switch (this) {
             case DOTNET_APP -> "SANDBOX (sin red): net8.0 con ImplicitUsings y Nullable; sin base de datos (los tests usan "
                     + "fakes en memoria). Npgsql 8.0.5 está disponible para la persistencia PostgreSQL (pídelo en "
-                    + "packages; la conexión se lee SOLO de las variables del contrato). Los .csproj de cada capa "
+                    + "packages; la conexión se lee SOLO de las variables del contrato). Entity Framework Core NO está "
+                    + "disponible en el sandbox: escribe los repositorios con Npgsql (NpgsqlDataSource y SQL parametrizado). Los .csproj de cada capa "
                     + "(src/<Ctx>.<Capa>/<Ctx>.<Capa>.csproj, tests/<Ctx>.Tests/<Ctx>.Tests.csproj) los genera Forjai "
                     + "con las referencias DDD y los paquetes xunit 2.5.3, Microsoft.NET.Test.Sdk 17.8.0 y "
                     + "xunit.runner.visualstudio 2.5.3: NO los escribas, escribe solo .cs. src/<Ctx>.Api es "
                     + "Microsoft.NET.Sdk.Web: necesita Program.cs (top-level, WebApplication) que responda GET /health "
                     + "con 200. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. La solución la genera el sandbox. "
+                    + "Los tests NO usan Microsoft.AspNetCore.Mvc.Testing ni WebApplicationFactory (arrastra decenas "
+                    + "de paquetes, algunos con vulnerabilidades): GET /health lo prueba el sandbox arrancando la API; "
+                    + "los tests prueban dominio y casos de uso con fakes en memoria. "
                     + PACKAGE_RULE;
             case GODOT_DOTNET_GAME -> "SANDBOX (sin red): Godot 4.3 .NET, net8.0. Los .csproj (capas en src/, "
                     + "tests/<Ctx>.Tests con xunit 2.5.3, y game/Game.csproj con Godot.NET.Sdk/4.3.0 que referencia "
@@ -300,11 +325,15 @@ public enum StackProfile {
                     + ".tscn que exista) y en [dotnet] project/assembly_name=\"Game\"; cada script C# es una clase "
                     + "partial con el mismo nombre que su archivo. Tests xUnit reales ([Fact]) en tests/<Ctx>.Tests. "
                     + "El juego corre 300 frames headless sin errores. " + PACKAGE_RULE;
-            case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.24 (Dart ^3.5), solo web; dependencias SOLO del "
-                    + "SDK (flutter, flutter_test) más cupertino_icons 1.0.8 y flutter_lints 4.0.0 (dev). Otras dependencias de pub.dev: en pubspec.yaml "
+            case FLUTTER_WEB_APP -> "SANDBOX (sin red): Flutter 3.41.9 (Dart 3.11), solo web; dependencias SOLO del "
+                    + "SDK (flutter, flutter_test) más cupertino_icons 1.0.9 y flutter_lints 6.0.0 (dev). "
+                    + "http 1.2.2 está disponible para llamar a una API (pídelo en pubspec.yaml como http: 1.2.2). "
+                    + "Otras dependencias de pub.dev: en pubspec.yaml "
                     + "con versión exacta (p. ej. equatable: 2.0.5, sin ^); se aprueban si pasan los chequeos. "
                     + "Tests reales con flutter_test en test/<ctx>/; web/index.html estándar de flutter create; "
-                    + "la app debe renderizar sin errores en Chrome headless.";
+                    + "la app debe renderizar sin errores en Chrome headless. El código sirve igual para web, Android e "
+                    + "iOS: nunca importes dart:html, dart:js, dart:js_util, dart:js_interop ni package:web (Forjai "
+                    + "rechaza el repositorio).";
         };
     }
 

@@ -50,11 +50,14 @@ public class CoreConfig {
     java.util.Map<String, com.aicompany.core.service.OpenAiCompatibleClient> remoteModelClients(
             org.springframework.core.env.Environment env,
             @Value("${remote-models.base-url:https://integrate.api.nvidia.com/v1}") String baseUrl,
-            @Value("${remote-models.read-timeout:10m}") java.time.Duration readTimeout) {
+            @Value("${remote-models.read-timeout:10m}") java.time.Duration readTimeout,
+            @Value("${remote-models.total-timeout:12m}") java.time.Duration totalTimeout) {
         var clients = new java.util.LinkedHashMap<String, com.aicompany.core.service.OpenAiCompatibleClient>();
         for (var provider : java.util.List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo")) {
-            var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
-            factory.setConnectTimeout(java.time.Duration.ofSeconds(15));
+            // Verificado en vivo (2026-10-03, llamada colgada 5 h): cliente HTTP del JDK, que aborta el envío cuando
+            // OpenAiCompatibleClient cancela una llamada que pasó el plazo total.
+            var factory = new org.springframework.http.client.JdkClientHttpRequestFactory(java.net.http.HttpClient
+                    .newBuilder().connectTimeout(java.time.Duration.ofSeconds(15)).build());
             factory.setReadTimeout(readTimeout);
             // Spec salud de modelos (2026-09-28): el ping de un modelo caído usa un timeout corto, no el de 10 minutos.
             var probeFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
@@ -64,7 +67,7 @@ public class CoreConfig {
                     RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build(),
                     RestClient.builder().baseUrl(baseUrl).requestFactory(probeFactory).build(),
                     env.getProperty("remote-models.providers." + provider + ".api-key", ""),
-                    java.time.Duration.ofSeconds(10)));
+                    java.time.Duration.ofSeconds(10), totalTimeout));
         }
         return clients;
     }

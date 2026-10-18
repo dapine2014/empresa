@@ -34,6 +34,7 @@ public class CompanyMemoryInitializer {
     @EventListener(ApplicationReadyEvent.class)
     public void initializeAfterReady() {
         memory.initialize();
+        memory.ensureLocalFallbacks();
         missionMemory.backfillMissionEnvironment();
         teamMemory.ensureAllTeams();
         promptMemory.ensureDefaultPrompts();

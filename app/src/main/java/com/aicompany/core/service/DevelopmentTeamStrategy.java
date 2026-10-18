@@ -6,14 +6,18 @@ import com.aicompany.core.agent.model.DevelopmentResult;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.agent.validation.ApiContractGate;
+import com.aicompany.core.agent.validation.ApiRoutesGenerator;
 import com.aicompany.core.agent.validation.CompilerErrorParser;
+import com.aicompany.core.agent.validation.HttpRouteExtractor;
 import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.AppComponent;
+import com.aicompany.core.model.ComponentScaffold;
 import com.aicompany.core.model.DependencyRef;
 import com.aicompany.core.model.MissionStatus;
-import com.aicompany.core.model.ProjectScaffold;
 import com.aicompany.core.model.SandboxResult;
 import com.aicompany.core.model.StackProfile;
 import com.aicompany.core.model.StaticCheck;
@@ -114,7 +118,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         createTask(context, validation, TeamPlan.KIND_VALIDATION, validationTaskId);
 
-        var expectedProjects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
+        var expectedProjects = ComponentScaffold.projectFiles(plan.resolvedComponents(), plan.contextNames());
         CommittedWork scaffold;
         try {
             scaffold = context.round() > 0 ? existingScaffold(context) : commitProjectScaffold(context);
@@ -132,16 +136,32 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
         // contra clases que nunca vio y el código no compilaba. Se genera por capas (domain → application →
         // infrastructure → api/game/presentation → tests) y cada agente ve el código ya commiteado.
-        var ordered = orderByLayer(work, plan);
+        var ordered = orderTasks(work, plan);
         var failures = new ArrayList<String>();
         var committed = new ArrayList<CommittedWork>();
         var generationHead = scaffold == null ? null : scaffold.commitSha();
         var packagesByTask = new LinkedHashMap<PlannedTask, List<DevelopmentResult.PackageRequest>>();
+        // Spec 2026-10-02 B1: archivos que escribe Java fuera del scaffold (api_routes.dart).
+        var forjaiFiles = new ArrayList<String>();
+
+        var routesCommitted = false;
+        var appComponent = fullstackApp(plan);
+        appComponent.ifPresent(app -> forjaiFiles.add(app.prefix(ApiRoutesGenerator.PATH)));
 
         for (int i = 0; i < ordered.size(); i++) {
 
             var task = ordered.get(i);
             var id = taskId(context, task.agentId());
+
+            // Spec 2026-10-02 B1 §2: el contrato de rutas se escribe antes de la primera tarea de la app.
+            if (!routesCommitted && touchesFlutter(task, plan)) {
+                var routes = commitApiRoutes(context, generationHead);
+                if (routes != null) {
+                    committed.add(routes);
+                    generationHead = routes.commitSha();
+                }
+                routesCommitted = true;
+            }
 
             progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30 + (40 * i / ordered.size()), "Desarrollo por capas",
                     agentName(context, task.agentId()) + " (" + (i + 1) + "/" + ordered.size() + ") está generando "
@@ -206,15 +226,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Parte 3: dependencias gobernadas. .NET: los paquetes pedidos entran al .csproj de la capa del agente
         // (commit de Forjai); Flutter: salen del pubspec.yaml. Lo que no está aprobado se descarga aislado y pasa
         // la política; si queda algo pendiente, VERIFY no corre.
-        var dependencyCommit = commitRequestedPackages(context, packagesByTask);
+        var hasNuget = plan.resolvedComponents().stream()
+                .anyMatch(c -> c.profile().ecosystem() == StackProfile.Ecosystem.NUGET);
+        var implied = hasNuget
+                ? impliedPackages(plan.resolvedComponents(), plan.contextNames(), csharpSources(missionId, generationHead))
+                : Map.<String, List<DependencyRef>>of();
+        var dependencyCommit = commitRequestedPackages(context, packagesByTask, implied, generationHead);
         if (dependencyCommit != null) {
             committed.add(dependencyCommit);
         }
-        var profileForDeps = plan.profile().orElse(null);
-        var pubspec = profileForDeps == StackProfile.FLUTTER_WEB_APP
-                ? readOrNull(missionId, committed.get(committed.size() - 1).commitSha(), "pubspec.yaml") : null;
-        var requestedRefs = profileForDeps == null ? List.<DependencyRef>of() : dependencyRefs(profileForDeps,
-                packagesByTask.values().stream().flatMap(List::stream).toList(), pubspec);
+        var lastSha = committed.get(committed.size() - 1).commitSha();
+        var requestedRefs = dependencyRefs(plan.resolvedComponents(),
+                packagesByTask.values().stream().flatMap(List::stream).toList(),
+                path -> readOrNull(missionId, lastSha, path));
         var dependencyOutcome = requestedRefs.isEmpty()
                 ? new DependencyService.Outcome(List.of(), List.of(), null)
                 : dependencies.resolve(missionId, "engineering", requestedRefs);
@@ -225,14 +249,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): los archivos del scaffold (Forjai) también son permitidos.
         var allowedPaths = java.util.stream.Stream.concat(
                 work.stream().flatMap(t -> t.ownedPathsOrEmpty().stream()),
-                scaffold == null ? java.util.stream.Stream.<String>empty() : scaffold.files().stream()).toList();
-        var profile = plan.profile().orElse(null);
-        var checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
+                java.util.stream.Stream.concat(
+                        scaffold == null ? java.util.stream.Stream.<String>empty() : scaffold.files().stream(),
+                        forjaiFiles.stream())).toList();
+        var components = plan.resolvedComponents();
+        var checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                forjaiFiles);
 
         var headSha = committed.get(committed.size() - 1).commitSha();
         SandboxResult sandboxResult = null;
         String sandboxError = null;
         var repairRounds = 0;
+        var triageRounds = 0;
+        var triageNotes = new ArrayList<String>();
         var autofixRounds = 0;
 
         // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10): si no compila, los errores reales del compilador
@@ -240,7 +269,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         for (int round = 0; ; round++) {
 
             // Review Focus: si los chequeos deterministas fallaron, no se gastan minutos compilando.
-            if (!checks.stream().allMatch(StaticCheck::passed) || profile == null) {
+            if (!checks.stream().allMatch(StaticCheck::passed) || components.isEmpty()) {
                 sandboxResult = null;
                 sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
                 break;
@@ -257,9 +286,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             progress.advance(MissionStatus.EVALUATING, 80, "Sandbox", round == 0
                     ? "Compilando, corriendo tests y arrancando el código en el sandbox."
                     : "Ronda de corrección " + round + ": verificando de nuevo en el sandbox.");
-            var verified = sandbox.verify(missionId, headSha, profile.name());
+            var verified = verifyComponents(missionId, headSha, components);
             sandboxResult = verified.orElse(null);
-            sandboxError = verified.isEmpty() ? sandbox.lastError() : null;
+            sandboxError = verified.isEmpty() ? (components.size() == 1 ? sandbox.lastError() : lastSandboxError) : null;
 
             if (sandboxResult == null || sandboxResult.passed()) {
                 break;
@@ -267,22 +296,43 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
             // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): los "using" faltantes los corrige Forjai sin modelo.
             if (autofixRounds < MAX_AUTOFIX_ROUNDS) {
-                var autofix = commitMissingUsings(missionId, headSha, profile, plan.contextNames(), sandboxResult);
+                var autofix = commitMissingUsings(missionId, headSha, components, plan.contextNames(), sandboxResult);
                 if (autofix != null) {
                     committed.add(autofix);
                     headSha = autofix.commitSha();
                     autofixRounds++;
-                    checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
+                    checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                            forjaiFiles);
                     continue;
                 }
             }
 
-            if (repairRounds >= MAX_REPAIR_ROUNDS) {
-                break;
-            }
-
             var errorsByTask = compileErrorsByOwner(sandboxResult, ordered);
             if (errorsByTask.isEmpty()) {
+                // Diagnóstico 360 (decisión del fundador 2026-10-03): compila pero un test falla. Neo arbitra si está mal
+                // el test, la lógica o ambos; Java valida y la corrección va a quien corresponde.
+                var failing = failingTests(sandboxResult);
+                if (failing.isEmpty() || triageRounds >= MAX_TEST_TRIAGE_ROUNDS) {
+                    break;
+                }
+                triageRounds++;
+                var triaged = triageAndRepair(context, ordered, failing, headSha, triageRounds, expectedProjects,
+                        committed, triageNotes);
+                if (triaged == null) {
+                    break;
+                }
+                headSha = triaged;
+                var triagedRoutes = commitApiRoutes(context, headSha);
+                if (triagedRoutes != null) {
+                    committed.add(triagedRoutes);
+                    headSha = triagedRoutes.commitSha();
+                }
+                checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                        forjaiFiles);
+                continue;
+            }
+
+            if (repairRounds >= MAX_REPAIR_ROUNDS) {
                 break;
             }
 
@@ -342,7 +392,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
 
             repairRounds++;
-            checks = staticValidator.validate(missionId, committed, profile, plan.contextNames(), allowedPaths);
+            // Spec 2026-10-02 B1 §2: si la corrección cambió rutas del backend, el contrato de la app se regenera.
+            var routes = commitApiRoutes(context, headSha);
+            if (routes != null) {
+                committed.add(routes);
+                headSha = routes.commitSha();
+            }
+            checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
+                            forjaiFiles);
         }
 
         if (sandboxResult != null) {
@@ -393,7 +450,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
 
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): los archivos del scaffold no son trabajo de un agente.
-        review = withoutFindingsOn(review, scaffold == null ? List.of() : scaffold.files());
+        var generatedByForjai = new ArrayList<String>(scaffold == null ? List.of() : scaffold.files());
+        generatedByForjai.addAll(forjaiFiles);
+        review = withoutFindingsOn(review, generatedByForjai);
 
         var status = StaticValidationStatus.compute(checks, review, sandboxResult);
         if (status == StaticValidationStatus.VERIFIED) {
@@ -424,7 +483,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 resultsForCeo(context, committed, checks, review, reviewError, status, failures,
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
-                        repairRounds, autofixRounds, dependencyOutcome)
+                        repairRounds, autofixRounds, dependencyOutcome, triageNotes)
                         + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText));
     }
 
@@ -439,35 +498,118 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 review.notValidatableWithoutExecution(), review.evidence());
     }
 
-    /** Parte 3: paquetes pedidos (.NET, del resultado de cada agente) o del pubspec.yaml (Flutter). */
-    static List<DependencyRef> dependencyRefs(StackProfile profile, List<DevelopmentResult.PackageRequest> requested,
-                                              String pubspec) {
-        if (profile.ecosystem() == StackProfile.Ecosystem.PUB) {
-            return pubspec == null ? List.of() : DependencyManifest.pubspec(pubspec).deps();
+    /** Parte 3 + B1: NuGet pedidos si hay un componente .NET; pub de cada pubspec.yaml de un componente Flutter. */
+    static List<DependencyRef> dependencyRefs(List<AppComponent> components,
+                                              List<DevelopmentResult.PackageRequest> requested,
+                                              java.util.function.Function<String, String> readFile) {
+        var refs = new ArrayList<DependencyRef>();
+        for (var component : components) {
+            if (component.profile().ecosystem() == StackProfile.Ecosystem.NUGET) {
+                requested.stream().map(p -> new DependencyRef("NUGET", p.name(), p.version()))
+                        .filter(r -> !refs.contains(r)).forEach(refs::add);
+            } else {
+                var pubspec = readFile.apply(component.prefix("pubspec.yaml"));
+                if (pubspec != null) {
+                    DependencyManifest.pubspec(pubspec).deps().stream().filter(r -> !refs.contains(r)).forEach(refs::add);
+                }
+            }
         }
-        return requested.stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).distinct().toList();
+        return refs;
     }
 
-    /** Regenera y commitea (autor Forjai) solo los .csproj de las capas que pidieron paquetes. */
+    /** Spec 2026-10-02 §2.5: la persistencia de Diego, en la imagen del sandbox y en BaselineDependencies. */
+    static final DependencyRef NPGSQL = new DependencyRef("NUGET", "Npgsql", "8.0.5");
+
+    private static final java.util.regex.Pattern USES_NPGSQL = java.util.regex.Pattern.compile(
+            "(?m)^\\s*(?:global\\s+)?using\\s+(?:static\\s+)?Npgsql\\b|\\bNpgsql\\.Npgsql[A-Z]");
+
+    /**
+     * Verificado en vivo (MISSION-DBA-1790955204): Diego e Iris usaron Npgsql sin pedirlo en "packages" y el build no
+     * habría encontrado el namespace. Un paquete preaprobado no depende del modelo: Java lo agrega al .csproj del
+     * proyecto de cada .cs que lo usa (sources: ruta → contenido en el último commit).
+     */
+    static Map<String, List<DependencyRef>> impliedPackages(List<AppComponent> components, List<String> contexts,
+                                                            Map<String, String> sources) {
+        var implied = new LinkedHashMap<String, List<DependencyRef>>();
+        for (var component : components) {
+            if (component.profile().ecosystem() != StackProfile.Ecosystem.NUGET) {
+                continue;
+            }
+            for (var project : component.profile().projectFiles(component.contexts(contexts))) {
+                var dir = component.prefix(project.substring(0, project.lastIndexOf('/') + 1));
+                var uses = sources.entrySet().stream().anyMatch(e -> e.getKey().startsWith(dir)
+                        && e.getKey().endsWith(".cs") && e.getValue() != null && USES_NPGSQL.matcher(e.getValue()).find());
+                if (uses) {
+                    implied.put(component.prefix(project), List.of(NPGSQL));
+                }
+            }
+        }
+        return implied;
+    }
+
+    /** Código C# del último commit, para {@link #impliedPackages}. */
+    private Map<String, String> csharpSources(String missionId, String sha) {
+        var sources = new LinkedHashMap<String, String>();
+        if (sha == null) {
+            return sources;
+        }
+        try {
+            for (var path : workspace.filesAtCommit(missionId, sha)) {
+                if (path.endsWith(".cs")) {
+                    var content = readOrNull(missionId, sha, path);
+                    if (content != null) {
+                        sources.put(path, content);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not list files for implied packages: {}", missionId, ex.getMessage());
+        }
+        return sources;
+    }
+
+    /**
+     * Regenera y commitea (autor Forjai) solo los .csproj de las capas que pidieron paquetes, más los implícitos
+     * ({@link #impliedPackages}) que el proyecto no tenga ya.
+     */
     private CommittedWork commitRequestedPackages(TeamMissionContext context,
-                                                  Map<PlannedTask, List<DevelopmentResult.PackageRequest>> packagesByTask) {
+                                                  Map<PlannedTask, List<DevelopmentResult.PackageRequest>> packagesByTask,
+                                                  Map<String, List<DependencyRef>> implied, String headSha) {
         var plan = context.plan();
-        var profile = plan.profile().orElse(null);
-        if (profile == null || profile.ecosystem() != StackProfile.Ecosystem.NUGET || packagesByTask.isEmpty()) {
+        if (plan.resolvedComponents().stream().noneMatch(c -> c.profile().ecosystem() == StackProfile.Ecosystem.NUGET)
+                || (packagesByTask.isEmpty() && implied.isEmpty())) {
             return null;
         }
         var byProject = new LinkedHashMap<String, List<DependencyRef>>();
         for (var entry : packagesByTask.entrySet()) {
             // Verificado en vivo (MISSION-DEPS-VERIFY-4): va a todos los proyectos de las capas del agente.
-            for (var project : projectsOf(profile, plan.contextNames(), entry.getKey().ownedPathsOrEmpty())) {
+            for (var project : projectsOf(plan.resolvedComponents(), plan.contextNames(), entry.getKey().ownedPathsOrEmpty())) {
                 byProject.computeIfAbsent(project, k -> new ArrayList<>()).addAll(
                         entry.getValue().stream().map(p -> new DependencyRef("NUGET", p.name(), p.version())).toList());
             }
         }
+        implied.forEach((project, refs) -> {
+            var packages = byProject.computeIfAbsent(project, k -> new ArrayList<>());
+            for (var ref : refs) {
+                if (packages.stream().noneMatch(p -> p.name().equalsIgnoreCase(ref.name()))) {
+                    packages.add(ref);
+                }
+            }
+        });
         if (byProject.isEmpty()) {
             return null;
         }
-        var files = ProjectScaffold.generate(profile, plan.contextNames(), byProject).stream()
+        var headProjects = new LinkedHashMap<String, String>();
+        byProject.keySet().forEach(project -> {
+            var content = headSha == null ? null : readOrNull(context.missionId(), headSha, project);
+            if (content != null) {
+                headProjects.put(project, content);
+            }
+        });
+        var withHead = withPackagesInHead(byProject, headProjects, plan.resolvedComponents(), plan.contextNames());
+        byProject.clear();
+        byProject.putAll(withHead);
+        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), byProject).stream()
                 .filter(f -> byProject.containsKey(f.path()))
                 .toList();
         try {
@@ -481,8 +623,40 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
     }
 
-    static List<String> projectsOf(StackProfile profile, List<String> contexts, List<String> ownedPaths) {
-        return profile.projectFiles(contexts).stream()
+    private static final java.util.regex.Pattern PACKAGE_REFERENCE = java.util.regex.Pattern.compile(
+            "<PackageReference\\s+Include=\"([^\"]+)\"\\s+Version=\"([^\"]+)\"");
+
+    /**
+     * Revisión final B1 (I6): regenerar un .csproj (p. ej. por el Npgsql implícito en una ronda nueva) conserva los
+     * paquetes que ya tenía en HEAD y que no son los del perfil; si no, el build pierde paquetes aprobados antes.
+     */
+    static Map<String, List<DependencyRef>> withPackagesInHead(Map<String, List<DependencyRef>> byProject,
+                                                               Map<String, String> headProjects,
+                                                               List<AppComponent> components, List<String> contexts) {
+        var base = new LinkedHashMap<String, String>();
+        ComponentScaffold.generate(components, contexts, Map.of()).forEach(f -> base.put(f.path(), f.content()));
+        var merged = new LinkedHashMap<String, List<DependencyRef>>();
+        byProject.forEach((project, refs) -> {
+            var packages = new ArrayList<>(refs);
+            var head = headProjects.get(project);
+            if (head != null) {
+                var matcher = PACKAGE_REFERENCE.matcher(head);
+                while (matcher.find()) {
+                    var name = matcher.group(1);
+                    var inProfile = base.getOrDefault(project, "").toLowerCase(java.util.Locale.ROOT)
+                            .contains("include=\"" + name.toLowerCase(java.util.Locale.ROOT) + "\"");
+                    if (!inProfile && packages.stream().noneMatch(p -> p.name().equalsIgnoreCase(name))) {
+                        packages.add(new DependencyRef("NUGET", name, matcher.group(2)));
+                    }
+                }
+            }
+            merged.put(project, packages);
+        });
+        return merged;
+    }
+
+    static List<String> projectsOf(List<AppComponent> components, List<String> contexts, List<String> ownedPaths) {
+        return ComponentScaffold.projectFiles(components, contexts).stream()
                 .filter(project -> OwnedPaths.coveredByAny(ownedPaths, project))
                 .toList();
     }
@@ -531,17 +705,32 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     static final int MAX_AUTOFIX_ROUNDS = 3;
 
     private static List<CompilerErrorParser.CompilerError> compileErrors(SandboxResult result) {
-        var failed = result.stepsOrEmpty().stream()
-                .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
-                .findFirst();
-        if (failed.isEmpty() || !List.of("restore", "build").contains(failed.get().name())) {
-            return List.of();
+        return ComponentSandbox.compileErrors(result);
+    }
+
+    private String lastSandboxError;
+
+    /** Spec 2026-10-02 B1 §3: un VERIFY por componente, siempre todos (una ronda de corrección recibe todos los errores). */
+    private java.util.Optional<SandboxResult> verifyComponents(String missionId, String headSha,
+                                                               List<AppComponent> components) {
+        if (components.size() == 1) {
+            return sandbox.verify(missionId, headSha, components.get(0).profile().name());
         }
-        return CompilerErrorParser.parse(failed.get().outputTail());
+        var results = new ArrayList<java.util.Optional<SandboxResult>>();
+        String error = null;
+        for (var component : components) {
+            var result = sandbox.verify(missionId, headSha, component.profile().name(), component.dir());
+            if (result.isEmpty() && error == null) {
+                error = component.dir() + "/: " + sandbox.lastError();
+            }
+            results.add(result);
+        }
+        lastSandboxError = error;
+        return ComponentSandbox.combine(components, results);
     }
 
     /** Commit "Forjai (auto-fix)" con los using faltantes, o null si no hay nada seguro que corregir. */
-    private CommittedWork commitMissingUsings(String missionId, String headSha, StackProfile profile,
+    private CommittedWork commitMissingUsings(String missionId, String headSha, List<AppComponent> components,
                                               List<String> contexts, SandboxResult result) {
         var errors = compileErrors(result);
         if (errors.isEmpty()) {
@@ -554,7 +743,24 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     files.put(path, workspace.readFileAtCommit(missionId, headSha, path));
                 }
             }
-            var fixes = MissingUsingFixer.fix(profile, contexts, files, errors);
+            // Spec 2026-10-02 B1 §3: por componente .NET, con rutas relativas a su carpeta.
+            var fixes = new LinkedHashMap<String, String>();
+            for (var component : components) {
+                if (component.profile().ecosystem() != StackProfile.Ecosystem.NUGET) {
+                    continue;
+                }
+                var own = new LinkedHashMap<String, String>();
+                files.forEach((path, content) -> {
+                    if (component.owns(path)) {
+                        component.strip(path).ifPresent(p -> own.put(p, content));
+                    }
+                });
+                var ownErrors = errors.stream().filter(e -> component.owns(e.path()))
+                        .map(e -> new CompilerErrorParser.CompilerError(component.strip(e.path()).orElseThrow(),
+                                e.line(), e.column(), e.code(), e.message())).toList();
+                MissingUsingFixer.fix(component.profile(), component.contexts(contexts), own, ownErrors)
+                        .forEach((path, content) -> fixes.put(component.prefix(path), content));
+            }
             if (fixes.isEmpty()) {
                 return null;
             }
@@ -569,16 +775,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
     }
 
-    /** Errores del compilador del primer paso fallido (restore/build), agrupados por dueño en orden de capas. */
+    /** Errores del compilador de los pasos restore/build fallidos, agrupados por dueño en orden de capas. */
     private static LinkedHashMap<PlannedTask, List<CompilerErrorParser.CompilerError>> compileErrorsByOwner(
             SandboxResult result, List<PlannedTask> ordered) {
         var byOwner = new LinkedHashMap<PlannedTask, List<CompilerErrorParser.CompilerError>>();
-        var failed = result.stepsOrEmpty().stream()
-                .filter(step -> "FAIL".equals(step.status()) || "TIMEOUT".equals(step.status()))
-                .findFirst();
-        if (failed.isEmpty() || !List.of("restore", "build").contains(failed.get().name())) {
-            return byOwner;
-        }
         var errors = compileErrors(result);
         for (var task : ordered) {
             var own = errors.stream().filter(e -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), e.path())).toList();
@@ -590,6 +790,168 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     static final int REPAIR_ATTEMPTS = 2;
+    /** Diagnóstico 360: rondas de arbitraje de tests rojos (el bloque 7 lo llevará hasta cero). */
+    static final int MAX_TEST_TRIAGE_ROUNDS = 2;
+
+    private static List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failingTests(SandboxResult result) {
+        var failing = new ArrayList<com.aicompany.core.agent.validation.FailingTestParser.FailingTest>();
+        for (var step : result.stepsOrEmpty()) {
+            if ("test".equals(ComponentSandbox.stepName(step.name())) && "FAIL".equals(step.status())) {
+                failing.addAll(com.aicompany.core.agent.validation.FailingTestParser.parse(step.outputTail(),
+                        ComponentSandbox.dirOf(step.name())));
+            }
+        }
+        return failing;
+    }
+
+    /**
+     * Diagnóstico 360 (decisión del fundador 2026-10-03): Neo (líder técnico, no Vera, que escribió los tests) recibe
+     * cada test rojo con su salida real, el código del stack, el test y lo pedido, y dictamina CODE_WRONG, TEST_WRONG o
+     * BOTH con la regla de negocio correcta. Java valida el veredicto y reparte: el código a su dueño (que no toca
+     * tests) y el test a QA (que no puede borrarlo ni bajar la cantidad de tests). Devuelve el nuevo HEAD o null.
+     */
+    private String triageAndRepair(TeamMissionContext context, List<PlannedTask> ordered,
+                                   List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failing,
+                                   String headSha, int triageRound, List<String> expectedProjects,
+                                   List<CommittedWork> committed, List<String> triageNotes) {
+        var missionId = context.missionId();
+        var leader = context.team().leaderAgentId();
+        var triageId = missionId + "-TEST-TRIAGE-" + triageRound;
+        try {
+            memory.createTask(triageId, missionId, leader, "TEST_TRIAGE", "TRIAGE");
+            var repoFiles = new java.util.HashSet<>(workspace.filesAtCommit(missionId, headSha));
+            var involved = failing.stream().flatMap(t -> t.files().stream()).filter(repoFiles::contains).distinct().toList();
+            var evidence = new LinkedHashMap<String, String>();
+            for (var path : involved) {
+                evidence.put(path, readOrNull(missionId, headSha, path));
+            }
+            var triage = runtime.triage(triageId, missionId, leader,
+                    triagePrompt(context, failing, evidence, headSha),
+                    t -> com.aicompany.core.agent.validation.TestTriageValidator.validate(t, failing, repoFiles)).join();
+
+            var codeWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
+            var testWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
+            for (var verdict : triage.verdictsOrEmpty()) {
+                triageNotes.add(verdict.test() + " → " + verdict.verdict() + ": " + verdict.rule());
+                if (verdict.codeWrong()) {
+                    verdict.codeFilesOrEmpty().forEach(file -> ownerOf(ordered, file)
+                            .ifPresent(task -> codeWork.computeIfAbsent(task, k -> new ArrayList<>()).add(verdict)));
+                }
+                if (verdict.testWrong()) {
+                    verdict.testFilesOrEmpty().forEach(file -> ownerOf(ordered, file)
+                            .ifPresent(task -> testWork.computeIfAbsent(task, k -> new ArrayList<>()).add(verdict)));
+                }
+            }
+
+            String head = headSha;
+            var changed = false;
+            for (var entry : java.util.stream.Stream.concat(codeWork.entrySet().stream(), testWork.entrySet().stream()).toList()) {
+                var task = entry.getKey();
+                // El código nunca es de QA y los tests solo son de QA: una tarea corrige o código o tests.
+                var fixingTests = testWork.containsKey(task);
+                var files = entry.getValue().stream()
+                        .flatMap(v -> (fixingTests ? v.testFilesOrEmpty() : v.codeFilesOrEmpty()).stream())
+                        .filter(f -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), f)).distinct().toList();
+                var id = taskId(context, task.agentId());
+                try {
+                    var prompt = buildWorkPrompt(context, task) + triageBlock(entry.getValue(), failing, fixingTests, files)
+                            + repositoryCode(missionId, head, "CÓDIGO ACTUAL DEL REPOSITORIO (commit " + head
+                            + "); devuelve completos los archivos que corrijas:", validatorModel(context, task.agentId()));
+                    DevelopmentResult result;
+                    if (fixingTests) {
+                        var headTests = new LinkedHashMap<String, String>();
+                        for (var file : files) {
+                            headTests.put(file, readOrNull(missionId, head, file));
+                        }
+                        result = runtime.generate(id, missionId, task.agentId(), prompt, task.ownedPathsOrEmpty(),
+                                expectedProjects, files, r -> com.aicompany.core.agent.validation.TestTriageValidator
+                                        .preservesTests(r.files(), headTests, failing)).join();
+                    } else {
+                        // Mismos chequeos que cualquier generación (capas, base de datos, contrato de la API).
+                        result = generate(id, missionId, task.agentId(), prompt, task.ownedPathsOrEmpty(),
+                                expectedProjects, files, context, head);
+                    }
+                    var record = workspace.commitAgentWork(missionId, id, task.agentId(),
+                            agentName(context, task.agentId()), result);
+                    memory.recordTaskArtifact(id, workspace.missionWorkspace(missionId).toString(), record.sha(), record.files());
+                    memory.updateTask(id, "COMPLETED", toJson(result));
+                    events.publish("EMPRESA_TASK_COMMITTED", missionId, id, task.agentId(),
+                            Map.of("commitSha", record.sha(), "files", record.files(), "testTriageRound", triageRound));
+                    committed.add(new CommittedWork(id, task.agentId(), record.sha(), record.files()));
+                    head = record.sha();
+                    changed = true;
+                } catch (Exception ex) {
+                    var message = "Corrección del diagnóstico fallida (" + safeMessage(ex, "sin detalle")
+                            + "); se conserva el commit anterior.";
+                    memory.updateTask(id, "COMPLETED", message);
+                    log.warn("MISSION {} - triage repair of {} failed: {}", missionId, task.agentId(), message);
+                }
+            }
+            return changed ? head : null;
+        } catch (Exception ex) {
+            triageNotes.add("no se completó (" + safeMessage(ex, "sin detalle") + ")");
+            log.warn("MISSION {} - test triage failed: {}", missionId, ex.getMessage());
+            return null;
+        }
+    }
+
+    private static java.util.Optional<PlannedTask> ownerOf(List<PlannedTask> ordered, String file) {
+        return ordered.stream().filter(t -> OwnedPaths.coveredByAny(t.ownedPathsOrEmpty(), file)).findFirst();
+    }
+
+    private String triagePrompt(TeamMissionContext context,
+                                List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failing,
+                                Map<String, String> evidence, String headSha) {
+        var plan = context.plan();
+        var tests = failing.stream().map(t -> "- " + t.name() + "\n  Salida real: " + t.message()
+                        + "\n  Stack: " + t.locations())
+                .collect(Collectors.joining("\n"));
+        var files = evidence.entrySet().stream().map(e -> "=== " + e.getKey() + " ===\n" + e.getValue())
+                .collect(Collectors.joining("\n"));
+        return """
+                Eres el líder técnico y ARBITRAS tests que fallan en el sandbox (ejecución real, commit %s). Un test
+                puede estar mal escrito y el código puede estar mal: decide con lo que se pidió, no a favor de nadie.
+
+                LO QUE SE PIDIÓ (misión): %s
+                PLAN: %s
+                %s
+
+                TESTS QUE FALLARON (salida real del sandbox):
+                %s
+
+                ARCHIVOS DEL STACK Y DE LOS TESTS:
+                %s
+
+                Para CADA test que falló devuelve un veredicto:
+                - CODE_WRONG: el test pide lo correcto según lo pedido y el código no lo cumple. codeFiles: los archivos de
+                  código a corregir (del repositorio, nunca de tests/).
+                - TEST_WRONG: el código cumple lo pedido y el test espera otra cosa o su fake/arreglo no refleja la realidad.
+                  testFiles: los archivos de tests a corregir.
+                - BOTH: los dos están mal; indica codeFiles y testFiles.
+                rule: la regla de negocio correcta, en una oración, según lo pedido. reason: por qué falla, citando la línea.
+                test: el nombre EXACTO del test como aparece arriba.
+                """.formatted(headSha, context.instruction(), plan.summary(), dddContext(plan), tests, files);
+    }
+
+    private static String triageBlock(List<com.aicompany.core.agent.model.TestTriage.Verdict> verdicts,
+                                      List<com.aicompany.core.agent.validation.FailingTestParser.FailingTest> failing,
+                                      boolean fixingTests, List<String> files) {
+        var lines = verdicts.stream().map(v -> {
+            var output = failing.stream().filter(t -> t.name().equals(v.test())).map(t -> t.message()).findFirst().orElse("");
+            return "- Test " + v.test() + " (" + v.verdict() + ")\n  Salida real: " + output
+                    + "\n  Regla correcta: " + v.rule() + "\n  Por qué falla: " + v.reason();
+        }).collect(Collectors.joining("\n"));
+        var rule = fixingTests
+                ? "Corrige SOLO tus tests " + files + ": que verifiquen la regla correcta. No puedes tocar el código, ni "
+                        + "borrar tests, ni cambiarles el nombre, ni bajar la cantidad de tests."
+                : "Corrige SOLO tu código " + files + " para que cumpla la regla correcta. No puedes tocar los tests.";
+        return """
+
+                DIAGNÓSTICO DEL LÍDER TÉCNICO (tests que fallaron en el sandbox real):
+                %s
+                %s Devuelve completos los archivos que corrijas.
+                """.formatted(lines, rule);
+    }
 
     private Map<String, String> currentContents(String missionId, String headSha,
                                                 List<CompilerErrorParser.CompilerError> errors) {
@@ -682,18 +1044,34 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         };
     }
 
-    /** Orden estable por la capa más baja de cada tarea; rutas que no son de una capa (entrada) cuentan como 3. */
-    private static List<PlannedTask> orderByLayer(List<PlannedTask> work, TeamPlan plan) {
-        var profile = plan.profile();
-        if (profile.isEmpty()) {
+    /**
+     * Spec 2026-10-02 B1 §2: por componente (backend antes que app, en el orden fijo de AppComponent) y dentro de cada
+     * uno por capa; los tests siempre al final. Con un componente es el orden por capas de siempre.
+     */
+    static List<PlannedTask> orderTasks(List<PlannedTask> work, TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        if (components.isEmpty()) {
             return work;
         }
         return work.stream()
                 .sorted(java.util.Comparator.comparingInt(task -> task.ownedPathsOrEmpty().stream()
-                        .map(path -> profile.get().locate(path, plan.contextNames())
-                                .map(location -> layerRank(location.layer())).orElse(3))
-                        .min(Integer::compare).orElse(3)))
+                        .map(path -> rank(components, plan.contextNames(), path))
+                        .min(Integer::compare).orElse(Integer.MAX_VALUE)))
                 .toList();
+    }
+
+    private static int rank(List<AppComponent> components, List<String> contexts, String path) {
+        for (int i = 0; i < components.size(); i++) {
+            var component = components.get(i);
+            if (!component.owns(path)) {
+                continue;
+            }
+            var layer = component.strip(path)
+                    .flatMap(p -> component.profile().locate(p, component.contexts(contexts)))
+                    .map(location -> layerRank(location.layer())).orElse(3);
+            return layer == 4 ? 1_000 : i * 10 + layer;
+        }
+        return 500; // raíz común (migraciones, .env.example): no define el orden
     }
 
     /** Código real ya commiteado (sin .csproj/.sln, que son de Forjai), con tope explícito. */
@@ -736,7 +1114,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      */
     private CommittedWork existingScaffold(TeamMissionContext context) {
         var plan = context.plan();
-        var files = plan.profile().map(p -> ProjectScaffold.generate(p, plan.contextNames())).orElse(List.of()).stream()
+        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of()).stream()
                 .map(DevelopmentResult.GeneratedFile::path).toList();
         try {
             return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai",
@@ -749,14 +1127,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private CommittedWork commitProjectScaffold(TeamMissionContext context) {
         var plan = context.plan();
-        var files = plan.profile().map(p -> ProjectScaffold.generate(p, plan.contextNames())).orElse(List.of());
+        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of());
         if (files.isEmpty()) {
             return null;
         }
         try {
             var record = workspace.commitAgentWork(context.missionId(), context.missionId() + "-SCAFFOLD", "forjai",
-                    "Forjai", new DevelopmentResult("Proyectos .csproj generados por Forjai (reglas DDD del perfil "
-                            + plan.stackProfile() + ")", files));
+                    "Forjai", new DevelopmentResult("Proyectos .csproj generados por Forjai (reglas DDD de "
+                            + plan.componentProfiles() + ")", files));
             return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai", record.sha(), record.files());
         } catch (Exception ex) {
             throw new IllegalStateException("No se pudo generar la estructura de proyectos: "
@@ -798,7 +1176,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private static String dddContext(TeamPlan plan) {
-        var profile = plan.profile().map(StackProfile::describe).orElse("- (sin perfil)");
+        // Spec 2026-10-02 B1: cada componente con su carpeta (las rutas del perfil van debajo de ella).
+        var profile = plan.resolvedComponents().isEmpty() ? "- (sin perfil)" : plan.resolvedComponents().stream()
+                .map(c -> (c.isRoot() ? "" : "[carpeta " + c.dir() + "/: todas las rutas de este perfil van debajo] ")
+                        + c.profile().describe())
+                .collect(Collectors.joining("\n"));
         var contexts = plan.boundedContextsOrEmpty().stream()
                 .map(c -> "- " + c.name() + ": " + c.description())
                 .collect(Collectors.joining("\n"));
@@ -862,13 +1244,227 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private DevelopmentResult generate(String id, String missionId, String agentId, String prompt, List<String> owned,
                                        List<String> expectedProjects, List<String> requiredPaths,
                                        TeamMissionContext context, String headSha) {
-        if (context.plan().databaseOrNull() == null) {
+        var checks = new ArrayList<java.util.function.Function<DevelopmentResult, List<String>>>();
+        if (context.plan().databaseOrNull() != null) {
+            checks.add(databaseChecks(context, headSha));
+        }
+        var api = apiChecks(context, owned, headSha);
+        if (api != null) {
+            checks.add(api);
+        }
+        var layers = layerChecks(context, owned, headSha);
+        if (layers != null) {
+            checks.add(layers);
+        }
+        if (checks.isEmpty()) {
             return requiredPaths == null
                     ? runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects).join()
                     : runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects, requiredPaths).join();
         }
         return runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects,
-                requiredPaths == null ? owned : requiredPaths, databaseChecks(context, headSha)).join();
+                requiredPaths == null ? owned : requiredPaths,
+                result -> checks.stream().flatMap(c -> c.apply(result).stream()).toList()).join();
+    }
+
+    /**
+     * Verificado en vivo (MISSION-B1-CRM-1790978221, MISSION-B1-AGENDA-1790981861): la capa application de la app
+     * importó el cliente HTTP de infrastructure y DDD_LAYERS lo detectó recién en la validación final, sin volver a la
+     * dueña. Al generar en un componente Flutter, una violación de capas en sus archivos es un reintento con el import
+     * exacto. null si la tarea no toca un componente Flutter.
+     */
+    private java.util.function.Function<DevelopmentResult, List<String>> layerChecks(
+            TeamMissionContext context, List<String> owned, String headSha) {
+        var plan = context.plan();
+        var flutter = plan.resolvedComponents().stream()
+                .filter(c -> c.profile() == StackProfile.FLUTTER_WEB_APP)
+                .anyMatch(c -> owned.stream().anyMatch(c::owns));
+        if (!flutter) {
+            return null;
+        }
+        var head = new LinkedHashMap<String, String>();
+        if (headSha != null) {
+            try {
+                for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                    if (path.endsWith(".dart") || path.endsWith(".cs") || path.endsWith("pubspec.yaml")) {
+                        var content = readOrNull(context.missionId(), headSha, path);
+                        if (content != null) {
+                            head.put(path, content);
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                log.warn("MISSION {} - could not read HEAD for the layer check: {}", context.missionId(), ex.getMessage());
+            }
+        }
+        return result -> layerErrors(plan.resolvedComponents(), plan.contextNames(), head,
+                result.files() == null ? List.of() : result.files());
+    }
+
+    /** Violaciones de capas DDD en los archivos devueltos, resueltas contra el resto del repositorio en HEAD. */
+    static List<String> layerErrors(List<AppComponent> components, List<String> contexts, Map<String, String> head,
+                                    List<DevelopmentResult.GeneratedFile> files) {
+        var contents = new LinkedHashMap<>(head);
+        var returned = new java.util.HashSet<String>();
+        for (var file : files) {
+            if (file != null && file.path() != null) {
+                contents.put(file.path(), file.content());
+                returned.add(file.path());
+            }
+        }
+        var errors = new ArrayList<String>();
+        for (var component : components) {
+            var relative = new LinkedHashMap<String, String>();
+            contents.forEach((path, content) -> {
+                if (component.owns(path)) {
+                    component.strip(path).ifPresent(p -> relative.put(p, content));
+                }
+            });
+            for (var violation : com.aicompany.core.agent.validation.DddLayerChecker.check(component.profile(),
+                    component.contexts(contexts), relative)) {
+                var path = component.prefix(violation.file());
+                if (returned.contains(path)) {
+                    errors.add(path + ": importa " + violation.dependency() + " (" + violation.reason() + "). "
+                            + "Usa una interfaz en domain/application implementada en infrastructure y únelas en "
+                            + "lib/main.dart.");
+                }
+            }
+        }
+        return errors;
+    }
+
+    static final String API_ROUTES_TASK_SUFFIX = "-API-ROUTES";
+
+    static final String FULLSTACK_JSON_WARNING = "Los nombres de los campos JSON entre la app y la API no se verifican "
+            + "hasta la entrega de ambientes (B2).";
+
+    /** Spec 2026-10-02 B1 §4: "Perfil: X" con un componente; con varios, cada carpeta con su perfil. */
+    private static String componentsLine(TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        if (components.size() < 2) {
+            return "Perfil: " + plan.stackProfile();
+        }
+        return "Componentes: " + components.stream().map(c -> c.dir() + "/ (" + c.profile().name() + ")")
+                .collect(Collectors.joining(", "));
+    }
+
+    /** El componente Flutter de una app completa (app + API .NET), o vacío. */
+    private static java.util.Optional<AppComponent> fullstackApp(TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        if (components.size() < 2 || !plan.hasComponent(StackProfile.DOTNET_APP)) {
+            return java.util.Optional.empty();
+        }
+        return components.stream().filter(c -> c.profile() == StackProfile.FLUTTER_WEB_APP).findFirst();
+    }
+
+    private static boolean touchesFlutter(PlannedTask task, TeamPlan plan) {
+        return fullstackApp(plan).map(app -> task.ownedPathsOrEmpty().stream().anyMatch(app::owns)).orElse(false);
+    }
+
+    private static boolean ownsBackendApi(List<String> owned) {
+        return owned.stream().anyMatch(p -> p.startsWith("backend/") && p.contains(".Api"));
+    }
+
+    /**
+     * Spec 2026-10-02 B1 §2: Forjai commitea app/lib/api/api_routes.dart desde las rutas reales del backend en HEAD.
+     * null si la misión no es app + API o si el archivo ya está igual.
+     */
+    private CommittedWork commitApiRoutes(TeamMissionContext context, String headSha) {
+        var app = fullstackApp(context.plan());
+        if (app.isEmpty() || headSha == null) {
+            return null;
+        }
+        var missionId = context.missionId();
+        try {
+            var routes = HttpRouteExtractor.extract(backendApiSources(missionId, headSha));
+            var path = app.get().prefix(ApiRoutesGenerator.PATH);
+            var content = ApiRoutesGenerator.generate(routes);
+            if (content.equals(readOrNull(missionId, headSha, path))) {
+                return null;
+            }
+            var id = missionId + API_ROUTES_TASK_SUFFIX;
+            var record = workspace.commitAgentWork(missionId, id, "forjai", "Forjai", new DevelopmentResult(
+                    "Forjai generó el contrato de rutas de la app desde " + routes.size() + " ruta(s) del backend",
+                    List.of(new DevelopmentResult.GeneratedFile(path, content))));
+            return new CommittedWork(id, "forjai", record.sha(), record.files());
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not commit API routes: {}", missionId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Spec 2026-10-02 B1 §2: la dueña de la app no escribe rutas de la API a mano (ApiContractGate); el dueño de la API
+     * deja al menos una ruta literal que Java pueda leer. null si no aplica.
+     */
+    private java.util.function.Function<DevelopmentResult, List<String>> apiChecks(
+            TeamMissionContext context, List<String> owned, String headSha) {
+        var plan = context.plan();
+        if (fullstackApp(plan).isEmpty()) {
+            return null;
+        }
+        var probe = new PlannedTask("", TeamPlan.KIND_WORK, "X", "x", List.of(), owned);
+        if (touchesFlutter(probe, plan)) {
+            var routes = HttpRouteExtractor.extract(backendApiSources(context.missionId(), headSha));
+            return result -> ApiContractGate.check(result.files(), routes);
+        }
+        if (ownsBackendApi(owned)) {
+            return result -> {
+                var sources = backendApiSources(context.missionId(), headSha);
+                (result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files()).stream()
+                        .filter(f -> f != null && f.path() != null && f.path().endsWith(".cs") && f.path().contains(".Api/"))
+                        .forEach(f -> sources.put(f.path(), f.content()));
+                return apiOwnerErrors(sources);
+            };
+        }
+        return null;
+    }
+
+    /**
+     * Revisión final (C1, I3): la API de una app completa necesita al menos una ruta del producto (además de /health) y
+     * todos sus prefijos legibles por Java; si no, el contrato de la app saldría mal sin que nada lo detecte.
+     */
+    static List<String> apiOwnerErrors(Map<String, String> apiSources) {
+        var extraction = HttpRouteExtractor.extractDetailed(apiSources);
+        var errors = new ArrayList<String>();
+        if (!extraction.unresolved().isEmpty()) {
+            errors.add("No puedo saber el prefijo de las rutas de " + extraction.unresolved() + ": declara cada grupo "
+                    + "como variable con ruta literal en el mismo archivo (var clientes = app.MapGroup(\"/clientes\");) "
+                    + "y mapea sobre esa variable o sobre app, sin pasar grupos como parámetros.");
+        }
+        if (extraction.routes().isEmpty()) {
+            errors.add("No encontré endpoints minimal API del producto con ruta literal (app.MapGet(\"/…\"), MapPost, …) "
+                    + "en backend/src/<Ctx>.Api, además de /health: la app Flutter los necesita y Forjai los lee del código.");
+        }
+        return errors;
+    }
+
+    private Map<String, String> backendApiSources(String missionId, String headSha) {
+        var sources = new LinkedHashMap<String, String>();
+        if (headSha == null) {
+            return sources;
+        }
+        try {
+            for (var path : workspace.filesAtCommit(missionId, headSha)) {
+                if (path.startsWith("backend/") && path.endsWith(".cs") && path.contains(".Api/")) {
+                    sources.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read backend API sources: {}", missionId, ex.getMessage());
+        }
+        return sources;
+    }
+
+    /** Spec 2026-10-02 B1 §2: reglas de app completa para el dueño de la API y para la dueña de la app. */
+    private static String fullstackBlock(TeamMissionContext context, PlannedTask task) {
+        var plan = context.plan();
+        if (fullstackApp(plan).isEmpty()) {
+            return "";
+        }
+        if (touchesFlutter(task, plan)) {
+            return "\n\n" + StackProfile.FULLSTACK_APP_RULE + "\n";
+        }
+        return ownsBackendApi(task.ownedPathsOrEmpty()) ? "\n\n" + StackProfile.FULLSTACK_API_RULE + "\n" : "";
     }
 
     /** Spec 2026-10-02 §2.4: migraciones, secretos y contrato, con reintento al dueño del archivo. */
@@ -925,7 +1521,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
-        return buildWorkPromptBase(context, task) + databaseBlock(context);
+        return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task);
     }
 
     private String buildWorkPromptBase(TeamMissionContext context, PlannedTask task) {
@@ -938,12 +1534,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .collect(Collectors.joining("\n"));
 
         // Verificado en vivo: la dueña de "game" no creó game/project.godot porque nadie le dijo que era obligatorio.
-        var requiredFiles = plan.profile().map(StackProfile::leaderOwnedPaths).orElse(List.of()).stream()
+        var requiredFiles = plan.resolvedComponents().stream()
+                .flatMap(c -> c.profile().leaderOwnedPaths().stream().map(c::prefix))
                 .filter(file -> OwnedPaths.coveredByAny(task.ownedPathsOrEmpty(), file))
                 .toList();
         var required = requiredFiles.isEmpty() ? "" : "ARCHIVOS OBLIGATORIOS que te corresponden (el proyecto no "
                 + "compila ni arranca sin ellos): " + requiredFiles + "\n";
-        var projects = plan.profile().map(p -> p.projectFiles(plan.contextNames())).orElse(List.of());
+        var projects = ComponentScaffold.projectFiles(plan.resolvedComponents(), plan.contextNames());
         if (!projects.isEmpty()) {
             required += "PROYECTOS .csproj: ya existen y los genera Forjai con las referencias DDD correctas; no los "
                     + "escribas: " + projects + "\n";
@@ -1079,7 +1676,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("MISIÓN DE EQUIPO: ").append(context.team().teamName())
                 .append(" (").append(context.team().teamId()).append(")\n");
         out.append("PLAN DEL LÍDER: ").append(context.plan().summary())
-                .append(" | Perfil: ").append(context.plan().stackProfile())
+                .append(" | ").append(componentsLine(context.plan()))
                 .append(" | Bounded contexts: ").append(context.plan().contextNames()).append("\n\n");
 
         out.append("COMMITS POR AGENTE:\n");
@@ -1126,14 +1723,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     private String verifiableState(
             TeamMissionContext context, CommittedWork scaffold, List<CommittedWork> committed, List<StaticCheck> checks,
             StaticValidationStatus status, List<String> failures, SandboxResult sandboxResult, String sandboxError,
-            int repairRounds, int autofixRounds, DependencyService.Outcome dependencyOutcome) {
+            int repairRounds, int autofixRounds, DependencyService.Outcome dependencyOutcome, List<String> triageNotes) {
 
         var passed = checks.stream().filter(StaticCheck::passed).count();
 
         var out = new StringBuilder();
         out.append("ESTADO VERIFICABLE (generado por Forjai, no por un modelo)\n");
         out.append("Workspace: ").append(workspace.missionWorkspace(context.missionId())).append("\n");
-        out.append("Perfil: ").append(context.plan().stackProfile())
+        out.append(componentsLine(context.plan()))
                 .append(" | Bounded contexts: ").append(context.plan().contextNames()).append("\n");
 
         if (scaffold != null) {
@@ -1154,6 +1751,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         out.append("Validación estática: ").append(status.name())
                 .append(" (").append(passed).append("/").append(checks.size()).append(" chequeos deterministas en PASS)\n");
         out.append("Sandbox: ").append(sandboxSummary(sandboxResult, sandboxError)).append("\n");
+        triageNotes.forEach(note -> out.append("Diagnóstico de tests (Neo): ").append(note).append("\n"));
+        var app = fullstackApp(context.plan());
+        if (app.isPresent() && !committed.isEmpty()) {
+            var routes = HttpRouteExtractor.extract(backendApiSources(context.missionId(),
+                    committed.get(committed.size() - 1).commitSha()));
+            out.append("Contrato de rutas: ").append(routes.size()).append(" ruta(s) en ")
+                    .append(app.get().prefix(ApiRoutesGenerator.PATH)).append("\n")
+                    .append(FULLSTACK_JSON_WARNING).append("\n");
+        }
         if (!dependencyOutcome.approvedNow().isEmpty() || !dependencyOutcome.pending().isEmpty()) {
             out.append("Dependencias: ").append(dependencyOutcome.approvedNow().size())
                     .append(" aprobada(s) por política ").append(dependencyOutcome.approvedNow().stream().map(DependencyRef::id).toList())
@@ -1201,13 +1807,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         return result.stepsOrEmpty().stream()
                 .map(s -> {
-                    var label = switch (s.name()) {
+                    var dir = ComponentSandbox.dirOf(s.name());
+                    var label = (dir.isEmpty() ? "" : dir + " ") + switch (ComponentSandbox.stepName(s.name())) {
                         case "build" -> "Build";
                         case "test" -> "Tests";
                         case "smoke" -> "Arranque";
-                        default -> s.name();
+                        default -> ComponentSandbox.stepName(s.name());
                     };
-                    var tests = "test".equals(s.name())
+                    var tests = "test".equals(ComponentSandbox.stepName(s.name()))
                             ? " " + s.testsPassed() + "/" + (s.testsPassed() + s.testsFailed()) : "";
                     return label + " " + s.status() + tests + " (" + (s.durationMs() / 1000) + " s)";
                 })

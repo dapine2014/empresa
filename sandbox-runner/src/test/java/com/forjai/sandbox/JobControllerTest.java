@@ -14,7 +14,7 @@ class JobControllerTest {
     private final JobController controller = new JobController(runner, mock(DependencyFetcher.class), mock(DependencyPromoter.class), "secreto");
 
     private static JobController.JobRequest request(String type, String profile) {
-        return new JobController.JobRequest(type, "M-1", "a".repeat(40), profile, null);
+        return new JobController.JobRequest(type, "M-1", "a".repeat(40), profile, null, null);
     }
 
     @Test
@@ -34,7 +34,7 @@ class JobControllerTest {
     @Test
     void runsAValidVerifyJob() {
         var result = new SandboxResult("PASS", java.util.List.of());
-        when(runner.verify("M-1", "a".repeat(40), ExecutionProfile.DOTNET_APP)).thenReturn(result);
+        when(runner.verify("M-1", "a".repeat(40), ExecutionProfile.DOTNET_APP, "")).thenReturn(result);
 
         var response = controller.run("secreto", request("VERIFY", "DOTNET_APP"));
 
@@ -50,10 +50,28 @@ class JobControllerTest {
         var pkgs = List.of(new DependencyRequest.Package("A", "1.0.0"));
         when(fetcher.fetch("NUGET", pkgs)).thenReturn(new FetchedPackage.FetchResult("fetch-1", "PASS", "", List.of()));
 
-        assertEquals(200, c.run("secreto", new JobController.JobRequest("FETCH_DEPENDENCIES", null, null, null,
+        assertEquals(200, c.run("secreto", new JobController.JobRequest("FETCH_DEPENDENCIES", null, null, null, null,
                 new DependencyRequest("NUGET", null, pkgs))).getStatusCode().value());
-        assertEquals(401, c.run("otro", new JobController.JobRequest("PROMOTE_DEPENDENCIES", null, null, null,
+        assertEquals(401, c.run("otro", new JobController.JobRequest("PROMOTE_DEPENDENCIES", null, null, null, null,
                 new DependencyRequest("NUGET", "fetch-1", pkgs))).getStatusCode().value());
         verifyNoInteractions(promoter);
+    }
+
+    // Spec 2026-10-02 B1 §3: carpetas de componente de una lista fija, como los perfiles.
+    @Test
+    void verifyRejectsAComponentDirOutsideTheCatalog() {
+        var response = controller.run("secreto", new JobController.JobRequest("VERIFY", "M-1", "a".repeat(40),
+                "DOTNET_APP", "src", null));
+        assertEquals(400, response.getStatusCode().value());
+        verifyNoInteractions(runner);
+    }
+
+    @Test
+    void verifyPassesTheComponentDir() {
+        var result = new SandboxResult("PASS", java.util.List.of());
+        when(runner.verify("M-1", "a".repeat(40), ExecutionProfile.FLUTTER_WEB_APP, "app")).thenReturn(result);
+        var response = controller.run("secreto", new JobController.JobRequest("VERIFY", "M-1", "a".repeat(40),
+                "FLUTTER_WEB_APP", "app", null));
+        assertSame(result, response.getBody());
     }
 }

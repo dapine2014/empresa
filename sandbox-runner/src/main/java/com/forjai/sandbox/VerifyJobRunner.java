@@ -29,7 +29,14 @@ public class VerifyJobRunner {
         this.executor = executor;
     }
 
+    /** Spec 2026-10-02 B1 §3: carpetas de componente admitidas (lista fija, como los perfiles). */
+    static final java.util.Set<String> COMPONENT_DIRS = java.util.Set.of("", "backend", "app", "game-client");
+
     public SandboxResult verify(String missionId, String commitSha, ExecutionProfile profile) {
+        return verify(missionId, commitSha, profile, "");
+    }
+
+    public SandboxResult verify(String missionId, String commitSha, ExecutionProfile profile, String componentDir) {
 
         var steps = new ArrayList<SandboxResult.StepResult>();
         var jobDir = workRoot.resolve("job-" + UUID.randomUUID());
@@ -37,7 +44,7 @@ public class VerifyJobRunner {
         try {
             Files.createDirectories(jobDir);
 
-            var checkout = checkout(missionId, commitSha, jobDir);
+            var checkout = checkout(missionId, commitSha, componentDir, jobDir);
             steps.add(checkout);
             var failed = !SandboxResult.PASS.equals(checkout.status());
 
@@ -65,19 +72,21 @@ public class VerifyJobRunner {
         }
     }
 
-    private SandboxResult.StepResult checkout(String missionId, String commitSha, Path jobDir) {
+    private SandboxResult.StepResult checkout(String missionId, String commitSha, String componentDir, Path jobDir) {
 
         var started = System.currentTimeMillis();
         var repo = productsRoot.resolve(missionId).normalize();
 
-        if (!repo.startsWith(productsRoot) || !commitSha.matches("[0-9a-f]{40}")) {
+        var dir = componentDir == null ? "" : componentDir;
+        if (!repo.startsWith(productsRoot) || !commitSha.matches("[0-9a-f]{40}") || !COMPONENT_DIRS.contains(dir)) {
             return new SandboxResult.StepResult("checkout", SandboxResult.FAIL, -1, 0,
-                    "missionId o commitSha inválidos.", 0, 0);
+                    "missionId, commitSha o componentDir inválidos.", 0, 0);
         }
+        var treeish = dir.isEmpty() ? commitSha : commitSha + ":" + dir;
 
         var tar = jobDir.resolve(".forjai-src.tar");
         var archive = executor.run(List.of("git", "-c", "safe.directory=*", "-C", repo.toString(), "archive",
-                "--format=tar", "-o", tar.toString(), commitSha), jobDir, 60);
+                "--format=tar", "-o", tar.toString(), treeish), jobDir, 60);
         if (archive.exitCode() != 0) {
             return new SandboxResult.StepResult("checkout", SandboxResult.FAIL, archive.exitCode(),
                     System.currentTimeMillis() - started, tail(archive.output(), OUTPUT_TAIL_CHARS), 0, 0);

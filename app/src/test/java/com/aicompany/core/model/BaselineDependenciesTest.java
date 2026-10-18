@@ -11,4 +11,10 @@ class BaselineDependenciesTest {
     void npgsqlIsPreapprovedForTheDataArchitect() {
         assertTrue(BaselineDependencies.contains(new DependencyRef("NUGET", "Npgsql", "8.0.5")));
     }
+
+    // Spec 2026-10-02 B1 §2: la app llama a la API con http, precargado en la imagen de Flutter.
+    @Test
+    void httpIsPreapprovedForFlutter() {
+        assertTrue(BaselineDependencies.contains(new DependencyRef("PUB", "http", "1.2.2")));
+    }
 }

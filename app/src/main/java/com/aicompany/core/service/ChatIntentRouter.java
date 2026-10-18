@@ -959,7 +959,7 @@ public class ChatIntentRouter {
     }
 
     /** Equipo, commits reales y estado de validación — 100% desde Neo4j, nunca redactado por el LLM. */
-    private String formatTeamExecution(MissionResponse mission, List<AgentTask> tasks) {
+    static String formatTeamExecution(MissionResponse mission, List<AgentTask> tasks) {
 
         if (mission.teamId() == null) {
             return "";
@@ -976,13 +976,28 @@ public class ChatIntentRouter {
             out.append(" Commits: ").append(commits).append(".");
         }
 
+        // Spec 2026-10-02 B1 §4: el resultado real del sandbox (por componente en una app completa).
         tasks.stream()
                 .filter(t -> t.validationStatus() != null)
                 .findFirst()
-                .ifPresent(t -> out.append(" Validación estática: ").append(t.validationStatus())
-                        .append(" (esta fase no ejecuta código)."));
+                .ifPresent(t -> {
+                    out.append(" Validación: ").append(t.validationStatus()).append(".");
+                    sandboxOf(t).ifPresent(sandbox -> out.append(" Sandbox: ")
+                            .append(DevelopmentTeamStrategy.sandboxSummary(sandbox, null)).append("."));
+                });
 
         return out.toString();
+    }
+
+    private static java.util.Optional<com.aicompany.core.model.SandboxResult> sandboxOf(AgentTask task) {
+        if (task.sandboxResult() == null || task.sandboxResult().isBlank()) {
+            return java.util.Optional.empty();
+        }
+        try {
+            return java.util.Optional.of(JSON.readValue(task.sandboxResult(), com.aicompany.core.model.SandboxResult.class));
+        } catch (Exception ex) {
+            return java.util.Optional.empty();
+        }
     }
 
     /**
@@ -2167,7 +2182,7 @@ public class ChatIntentRouter {
     private String formatModelsHealth() {
         var models = modelHealth.snapshot();
         if (models.isEmpty()) {
-            return "No hay modelos remotos en uso: todos los agentes usan modelos locales.";
+            return "No hay modelos remotos en uso: todos los agentes usan modelos locales." + fallbacksLine();
         }
         return "Estado de los modelos: " + models.stream().map(h -> "DOWN".equals(h.status())
                         ? "⚠ " + ModelHealthService.shortName(h.model()) + " no responde desde " + SINCE.format(h.since())
@@ -2175,6 +2190,19 @@ public class ChatIntentRouter {
                         + h.affectedAgents().stream().map(modelHealth::fallbackFor).distinct().collect(Collectors.joining(", "))
                         + ")"
                         : "✅ " + ModelHealthService.shortName(h.model()) + " (" + String.join(", ", h.affectedAgents()) + ")")
+                .collect(Collectors.joining("; ")) + "." + fallbacksLine();
+    }
+
+    /** Decisión del fundador (2026-10-03): si el suplente local no está disponible, los agentes no tienen respaldo. */
+    private String fallbacksLine() {
+        var fallbacks = modelHealth.fallbackSnapshot();
+        if (fallbacks == null || fallbacks.isEmpty()) {
+            return "";
+        }
+        return " Suplentes: " + fallbacks.stream().map(h -> "DOWN".equals(h.status())
+                        ? "⚠ Suplente " + h.model() + " no disponible desde " + SINCE.format(h.since()) + " ("
+                        + h.lastError() + "): " + String.join(", ", h.affectedAgents()) + " no tienen respaldo"
+                        : "✅ " + h.model() + " (" + h.affectedAgents().size() + " agentes)")
                 .collect(Collectors.joining("; ")) + ".";
     }
 
@@ -2182,8 +2210,13 @@ public class ChatIntentRouter {
         var down = modelHealth.snapshot().stream().filter(h -> "DOWN".equals(h.status()))
                 .map(h -> ModelHealthService.shortName(h.model()) + " desde " + SINCE.format(h.since()))
                 .toList();
-        return down.isEmpty() ? "" : " ⚠ Modelos caídos: " + String.join(", ", down)
-                + " (sus agentes trabajan con el suplente local).";
+        var fallbacks = modelHealth.fallbackSnapshot();
+        var fallbacksDown = fallbacks == null ? List.<String>of() : fallbacks.stream()
+                .filter(h -> "DOWN".equals(h.status())).map(h -> h.model() + " (" + h.lastError() + ")").toList();
+        return (down.isEmpty() ? "" : " ⚠ Modelos caídos: " + String.join(", ", down)
+                + " (sus agentes trabajan con el suplente local).")
+                + (fallbacksDown.isEmpty() ? "" : " ⚠ Suplentes no disponibles: " + String.join(", ", fallbacksDown)
+                + ": los agentes no tienen respaldo si cae un modelo remoto.");
     }
 
     private static long countProducts(List<ProductView> views, CatalogStatus status) {

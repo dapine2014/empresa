@@ -93,6 +93,8 @@ forjai:
 remote-models:
   base-url: ${REMOTE_MODELS_BASE_URL:https://integrate.api.nvidia.com/v1}
   read-timeout: ${REMOTE_MODELS_READ_TIMEOUT:10m}
+  # Plazo total por llamada (verificado en vivo 2026-10-03: una llamada quedó colgada 5 h con el read-timeout).
+  total-timeout: ${REMOTE_MODELS_TOTAL_TIMEOUT:12m}
   providers:
     nvidia:
       api-key: ${NVIDIA_API_KEY:}
