@@ -98,7 +98,8 @@ public class ApiKeyService {
         for (var model : models) {
             var check = client.checkKey(model, key);
             if (check == OpenAiCompatibleClient.KeyCheck.UNAUTHORIZED) {
-                throw new IllegalArgumentException("NVIDIA rechazó la key de " + provider + " (401/403): no se guardó y sigue la anterior.");
+                throw new IllegalArgumentException("El proveedor rechazó la key de " + provider + " (" + client.lastCheckError()
+                        + "): no se guardó y sigue la anterior.");
             }
             if (check == OpenAiCompatibleClient.KeyCheck.OK) {
                 answered = true;
@@ -127,7 +128,10 @@ public class ApiKeyService {
                 }
             }
         }
-        models.addAll(DEFAULT_CHECK_MODELS);
+        // Proveedores pagos (2026-10-04): cada uno con su modelo de prueba; los de NVIDIA solo para NVIDIA.
+        var client = remotes.get(provider);
+        var own = client == null || client.checkModels() == null ? List.<String>of() : client.checkModels();
+        models.addAll(own.isEmpty() ? DEFAULT_CHECK_MODELS : own);
         return models.stream().limit(MAX_CHECKS).toList();
     }
 }

@@ -38,6 +38,9 @@ import type {
   Prospect,
   ProspectingRun,
   StrategyView,
+  ModelCostView,
+  RequirementsDecision,
+  RequirementsView,
 } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -79,6 +82,11 @@ export const api = {
   modelsHealth: () => request<ModelHealth[]>('/api/company/models/health'),
   updateAgentFallbackModel: (agentId: string, model: string) =>
     request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/fallback-model`, {
+      method: 'PUT',
+      body: JSON.stringify({ model }),
+    }),
+  updateAgentPaidFallbackModel: (agentId: string, model: string) =>
+    request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/paid-fallback-model`, {
       method: 'PUT',
       body: JSON.stringify({ model }),
     }),
@@ -181,6 +189,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(command),
     }),
+
+  missionModelCost: (missionId: string) => request<ModelCostView>(`/api/company/missions/${missionId}/model-cost`),
+
+  requirements: (missionId: string) =>
+    request<RequirementsView>(`/api/company/missions/${missionId}/requirements`),
+
+  decideRequirements: (missionId: string, decision: RequirementsDecision, instruction?: string) =>
+    request<RequirementsView>(`/api/company/missions/${missionId}/requirements/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, instruction: instruction ?? null }),
+    }),
+
+  buildIncrement: (missionId: string, increment: number) =>
+    request<RequirementsView>(`/api/company/missions/${missionId}/increments/${increment}`, { method: 'POST' }),
 
   deleteMission: (missionId: string) =>
     request<void>(`/api/company/missions/${missionId}`, { method: 'DELETE' }),

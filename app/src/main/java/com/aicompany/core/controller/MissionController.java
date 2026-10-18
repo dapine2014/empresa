@@ -1,5 +1,7 @@
 package com.aicompany.core.controller;
 
+import com.aicompany.core.model.RequirementsDecisionCommand;
+import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.DecisionResponse;
 import com.aicompany.core.model.MissionCommand;
@@ -73,5 +75,44 @@ public class MissionController {
         return missionService.recordDecision(missionId, command)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Spec 2026-10-03 Aria §2: requisitos de Aria de la misión (versión vigente y aprobada). */
+    @GetMapping("/{missionId}/requirements")
+    public ResponseEntity<RequirementsView> requirements(@PathVariable String missionId) {
+        return missionService.requirements(missionId).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/{missionId}/requirements/decision")
+    public RequirementsView decideRequirements(@PathVariable String missionId,
+                                               @RequestBody RequirementsDecisionCommand command) {
+        return missionService.decideRequirements(missionId, command);
+    }
+
+    /** Spec 2026-10-03 Aria §3: construir el incremento N (ronda de la misma misión). */
+    @PostMapping("/{missionId}/increments/{increment}")
+    public RequirementsView buildIncrement(@PathVariable String missionId, @PathVariable int increment) {
+        return missionService.buildIncrement(missionId, increment);
+    }
+
+    private com.aicompany.core.service.ModelCostService modelCost;
+
+    /** Costo real por misión (2026-10-04). Opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelCost(com.aicompany.core.service.ModelCostService modelCost) {
+        this.modelCost = modelCost;
+    }
+
+    public record ModelCostView(String missionId, double totalUsd, long calls,
+                                java.util.List<com.aicompany.core.service.ModelUsageMemoryService.Row> rows) {
+    }
+
+    /** Costo real por misión (2026-10-04): tokens y US$ de las llamadas remotas de la misión (NVIDIA = US$ 0). */
+    @GetMapping("/{missionId}/model-cost")
+    public ModelCostView modelCost(@PathVariable String missionId) {
+        var summary = modelCost == null ? new com.aicompany.core.service.ModelCostService.Summary(java.util.List.of())
+                : modelCost.missionCost(missionId);
+        return new ModelCostView(missionId, summary.totalUsd(), summary.calls(), summary.rows());
     }
 }

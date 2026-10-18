@@ -1,5 +1,6 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.ProductView;
 
 import com.aicompany.core.model.CatalogStatus;
@@ -357,7 +358,16 @@ public class ChatIntentRouter {
                 || PRODUCT_COMMAND.matcher(normalize(message)).matches()
                 || MISSION_START.matcher(message).find()
                 || detectFreeMissionStart(normalize(message))
-                || detectDecision(message) != null;
+                || detectDecision(message) != null
+                || isRequirementsCommand(message);
+    }
+
+    /** Spec 2026-10-03 Aria §2: los comandos de requisitos son gobernanza (antes de las menciones). */
+    private static boolean isRequirementsCommand(String message) {
+        var normalized = normalize(message);
+        return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
+                || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
+                || ADJUST_STORIES.matcher(message).find();
     }
 
     private ChatReply ceoReply(String text) {
@@ -627,6 +637,16 @@ public class ChatIntentRouter {
                     + "/details para ver el progreso y las tareas.";
         }
 
+        var costReply = handleModelCost(message);
+        if (costReply != null) {
+            return costReply;
+        }
+
+        var requirementsReply = handleRequirements(message);
+        if (requirementsReply != null) {
+            return requirementsReply;
+        }
+
         if (detectFreeMissionStart(normalize(message))) {
             return handleFreeMissionStart(message);
         }
@@ -713,6 +733,52 @@ public class ChatIntentRouter {
 
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
     private com.aicompany.core.database.DatabaseApplyService databaseApply;
+    private ModelCostService modelCost;
+    private RequirementsMemoryService requirementsMemory;
+
+    /** Aria (2026-10-04): qué rondas fueron incrementos, para no contarlas como evidencia. Opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRequirementsMemory(RequirementsMemoryService requirementsMemory) {
+        this.requirementsMemory = requirementsMemory;
+    }
+
+    private Map<Integer, Integer> incrementRoundsOf(String missionId) {
+        if (requirementsMemory == null) {
+            return Map.of();
+        }
+        var rounds = requirementsMemory.incrementRoundsByNumber(missionId);
+        return rounds == null ? Map.of() : rounds;
+    }
+
+    /** Costo real por misión (2026-10-04). Opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelCost(ModelCostService modelCost) {
+        this.modelCost = modelCost;
+    }
+
+    private static final Pattern MISSION_COST = Pattern.compile(
+            "(?i)\\bcuanto\\s+(?:costo|cuesta|ha\\s+costado|gasto|se\\s+gasto\\s+en)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern MONTH_COST = Pattern.compile(
+            "(?i)\\bcuanto\\s+(?:hemos\\s+gastado|se\\s+ha\\s+gastado|gastamos|llevamos(?:\\s+gastado)?|cuestan?)\\b.*\\bmodelos?\\b");
+
+    /** Costo real por misión (2026-10-04): respuesta armada en Java desde (:ModelUsage). */
+    private String handleModelCost(String message) {
+        if (modelCost == null) {
+            return null;
+        }
+        var normalized = normalize(message);
+        var mission = MISSION_COST.matcher(normalized);
+        if (mission.find()) {
+            var missionId = mission.group(1).toUpperCase(Locale.ROOT);
+            return "Costo de modelos de " + missionId + ": " + ModelCostService.describe(modelCost.missionCost(missionId))
+                    + ". NVIDIA es gratis (US$ 0); se paga solo Bedrock, el respaldo cuando NVIDIA cae.";
+        }
+        if (MONTH_COST.matcher(normalized).find()) {
+            return "Costo de modelos este mes: " + ModelCostService.describe(modelCost.monthCost())
+                    + ". Presupuesto de AWS: US$ 20 al mes, con alertas al 80 % y al 100 %.";
+        }
+        return null;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setDatabaseConnections(com.aicompany.core.database.DatabaseConnectionService databaseConnections) {
@@ -823,6 +889,65 @@ public class ChatIntentRouter {
                 + "/details para ver el progreso y las tareas.";
     }
 
+    /** Spec 2026-10-03 Aria §2: comandos de requisitos; van antes que la decisión del inversionista. */
+    private static final Pattern SHOW_STORIES = Pattern.compile(
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern APPROVE_STORIES = Pattern.compile(
+            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern REJECT_STORIES = Pattern.compile(
+            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+    private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(MISSION-[A-Za-z0-9-]+)\\s*:\\s*(.+)$",
+            Pattern.DOTALL);
+    private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos)\\b");
+    private static final Pattern BUILD_INCREMENT = Pattern.compile(
+            "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+
+    private String handleRequirements(String message) {
+        var normalized = normalize(message);
+        try {
+            var build = BUILD_INCREMENT.matcher(normalized);
+            if (build.find()) {
+                var missionId = build.group(2).toUpperCase(Locale.ROOT);
+                missionService.buildIncrement(missionId, Integer.parseInt(build.group(1)));
+                return "Arrancó el incremento " + build.group(1) + " de " + missionId
+                        + " sobre el mismo repositorio. Te aviso cuando termine.";
+            }
+            var show = SHOW_STORIES.matcher(normalized);
+            if (show.find()) {
+                var missionId = show.group(1).toUpperCase(Locale.ROOT);
+                return missionService.requirements(missionId)
+                        .filter(v -> v.version() != null)
+                        .map(v -> "Requisitos de " + missionId + " (versión " + v.version() + ", " + v.versionStatus()
+                                + "): " + v.summary())
+                        .orElse(missionId + " no tiene requisitos de Aria.");
+            }
+            var approve = APPROVE_STORIES.matcher(normalized);
+            if (approve.find()) {
+                var missionId = approve.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+                return "Requisitos de " + missionId + " aprobados: Neo planifica el incremento 1.";
+            }
+            var reject = REJECT_STORIES.matcher(normalized);
+            if (reject.find()) {
+                var missionId = reject.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+                return "Requisitos de " + missionId + " rechazados: la misión quedó cancelada.";
+            }
+            var adjust = ADJUST_STORIES.matcher(message);
+            if (adjust.find()) {
+                var missionId = adjust.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjust.group(2).strip()));
+                return "Le pasé el ajuste a Aria; te aviso cuando las historias de " + missionId + " estén listas.";
+            }
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
+        return null;
+    }
+
     private record DetectedDecision(String missionId, InvestorDecision decision) {
     }
 
@@ -840,6 +965,13 @@ public class ChatIntentRouter {
 
         if (MORE_EVIDENCE.matcher(normalize(message)).find()) {
             return new DetectedDecision(missionId, InvestorDecision.REQUEST_MORE_EVIDENCE);
+        }
+
+        // Revisión final Aria (7): un mensaje sobre las HU o los requisitos nunca cierra ni cancela la misión. Verificado
+        // en vivo (2026-10-04): solo bloquea aprobar/rechazar; "pide más evidencia … sin agregar historias" sigue siendo
+        // una ronda.
+        if (REQUIREMENTS_WORD.matcher(normalize(message)).find()) {
+            return null;
         }
 
         if (APPROVE.matcher(message).find()) {
@@ -1139,7 +1271,10 @@ public class ChatIntentRouter {
                 ? "Sales, Product, Finance, Engineering y QA"
                 : teamMemory.snapshot(teamId).members().stream().map(TeamMemberInfo::name)
                         .collect(Collectors.joining(", "));
-        return "Arrancó la ronda " + round + " de " + max + " de más evidencia sobre " + missionId + ". Trabajan: "
+        // Verificado en vivo (2026-10-04): las rondas de incremento no cuentan como evidencia.
+        var increments = incrementRoundsOf(missionId);
+        var evidenceNumber = round - (int) increments.keySet().stream().filter(r -> r < round).count();
+        return "Arrancó la ronda " + evidenceNumber + " de " + max + " de más evidencia sobre " + missionId + ". Trabajan: "
                 + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
     }
 
@@ -1153,13 +1288,20 @@ public class ChatIntentRouter {
         var max = (int) companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
         var byRound = new java.util.TreeMap<Integer, List<AgentTask>>();
         tasks.forEach(t -> byRound.computeIfAbsent(TaskIds.roundOf(t.taskId()), k -> new ArrayList<>()).add(t));
+        // Verificado en vivo (2026-10-04): las rondas de incremento se etiquetan aparte y no consumen el límite.
+        var increments = incrementRoundsOf(missionId);
+        var evidenceRounds = java.util.stream.IntStream.rangeClosed(1, round).filter(r -> !increments.containsKey(r))
+                .boxed().toList();
+        var used = evidenceRounds.size();
         var lines = new ArrayList<String>();
-        lines.add(" Ronda de evidencia " + round + " de " + max + " (queda" + (max - round == 1 ? " 1" : "n " + Math.max(0, max - round)) + ").");
+        lines.add(" Ronda de evidencia " + used + " de " + max + " (queda" + (max - used == 1 ? " 1" : "n " + Math.max(0, max - used)) + ").");
         byRound.forEach((r, list) -> {
             // Los pedidos se alinean desde el final: uno registrado antes de existir las rondas no disparó ninguna.
-            var index = requests.size() - round + (r - 1);
-            var label = r == 0 ? "Ronda 0" : "Ronda " + r + " (pedido: \""
-                    + (index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
+            var position = evidenceRounds.indexOf(r);
+            var index = requests.size() - used + position;
+            var label = r == 0 ? "Ronda 0" : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
+                    : "Ronda " + r + " (pedido: \""
+                    + (position >= 0 && index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
             lines.add(" " + label + ": " + list.stream().map(t -> t.agentId() + "=" + t.action() + " " + t.status())
                     .collect(Collectors.joining(", ")) + ".");
         });
@@ -1646,12 +1788,21 @@ public class ChatIntentRouter {
      */
     private String formatCompanyStatus() {
 
-        var missions = missionMemory.findAll(50).stream()
+        var all = missionMemory.findAll(50);
+        // Spec 2026-10-03 Aria §2: los requisitos esperan al fundador en cualquier entorno.
+        var awaitingSpec = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_SPEC_APPROVAL)
+                .map(MissionResponse::missionId).toList();
+        var specLine = awaitingSpec.isEmpty() ? ""
+                : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec)
+                        + " (\"muéstrame las HU de <misión>\").";
+
+        var missions = all.stream()
                 .filter(m -> "PRODUCTION".equals(m.environment()))
                 .toList();
 
         var active = missions.stream()
                 .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
+                        && m.status() != MissionStatus.AWAITING_SPEC_APPROVAL
                         && m.status() != MissionStatus.FAILED
                         && m.status() != MissionStatus.COMPLETED
                         && m.status() != MissionStatus.CANCELLED)
@@ -1701,7 +1852,7 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + orchestratorLine() + downModelsLine();
+        ) + specLine + orchestratorLine() + downModelsLine();
     }
 
     /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */
@@ -2001,13 +2152,22 @@ public class ChatIntentRouter {
      * confundir ninguna de las dos cosas con "lo que el agente está
      * haciendo ahora".
      */
+    /** Decisión del fundador (2026-10-04): con el gratis caído lo atiende el respaldo pago o, si no, el suplente local. */
+    private String downSuffix(String agentId, String model) {
+        var effective = modelHealth.effectiveModel(agentId, model);
+        if (effective != null && CeoService.remoteModel(effective).isPresent()) {
+            return " (caído: lo atiende su respaldo pago " + effective + ")";
+        }
+        return " (caído: usa su suplente " + modelHealth.fallbackFor(agentId) + ")";
+    }
+
     private String formatOneAgentStatus(AgentStatusResponse a) {
 
         var base = statusDot(a.status()) + " " + a.name() + " (" + a.role() + "): " + a.status();
         // Subproyecto 2 (2026-09-28): el modelo real de cada agente (editable desde el Command Center).
         var model = companyMemory.agentModel(a.agentId(), defaultCeoModel);
         var modelSuffix = model == null || model.isBlank() ? "" : " — modelo " + model
-                + (modelHealth.isDown(model) ? " (caído: usa su suplente " + modelHealth.fallbackFor(a.agentId()) + ")" : "");
+                + (modelHealth.isDown(model) ? downSuffix(a.agentId(), model) : "");
 
         if (a.missionId() == null) {
             return base + modelSuffix;

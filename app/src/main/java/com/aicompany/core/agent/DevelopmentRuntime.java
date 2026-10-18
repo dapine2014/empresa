@@ -118,7 +118,7 @@ public class DevelopmentRuntime {
         }
         var model = companyMemory.agentModel(agentId, defaultAgentModel);
         if (modelHealth.isDown(model)) {
-            memory.setTaskModelUsed(taskId, modelHealth.fallbackFor(agentId));
+            memory.setTaskModelUsed(taskId, modelHealth.effectiveModel(agentId, model));
         }
     }
 
@@ -183,7 +183,9 @@ public class DevelopmentRuntime {
 
     private <T> CompletableFuture<T> submit(String taskId, String missionId, String agentId, Supplier<T> work) {
         try {
-            return CompletableFuture.supplyAsync(work, agentTaskExecutor);
+            // Costo real por misión (2026-10-04): las llamadas de esta tarea quedan atribuidas a su misión.
+            return CompletableFuture.supplyAsync(
+                    () -> com.aicompany.core.service.ModelCallContext.with(missionId, taskId, work), agentTaskExecutor);
         } catch (Exception ex) {
             var message = safeMessage(ex, "No se pudo iniciar la tarea.");
             memory.updateTask(taskId, "FAILED", message);
@@ -284,7 +286,7 @@ public class DevelopmentRuntime {
     }
 
     private boolean runsLocally(String model) {
-        return model == null || !model.startsWith("nvidia") || (modelHealth != null && modelHealth.isDown(model));
+        return model == null || com.aicompany.core.service.CeoService.remoteModel(model).isEmpty();
     }
 
     /**
@@ -295,7 +297,8 @@ public class DevelopmentRuntime {
     DevelopmentResult collectBatches(String agentId, String prompt, String agentPrompt, String model) {
         var byPath = new java.util.LinkedHashMap<String, DevelopmentResult.GeneratedFile>();
         var packagesByName = new java.util.LinkedHashMap<String, DevelopmentResult.PackageRequest>();
-        var local = runsLocally(model);
+        // Respaldo pago (2026-10-04): con el gratis caído, lo atiende kimi en Bedrock (lotes de remoto) o el suplente local.
+        var local = runsLocally(modelHealth == null ? model : modelHealth.effectiveModel(agentId, model));
         String summary = null;
         var continuation = "";
         var lastRemaining = List.<String>of();

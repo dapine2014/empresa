@@ -9,7 +9,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 
 | | Faltante | Por qué frena una misión real | Dónde se resuelve |
 |---|---|---|---|
-| [ ] | **Aria (HUs, BDD, MVP por incrementos)** | Nadie recorta el pedido a un MVP: Neo intenta construir todo de una vez | Bloque 5 |
+| [x] | **Aria (HUs, BDD, MVP por incrementos)** | Hecho (v1, sin cola, 2026-10-04): HU con roles, escenarios e incrementos aprobados por el fundador; CRM de 2 incrementos `VERIFIED`. Pendiente: HU nuevas tras aprobar, incrementos encadenados solos (misiones durables) | Bloque 5 |
 | [ ] | **Misiones durables** | Las misiones viven en memoria: un reinicio de `company-core` las corta (pasó con `MISSION-1790905978528`) | Bloque 4 |
 | [ ] | **Corrección hasta cero errores** | Hoy solo se corrigen errores de compilación, en 2 rondas; un test que falla deja la misión en `FAILED` | Bloque 7 |
 | [ ] | **Escenarios BDD trazables** | `VERIFIED` solo exige que compile y pase al menos 1 test, no que se cumplan los criterios de aceptación | Bloques 5 y 6 |

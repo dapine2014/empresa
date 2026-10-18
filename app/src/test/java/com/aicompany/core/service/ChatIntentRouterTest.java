@@ -1,5 +1,7 @@
 package com.aicompany.core.service;
 
+import com.aicompany.core.model.RequirementsDecisionCommand;
+import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.FinanceEntry;
 
 import com.aicompany.core.model.FinanceSummary;
@@ -2266,5 +2268,168 @@ class ChatIntentRouterTest {
         assertTrue(response.contains("⚠ Suplente qwen3-coder:30b no disponible desde 2026-10-03 07:00 UTC (Ollama no responde)"),
                 response);
         verifyNoInteractions(ceoService);
+    }
+    // Spec 2026-10-03 Aria §2 + Review Focus 1: "apruebo las HU" es de requisitos, no la decisión del inversionista.
+    @Test
+    void approvingTheStoriesGoesToTheRequirementsNotToTheInvestorDecision() {
+        when(missionService.decideRequirements(eq("MISSION-9"), any())).thenReturn(new RequirementsView("MISSION-9",
+                "PLANNING", 1, "APPROVED", 1, 0, 2, null, ""));
+
+        var response = router.route("apruebo las HU de MISSION-9");
+
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(missionService, never()).recordDecision(anyString(), any());
+        assertTrue(response.contains("incremento 1"), response);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void storiesCanBeShownAdjustedRejectedAndIncrementsBuilt() {
+        var view = new RequirementsView("MISSION-9", "AWAITING_SPEC_APPROVAL", 1, "DRAFT", null, 0, 2, null,
+                "Roles: vendedor. Incremento 1 (MVP): HU-01 registrar clientes.");
+        when(missionService.requirements("MISSION-9")).thenReturn(Optional.of(view));
+        when(missionService.decideRequirements(eq("MISSION-9"), any())).thenReturn(view);
+        when(missionService.buildIncrement("MISSION-9", 2)).thenReturn(view);
+
+        assertTrue(router.route("muéstrame las HU de MISSION-9").contains("HU-01 registrar clientes"));
+        router.route("para MISSION-9: el MVP solo con clientes");
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "el MVP solo con clientes"));
+        router.route("rechaza las HU de MISSION-9");
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+        router.route("construye el incremento 2 de MISSION-9");
+        verify(missionService).buildIncrement("MISSION-9", 2);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void aRefusedRequirementsCommandExplainsWhy() {
+        when(missionService.decideRequirements(eq("MISSION-9"), any()))
+                .thenThrow(new IllegalStateException("MISSION-9 no está esperando la aprobación de requisitos"));
+        assertTrue(router.route("apruebo las HU de MISSION-9").contains("no está esperando"));
+    }
+
+    // Spec 2026-10-03 Aria §2: el status anuncia los requisitos que esperan al fundador (también en TEST) y no los
+    // cuenta como misiones activas.
+    @Test
+    void theStatusAnnouncesRequirementsWaitingForApproval() {
+        when(missionMemory.findAll(50)).thenReturn(List.of(
+                new MissionResponse("MISSION-CRM", MissionStatus.AWAITING_SPEC_APPROVAL, "TEST", 8, "x", "x", Instant.now(), null),
+                new MissionResponse("MISSION-P", MissionStatus.AWAITING_SPEC_APPROVAL, "PRODUCTION", 8, "x", "x", Instant.now(), null)));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(customerMemory.countCustomersAndProspects()).thenReturn(new long[]{0L, 0L});
+        when(finance.summary(null)).thenReturn(new FinanceSummary(50, 0, 0, 0, 50, List.of()));
+
+        var response = router.route("dame un status");
+
+        assertTrue(response.contains("0 activa"), response);
+        assertTrue(response.contains("Requisitos de Aria esperando tu aprobación: MISSION-CRM, MISSION-P"), response);
+    }
+
+    // Revisión final (7): "los requisitos" / "todas las HU" también son de requisitos; nunca cierran la misión.
+    @Test
+    void requirementsCommandsAcceptOtherArticles() {
+        when(missionService.decideRequirements(eq("MISSION-9"), any())).thenReturn(new RequirementsView("MISSION-9",
+                "PLANNING", 1, "APPROVED", 1, 0, 2, null, ""));
+
+        router.route("apruebo los requisitos de MISSION-9");
+        router.route("aprueba todas las HU de MISSION-9");
+        router.route("rechaza los requisitos de MISSION-9");
+
+        verify(missionService, times(2)).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(missionService).decideRequirements("MISSION-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+        verify(missionService, never()).recordDecision(anyString(), any());
+    }
+
+    // Decisión del fundador (2026-10-04): con el gratis caído el estado nombra lo que de verdad atiende (respaldo pago).
+    @Test
+    void anAgentOnThePaidFallbackIsMarkedInTheAgentStatus() {
+        kimiDown();
+        when(modelHealth.effectiveModel("engineering", "nvidia:moonshotai/kimi-k3")).thenReturn("bedrock:global.moonshotai.kimi-k3");
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of(new AgentStatusResponse("engineering", "Neo",
+                "Architect", "x", "WORKING", "MISSION-1", "DELIVERY_FEASIBILITY", "RUNNING", Instant.now())));
+        when(companyMemory.agentModel(eq("engineering"), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
+
+        var response = router.route("¿Qué agentes están trabajando ahora?");
+
+        assertTrue(response.contains("(caído: lo atiende su respaldo pago bedrock:global.moonshotai.kimi-k3)"), response);
+    }
+
+    // Costo real por misión (2026-10-04): el chat responde el costo de modelos en Java, sin llamar a un modelo.
+    @Test
+    void theModelCostOfAMissionAndOfTheMonthIsAnsweredInJava() {
+        var costs = mock(ModelCostService.class);
+        router.setModelCost(costs);
+        when(costs.missionCost("MISSION-9")).thenReturn(new ModelCostService.Summary(List.of(
+                new ModelUsageMemoryService.Row("bedrock", "global.moonshotai.kimi-k3", 3, 900_000, 0, 60_000, 3.6))));
+        when(costs.monthCost()).thenReturn(new ModelCostService.Summary(List.of()));
+
+        var mission = router.route("¿cuánto costó MISSION-9?");
+        var month = router.route("¿cuánto hemos gastado en modelos este mes?");
+
+        assertTrue(mission.contains("MISSION-9") && mission.contains("US$ 3.60"), mission);
+        assertTrue(month.contains("este mes") && month.contains("sin llamadas remotas"), month);
+        verifyNoInteractions(ceoService);
+    }
+
+    // Verificado en vivo (2026-10-04): "pide más evidencia … sin agregar historias nuevas" caía en el estado de la misión
+    // porque la palabra "historias" bloqueaba toda decisión. Solo bloquea aprobar/rechazar.
+    @Test
+    void anEvidenceRequestThatMentionsStoriesStillStartsTheRound() {
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-1", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 1)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+
+        router.route("pide más evidencia sobre MISSION-1: corrige las rutas. Sin agregar historias nuevas.");
+
+        verify(missionService).recordDecision(eq("MISSION-1"),
+                argThat(c -> c.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE));
+    }
+
+    // Verificado en vivo (2026-10-04): con incrementos el chat decía "Ronda de evidencia 4 de 2 (quedan 0)" y le ponía
+    // a la ronda 4 (un incremento) el pedido de la ronda 1.
+    @Test
+    void incrementRoundsAreLabeledAndDoNotCountAsEvidence() {
+        var requirements = mock(RequirementsMemoryService.class);
+        router.setRequirementsMemory(requirements);
+        when(requirements.incrementRoundsByNumber("MISSION-5")).thenReturn(java.util.Map.of(2, 2, 3, 2));
+        var mission = new MissionResponse("MISSION-5", MissionStatus.AWAITING_INVESTOR, "TEST", 95, "x", "x", Instant.now(), null);
+        when(missionMemory.find("MISSION-5")).thenReturn(Optional.of(mission));
+        when(missionMemory.tasks("MISSION-5")).thenReturn(List.of(
+                new AgentTask("MISSION-5-QA", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-5-QA-R1", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-5-QA-R2", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now()),
+                new AgentTask("MISSION-5-QA-R3", "MISSION-5", "qa", "TESTS", "COMPLETED", "{}", Instant.now())));
+        when(missionMemory.latestTaskPerAgent()).thenReturn(List.of());
+        when(productStatusService.resolve("MISSION-5")).thenReturn(ProductStatus.DESIGN);
+        when(missionMemory.evidenceRound("MISSION-5")).thenReturn(3);
+        when(missionMemory.evidenceRequests("MISSION-5")).thenReturn(List.of("Corrige el 409"));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+
+        var response = router.route("¿Cómo va MISSION-5?");
+
+        assertTrue(response.contains("Ronda de evidencia 1 de 2 (queda 1)"), response);
+        assertTrue(response.contains("Ronda 1 (pedido: \"Corrige el 409\")"), response);
+        assertTrue(response.contains("Ronda 2 (incremento 2)") && response.contains("Ronda 3 (incremento 2)"), response);
+    }
+
+    @Test
+    void theRoundStartedMessageCountsOnlyEvidenceRounds() {
+        var requirements = mock(RequirementsMemoryService.class);
+        router.setRequirementsMemory(requirements);
+        when(requirements.incrementRoundsByNumber("MISSION-1")).thenReturn(java.util.Map.of(2, 2, 3, 2, 4, 2));
+        when(missionService.recordDecision(eq("MISSION-1"), any())).thenReturn(Optional.of(
+                new DecisionResponse("D1", "MISSION-1", InvestorDecision.REQUEST_MORE_EVIDENCE, Instant.now(), 5)));
+        when(companyPolicyService.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(missionMemory.teamId("MISSION-1")).thenReturn(Optional.empty());
+
+        var response = router.route("pide más evidencia sobre MISSION-1: corrige las rutas");
+
+        assertTrue(response.contains("ronda 2 de 2"), response);
     }
 }

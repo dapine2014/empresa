@@ -9,6 +9,7 @@ export type MissionStatus =
   | 'EVALUATING'
   | 'WAITING_AGENT_RESULTS'
   | 'CONSOLIDATING'
+  | 'AWAITING_SPEC_APPROVAL'
   | 'AWAITING_INVESTOR'
   | 'EXECUTING'
   | 'COMPLETED'
@@ -353,6 +354,8 @@ export interface AgentInfo {
   model: string
   /** Suplente local si su modelo remoto cae (spec salud de modelos 2026-09-28); "" = sin suplente. */
   fallbackModel: string
+  // Decisión del fundador (2026-10-04): respaldo pago (kimi en Bedrock) solo si el modelo gratis cae; "" = sin él.
+  paidFallbackModel: string
   /** Agente encendido; uno apagado nunca recibe una llamada al modelo (decisión del fundador 2026-10-01). */
   enabled: boolean
 }
@@ -577,4 +580,64 @@ export interface MissionDatabaseStatus {
   connectionName: string | null
   migrations: { version: number; description: string; state: 'APPLIED' | 'PENDING' | 'FAILED' }[]
   lastResult: string | null
+}
+
+// Spec 2026-10-03 Aria: requisitos (RequirementsSpec / RequirementsView en Java).
+export interface RequirementsScenario {
+  id: string
+  title: string
+  given: string[]
+  when: string[]
+  then: string[]
+}
+
+export interface RequirementsStory {
+  id: string
+  role: string
+  iWant: string
+  soThat: string
+  acceptanceCriteria: string[]
+  dependsOn: string[]
+  scenarios: RequirementsScenario[]
+}
+
+export interface RequirementsSpec {
+  summary: string
+  assumptions: string[]
+  outOfScope: string[]
+  roles: { name: string; description: string }[]
+  userStories: RequirementsStory[]
+  increments: { number: number; goal: string; userStoryIds: string[] }[]
+}
+
+export interface RequirementsView {
+  missionId: string
+  status: string
+  version: number | null
+  versionStatus: string | null
+  approvedVersion: number | null
+  builtIncrement: number
+  incrementsTotal: number
+  spec: RequirementsSpec | null
+  summary: string
+}
+
+export type RequirementsDecision = 'APPROVE' | 'ADJUST' | 'REJECT'
+
+// Costo real por misión (2026-10-04): MissionController.ModelCostView.
+export interface ModelUsageRow {
+  provider: string
+  model: string
+  calls: number
+  input: number
+  cached: number
+  output: number
+  costUsd: number
+}
+
+export interface ModelCostView {
+  missionId: string
+  totalUsd: number
+  calls: number
+  rows: ModelUsageRow[]
 }

@@ -151,4 +151,20 @@ class ModelHealthServiceTest {
         assertTrue(fallbacks.get(0).lastError().contains("no está instalado"), fallbacks.get(0).lastError());
         assertEquals(List.of("ceo", "qa"), fallbacks.get(0).affectedAgents());
     }
+
+    // Decisión del fundador (2026-10-04): el gratis; si cae, el respaldo pago; si también cae, el suplente local.
+    @Test
+    void theEffectiveModelFollowsTheChain() {
+        var bedrock = "bedrock:global.moonshotai.kimi-k3";
+        when(memory.agentPaidFallbackModel("engineering")).thenReturn(bedrock);
+        assertEquals(KIMI, health.effectiveModel("engineering", KIMI));
+
+        health.recordFailure(KIMI, "timeout");
+        health.recordFailure(KIMI, "timeout");
+        assertEquals(bedrock, health.effectiveModel("engineering", KIMI));
+
+        health.recordFailure(bedrock, "timeout");
+        health.recordFailure(bedrock, "timeout");
+        assertEquals("qwen3-coder:30b", health.effectiveModel("engineering", KIMI));
+    }
 }

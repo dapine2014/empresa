@@ -256,7 +256,9 @@ public class CeoService {
      * Prefijo de Agent.model para la API remota compatible con OpenAI (hoy NVIDIA). Decisión del fundador
      * (2026-09-26): Engineering con "nvidia:moonshotai/kimi-k3" tras 18 misiones con qwen3:8b sin build verde.
      */
-    static final java.util.regex.Pattern REMOTE_MODEL = java.util.regex.Pattern.compile("^(nvidia(?:-[a-z]+)?):(.+)$");
+    // Respaldo pago (2026-10-04): bedrock también es remoto. No vale cualquier prefijo: los modelos locales de Ollama
+    // también llevan ":" (qwen3-coder:30b).
+    static final java.util.regex.Pattern REMOTE_MODEL = java.util.regex.Pattern.compile("^(nvidia(?:-[a-z]+)?|bedrock):(.+)$");
 
     /** Proveedor remoto y modelo de un Agent.model con prefijo (decisión del fundador 2026-09-27: una key por grupo). */
     public record RemoteModel(String provider, String model) {
@@ -311,7 +313,23 @@ public class CeoService {
         checkModel(candidate);
     }
 
-    static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
+    /**
+     * Decisión del fundador (2026-10-04): el respaldo pago solo se usa si el modelo gratis cae; tiene que ser un modelo
+     * remoto de un proveedor configurado (p. ej. bedrock:global.moonshotai.kimi-k3). Vacío = sin respaldo pago.
+     */
+    public void checkPaidFallbackModel(String model) {
+        if (model == null || model.isBlank()) {
+            return;
+        }
+        var ref = remoteModel(model.strip());
+        if (ref.isEmpty() || !remotes.containsKey(ref.get().provider())) {
+            throw new IllegalArgumentException("El respaldo pago debe ser un modelo remoto de un proveedor configurado "
+                    + new java.util.TreeSet<>(remotes.keySet()) + " (p. ej. bedrock:global.moonshotai.kimi-k3), no \""
+                    + model.strip() + "\".");
+        }
+    }
+
+    public static java.util.Optional<RemoteModel> remoteModel(String agentModel) {
         if (agentModel == null) {
             return java.util.Optional.empty();
         }
@@ -1233,6 +1251,14 @@ public class CeoService {
                 TeamPlanSchema.SCHEMA, TeamPlan.class);
     }
 
+    /** Spec 2026-10-03 Aria §1: requisitos de Aria (format RequirementsSpec.SCHEMA, sin tools). */
+    public com.aicompany.core.agent.model.RequirementsSpec writeRequirements(String agentId, String prompt,
+                                                                             String agentPrompt, String model) {
+        return callStructured("REQUIREMENTS_SPEC", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.RequirementsSpec.SCHEMA,
+                com.aicompany.core.agent.model.RequirementsSpec.class);
+    }
+
     /** Código real de una tarea WORK (spec §6): format DevelopmentResultSchema, sin tools. */
     public DevelopmentResult generateDevelopmentArtifact(String agentId, String prompt, String agentPrompt, String model) {
         return callStructured("DEVELOPMENT_TASK", agentId, prompt, agentPrompt, model,
@@ -1726,6 +1752,14 @@ public class CeoService {
 
     private ModelHealthService modelHealth;
 
+    private ModelCostService modelCost;
+
+    /** Costo real por misión (2026-10-04). Setter opcional: los tests que no lo usan no cambian. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelCost(ModelCostService modelCost) {
+        this.modelCost = modelCost;
+    }
+
     /** Spec salud de modelos (2026-09-28). Setter opcional: los tests que no lo usan no cambian. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setModelHealth(ModelHealthService modelHealth) {
@@ -1735,6 +1769,19 @@ public class CeoService {
     /** La llamada del agente va a su suplente local; nunca en silencio (log, y el aviso lo da ModelHealthService). */
     private ModelMessage viaFallback(String operation, String actor, String model, List<Map<String, Object>> messages,
                                      Object format, List<Map<String, Object>> tools, Boolean think, Exception cause) {
+        // Decisión del fundador (2026-10-04): primero el respaldo pago (kimi en Bedrock), solo porque el gratis cayó;
+        // si también falla, el suplente local. El respaldo pago caído se salta (no se espera de nuevo).
+        var paid = modelHealth.paidFallbackFor(actor);
+        if (paid != null && !paid.isBlank() && !paid.equals(model) && remoteModel(paid).isPresent()
+                && !modelHealth.isDown(paid)) {
+            log.warn("MODEL_PAID_FALLBACK operation={} actor={} model={} paid={}", operation, actor, model, paid);
+            try {
+                return callModel(operation, actor, paid, messages, format, tools, think);
+            } catch (RuntimeException ex) {
+                log.warn("MODEL_PAID_FALLBACK_FAILED operation={} actor={} paid={} error={}", operation, actor, paid,
+                        ex.getMessage());
+            }
+        }
         var fallback = modelHealth.fallbackFor(actor);
         var since = modelHealth.downSince(model);
         if (fallback == null || fallback.isBlank() || remoteModel(fallback).isPresent() && modelHealth.isDown(fallback)) {
@@ -1839,9 +1886,14 @@ public class CeoService {
             if (modelHealth != null) {
                 modelHealth.recordSuccess(model);
             }
-            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={}",
+            var usage = reply.usage() == null ? com.aicompany.core.model.TokenUsage.ZERO : reply.usage();
+            if (modelCost != null) {
+                modelCost.record(remoteRef.get().provider(), remoteModel, actor, operation, usage);
+            }
+            log.info("REMOTE_MODEL_METRICS operation={} actor={} model={} durationMs={} chars={} toolCalls={} "
+                            + "inputTokens={} cachedTokens={} outputTokens={}",
                     operation, actor, remoteModel, (System.nanoTime() - startedAt) / 1_000_000,
-                    reply.content().length(), reply.toolCalls().size());
+                    reply.content().length(), reply.toolCalls().size(), usage.input(), usage.cached(), usage.output());
             return new ModelMessage(reply.content(), reply.toolCalls(), "length".equals(reply.finishReason()));
         }
 

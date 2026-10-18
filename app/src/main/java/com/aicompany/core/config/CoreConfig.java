@@ -53,7 +53,7 @@ public class CoreConfig {
             @Value("${remote-models.read-timeout:10m}") java.time.Duration readTimeout,
             @Value("${remote-models.total-timeout:12m}") java.time.Duration totalTimeout) {
         var clients = new java.util.LinkedHashMap<String, com.aicompany.core.service.OpenAiCompatibleClient>();
-        for (var provider : java.util.List.of("nvidia", "nvidia-discovery", "nvidia-creative", "nvidia-ceo")) {
+        for (var provider : RemoteProviders.from(env, baseUrl)) {
             // Verificado en vivo (2026-10-03, llamada colgada 5 h): cliente HTTP del JDK, que aborta el envío cuando
             // OpenAiCompatibleClient cancela una llamada que pasó el plazo total.
             var factory = new org.springframework.http.client.JdkClientHttpRequestFactory(java.net.http.HttpClient
@@ -63,11 +63,13 @@ public class CoreConfig {
             var probeFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
             probeFactory.setConnectTimeout(java.time.Duration.ofSeconds(10));
             probeFactory.setReadTimeout(java.time.Duration.ofSeconds(20));
-            clients.put(provider, new com.aicompany.core.service.OpenAiCompatibleClient(
-                    RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build(),
-                    RestClient.builder().baseUrl(baseUrl).requestFactory(probeFactory).build(),
-                    env.getProperty("remote-models.providers." + provider + ".api-key", ""),
-                    java.time.Duration.ofSeconds(10), totalTimeout));
+            var client = new com.aicompany.core.service.OpenAiCompatibleClient(
+                    RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(factory).build(),
+                    RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(probeFactory).build(),
+                    provider.apiKey(), java.time.Duration.ofSeconds(10), totalTimeout);
+            client.configure(provider.name(), provider.nvidiaOptions(), provider.checkModels(),
+                    provider.thinkingOff());
+            clients.put(provider.name(), client);
         }
         return clients;
     }

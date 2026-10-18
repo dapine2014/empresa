@@ -109,7 +109,7 @@ class AgentRuntimeTest {
         runtime.setModelHealth(health);
         when(companyMemory.agentModel(eq("finance"), anyString())).thenReturn("nvidia:moonshotai/kimi-k3");
         when(health.isDown("nvidia:moonshotai/kimi-k3")).thenReturn(true);
-        when(health.fallbackFor("finance")).thenReturn("qwen3-coder:30b");
+        when(health.effectiveModel("finance", "nvidia:moonshotai/kimi-k3")).thenReturn("qwen3-coder:30b");
         when(ceoService.executeAgentTask(eq("finance"), anyString(), anyString(), eq("MISSION-1"), eq("TASK-1"), anyString()))
                 .thenReturn(outcome(result));
         when(validator.validate(result)).thenReturn(new AgentResultValidator.ValidationResult(true, List.of()));

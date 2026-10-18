@@ -45,6 +45,78 @@ class OpenAiCompatibleClientTest {
         server.verify();
     }
 
+    // Proveedores pagos (2026-10-04): las opciones de NVIDIA (chat_template_kwargs) no van a otros proveedores.
+    @Test
+    void otherProvidersDoNotGetTheNvidiaOptions() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.response_format.type").value("json_object"))
+                .andExpect(jsonPath("$.chat_template_kwargs").doesNotExist())
+                // Un proveedor con su propio parámetro booleano para apagar el razonamiento.
+                .andExpect(jsonPath("$.enable_thinking").value(false))
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("otro", false, List.of("m"), "enable_thinking=false");
+
+        client.chat("m", MESSAGES, true, 100);
+        server.verify();
+        assertEquals(List.of("m"), client.checkModels());
+    }
+
+    // Verificado en vivo (2026-10-04): 403 también es "modelo no habilitado"; el motivo del proveedor se muestra,
+    // nunca la key.
+    @Test
+    void aRejectedKeyKeepsTheProviderReasonWithoutTheKey() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":{\"code\":\"AccessDenied\",\"message\":\"Model access denied for sk-secreta\"}}"));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertEquals(OpenAiCompatibleClient.KeyCheck.UNAUTHORIZED, client.checkKey("qwen3-coder-plus", "sk-secreta"));
+        var reason = client.lastCheckError();
+        assertTrue(reason.contains("403") && reason.contains("AccessDenied"), reason);
+        assertFalse(reason.contains("sk-secreta"), reason);
+    }
+
+    // Verificado en vivo (2026-10-04, Bedrock): kimi-k3 razona por defecto (50 de 70 tokens de salida); se apaga con
+    // reasoning_effort=none, un valor de texto.
+    @Test
+    void bedrockTurnsReasoningOffWithATextValue() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.reasoning_effort").value("none"))
+                .andExpect(jsonPath("$.chat_template_kwargs").doesNotExist())
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("bedrock", false, List.of("global.moonshotai.kimi-k3"), "reasoning_effort=none");
+
+        client.chat("global.moonshotai.kimi-k3", MESSAGES, true, 100);
+        server.verify();
+    }
+
+    // Costo real por misión (2026-10-04): la respuesta trae los tokens usados.
+    @Test
+    void theReplyCarriesTheTokenUsage() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions")).andRespond(withSuccess("""
+                {"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+                 "usage":{"prompt_tokens":95,"completion_tokens":14,"prompt_tokens_details":{"cached_tokens":20}}}
+                """, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+        assertEquals(new com.aicompany.core.model.TokenUsage(95, 20, 14),
+                client.complete("m", MESSAGES, null, false, 100).usage());
+    }
+
     @Test
     void rateLimitsAndServerErrorsAreRetried() {
         var builder = RestClient.builder().baseUrl("https://api.test/v1");
@@ -63,7 +135,7 @@ class OpenAiCompatibleClientTest {
     void aMissingKeyFailsWithAClearMessage() {
         var client = new OpenAiCompatibleClient(RestClient.builder().baseUrl("https://api.test/v1").build(), "", Duration.ZERO);
         var ex = assertThrows(IllegalStateException.class, () -> client.chat("m", MESSAGES, true, 100));
-        assertTrue(ex.getMessage().contains("NVIDIA_API_KEY"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("proveedor nvidia") && ex.getMessage().contains("Settings"), ex.getMessage());
     }
 
     @Test

@@ -153,6 +153,20 @@ public class ModelHealthService {
         return companyMemory.agentFallbackModel(agentId);
     }
 
+    /** Decisión del fundador (2026-10-04): respaldo pago, antes del suplente local; "" = sin respaldo pago. */
+    public String paidFallbackFor(String agentId) {
+        return companyMemory.agentPaidFallbackModel(agentId);
+    }
+
+    /** El modelo que de verdad atiende al agente: el suyo; si cayó, el respaldo pago disponible; si no, el suplente. */
+    public String effectiveModel(String agentId, String model) {
+        if (!isDown(model)) {
+            return model;
+        }
+        var paid = paidFallbackFor(agentId);
+        return paid != null && !paid.isBlank() && !paid.equals(model) && !isDown(paid) ? paid : fallbackFor(agentId);
+    }
+
     public void recordSuccess(String model) {
         states.computeIfPresent(model, (k, s) -> s.down() ? s : State.UP);
     }

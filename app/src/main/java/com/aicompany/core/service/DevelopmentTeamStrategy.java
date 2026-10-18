@@ -247,11 +247,20 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 "Chequeos deterministas y revisión estática de " + validation.agentId() + ".");
 
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-9): los archivos del scaffold (Forjai) también son permitidos.
-        var allowedPaths = java.util.stream.Stream.concat(
+        var allowedPaths = new ArrayList<String>(java.util.stream.Stream.concat(
                 work.stream().flatMap(t -> t.ownedPathsOrEmpty().stream()),
                 java.util.stream.Stream.concat(
                         scaffold == null ? java.util.stream.Stream.<String>empty() : scaffold.files().stream(),
-                        forjaiFiles.stream())).toList();
+                        forjaiFiles.stream())).toList());
+        // Verificado en vivo (incremento 2): en una ronda, lo que ya estaba en el repositorio al empezar sigue permitido
+        // aunque su dueño no esté en el plan de esta ronda.
+        if (context.round() > 0 && scaffold != null) {
+            try {
+                allowedPaths.addAll(workspace.filesAtCommit(missionId, scaffold.commitSha()));
+            } catch (Exception ex) {
+                log.warn("MISSION {} - could not list the files of the previous round: {}", missionId, ex.getMessage());
+            }
+        }
         var components = plan.resolvedComponents();
         var checks = staticValidator.validate(missionId, committed, components, plan.contextNames(), allowedPaths,
                 forjaiFiles);
@@ -1112,13 +1121,27 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * Ronda de evidencia: el repositorio ya existe y los agentes corrigen encima del código actual. El scaffold no se
      * vuelve a commitear; sus archivos (deterministas) siguen siendo de Forjai y el punto de partida es el HEAD.
      */
+    /**
+     * Rondas: mismo repositorio. Verificado en vivo (MISSION-ARIA-CRM-1791093806, incremento 2): un contexto nuevo no tenía
+     * sus .csproj; Forjai commitea solo los archivos del scaffold que faltan (los existentes nunca se pisan).
+     */
     private CommittedWork existingScaffold(TeamMissionContext context) {
         var plan = context.plan();
-        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of()).stream()
-                .map(DevelopmentResult.GeneratedFile::path).toList();
+        var generated = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of());
+        var files = generated.stream().map(DevelopmentResult.GeneratedFile::path).toList();
         try {
-            return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai",
-                    workspace.headSha(context.missionId()), files);
+            var head = workspace.headSha(context.missionId());
+            var startHead = head;
+            var missing = generated.stream()
+                    .filter(file -> readOrNull(context.missionId(), startHead, file.path()) == null)
+                    .toList();
+            if (!missing.isEmpty()) {
+                var record = workspace.commitAgentWork(context.missionId(),
+                        context.missionId() + "-SCAFFOLD-R" + context.round(), "forjai", "Forjai",
+                        new DevelopmentResult("Proyectos .csproj de los contextos nuevos, generados por Forjai", missing));
+                head = record.sha();
+            }
+            return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai", head, files);
         } catch (Exception ex) {
             throw new IllegalStateException("No se pudo leer el repositorio de la ronda anterior: "
                     + safeMessage(ex, "error de Git"), ex);
@@ -1297,12 +1320,21 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
         }
         return result -> layerErrors(plan.resolvedComponents(), plan.contextNames(), head,
-                result.files() == null ? List.of() : result.files());
+                result.files() == null ? List.of() : result.files(), owned);
     }
 
-    /** Violaciones de capas DDD en los archivos devueltos, resueltas contra el resto del repositorio en HEAD. */
     static List<String> layerErrors(List<AppComponent> components, List<String> contexts, Map<String, String> head,
                                     List<DevelopmentResult.GeneratedFile> files) {
+        return layerErrors(components, contexts, head, files, List.of());
+    }
+
+    /**
+     * Violaciones de capas DDD en los archivos devueltos y, verificado en vivo (MISSION-ARIA-CRM-1791093806,
+     * incremento 2), en los archivos propios del agente que ya están en el repositorio (los dejó una corrida anterior):
+     * la dueña tiene que devolverlos corregidos. Resueltas contra el resto del repositorio en HEAD.
+     */
+    static List<String> layerErrors(List<AppComponent> components, List<String> contexts, Map<String, String> head,
+                                    List<DevelopmentResult.GeneratedFile> files, List<String> owned) {
         var contents = new LinkedHashMap<>(head);
         var returned = new java.util.HashSet<String>();
         for (var file : files) {
@@ -1322,10 +1354,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             for (var violation : com.aicompany.core.agent.validation.DddLayerChecker.check(component.profile(),
                     component.contexts(contexts), relative)) {
                 var path = component.prefix(violation.file());
+                var ownedHere = owned.stream().anyMatch(o -> path.equals(o) || path.startsWith(o.endsWith("/") ? o : o + "/"));
                 if (returned.contains(path)) {
                     errors.add(path + ": importa " + violation.dependency() + " (" + violation.reason() + "). "
                             + "Usa una interfaz en domain/application implementada en infrastructure y únelas en "
                             + "lib/main.dart.");
+                } else if (ownedHere) {
+                    errors.add(path + " (ya está en el repositorio y es tuyo): importa " + violation.dependency() + " ("
+                            + violation.reason() + "). Devuélvelo corregido: entre contextos solo se usa la capa "
+                            + "application; lo compartido entre pantallas va en lib/main.dart o en un módulo propio.");
                 }
             }
         }

@@ -122,4 +122,30 @@ class ApiKeyServiceTest {
         assertTrue(ex.getMessage().contains("FORJAI_SECRETS_KEY"), ex.getMessage());
         verify(engClient, never()).checkKey(any(), any());
     }
+
+    // Proveedores pagos (2026-10-04): la key de Bedrock se prueba con su propio modelo, nunca con los de NVIDIA.
+    @Test
+    void aPaidProviderKeyIsCheckedWithItsOwnModel() {
+        var bedrock = mock(OpenAiCompatibleClient.class);
+        when(bedrock.checkModels()).thenReturn(List.of("global.moonshotai.kimi-k3"));
+        when(bedrock.keyHint()).thenReturn("…ueva");
+        when(bedrock.checkKey("global.moonshotai.kimi-k3", "bedrock-nueva")).thenReturn(KeyCheck.OK);
+        var withAlibaba = new ApiKeyService(Map.of("bedrock", bedrock), memory, cipher, events, companyMemory);
+
+        withAlibaba.update("bedrock", "bedrock-nueva", "human");
+
+        verify(bedrock).checkKey("global.moonshotai.kimi-k3", "bedrock-nueva");
+        verify(bedrock, never()).checkKey(eq("nvidia/nemotron-3-ultra-550b-a55b"), anyString());
+        verify(bedrock).setApiKey("bedrock-nueva");
+    }
+
+    @Test
+    void theRejectionShowsTheProviderReason() {
+        when(ceoClient.checkKey(anyString(), anyString())).thenReturn(KeyCheck.UNAUTHORIZED);
+        when(ceoClient.lastCheckError()).thenReturn("HTTP 403: {\"code\":\"AccessDenied\"}");
+
+        var ex = assertThrows(IllegalArgumentException.class, () -> service.update("nvidia-ceo", "k", "human"));
+
+        assertTrue(ex.getMessage().contains("AccessDenied"), ex.getMessage());
+    }
 }

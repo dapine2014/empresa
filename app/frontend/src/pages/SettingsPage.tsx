@@ -144,8 +144,9 @@ function ApiKeysSection() {
     <>
       <h2>Keys de modelos</h2>
       <p className="hint">
-        Una key por proveedor de NVIDIA. Antes de guardarla se prueba con una llamada mínima; si NVIDIA la rechaza, se
-        conserva la anterior. Se guarda cifrada y nunca se vuelve a mostrar completa.
+        Una key por proveedor (NVIDIA y Amazon Bedrock, el respaldo pago cuando NVIDIA cae). Antes de guardarla se prueba con una llamada
+        mínima; si el proveedor la rechaza, se conserva la anterior. Se guarda cifrada y nunca se vuelve a mostrar
+        completa.
       </p>
       {isLoading && <p>Cargando keys...</p>}
       {error && <p className="error">No se pudieron cargar las keys.</p>}

@@ -35,6 +35,8 @@ public class CompanyMemoryInitializer {
     public void initializeAfterReady() {
         memory.initialize();
         memory.ensureLocalFallbacks();
+        // Decisión del fundador (2026-10-04): kimi gratis en NVIDIA; si cae, kimi en Bedrock (solo se siembra si falta).
+        memory.ensurePaidFallbacks("nvidia:moonshotai/kimi-k3", "bedrock:global.moonshotai.kimi-k3");
         missionMemory.backfillMissionEnvironment();
         teamMemory.ensureAllTeams();
         promptMemory.ensureDefaultPrompts();

@@ -283,6 +283,16 @@ public class MissionMemoryService {
         }
     }
 
+    /** Spec 2026-10-03 Aria §3: todos los planes del líder de la misión, del más viejo al más nuevo (incrementos). */
+    public List<String> teamPlanJsons(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_TASK]->(t:AgentTask {kind:'PLANNING', status:'COMPLETED'}) "
+                            + "WHERE t.result IS NOT NULL RETURN t.result AS r ORDER BY t.updatedAt ASC",
+                            Map.of("id", missionId))
+                    .list(r -> r.get("r").asString());
+        }
+    }
+
     /** Spec salud de modelos (2026-09-28): la tarea se hizo con el suplente local porque el modelo del agente cayó. */
     public void setTaskModelUsed(String taskId, String model) {
         try (var session = driver.session()) {

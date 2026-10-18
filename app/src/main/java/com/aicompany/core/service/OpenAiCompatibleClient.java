@@ -36,6 +36,39 @@ public class OpenAiCompatibleClient {
     private static final java.util.concurrent.ExecutorService CALLS =
             java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
 
+    private volatile String providerName = "nvidia";
+    private volatile boolean nvidiaOptions = true;
+    private volatile List<String> checkModels = List.of();
+    private volatile String thinkingOffParam = "";
+    private volatile Object thinkingOffValue = Boolean.FALSE;
+
+    /** Proveedores pagos (2026-10-04): nombre, si lleva las opciones de NVIDIA y con qué modelos se prueba una key. */
+    public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels) {
+        configure(providerName, nvidiaOptions, checkModels, "");
+    }
+
+    /** {@code thinkingOff}: "parámetro=valor" que apaga el razonamiento ("false"/"true" se mandan como booleanos). */
+    public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels, String thinkingOff) {
+        this.providerName = providerName;
+        this.nvidiaOptions = nvidiaOptions;
+        this.checkModels = List.copyOf(checkModels);
+        var parts = thinkingOff == null ? new String[0] : thinkingOff.split("=", 2);
+        this.thinkingOffParam = parts.length == 2 ? parts[0].strip() : "";
+        this.thinkingOffValue = parts.length == 2 ? parseValue(parts[1].strip()) : Boolean.FALSE;
+    }
+
+    private static Object parseValue(String value) {
+        return "false".equalsIgnoreCase(value) ? Boolean.FALSE : "true".equalsIgnoreCase(value) ? Boolean.TRUE : value;
+    }
+
+    public List<String> checkModels() {
+        return checkModels;
+    }
+
+    public String providerName() {
+        return providerName;
+    }
+
     public OpenAiCompatibleClient(RestClient client, String apiKey, Duration retryDelay) {
         this(client, client, apiKey, retryDelay);
     }
@@ -92,21 +125,42 @@ public class OpenAiCompatibleClient {
 
     public enum KeyCheck { OK, UNAUTHORIZED, UNAVAILABLE }
 
+    private volatile String lastCheckError = "";
+
+    /** Verificado en vivo (2026-10-04): el motivo del proveedor en la última prueba de key, sin la key. */
+    public String lastCheckError() {
+        return lastCheckError;
+    }
+
+    static String redactedReason(String reason, String key) {
+        var text = key == null || key.isBlank() ? reason : reason.replace(key, "****");
+        text = text.replaceAll("\\s+", " ").strip();
+        return text.length() > 300 ? text.substring(0, 300) + "…" : text;
+    }
+
     /** Prueba una key candidata con una llamada mínima, sin tocar la vigente; nunca lanza ni loguea la key. */
     public KeyCheck checkKey(String model, String candidate) {
+        lastCheckError = "";
         try {
             var body = new LinkedHashMap<String, Object>();
             body.put("model", model);
             body.put("messages", List.of(Map.of("role", "user", "content", "Responde solo: ok")));
             body.put("max_tokens", 10);
-            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            if (nvidiaOptions) {
+                body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            }
+            if (!thinkingOffParam.isBlank()) {
+                body.put(thinkingOffParam, thinkingOffValue);
+            }
             probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + candidate)
                     .body(body).retrieve().body(Map.class);
             return KeyCheck.OK;
         } catch (org.springframework.web.client.HttpClientErrorException ex) {
             var status = ex.getStatusCode().value();
+            lastCheckError = redactedReason("HTTP " + status + ": " + ex.getResponseBodyAsString(), candidate);
             return status == 401 || status == 403 ? KeyCheck.UNAUTHORIZED : KeyCheck.UNAVAILABLE;
         } catch (Exception ex) {
+            lastCheckError = redactedReason(String.valueOf(ex.getMessage()), candidate);
             return KeyCheck.UNAVAILABLE;
         }
     }
@@ -119,7 +173,12 @@ public class OpenAiCompatibleClient {
             body.put("model", model);
             body.put("messages", List.of(Map.of("role", "user", "content", "Responde solo: ok")));
             body.put("max_tokens", 10);
-            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            if (nvidiaOptions) {
+                body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+            }
+            if (!thinkingOffParam.isBlank()) {
+                body.put(thinkingOffParam, thinkingOffValue);
+            }
             var response = probeClient.post().uri("/chat/completions").header("Authorization", "Bearer " + apiKey)
                     .body(body).retrieve().body(Map.class);
             var choices = response == null ? null : (List<Object>) response.get("choices");
@@ -131,9 +190,15 @@ public class OpenAiCompatibleClient {
 
     /** Respuesta remota: content y tool_calls ya en formato Ollama ({"function": {"name", "arguments": Map}}). */
     /** finishReason: "stop", "length" (cortada por el límite de salida), "tool_calls"… o null si no vino. */
-    public record RemoteReply(String content, List<Map<String, Object>> toolCalls, String finishReason) {
+    /** {@code usage}: tokens de la llamada (costo real por misión, 2026-10-04). */
+    public record RemoteReply(String content, List<Map<String, Object>> toolCalls, String finishReason,
+                              com.aicompany.core.model.TokenUsage usage) {
         public RemoteReply(String content, List<Map<String, Object>> toolCalls) {
             this(content, toolCalls, null);
+        }
+
+        public RemoteReply(String content, List<Map<String, Object>> toolCalls, String finishReason) {
+            this(content, toolCalls, finishReason, com.aicompany.core.model.TokenUsage.ZERO);
         }
     }
 
@@ -153,7 +218,8 @@ public class OpenAiCompatibleClient {
                                 boolean json, int maxTokens) {
 
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Falta NVIDIA_API_KEY para usar el modelo remoto " + model + ".");
+            throw new IllegalStateException("Falta la key del proveedor " + providerName + " para usar el modelo remoto "
+                    + model + " (cárgala en Settings → Keys de modelos).");
         }
 
         var body = new LinkedHashMap<String, Object>();
@@ -161,7 +227,12 @@ public class OpenAiCompatibleClient {
         body.put("messages", toOpenAi(messages));
         body.put("max_tokens", maxTokens);
         body.put("temperature", 0.2);
-        body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+        if (nvidiaOptions) {
+            body.put("chat_template_kwargs", Map.of("thinking", false, "enable_thinking", false));
+        }
+        if (!thinkingOffParam.isBlank()) {
+            body.put(thinkingOffParam, thinkingOffValue);
+        }
         if (json) {
             body.put("response_format", Map.of("type", "json_object"));
         }
@@ -190,7 +261,8 @@ public class OpenAiCompatibleClient {
                 var rawCalls = message == null ? null : message.get("tool_calls");
                 var finishReason = choices.get(0).get("finish_reason");
                 return new RemoteReply(content == null ? "" : String.valueOf(content), toOllamaToolCalls(rawCalls),
-                        finishReason == null ? null : String.valueOf(finishReason));
+                        finishReason == null ? null : String.valueOf(finishReason),
+                        com.aicompany.core.model.TokenUsage.fromOpenAi(response.get("usage")));
             } catch (RestClientResponseException ex) {
                 var status = ex.getStatusCode().value();
                 var detail = "Modelo remoto " + model + " respondió HTTP " + status + ": "

@@ -3,6 +3,7 @@ package com.aicompany.core.model;
 public enum MissionStatus {
     CREATED,
     PLANNING,
+    AWAITING_SPEC_APPROVAL,
     DELEGATING,
     RESEARCHING,
     EVALUATING,

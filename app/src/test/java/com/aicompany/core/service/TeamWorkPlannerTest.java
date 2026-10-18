@@ -368,4 +368,24 @@ class TeamWorkPlannerTest {
         assertTrue(prompt.getValue().contains("citas-dev-aws"), prompt.getValue());
         assertFalse(prompt.getValue().contains("rds.amazonaws.com"), prompt.getValue());
     }
+
+    // Verificado en vivo (MISSION-ARIA-CRM-1791093806, incremento 2): en un incremento se conserva el producto existente
+    // (contextos del plan anterior) y Mila recibe también las rutas del contexto viejo.
+    @Test
+    void anIncrementKeepsThePreviousContextsAndTellsNeo() {
+        when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(engineering());
+        var prompt = ArgumentCaptor.forClass(String.class);
+        var next = new TeamPlan("Despedida", null, null, dddPlan().tasks(), List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("despedida", "Despedir al usuario")), dddPlan().ubiquitousLanguage());
+        when(ceoService.planTeamWork(eq("engineering"), prompt.capture(), anyString(), anyString())).thenReturn(next);
+
+        var result = planner.plan("M-1", "TEAM-DEVELOPMENT", "Despedida", TeamExecutionMode.DEVELOPMENT, 2, dddPlan());
+
+        assertTrue(prompt.getValue().contains("PRODUCTO EXISTENTE") && prompt.getValue().contains("saludo"), prompt.getValue());
+        assertEquals(List.of("saludo", "despedida"), result.plan().contextNames());
+        var mila = result.plan().tasksOrEmpty().stream().filter(t -> t.agentId().equals("frontend-ui")).findFirst().orElseThrow();
+        assertTrue(mila.ownedPaths().contains("lib/saludo/domain") && mila.ownedPaths().contains("lib/despedida/domain"),
+                mila.ownedPaths().toString());
+        verify(memory).createTask("M-1-ENGINEERING-PLAN-R2", "M-1", "engineering", "TEAM_PLANNING", "PLANNING");
+    }
 }

@@ -254,4 +254,16 @@ class CompanyControllerTest {
         assertThrows(IllegalArgumentException.class,
                 () -> controller.updateAgentModel("ghost", new AgentModelCommand("llama3:8b")));
     }
+
+    // Decisión del fundador (2026-10-04): respaldo pago editable en Agents.
+    @Test
+    void thePaidFallbackIsCheckedAndSaved() {
+        doThrow(new IllegalArgumentException("El respaldo pago debe ser remoto")).when(ceoService).checkPaidFallbackModel("qwen3:8b");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> controller.updateAgentPaidFallbackModel("qa", new AgentModelCommand("qwen3:8b")));
+        controller.updateAgentPaidFallbackModel("qa", new AgentModelCommand("bedrock:global.moonshotai.kimi-k3"));
+
+        verify(memory).setAgentPaidFallbackModel("qa", "bedrock:global.moonshotai.kimi-k3");
+    }
 }

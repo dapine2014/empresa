@@ -455,7 +455,8 @@ class MissionServiceTest {
 
         service.start("MISSION-7", "Hola mundo", "PRODUCTION", null, "TEAM-DEVELOPMENT");
 
-        verify(availability).requireEnabled(List.of("ceo", "engineering"), "iniciar una misión de TEAM-DEVELOPMENT");
+        // Spec 2026-10-03 Aria §4: el Development Group también necesita a Aria encendida.
+        verify(availability).requireEnabled(List.of("ceo", "engineering", "product-owner"), "iniciar una misión de TEAM-DEVELOPMENT");
     }
 
     @Test
