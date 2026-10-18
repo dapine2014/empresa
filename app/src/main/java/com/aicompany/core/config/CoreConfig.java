@@ -76,7 +76,7 @@ public class CoreConfig {
                     RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(probeFactory).build(),
                     provider.apiKey(), java.time.Duration.ofSeconds(10), provider.totalTimeout(totalTimeout));
             client.configure(provider.name(), provider.nvidiaOptions(), provider.checkModels(),
-                    provider.thinkingOff());
+                    provider.thinkingOff(), provider.promptCacheOff());
             clients.put(provider.name(), client);
         }
         return clients;

@@ -1204,3 +1204,22 @@ Prueba en vivo del paso `package` con podman sin red sobre el commit `dd0a0e0` d
 Revisión final (tanda de correcciones, 2026-10-18): el paso `package` pasa a 1800 s (300 s por target y tope global de 1700 s en `run.sh`; lo que no entra queda «FAIL: sin tiempo») y el job `PACKAGE` usa su propio read timeout en company-core (`sandbox.runner.package-timeout`, 40 min) porque restore 300 s + package 1800 s no entraban en los 30 min del cliente. «Generar entrega» usa el incremento guardado junto al commit VERIFIED (`Mission.verifiedIncrement`; en misiones anteriores, el último construido) y se rechaza con la misión trabajando. Re-verificado con podman sin red sobre `dd0a0e0` con la imagen `godot-dotnet-game:3` reconstruida: windows, macos, linux y android-apk PASS en 114 s; un `android-aab` fallido no deja restos en `juego/android/`, y con el reloj cerca del tope el target siguiente queda «FAIL: sin tiempo».
 
 La verificación de punta a punta con el despliegue (Step 5) la hace el controlador y se registra aquí después.
+
+## Bedrock: caché de prompts apagado (2026-10-18)
+
+El fundador vio el gasto de AWS en US$ 23 y pidió saber por qué. Cost Explorer lo repartía así:
+
+- Bedrock, US$ 20,31: US$ 17,90 del Pong del 17 de octubre y US$ 2,22 de la misión de Aria del CRM del 5.
+- RDS, US$ 2,10: una base `db.t3.micro` que corrió del 1 al 4 de octubre y ya estaba borrada.
+- EC2, US$ 1,31: el disco de 30 GB de la instancia detenida `iniciativa-staging-app`, que no es de Forjai.
+
+Forjai había registrado US$ 17,55, un 15 % menos que lo que cobró AWS. AWS cobraba la entrada de kimi-k3 como «cache write (30 min)» a US$ 3,75 por millón, mientras Forjai la calculaba a US$ 3. Bedrock pone un marcador de caché automático en el último mensaje, así que cada llamada escribía en caché el prompt entero. El 17 de octubre se escribieron 3,38 millones de tokens en caché y se leyeron solo 44.000, porque cada llamada empieza distinto (otro agente, otra ronda, otros errores).
+
+Lo verificamos en vivo con dos llamadas iguales de 3.600 tokens:
+
+| Pedido | `cache_write_tokens` |
+|---|---|
+| Sin opciones | 3.633 |
+| Con `"prompt_cache_options": {"mode": "explicit"}` y sin marcadores | 0 |
+
+El fundador aprobó el cambio. El proveedor `bedrock` ahora lleva `prompt-cache-off: true`, y `OpenAiCompatibleClient` agrega ese parámetro en cada llamada de chat. La entrada vuelve a cobrarse a US$ 3 por millón, que es el precio que ya usa Forjai, así que el costo por misión y el tope de costo de la misión coinciden con AWS.

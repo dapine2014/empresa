@@ -101,6 +101,38 @@ class OpenAiCompatibleClientTest {
         server.verify();
     }
 
+    // Verificado en vivo (2026-10-18, Bedrock kimi-k3): por defecto cada llamada escribe el prompt entero en caché (cobrado
+    // a 1,25× la entrada) y casi nunca se relee; prompt_cache_options.mode=explicit sin marcadores lo apaga.
+    @Test
+    void bedrockTurnsThePromptCacheOff() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.prompt_cache_options.mode").value("explicit"))
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("bedrock", false, List.of("global.moonshotai.kimi-k3"), "reasoning_effort=none", true);
+
+        client.chat("global.moonshotai.kimi-k3", MESSAGES, true, 100);
+        server.verify();
+    }
+
+    @Test
+    void withoutTheOptionThePromptCacheIsUntouched() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.prompt_cache_options").doesNotExist())
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("nvidia", true, List.of("m"), "");
+
+        client.chat("m", MESSAGES, true, 100);
+        server.verify();
+    }
+
     // Costo real por misión (2026-10-04): la respuesta trae los tokens usados.
     @Test
     void theReplyCarriesTheTokenUsage() {

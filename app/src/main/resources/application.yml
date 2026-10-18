@@ -125,6 +125,9 @@ remote-models:
       check-models: global.moonshotai.kimi-k3
       # Verificado en vivo (2026-10-04): kimi-k3 en Bedrock razona por defecto; reasoning_effort=none lo apaga.
       thinking-off: reasoning_effort=none
+      # Verificado en vivo (2026-10-18): sin esto Bedrock escribe cada prompt en caché a 1,25× la entrada y casi nunca lo
+      # relee; con prompt_cache_options.mode=explicit (sin marcadores) no hay escrituras ni recargo.
+      prompt-cache-off: true
       # Costo real por misión (2026-10-04): US$ por millón de tokens de kimi-k3 en Bedrock (perfil global).
       price:
         input: 3.0
