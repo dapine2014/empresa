@@ -594,21 +594,41 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         if (status == StaticValidationStatus.VERIFIED) {
             // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
-            memory.recordVerifiedCommit(missionId, headSha);
+            // Entrega (revisión final, 2): con el número del incremento que verificó.
+            Integer inc = null;
+            var incrementError = "";
+            try {
+                inc = currentIncrement(missionId);
+            } catch (Exception ex) {
+                incrementError = safeMessage(ex, "sin detalle");
+                log.warn("MISSION {} - current increment unreadable: {}", missionId, incrementError);
+            }
+            memory.recordVerifiedCommit(missionId, headSha, inc);
             if (deliveryService != null) {
-                try {
-                    var inc = Math.max(1, requirementsMemory == null ? 1 : requirementsMemory.currentIncrement(missionId));
-                    progress.advance(MissionStatus.EVALUATING, 90, "Entrega", "Empaquetando el incremento " + inc + " para entregar.");
-                    var delivery = deliveryService.deliver(missionId, inc, headSha, plan.stackProfile(), repairRounds, sandboxResult);
-                    if (delivery != null) {
-                        deliveryText = delivery.status() + " — "
-                                + (delivery.path() == null || delivery.path().isBlank() ? delivery.error() : delivery.path());
+                if (inc == null) {
+                    deliveryText = "FAILED — " + incrementError;
+                } else {
+                    try {
+                        progress.advance(MissionStatus.EVALUATING, 90, "Entrega", "Empaquetando el incremento " + inc + " para entregar.");
+                        var delivery = deliveryService.deliver(missionId, inc, headSha, plan.stackProfile(), repairRounds, sandboxResult);
+                        if (delivery != null) {
+                            deliveryText = delivery.status() + " — "
+                                    + (delivery.path() == null || delivery.path().isBlank() ? delivery.error() : delivery.path());
+                        }
+                    } catch (MissionCancellations.MissionCancelledException ex) {
+                        throw ex;
+                    } catch (Exception ex) {
+                        // La entrega nunca cambia la validación (spec 2026-10-17).
+                        log.warn("MISSION {} - delivery step failed: {}", missionId, safeMessage(ex, "sin detalle"));
+                        deliveryText = "FAILED — " + safeMessage(ex, "sin detalle");
                     }
-                } catch (Exception ex) {
-                    // La entrega nunca cambia la validación (spec 2026-10-17).
-                    log.warn("MISSION {} - delivery step failed: {}", missionId, safeMessage(ex, "sin detalle"));
-                    deliveryText = "FAILED — " + safeMessage(ex, "sin detalle");
                 }
+            }
+        } else if (deliveryService != null) {
+            // Revisión final (4): una entrega que un reinicio dejó en PACKAGING y cuya retoma no quedó VERIFIED queda FAILED.
+            var inc = currentIncrementOrNull(missionId);
+            if (inc != null) {
+                deliveryService.abandonInterrupted(missionId, inc);
             }
         }
 
@@ -784,7 +804,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         events.publishTask("EMPRESA_TASK_COMPLETED", validationTaskId, missionId, HUMAN_VERIFY_AGENT, "COMPLETED",
                 "Verificación humana del commit " + headSha + ".");
         if (status == StaticValidationStatus.VERIFIED) {
-            memory.recordVerifiedCommit(missionId, headSha);
+            memory.recordVerifiedCommit(missionId, headSha, currentIncrementOrNull(missionId));
         }
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
         events.publish("EMPRESA_STATIC_VALIDATION_COMPLETED", missionId, validationTaskId, HUMAN_VERIFY_AGENT,
@@ -1602,6 +1622,21 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     private com.aicompany.core.delivery.DeliveryService deliveryService;
+
+    /** El incremento en construcción o el último construido (mínimo 1). */
+    private int currentIncrement(String missionId) {
+        return Math.max(1, requirementsMemory == null ? 1 : requirementsMemory.currentIncrement(missionId));
+    }
+
+    /** Como {@link #currentIncrement}, pero null si no se pudo leer. */
+    private Integer currentIncrementOrNull(String missionId) {
+        try {
+            return currentIncrement(missionId);
+        } catch (Exception ex) {
+            log.warn("MISSION {} - current increment unreadable: {}", missionId, safeMessage(ex, "sin detalle"));
+            return null;
+        }
+    }
 
     /** Entrega del producto (spec 2026-10-17): empaqueta el incremento al quedar VERIFIED (opcional en tests). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)

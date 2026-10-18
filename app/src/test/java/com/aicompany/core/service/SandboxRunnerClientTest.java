@@ -110,4 +110,23 @@ class SandboxRunnerClientTest {
         assertTrue(client.packageJob("M-1", "a".repeat(40), "DOTNET_APP", 1, java.util.List.of("windows"), null).isEmpty());
         assertNotNull(client.lastError());
     }
+
+    // Revisión final (5): el job PACKAGE va por su propio cliente (timeout de 40 min) y trae la carpeta del job.
+    @Test
+    void packageJobUsesItsOwnClientAndReadsTheJobStagingDir() {
+        var verifyBuilder = RestClient.builder().baseUrl("http://runner");
+        var verifyServer = MockRestServiceServer.bindTo(verifyBuilder).build();
+        var packageBuilder = RestClient.builder().baseUrl("http://runner");
+        var packageServer = MockRestServiceServer.bindTo(packageBuilder).build();
+        packageServer.expect(requestTo("http://runner/jobs")).andExpect(jsonPath("$.jobType").value("PACKAGE"))
+                .andRespond(withSuccess("{\"overall\":\"PASS\",\"steps\":[],\"stagingDir\":\"incremento-1-abc\"}",
+                        MediaType.APPLICATION_JSON));
+
+        var client = new SandboxRunnerClient(verifyBuilder.build(), packageBuilder.build(), "t0k");
+        var result = client.packageJob("M-1", "a".repeat(40), "DOTNET_APP", 1, java.util.List.of("app"), null);
+
+        assertEquals("incremento-1-abc", result.orElseThrow().stagingDir());
+        packageServer.verify();
+        verifyServer.verify();
+    }
 }

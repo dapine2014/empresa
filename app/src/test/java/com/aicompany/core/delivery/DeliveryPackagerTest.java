@@ -53,7 +53,14 @@ class DeliveryPackagerTest {
         assertTrue(names.containsAll(List.of("ENTREGA.md", "juego/linux/Juego.x86_64", "codigo-fuente/README.md",
                 "codigo-fuente.bundle", "base-de-datos/migraciones/V1__crear.sql")), names.toString());
         assertFalse(Files.exists(staging));
-        assertFalse(Files.exists(zip.resolveSibling("incremento-2.zip.part")));
+        assertEquals(List.of(), leftovers());
+    }
+
+    /** Todo lo que no es un zip terminado: .part, temporales y staging. */
+    List<Path> leftovers() throws IOException {
+        try (var walk = Files.walk(tmp.resolve("entregas"))) {
+            return walk.filter(Files::isRegularFile).filter(p -> !p.toString().endsWith(".zip")).toList();
+        }
     }
 
     @Test
@@ -107,5 +114,82 @@ class DeliveryPackagerTest {
     @Test
     void aMissionIdWithPathTraversalIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> packager.zipPath("../x", 1));
+    }
+
+    // Revisión final (1): del staging solo entran juego/ y app/; nombres peligrosos y repetidos se omiten.
+    @Test
+    void stagingEntriesOutsideTheBuildsOrWithUnsafeNamesAreSkippedAndDuplicatesNeverBreakTheZip() throws Exception {
+        var staging = packager.stagingDir("M-1", 1, "incremento-1-" + java.util.UUID.randomUUID());
+        Files.createDirectories(staging.resolve("juego/windows"));
+        Files.writeString(staging.resolve("juego/windows/Juego.exe"), "exe");
+        Files.writeString(staging.resolve("juego/windows/..\\..\\..\\fuera.txt"), "zip-slip");
+        Files.writeString(staging.resolve("juego/windows/con\u0007control"), "x");
+        Files.writeString(staging.resolve("ENTREGA.md"), "falsa");
+        Files.createDirectories(staging.resolve("docker"));
+        Files.writeString(staging.resolve("docker/Dockerfile"), "FROM evil");
+        Files.createDirectories(staging.resolve("base-de-datos"));
+        Files.writeString(staging.resolve("base-de-datos/LEEME.md"), "falso");
+        Files.createDirectories(staging.resolve("app"));
+        Files.writeString(staging.resolve("app/index.html"), "<html>");
+
+        var zip = packager.assemble(new DeliveryPackager.Assembly("M-1", 1, sha, "FLUTTER_WEB_APP", staging, "# real",
+                Map.of("docker/Dockerfile", "FROM nginx", "base-de-datos/LEEME.md", "# real"), Map.of()));
+
+        var names = zipEntries(zip);
+        assertTrue(names.containsAll(List.of("juego/windows/Juego.exe", "app/index.html", "docker/Dockerfile")), names.toString());
+        assertTrue(names.stream().noneMatch(n -> n.contains("..") || n.contains("\\") || n.contains("\u0007")), names.toString());
+        assertEquals(names.size(), new java.util.HashSet<>(names).size(), names.toString());
+        try (var z = new ZipFile(zip.toFile())) {
+            assertEquals("# real", new String(z.getInputStream(z.getEntry("ENTREGA.md")).readAllBytes()));
+            assertEquals("FROM nginx", new String(z.getInputStream(z.getEntry("docker/Dockerfile")).readAllBytes()));
+            assertEquals("# real", new String(z.getInputStream(z.getEntry("base-de-datos/LEEME.md")).readAllBytes()));
+        }
+    }
+
+    @Test
+    void unsafeEntryNamesAreDetected() {
+        for (var bad : List.of("..\\..\\x", "a/../b", "/abs", "a//b", "./a", "a/\u0001b", "")) {
+            assertFalse(DeliveryPackager.safeEntryName(bad), bad);
+        }
+        assertTrue(DeliveryPackager.safeEntryName("juego/windows/data_Juego_windows_x86_64/Godot.dll"));
+    }
+
+    // Revisión final (3): la carpeta del job debe ser de este incremento; nunca una ruta libre.
+    @Test
+    void theJobStagingNameMustBelongToTheIncrement() {
+        var job = "incremento-2-" + java.util.UUID.randomUUID();
+        assertEquals(tmp.resolve("entregas/.staging/M-1").resolve(job).toAbsolutePath().normalize(),
+                packager.stagingDir("M-1", 2, job));
+        assertEquals(packager.stagingDir("M-1", 2), packager.stagingDir("M-1", 2, null));
+        assertThrows(IllegalArgumentException.class, () -> packager.stagingDir("M-1", 2, "../../etc"));
+        assertThrows(IllegalArgumentException.class, () -> packager.stagingDir("M-1", 2, "incremento-1-" + java.util.UUID.randomUUID()));
+    }
+
+    // Revisión final (4): el .part vive en .staging; un armado fallido no deja nada y borra el staging del job.
+    @Test
+    void aFailedAssemblyLeavesNothingBehindAndDiscardsTheJobStaging() throws Exception {
+        var staging = packager.stagingDir("M-1", 1, "incremento-1-" + java.util.UUID.randomUUID());
+        Files.createDirectories(staging.resolve("juego/linux"));
+        Files.writeString(staging.resolve("juego/linux/Juego.x86_64"), "bin");
+        assertThrows(IOException.class, () -> packager.assemble(new DeliveryPackager.Assembly("M-1", 1, "f".repeat(40),
+                "GODOT_DOTNET_GAME", staging, "# doc", Map.of(), Map.of())));
+        assertFalse(Files.exists(staging));
+        assertEquals(List.of(), leftovers());
+    }
+
+    @Test
+    void orphansFromAnotherProcessAndOldRunnerStagingAreCleanedAtStartup() throws Exception {
+        var mission = Files.createDirectories(tmp.resolve("entregas/.staging/M-1"));
+        Files.writeString(mission.resolve("incremento-1-otro-proceso.zip.part"), "a medias");
+        Files.createDirectories(mission.resolve("src-1-otro-proceso"));
+        var old = Files.createDirectories(mission.resolve("incremento-1-" + java.util.UUID.randomUUID()));
+        Files.setLastModifiedTime(old, java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofHours(2))));
+        var fresh = Files.createDirectories(mission.resolve("incremento-2-" + java.util.UUID.randomUUID()));
+
+        packager.cleanOrphans();
+
+        try (var left = Files.list(mission)) {
+            assertEquals(List.of(fresh.getFileName().toString()), left.map(p -> p.getFileName().toString()).toList());
+        }
     }
 }

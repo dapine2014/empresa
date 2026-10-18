@@ -34,12 +34,18 @@ public class CoreConfig {
     com.aicompany.core.service.SandboxRunnerClient sandboxRunnerClient(
             @Value("${sandbox.runner.url}") String url,
             @Value("${sandbox.runner.token:}") String token,
-            @Value("${sandbox.runner.timeout:30m}") java.time.Duration timeout) {
+            @Value("${sandbox.runner.timeout:30m}") java.time.Duration timeout,
+            @Value("${sandbox.runner.package-timeout:40m}") java.time.Duration packageTimeout) {
         var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(java.time.Duration.ofSeconds(10));
         factory.setReadTimeout(timeout);
+        // Entrega del producto (revisión final, 5): restore 300 s + package 1800 s (+ checkout y copia) no entran en 30 min.
+        var packageFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        packageFactory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+        packageFactory.setReadTimeout(packageTimeout);
         return new com.aicompany.core.service.SandboxRunnerClient(
-                RestClient.builder().baseUrl(url).requestFactory(factory).build(), token);
+                RestClient.builder().baseUrl(url).requestFactory(factory).build(),
+                RestClient.builder().baseUrl(url).requestFactory(packageFactory).build(), token);
     }
 
     /**

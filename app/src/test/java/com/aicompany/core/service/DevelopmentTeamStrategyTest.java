@@ -315,6 +315,60 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains("Entrega: FAILED — neo4j caído"), result.verifiableState());
     }
 
+    // Entrega (revisión final, 2): el commit VERIFIED se guarda con el número del incremento que verificó.
+    @Test
+    void theVerifiedCommitIsRecordedWithItsIncrement() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        strategy.setDeliveryService(delivery);
+        var reqs = mock(RequirementsMemoryService.class);
+        when(reqs.currentIncrement("M-1")).thenReturn(2);
+        strategy.setRequirements(reqs);
+
+        strategy.execute(context(), progress);
+
+        verify(memory).recordVerifiedCommit("M-1", SHA_NEO, 2);
+        verify(delivery).deliver(eq("M-1"), eq(2), eq(SHA_NEO), anyString(), anyInt(), any());
+        verify(delivery, never()).abandonInterrupted(anyString(), anyInt());
+    }
+
+    // Entrega (revisión final, 12): cancelar la misión durante la entrega corta la misión, no se traga.
+    @Test
+    void aCancellationDuringTheDeliveryIsRethrown() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        when(delivery.deliver(any(), anyInt(), any(), any(), anyInt(), any()))
+                .thenThrow(new MissionCancellations.MissionCancelledException("M-1"));
+        strategy.setDeliveryService(delivery);
+
+        assertThrows(MissionCancellations.MissionCancelledException.class, () -> strategy.execute(context(), progress));
+    }
+
+    // Entrega (revisión final, 4): una validación que no queda VERIFIED cierra la entrega que un reinicio dejó a medias.
+    @Test
+    void aValidationThatIsNotVerifiedAbandonsAnInterruptedDelivery() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        var failed = new com.aicompany.core.database.DatabaseApplyService.EnvironmentResult(
+                "citas-prod", "PRODUCTION", List.of(1), 2, "columna x no existe", false);
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(failed), com.aicompany.core.database.DatabaseApplyService.Outcome.NEEDS_CORRECTION, "falló"));
+        strategy.setDatabaseApply(apply);
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        strategy.setDeliveryService(delivery);
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        verify(delivery, never()).deliver(any(), anyInt(), any(), any(), anyInt(), any());
+        verify(delivery, atLeastOnce()).abandonInterrupted("M-1", 1);
+    }
+
     @Test
     void theReviewReceivesTheRealSandboxResults() throws Exception {
         stubHappyPath();
@@ -1033,7 +1087,7 @@ class DevelopmentTeamStrategyTest {
 
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"),
                 argThat(json -> json.contains("DATABASE_APPLIED") && !json.contains("\"FAIL\"")));
-        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
     }
 
     // Spec Diego ambientes §2: un ambiente fallido es un chequeo FAIL, la validación FAILED y no hay commit verificado.
@@ -1055,7 +1109,7 @@ class DevelopmentTeamStrategyTest {
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"), argThat(json -> json.contains("DATABASE_APPLIED")
                 && json.contains("PRODUCTION") && json.contains("citas-prod") && json.contains("V2")
                 && json.contains("columna x no existe")));
-        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
         assertTrue(result.verifiableState().contains("falló"), result.verifiableState());
     }
 
@@ -1149,7 +1203,7 @@ class DevelopmentTeamStrategyTest {
         var result = executeWithDatabase();
 
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
-        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
         assertTrue(result.verifiableState().contains("aplica el esquema de M-1"), result.verifiableState());
         verifyNoInteractions(dbApplier, dbMail);
     }
@@ -1165,7 +1219,7 @@ class DevelopmentTeamStrategyTest {
 
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"),
                 argThat(json -> json.contains("DATABASE_APPLIED") && json.contains("syntax error")));
-        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
         verify(dbApplier, never()).apply(eq(DB_PROD), any(), anyList(), any(), any());
         verifyNoInteractions(dbMail);
     }
@@ -1180,7 +1234,7 @@ class DevelopmentTeamStrategyTest {
         var result = executeWithDatabase();
 
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
-        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
         assertTrue(result.verifiableState().contains("problema del ambiente")
                 && result.verifiableState().contains("aplica el esquema de M-1"), result.verifiableState());
         assertFalse(result.verifiableState().contains("test.secreto.example"), result.verifiableState());
@@ -1200,7 +1254,7 @@ class DevelopmentTeamStrategyTest {
         var result = executeWithDatabase();
 
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
-        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
         assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
         verify(dbMail).send(contains("M-1"), anyString(), eq(true));
     }
@@ -1229,7 +1283,7 @@ class DevelopmentTeamStrategyTest {
         var result = executeWithDatabase();
 
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
-        verify(memory).recordVerifiedCommit(eq("M-1"), anyString());
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
         assertTrue(result.verifiableState().contains("neo4j caído"), result.verifiableState());
     }
 
@@ -1737,7 +1791,7 @@ class DevelopmentTeamStrategyTest {
         verify(memory).updateTask(eq("M-1-HUMAN-VERIFY-1"), eq("COMPLETED"), argThat(r -> r.contains("✅ ESC-01")));
         verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("VERIFIED"),
                 argThat(json -> json.contains("SCENARIO_COVERAGE") && json.contains("TEST_SUITE_GROWTH")));
-        verify(memory).recordVerifiedCommit("M-1", head);
+        verify(memory).recordVerifiedCommit("M-1", head, 1);
         assertTrue(result.verifiableState().contains(head), result.verifiableState());
     }
 
@@ -1933,7 +1987,7 @@ class DevelopmentTeamStrategyTest {
         verifyNoInteractions(runtime);
         verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"),
                 argThat(json -> json.contains("DATABASE_APPLIED") && json.contains("syntax error")));
-        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
         assertTrue(result.verifiableState().contains("Base de datos:"), result.verifiableState());
     }
 
@@ -1971,7 +2025,7 @@ class DevelopmentTeamStrategyTest {
 
         var order = inOrder(dbApplier, memory);
         order.verify(dbApplier).apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head));
-        order.verify(memory).recordVerifiedCommit("M-1", head);
+        order.verify(memory).recordVerifiedCommit("M-1", head, 1);
         verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("VERIFIED"),
                 argThat(json -> json.contains("DATABASE_APPLIED") && !json.contains("\"FAIL\"")));
     }
@@ -1992,7 +2046,7 @@ class DevelopmentTeamStrategyTest {
         verify(workspace, never()).dropHeadCommit(anyString());
         verify(memory).updateTask(eq("M-1-HUMAN-VERIFY-1"), eq("COMPLETED"), argThat(r -> r.contains("sin commit")));
         verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"), anyString());
-        verify(memory, never()).recordVerifiedCommit(anyString(), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
         assertTrue(result.verifiableState().contains("sin commit"), result.verifiableState());
     }
 

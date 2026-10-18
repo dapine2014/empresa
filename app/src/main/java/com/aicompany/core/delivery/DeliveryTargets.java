@@ -14,6 +14,9 @@ public final class DeliveryTargets {
     public static final String NO_AAB_WITHOUT_KEY = "Sin .aab para Google Play: falta la clave de publicación de Android "
             + "del proyecto (cárgala en la misión → Entregas → Clave de Android y genera la entrega de nuevo).";
 
+    public static final String NO_DOCKER_GAME = "Sin versión Docker: un juego de escritorio y Android no se publica "
+            + "como contenedor.";
+
     public record Plan(List<String> targets, List<String> limitations) { }
 
     private DeliveryTargets() { }
@@ -35,6 +38,7 @@ public final class DeliveryTargets {
                     else if (lastIncrement) limits.add(NO_AAB_WITHOUT_KEY);
                 }
                 if (asked.isEmpty() || asked.contains("WEB")) limits.add(0, NO_WEB_CSHARP);
+                if (asked.contains("DOCKER")) limits.add(NO_DOCKER_GAME);
             }
             case "FLUTTER_WEB_APP" -> targets.add("web");
             case "DOTNET_APP" -> targets.add("app");

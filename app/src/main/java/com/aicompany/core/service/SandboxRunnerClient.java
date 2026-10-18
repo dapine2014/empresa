@@ -20,11 +20,21 @@ public class SandboxRunnerClient {
     private static final Logger log = LoggerFactory.getLogger(SandboxRunnerClient.class);
 
     private final RestClient client;
+    private final RestClient packageClient;
     private final String token;
     private volatile String lastError;
 
     public SandboxRunnerClient(RestClient client, String token) {
+        this(client, client, token);
+    }
+
+    /**
+     * {@code packageClient}: el del job PACKAGE, con su propio read timeout (restore 300 s + package 1800 s no entran en
+     * los 30 min de {@code sandbox.runner.timeout}; revisión final, 5).
+     */
+    public SandboxRunnerClient(RestClient client, RestClient packageClient, String token) {
         this.client = client;
+        this.packageClient = packageClient;
         this.token = token;
     }
 
@@ -89,7 +99,7 @@ public class SandboxRunnerClient {
                 body.put("androidRelease", Map.of("keystoreBase64", release.keystoreBase64(),
                         "alias", release.alias(), "password", release.password()));
             }
-            var result = client.post().uri("/jobs")
+            var result = packageClient.post().uri("/jobs")
                     .header("X-Sandbox-Token", token == null ? "" : token)
                     .body(body)
                     .retrieve()

@@ -336,11 +336,29 @@ public class MissionMemoryService {
         return all;
     }
 
-    /** Revisión final (I-4): el commit que quedó VERIFIED (el que se puede aplicar a pedido). */
-    public void recordVerifiedCommit(String missionId, String sha) {
+    /**
+     * Revisión final (I-4): el commit que quedó VERIFIED (el que se puede aplicar a pedido). Entrega del producto
+     * (revisión final, 2): con el número del incremento que verificó, para que «Generar entrega» no le ponga al commit
+     * de un incremento el número del que está en construcción.
+     */
+    public void recordVerifiedCommit(String missionId, String sha, Integer increment) {
+        // Sin número (no se pudo leer el incremento) se borra el anterior: nunca queda el de otro commit.
+        var params = new java.util.HashMap<String, Object>();
+        params.put("id", missionId);
+        params.put("sha", sha);
+        params.put("inc", increment);
         try (var session = driver.session()) {
-            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.verifiedCommit=$sha",
-                    Map.of("id", missionId, "sha", sha)).consume());
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.verifiedCommit=$sha, m.verifiedIncrement=$inc",
+                    params).consume());
+        }
+    }
+
+    /** El incremento del commit VERIFIED; vacío en misiones anteriores a guardarlo. */
+    public Optional<Integer> verifiedIncrement(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.verifiedIncrement IS NOT NULL "
+                            + "RETURN m.verifiedIncrement AS n", Map.of("id", missionId))
+                    .list(r -> r.get("n").asInt()).stream().findFirst();
         }
     }
 

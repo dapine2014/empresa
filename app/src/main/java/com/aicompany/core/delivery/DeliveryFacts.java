@@ -2,7 +2,10 @@ package com.aicompany.core.delivery;
 
 import java.util.List;
 
-/** Hechos de la entrega (spec 2026-10-17): lo único que {@link DeliveryDocument} y {@link DockerTemplates} leen. */
+/**
+ * Hechos de la entrega (spec 2026-10-17): lo único que {@link DeliveryDocument} y {@link DockerTemplates} leen.
+ * {@code correctionRounds} negativo = sin dato (una entrega generada a pedido no sabe cuántas rondas hubo).
+ */
 public record DeliveryFacts(
         String missionId, String productName, String clientSummary, String experience /*APP|GAME|NONE*/,
         String stackProfile, int increment, int totalIncrements, String verifiedAt, String commitSha,
@@ -25,6 +28,11 @@ public record DeliveryFacts(
 
     public record TargetResult(String name, String status /*PASS|FAIL|TIMEOUT|SKIPPED*/, String reason) { }
 
-    /** Nunca lleva contraseña. */
-    public record Database(String name, String environment, String host, int port, String database, String username) { }
+    /** Nunca lleva contraseña. {@code sslMode}: el de libpq/JDBC (disable|require|verify-full); "" = sin dato. */
+    public record Database(String name, String environment, String host, int port, String database, String username,
+                           String sslMode) {
+        public Database(String name, String environment, String host, int port, String database, String username) {
+            this(name, environment, host, port, database, username, "");
+        }
+    }
 }

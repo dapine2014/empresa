@@ -88,6 +88,8 @@ sandbox:
     url: ${SANDBOX_RUNNER_URL:http://localhost:8090}
     token: ${SANDBOX_RUNNER_TOKEN:}
     timeout: ${SANDBOX_RUNNER_TIMEOUT:30m}
+    # Job PACKAGE de la entrega: restore 300 s + package 1800 s + checkout y copia.
+    package-timeout: ${SANDBOX_RUNNER_PACKAGE_TIMEOUT:40m}
 # Keys de modelos editables desde Settings (2026-09-29): llave maestra AES-256 (32 bytes en base64) con la que se
 # cifran en Neo4j. Solo vive en .env; sin ella las keys solo salen del .env.
 forjai:

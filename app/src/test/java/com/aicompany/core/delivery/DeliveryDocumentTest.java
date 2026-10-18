@@ -55,4 +55,38 @@ class DeliveryDocumentTest {
         assertTrue(md.contains("no disponible"));
         assertTrue(md.startsWith("# " + f.missionId() + " — entrega del incremento 1"));
     }
+
+    static DeliveryFacts withDb(DeliveryFacts f, String stack, List<DeliveryFacts.TargetResult> targets,
+                                List<DeliveryFacts.Database> dbs, List<String> migrations, int rounds) {
+        return new DeliveryFacts(f.missionId(), f.productName(), f.clientSummary(), "APP", stack, f.increment(),
+                f.totalIncrements(), f.verifiedAt(), f.commitSha(), f.repoPath(), f.zipPath(), f.contractItems(),
+                f.stories(), f.scenarios(), List.of(), List.of(), List.of("Clientes"), f.testsPassed(), f.testsTotal(),
+                rounds, targets, List.of(), dbs, migrations, f.costUsd(), f.agents());
+    }
+
+    // Revisión final (8): sección 7 con bases y migraciones en orden; entrega de app con docker/.
+    @Test
+    void anAppDeliveryWithDatabasesListsDockerTheOrderedMigrationsAndTheConnections() {
+        var crm = new DeliveryFacts.Database("crm", "TEST", "db.local", 5432, "crm", "app");
+        var md = DeliveryDocument.render(withDb(game(List.of(), List.of()), "DOTNET_APP",
+                List.of(new DeliveryFacts.TargetResult("app", "PASS", null)), List.of(crm),
+                List.of("V1__crear.sql", "V2__datos.sql", "V10__indices.sql"), 2));
+        assertTrue(md.contains("```\napp/\ndocker/\nbase-de-datos/\n"), md);
+        assertTrue(md.contains("`cd docker && cp .env.example .env && docker compose up -d`"), md);
+        var section7 = md.substring(md.indexOf("## 7. Base de datos"), md.indexOf("## 8. Limitaciones"));
+        assertTrue(section7.contains("Migraciones (en este orden):\n\n- V1__crear.sql\n- V2__datos.sql\n- V10__indices.sql\n"), section7);
+        assertTrue(section7.contains("- crm (TEST): db.local:5432/crm, usuario app"), section7);
+        assertTrue(section7.contains("La contraseña está en Forjai → Settings → Bases de datos."), section7);
+        assertTrue(section7.contains("base-de-datos/LEEME.md"), section7);
+        assertTrue(md.contains("- 2 rondas de corrección"), md);
+    }
+
+    // Revisión final (11): una entrega a pedido no inventa las rondas de corrección.
+    @Test
+    void unknownCorrectionRoundsSayNotAvailable() {
+        var md = DeliveryDocument.render(withDb(game(List.of(), List.of()), "DOTNET_APP", List.of(), List.of(), List.of(),
+                DeliveryService.ROUNDS_UNKNOWN));
+        assertTrue(md.contains("- Rondas de corrección: no disponible"), md);
+        assertFalse(md.contains("-1 rondas"), md);
+    }
 }

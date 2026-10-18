@@ -131,7 +131,8 @@ public final class DeliveryDocument {
                 .append("- ").append(f.testsPassed()).append(" de ").append(f.testsTotal()).append(" tests\n")
                 .append("- Escenarios verificados: ").append(verified).append(" de ").append(scenarios.size())
                 .append('\n')
-                .append("- ").append(f.correctionRounds()).append(" rondas de corrección\n")
+                .append(f.correctionRounds() < 0 ? "- Rondas de corrección: " + NA + "\n"
+                        : "- " + f.correctionRounds() + " rondas de corrección\n")
                 .append("- Commit: ").append(or(f.commitSha())).append("\n\n");
 
         sb.append("## 7. Base de datos\n\n");
@@ -139,14 +140,15 @@ public final class DeliveryDocument {
             sb.append("Sin base de datos.\n");
         } else {
             if (!nul(f.migrations()).isEmpty()) {
-                sb.append("Migraciones:\n\n");
+                sb.append("Migraciones (en este orden):\n\n");
                 f.migrations().forEach(m -> sb.append("- ").append(m).append('\n'));
                 sb.append('\n');
             }
             nul(f.databases()).forEach(d -> sb.append("- ").append(d.name()).append(" (").append(d.environment())
                     .append("): ").append(d.host()).append(':').append(d.port()).append('/').append(d.database())
                     .append(", usuario ").append(d.username()).append('\n'));
-            sb.append("\nLa contraseña está en Forjai → Settings → Bases de datos.\n");
+            if (!nul(f.databases()).isEmpty()) sb.append("\nLa contraseña está en Forjai → Settings → Bases de datos.\n");
+            sb.append("\nCómo aplicar las migraciones y apuntar a una base real: base-de-datos/LEEME.md.\n");
         }
         sb.append('\n');
 

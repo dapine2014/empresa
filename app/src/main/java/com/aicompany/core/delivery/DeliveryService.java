@@ -3,6 +3,8 @@ package com.aicompany.core.delivery;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.event.CompanyEventPublisher;
 import com.aicompany.core.model.SandboxResult;
+import com.aicompany.core.recovery.MissionRecoveryService;
+import com.aicompany.core.service.MissionCancellations;
 import com.aicompany.core.service.MissionMemoryService;
 import com.aicompany.core.service.SandboxRunnerClient;
 import org.slf4j.Logger;
@@ -18,10 +20,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Entrega del producto (spec 2026-10-17): al quedar un incremento VERIFIED pide los compilados al sandbox-runner, arma
- * ENTREGA.md y el zip y lo registra. Todo lo decide Java; nunca lanza: una falla queda como entrega FAILED con su motivo.
+ * ENTREGA.md y el zip y lo registra. Todo lo decide Java; una falla queda como entrega FAILED con su motivo (solo la
+ * cancelación de la misión se relanza).
  */
 @Service
 public class DeliveryService {
@@ -29,6 +33,13 @@ public class DeliveryService {
     private static final Logger log = LoggerFactory.getLogger(DeliveryService.class);
     private static final Set<String> APPS = Set.of("FLUTTER_WEB_APP", "DOTNET_APP");
     private static final int REASON_MAX = 300;
+    /** Revisión final (11): sin dato de rondas de corrección (ENTREGA.md dice «no disponible»). */
+    public static final int ROUNDS_UNKNOWN = -1;
+    static final String NOTHING_TO_BUILD = "no se pidió ningún compilado posible";
+    static final String INTERRUPTED = "La entrega se cortó con un reinicio y la validación retomada no quedó VERIFIED.";
+
+    /** missionId#incremento con un empaquetado en curso en este proceso. */
+    private final Set<String> inProgress = ConcurrentHashMap.newKeySet();
 
     private final DeliveryMemoryService deliveries;
     private final SandboxRunnerClient runner;
@@ -52,8 +63,37 @@ public class DeliveryService {
         this.json = json;
     }
 
+    /**
+     * Al quedar VERIFIED (lo llama la validación). Si ya hay un empaquetado de ese incremento en curso en este proceso,
+     * lo salta (null). Nunca lanza, salvo la cancelación de la misión.
+     */
     public DeliveryRecord deliver(String missionId, int increment, String commitSha, String stackProfile,
                                   int correctionRounds, SandboxResult verifiedRun) {
+        return guarded(missionId, increment, commitSha, stackProfile, correctionRounds, verifiedRun, false);
+    }
+
+    /** Revisión final (3): un solo empaquetado por misión e incremento a la vez (botón, chat, validación, recuperación). */
+    private DeliveryRecord guarded(String missionId, int increment, String commitSha, String stackProfile,
+                                   int correctionRounds, SandboxResult verifiedRun, boolean failIfBusy) {
+        var key = key(missionId, increment);
+        if (!inProgress.add(key)) {
+            if (failIfBusy) {
+                throw new IllegalStateException("Ya se está empaquetando el incremento " + increment + " de " + missionId
+                        + ": espera a que termine.");
+            }
+            log.info("DELIVERY mission={} increment={} skipped: ya se está empaquetando", missionId, increment);
+            return null;
+        }
+        try {
+            return pack(missionId, increment, commitSha, stackProfile, correctionRounds, verifiedRun);
+        } finally {
+            inProgress.remove(key);
+        }
+    }
+
+    private DeliveryRecord pack(String missionId, int increment, String commitSha, String stackProfile,
+                                int correctionRounds, SandboxResult verifiedRun) {
+        Path staging = null;
         try {
             deliveries.markPackaging(missionId, increment);
             var spec = factsBuilder.spec(missionId);
@@ -62,12 +102,17 @@ public class DeliveryService {
             var contract = factsBuilder.contract(missionId);
             var plan = DeliveryTargets.plan(stackProfile, contract == null ? null : contract.deliveryOrNull(), last,
                     keys.status(missionId).configured());
-            var release = last && plan.targets().contains("android-aab") ? keys.plain(missionId).orElse(null) : null;
 
-            var run = runner.packageJob(missionId, commitSha, stackProfile, increment, plan.targets(), release)
-                    .orElseThrow(() -> new IllegalStateException(runner.lastError() == null
-                            ? "El sandbox-runner no devolvió resultado." : runner.lastError()));
-            var results = targetResults(plan.targets(), run);
+            // Revisión final (9): sin ningún target posible no se llama al runner; el zip lleva código y documentos.
+            var results = List.<DeliveryFacts.TargetResult>of();
+            if (!plan.targets().isEmpty()) {
+                var release = last && plan.targets().contains("android-aab") ? keys.plain(missionId).orElse(null) : null;
+                var run = runner.packageJob(missionId, commitSha, stackProfile, increment, plan.targets(), release)
+                        .orElseThrow(() -> new IllegalStateException(runner.lastError() == null
+                                ? "El sandbox-runner no devolvió resultado." : runner.lastError()));
+                staging = packager.stagingDir(missionId, increment, run.stagingDir());
+                results = targetResults(plan.targets(), run);
+            }
             var passed = results.stream().filter(t -> "PASS".equals(t.status())).map(DeliveryFacts.TargetResult::name).toList();
 
             var migrations = factsBuilder.migrations(missionId, commitSha);
@@ -78,25 +123,40 @@ public class DeliveryService {
 
             var extras = extraFiles(stackProfile, facts, !migrations.isEmpty());
             var zip = packager.assemble(new DeliveryPackager.Assembly(missionId, increment, commitSha, stackProfile,
-                    packager.stagingDir(missionId, increment), md, extras, migrations));
+                    staging, md, extras, migrations));
             var path = zip == null ? zipPlanned : zip.toString();
 
             var status = passed.isEmpty() ? "FAILED" : passed.size() == results.size() ? "READY" : "PARTIAL";
-            var error = "FAILED".equals(status) ? "no se generó ningún compilado" : "";
+            var error = !"FAILED".equals(status) ? "" : results.isEmpty() ? NOTHING_TO_BUILD : "no se generó ningún compilado";
             var saved = new DeliveryRecord(missionId, increment, status, path, sizeOf(zip), results, error,
                     Instant.now().toString());
             deliveries.save(saved);
             events.publish("EMPRESA_DELIVERY_PACKAGED", missionId, null, "delivery", Map.of("increment", increment,
                     "status", status, "targets", passed, "path", path));
             return saved;
+        } catch (MissionCancellations.MissionCancelledException ex) {
+            // Revisión final (12): la cancelación no es una falla de la entrega; la decide quien canceló.
+            failed(missionId, increment, "la misión se canceló durante la entrega");
+            throw ex;
         } catch (Exception ex) {
-            return failed(missionId, increment, ex);
+            return failed(missionId, increment, reasonOf(ex));
+        } finally {
+            packager.discardStaging(staging);
         }
     }
 
-    /** Para el botón y la recuperación: el último commit VERIFIED con el incremento en curso. */
+    /**
+     * Para el botón y el chat: el último commit VERIFIED con el número del incremento que verificó (revisión final, 2).
+     * Con la misión trabajando no: la entrega se genera sola al quedar VERIFIED.
+     */
     public DeliveryRecord deliverVerified(String missionId) {
-        return redo(missionId, Math.max(1, requirementsIncrement(missionId)));
+        var mission = missions.find(missionId);
+        if (mission != null && mission.isPresent() && MissionRecoveryService.WORKING.contains(mission.get().status())) {
+            throw new IllegalStateException(missionId + " está trabajando (" + mission.get().status() + "): la entrega se "
+                    + "genera sola cuando el incremento quede VERIFIED. Vuelve a intentarlo cuando termine.");
+        }
+        var sha = verifiedCommit(missionId);
+        return redo(missionId, verifiedIncrement(missionId), sha, true);
     }
 
     public List<DeliveryRecord> list(String missionId) {
@@ -107,8 +167,17 @@ public class DeliveryService {
         return deliveries.recent(limit);
     }
 
-    /** Rehace las entregas que un reinicio dejó en PACKAGING. Nunca lanza. */
+    /**
+     * Al arrancar: borra los temporales huérfanos y resuelve las entregas que un reinicio dejó en PACKAGING. Una misión
+     * en trabajo la retoma la recuperación (si queda VERIFIED vuelve a empaquetar; si no, {@link #abandonInterrupted});
+     * una detenida se rehace solo si el incremento sigue siendo el VERIFIED, y si no queda FAILED. Nunca lanza.
+     */
     public void resumeStuck() {
+        try {
+            packager.cleanOrphans();
+        } catch (Exception ex) {
+            log.warn("DELIVERY_RESUME could not clean orphans: {}", ex.getMessage());
+        }
         List<DeliveryRecord> stuck;
         try {
             stuck = deliveries.packaging();
@@ -118,29 +187,62 @@ public class DeliveryService {
         }
         for (var r : stuck) {
             try {
-                // Una misión en estado de trabajo la retoma la recuperación y vuelve a empaquetar: no se rehace dos veces.
                 var mission = missions.find(r.missionId());
-                if (mission != null && mission.isPresent()
-                        && com.aicompany.core.recovery.MissionRecoveryService.WORKING.contains(mission.get().status())) {
+                if (mission != null && mission.isPresent() && MissionRecoveryService.WORKING.contains(mission.get().status())) {
                     log.info("DELIVERY_RESUME mission={} skipped: la misión está en {}", r.missionId(), mission.get().status());
                     continue;
                 }
-                redo(r.missionId(), r.increment());
+                var sha = missions.verifiedCommit(r.missionId());
+                var verified = verifiedIncrement(r.missionId());
+                if (sha.isEmpty() || verified != r.increment()) {
+                    failed(r.missionId(), r.increment(), "La entrega se cortó con un reinicio y el incremento "
+                            + r.increment() + " ya no es el VERIFIED de la misión.");
+                    continue;
+                }
+                redo(r.missionId(), r.increment(), sha.get(), false);
             } catch (Exception ex) {
                 log.warn("DELIVERY_RESUME mission={} increment={} reason={}", r.missionId(), r.increment(), ex.getMessage());
             }
         }
     }
 
-    private DeliveryRecord redo(String missionId, int increment) {
-        var sha = missions.verifiedCommit(missionId).orElseThrow(() -> new IllegalStateException(
-                missionId + " no tiene un incremento VERIFIED para entregar."));
-        var verifiedRun = missions.lastVerifiedSandboxJson(missionId).map(this::sandboxOrNull).orElse(null);
-        return deliver(missionId, increment, sha, stackProfileOf(missionId), 0, verifiedRun);
+    /**
+     * Revisión final (4): la validación retomada tras un reinicio no quedó VERIFIED; la entrega de ese incremento que el
+     * reinicio dejó en PACKAGING queda FAILED. Nunca lanza.
+     */
+    public void abandonInterrupted(String missionId, int increment) {
+        if (inProgress.contains(key(missionId, increment))) {
+            return;
+        }
+        try {
+            var r = deliveries.find(missionId, increment);
+            if (r != null && r.isPresent() && "PACKAGING".equals(r.get().status())) {
+                failed(missionId, increment, INTERRUPTED);
+            }
+        } catch (Exception ex) {
+            log.warn("DELIVERY mission={} increment={} could not abandon: {}", missionId, increment, ex.getMessage());
+        }
     }
 
-    private int requirementsIncrement(String missionId) {
-        return factsBuilder.currentIncrement(missionId);
+    private DeliveryRecord redo(String missionId, int increment, String sha, boolean failIfBusy) {
+        var verifiedRun = missions.lastVerifiedSandboxJson(missionId).map(this::sandboxOrNull).orElse(null);
+        // Revisión final (11): a pedido no se sabe cuántas rondas de corrección hubo.
+        return guarded(missionId, increment, sha, stackProfileOf(missionId), ROUNDS_UNKNOWN, verifiedRun, failIfBusy);
+    }
+
+    private String verifiedCommit(String missionId) {
+        return missions.verifiedCommit(missionId).orElseThrow(() -> new IllegalStateException(
+                missionId + " no tiene un incremento VERIFIED para entregar."));
+    }
+
+    /** El incremento del commit VERIFIED; en misiones anteriores a guardarlo, el último construido (mínimo 1). */
+    private int verifiedIncrement(String missionId) {
+        var stored = missions.verifiedIncrement(missionId);
+        return Math.max(1, stored != null && stored.isPresent() ? stored.get() : factsBuilder.builtIncrement(missionId));
+    }
+
+    private static String key(String missionId, int increment) {
+        return missionId + "#" + increment;
     }
 
     private String stackProfileOf(String missionId) {
@@ -193,8 +295,11 @@ public class DeliveryService {
         return extras;
     }
 
-    private DeliveryRecord failed(String missionId, int increment, Exception ex) {
-        var reason = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+    private static String reasonOf(Exception ex) {
+        return ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+    }
+
+    private DeliveryRecord failed(String missionId, int increment, String reason) {
         log.warn("DELIVERY_FAILED mission={} reason={}", missionId, reason);
         var record = new DeliveryRecord(missionId, increment, "FAILED", "", 0, List.of(), reason, Instant.now().toString());
         try {

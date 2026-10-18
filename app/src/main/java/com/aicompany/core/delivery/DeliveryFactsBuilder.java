@@ -5,6 +5,7 @@ import com.aicompany.core.agent.model.InteractionDesign;
 import com.aicompany.core.agent.model.RequirementsSpec;
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.database.DatabaseConnectionService;
+import com.aicompany.core.database.MigrationSet;
 import com.aicompany.core.model.SandboxResult;
 import com.aicompany.core.service.ContractMemoryService;
 import com.aicompany.core.service.DevelopmentWorkspaceService;
@@ -33,7 +34,6 @@ import java.util.Optional;
 public class DeliveryFactsBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(DeliveryFactsBuilder.class);
-    static final String MIGRATIONS_DIR = "db/postgres/migrations/";
 
     private final RequirementsMemoryService requirements;
     private final ContractMemoryService contracts;
@@ -70,15 +70,6 @@ public class DeliveryFactsBuilder {
         }
     }
 
-    /** El incremento en construcción o el último construido (0 = ninguno o no se pudo leer). */
-    public int currentIncrement(String missionId) {
-        try {
-            return requirements.currentIncrement(missionId);
-        } catch (Exception ex) {
-            return 0;
-        }
-    }
-
     /** El contrato aprobado; null si no hay o no se puede leer. */
     public ClientContract contract(String missionId) {
         try {
@@ -90,15 +81,29 @@ public class DeliveryFactsBuilder {
         }
     }
 
-    /** Migraciones SQL del commit: nombre (sin el directorio) → contenido, en orden. */
+    /** El último incremento construido (0 = ninguno o no se pudo leer). */
+    public int builtIncrement(String missionId) {
+        try {
+            return requirements.builtIncrement(missionId);
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    /**
+     * Migraciones SQL del commit: nombre del archivo → contenido, en orden numérico de versión (revisión final, 8: V2
+     * antes que V10). Solo las versionadas que aplica Diego ({@link MigrationSet}); cualquier otro archivo no entra.
+     */
     public Map<String, String> migrations(String missionId, String commitSha) {
         var out = new LinkedHashMap<String, String>();
         try {
-            var names = workspace.filesAtCommit(missionId, commitSha).stream()
-                    .filter(f -> f.startsWith(MIGRATIONS_DIR) && f.length() > MIGRATIONS_DIR.length()).sorted().toList();
-            for (var f : names) {
-                out.put(f.substring(MIGRATIONS_DIR.length()), workspace.readFileAtCommit(missionId, commitSha, f));
+            var contents = new LinkedHashMap<String, String>();
+            for (var f : workspace.filesAtCommit(missionId, commitSha)) {
+                if (MigrationSet.isMigrationPath(f)) {
+                    contents.put(f, workspace.readFileAtCommit(missionId, commitSha, f));
+                }
             }
+            MigrationSet.parse(contents).forEach(m -> out.put(MigrationSet.fileName(m), m.sql()));
         } catch (Exception ex) {
             log.warn("DELIVERY_FACTS mission={} migrations unreadable: {}", missionId, ex.getMessage());
         }
@@ -159,7 +164,7 @@ public class DeliveryFactsBuilder {
         var dbs = new ArrayList<DeliveryFacts.Database>();
         try {
             databases.connectionsOf(missionId).forEach(c -> dbs.add(new DeliveryFacts.Database(c.name(), c.environment(),
-                    c.host(), c.port(), c.database(), c.username())));
+                    c.host(), c.port(), c.database(), c.username(), sslMode(c.tls()))));
         } catch (Exception ex) {
             log.warn("DELIVERY_FACTS mission={} connections unreadable: {}", missionId, ex.getMessage());
         }
@@ -206,6 +211,16 @@ public class DeliveryFactsBuilder {
         } catch (Exception ex) {
             return List.of();
         }
+    }
+
+    /** El mismo mapeo que {@code JdbcPostgresConnector}. */
+    static String sslMode(String tls) {
+        return switch (tls == null ? "" : tls) {
+            case "DISABLE" -> "disable";
+            case "REQUIRE" -> "require";
+            case "VERIFY_FULL" -> "verify-full";
+            default -> "";
+        };
     }
 
     private static String nul(String s) {
