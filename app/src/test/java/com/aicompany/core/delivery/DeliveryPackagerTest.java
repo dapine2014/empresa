@@ -56,6 +56,15 @@ class DeliveryPackagerTest {
         assertEquals(List.of(), leftovers());
     }
 
+    @Test
+    void theZipAndTheMissionFolderTakeTheOwnerOfTheDeliveriesRoot() throws Exception {
+        var zip = packager.assemble(new DeliveryPackager.Assembly("M-1", 1, sha, "GODOT_DOTNET_GAME",
+                packager.stagingDir("M-1", 1), "# doc", Map.of(), Map.of()));
+        var owner = Files.getOwner(tmp.resolve("entregas"));
+        assertEquals(owner, Files.getOwner(zip));
+        assertEquals(owner, Files.getOwner(zip.getParent()));
+    }
+
     /** Todo lo que no es un zip terminado: .part, temporales y staging. */
     List<Path> leftovers() throws IOException {
         try (var walk = Files.walk(tmp.resolve("entregas"))) {

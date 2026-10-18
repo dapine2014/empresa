@@ -38,12 +38,13 @@ class DeliveryServiceTest {
     ModelCostService cost = mock(ModelCostService.class);
     DevelopmentWorkspaceService workspace = mock(DevelopmentWorkspaceService.class);
     DeliveryService service;
+    DeliveryPaths paths = new DeliveryPaths("/tmp/e", "~/entregas-forja", "/tmp/p", "~/forjai-products");
 
     @BeforeEach
     void setUp() throws Exception {
         var json = JsonMapper.builder().build();
-        var builder = new DeliveryFactsBuilder(requirements, contracts, designs, dbs, cost, workspace, missions, json);
-        service = new DeliveryService(deliveries, runner, packager, keys, builder, events, missions, json);
+        var builder = new DeliveryFactsBuilder(requirements, contracts, designs, dbs, cost, workspace, missions, json, paths);
+        service = new DeliveryService(deliveries, runner, packager, keys, builder, events, missions, json, paths);
         when(keys.status(anyString())).thenReturn(new AndroidSigningKeyService.Status(false, "", ""));
         when(keys.plain(anyString())).thenReturn(Optional.empty());
         when(packager.zipPath(anyString(), anyInt())).thenReturn(Path.of("/tmp/e/M-1/incremento-1.zip"));
@@ -99,6 +100,36 @@ class DeliveryServiceTest {
         assertEquals("FAILED", r.status());
         assertTrue(r.error().contains("Connection refused"));
         verify(events).publish(eq("EMPRESA_DELIVERY_FAILED"), eq("M-1"), isNull(), eq("delivery"), anyMap());
+    }
+
+    @Test void documentAndEventShowTheFoundersPathsNeverTheContainerOnes() throws Exception {
+        when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/tmp/p/M-1"));
+        when(packager.zipPath("M-1", 1)).thenReturn(Path.of("/tmp/e/M-1/incremento-1.zip"));
+        when(packager.assemble(any())).thenReturn(Path.of("/tmp/e/M-1/incremento-1.zip"));
+        when(missions.verifiedCommit("M-1")).thenReturn(Optional.of(SHA));
+        when(missions.verifiedAt("M-1")).thenReturn(Optional.of("2026-10-17T20:00:00Z"));
+        when(runner.packageJob(any(), any(), any(), anyInt(), any(), any())).thenReturn(Optional.of(new SandboxResult("PASS",
+                List.of(step("package:windows", "PASS", "")))));
+
+        service.deliver("M-1", 1, SHA, "GODOT_DOTNET_GAME", 0, verifiedRun(5, 5));
+
+        verify(packager).assemble(argThat(a -> a.entregaMd().contains("Zip: ~/entregas-forja/M-1/incremento-1.zip")
+                && a.entregaMd().contains("Repositorio: ~/forjai-products/M-1")
+                && a.entregaMd().contains("Verificado: 2026-10-17T20:00:00Z")
+                && !a.entregaMd().contains("/tmp/")));
+        verify(events).publish(eq("EMPRESA_DELIVERY_PACKAGED"), eq("M-1"), isNull(), eq("delivery"),
+                argThat(m -> "~/entregas-forja/M-1/incremento-1.zip".equals(m.get("path"))));
+    }
+
+    @Test void withoutAStoredVerificationTimeTheDocumentSaysNotAvailable() throws Exception {
+        when(missions.verifiedCommit("M-1")).thenReturn(Optional.of(SHA));
+        when(missions.verifiedAt("M-1")).thenReturn(Optional.empty());
+        when(runner.packageJob(any(), any(), any(), anyInt(), any(), any())).thenReturn(Optional.of(new SandboxResult("PASS",
+                List.of(step("package:windows", "PASS", "")))));
+
+        service.deliver("M-1", 1, SHA, "GODOT_DOTNET_GAME", 0, verifiedRun(5, 5));
+
+        verify(packager).assemble(argThat(a -> a.entregaMd().contains("Verificado: no disponible")));
     }
 
     @Test void theEventNeverCarriesSecrets() {

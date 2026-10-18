@@ -43,17 +43,19 @@ public class DeliveryFactsBuilder {
     private final DevelopmentWorkspaceService workspace;
     private final MissionMemoryService missions;
     private final JsonMapper json;
+    private final DeliveryPaths paths;
 
     public DeliveryFactsBuilder(RequirementsMemoryService requirements, ContractMemoryService contracts,
                                 InteractionDesignMemoryService designs, DatabaseConnectionService databases,
                                 ModelCostService cost, DevelopmentWorkspaceService workspace,
-                                MissionMemoryService missions, JsonMapper json) {
+                                MissionMemoryService missions, JsonMapper json, DeliveryPaths paths) {
         this.requirements = requirements;
         this.contracts = contracts;
         this.designs = designs;
         this.databases = databases;
         this.cost = cost;
         this.workspace = workspace;
+        this.paths = paths;
         this.missions = missions;
         this.json = json;
     }
@@ -177,7 +179,7 @@ public class DeliveryFactsBuilder {
         }
 
         return new DeliveryFacts(missionId, "", contract == null ? "" : nul(contract.summary()), experience,
-                stackProfile, increment, total, Instant.now().toString(), commitSha, repoPath(missionId), zipPath,
+                stackProfile, increment, total, verifiedAt(missionId, commitSha), commitSha, repoPath(missionId), zipPath,
                 items.stream().map(i -> new DeliveryFacts.Item(i.id(), i.kind(), i.name(), i.description())).toList(),
                 stories, scenarios, controls, levels, screens, passed, passed + failed, correctionRounds,
                 targets, limitations, dbs, migrationNames, costUsd, agents(missionId));
@@ -193,9 +195,24 @@ public class DeliveryFactsBuilder {
         }
     }
 
+    /** Cuándo quedó VERIFIED ese commit; null (el documento dice «no disponible») si no se guardó o es de otro commit. */
+    private String verifiedAt(String missionId, String commitSha) {
+        try {
+            var sha = missions.verifiedCommit(missionId);
+            if (sha == null || sha.isEmpty() || !sha.get().equals(commitSha)) {
+                return null;
+            }
+            var at = missions.verifiedAt(missionId);
+            return at == null ? null : at.orElse(null);
+        } catch (Exception ex) {
+            log.warn("DELIVERY_FACTS mission={} verifiedAt unreadable: {}", missionId, ex.getMessage());
+            return null;
+        }
+    }
+
     private String repoPath(String missionId) {
         try {
-            return String.valueOf(workspace.missionWorkspace(missionId));
+            return paths.display(String.valueOf(workspace.missionWorkspace(missionId)));
         } catch (Exception ex) {
             return "";
         }

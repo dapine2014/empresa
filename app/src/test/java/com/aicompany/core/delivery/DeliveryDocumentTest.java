@@ -39,6 +39,14 @@ class DeliveryDocumentTest {
     }
 
     @Test
+    void thePathsSectionNeverShowsContainerPaths() {
+        var md = DeliveryDocument.render(game(List.of(), List.of()));
+        assertFalse(md.contains("/data/"));
+        assertTrue(md.contains("- Zip: ~/entregas-forja/"));
+        assertTrue(md.contains("- Repositorio: ~/forjai-products/"));
+    }
+
+    @Test
     void aFailedTargetIsListedWithItsReasonAndNotAsRunnable() {
         var md = DeliveryDocument.render(game(List.of(new DeliveryFacts.TargetResult("windows", "PASS", null),
                 new DeliveryFacts.TargetResult("android-apk", "FAIL", "falta el SDK")), List.of()));

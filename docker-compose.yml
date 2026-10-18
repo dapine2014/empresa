@@ -24,6 +24,7 @@ services:
       FORJAI_SECRETS_KEY: ${FORJAI_SECRETS_KEY}
       DELIVERIES_ROOT: /data/entregas-forja
       DELIVERIES_HOST_PATH: ~/entregas-forja
+      PRODUCTS_HOST_PATH: ~/forjai-products
     volumes:
       - ${HOME}/forjai-products:/data/forjai-products
       - ${HOME}/entregas-forja:/data/entregas-forja

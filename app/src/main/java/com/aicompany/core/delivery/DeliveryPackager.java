@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -168,11 +169,31 @@ public class DeliveryPackager {
                 }
             }
             Files.move(part, zip, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            handOverToRootOwner(zip);
+            handOverToRootOwner(zip.getParent());
             return zip;
         } finally {
             Files.deleteIfExists(part);
             deleteTree(tmp);
             discardStaging(a.staging());
+        }
+    }
+
+    /**
+     * El contenedor corre como root: el zip y la carpeta de la misión quedarían de root en el equipo del fundador. Les
+     * pone el dueño (y el grupo) de deliveries-root. Nunca lanza: no poder cambiarlo no es una falla de la entrega.
+     */
+    private void handOverToRootOwner(Path target) {
+        try {
+            var owner = Files.getOwner(deliveriesRoot);
+            Files.setOwner(target, owner);
+            var rootView = Files.getFileAttributeView(deliveriesRoot, PosixFileAttributeView.class);
+            var view = Files.getFileAttributeView(target, PosixFileAttributeView.class);
+            if (rootView != null && view != null) {
+                view.setGroup(rootView.readAttributes().group());
+            }
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            log.warn("DELIVERY owner of {} not changed: {}", target, ex.getMessage());
         }
     }
 

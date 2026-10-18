@@ -49,10 +49,12 @@ public class DeliveryService {
     private final CompanyEventPublisher events;
     private final MissionMemoryService missions;
     private final JsonMapper json;
+    private final DeliveryPaths paths;
 
     public DeliveryService(DeliveryMemoryService deliveries, SandboxRunnerClient runner, DeliveryPackager packager,
                            AndroidSigningKeyService keys, DeliveryFactsBuilder factsBuilder,
-                           CompanyEventPublisher events, MissionMemoryService missions, JsonMapper json) {
+                           CompanyEventPublisher events, MissionMemoryService missions, JsonMapper json,
+                           DeliveryPaths paths) {
         this.deliveries = deliveries;
         this.runner = runner;
         this.packager = packager;
@@ -61,6 +63,7 @@ public class DeliveryService {
         this.events = events;
         this.missions = missions;
         this.json = json;
+        this.paths = paths;
     }
 
     /**
@@ -117,8 +120,9 @@ public class DeliveryService {
 
             var migrations = factsBuilder.migrations(missionId, commitSha);
             var zipPlanned = str(packager.zipPath(missionId, increment));
+            var zipShown = paths.display(zipPlanned);
             var facts = factsBuilder.build(missionId, increment, commitSha, stackProfile, correctionRounds, verifiedRun,
-                    results, plan.limitations(), zipPlanned, spec.orElse(null), contract, List.copyOf(migrations.keySet()));
+                    results, plan.limitations(), zipShown, spec.orElse(null), contract, List.copyOf(migrations.keySet()));
             var md = DeliveryDocument.render(facts);
 
             var extras = extraFiles(stackProfile, facts, !migrations.isEmpty());
@@ -132,7 +136,7 @@ public class DeliveryService {
                     Instant.now().toString());
             deliveries.save(saved);
             events.publish("EMPRESA_DELIVERY_PACKAGED", missionId, null, "delivery", Map.of("increment", increment,
-                    "status", status, "targets", passed, "path", path));
+                    "status", status, "targets", passed, "path", paths.display(path)));
             return saved;
         } catch (MissionCancellations.MissionCancelledException ex) {
             // Revisión final (12): la cancelación no es una falla de la entrega; la decide quien canceló.

@@ -61,6 +61,8 @@ products:
   deliveries-root: ${DELIVERIES_ROOT:${user.home}/entregas-forja}
   # Solo para mostrar: la ruta de deliveries-root vista desde el equipo del fundador.
   deliveries-host-path: ${DELIVERIES_HOST_PATH:~/entregas-forja}
+  # Solo para mostrar: la ruta de workspace-root vista desde el equipo del fundador.
+  workspace-host-path: ${PRODUCTS_HOST_PATH:~/forjai-products}
 
 evidence:
   web-search:

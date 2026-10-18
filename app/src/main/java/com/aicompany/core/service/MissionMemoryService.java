@@ -347,8 +347,10 @@ public class MissionMemoryService {
         params.put("id", missionId);
         params.put("sha", sha);
         params.put("inc", increment);
+        params.put("at", java.time.Instant.now().toString());
         try (var session = driver.session()) {
-            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.verifiedCommit=$sha, m.verifiedIncrement=$inc",
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.verifiedCommit=$sha, m.verifiedIncrement=$inc, "
+                    + "m.verifiedAt=$at",
                     params).consume());
         }
     }
@@ -359,6 +361,14 @@ public class MissionMemoryService {
             return session.run("MATCH (m:Mission {id:$id}) WHERE m.verifiedIncrement IS NOT NULL "
                             + "RETURN m.verifiedIncrement AS n", Map.of("id", missionId))
                     .list(r -> r.get("n").asInt()).stream().findFirst();
+        }
+    }
+
+    /** Cuándo se guardó el commit VERIFIED; vacío en misiones anteriores a guardarlo. */
+    public Optional<String> verifiedAt(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.verifiedAt IS NOT NULL RETURN m.verifiedAt AS s",
+                    Map.of("id", missionId)).list(r -> r.get("s").asString()).stream().findFirst();
         }
     }
 
