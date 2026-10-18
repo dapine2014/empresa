@@ -17,7 +17,12 @@ public final class RemoteProviders {
      * {@code reasoning_effort=none}, verificado en vivo 2026-10-04).
      */
     public record Provider(String name, String baseUrl, String apiKey, List<String> checkModels, boolean nvidiaOptions,
-                           String thinkingOff) {
+                           String thinkingOff, java.time.Duration ownTotalTimeout) {
+
+        /** Lentitud como caída (decisión del fundador 2026-10-05): plazo propio del proveedor o, si no tiene, el general. */
+        public java.time.Duration totalTimeout(java.time.Duration general) {
+            return ownTotalTimeout == null ? general : ownTotalTimeout;
+        }
     }
 
     // Decisión del fundador (2026-10-04): Alibaba se quitó (consola sin activación posible); el pago es Bedrock.
@@ -33,7 +38,13 @@ public final class RemoteProviders {
             var checks = Arrays.stream(env.getProperty(prefix + "check-models", "").split(","))
                     .map(String::strip).filter(m -> !m.isEmpty()).toList();
             return new Provider(name, baseUrl, env.getProperty(prefix + "api-key", ""), checks,
-                    baseUrl.contains("nvidia.com"), env.getProperty(prefix + "thinking-off", ""));
+                    baseUrl.contains("nvidia.com"), env.getProperty(prefix + "thinking-off", ""),
+                    timeoutOf(env.getProperty(prefix + "total-timeout")));
         }).toList();
+    }
+
+    private static java.time.Duration timeoutOf(String value) {
+        return value == null || value.isBlank() ? null
+                : org.springframework.boot.convert.DurationStyle.detectAndParse(value.strip());
     }
 }

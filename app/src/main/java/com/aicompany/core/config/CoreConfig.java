@@ -66,7 +66,7 @@ public class CoreConfig {
             var client = new com.aicompany.core.service.OpenAiCompatibleClient(
                     RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(factory).build(),
                     RestClient.builder().baseUrl(provider.baseUrl()).requestFactory(probeFactory).build(),
-                    provider.apiKey(), java.time.Duration.ofSeconds(10), totalTimeout);
+                    provider.apiKey(), java.time.Duration.ofSeconds(10), provider.totalTimeout(totalTimeout));
             client.configure(provider.name(), provider.nvidiaOptions(), provider.checkModels(),
                     provider.thinkingOff());
             clients.put(provider.name(), client);
