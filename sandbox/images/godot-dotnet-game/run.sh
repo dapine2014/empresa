@@ -86,6 +86,12 @@ case "$1" in
     fi
     make_sln; dotnet build "$SLN" --no-restore -c Release > /tmp/release.log 2>&1 || true
     IFS=',' read -ra TS <<< "${FORJAI_TARGETS:-}"
+    # Revisión final (5): 300 s por target y un tope global de 1700 s (el paso tiene 1800 s): lo que no entra
+    # queda "FAIL: sin tiempo" en vez de que el runner corte el contenedor y pierda los estados.
+    DEADLINE=1700
+    # Revisión final (6): cada target exporta a su propia carpeta temporal (fuera de $OUT) y solo pasa a la entrega
+    # si quedó PASS; android-apk y android-aab comparten juego/android/ pero cada uno mueve solo sus archivos.
+    TMP_EXPORTS=/work/.forjai/export-tmp
     for t in "${TS[@]}"; do
       case "$t" in
         windows)     dir=juego/windows; file=Juego.exe;         preset=Windows ;;
@@ -95,16 +101,25 @@ case "$1" in
         android-aab) dir=juego/android; file=Juego.aab;         preset=AndroidAab ;;
         *) status "$t" "FAIL: target desconocido"; continue ;;
       esac
-      mkdir -p "$OUT/$dir"
+      left=$((DEADLINE - SECONDS))
+      if [ "$left" -lt 60 ]; then
+        status "$t" "FAIL: sin tiempo (el paso package llegó a su tope antes de exportar $t)"
+        echo "== export $t: $(cat "$OUT/status/$t")"; continue
+      fi
+      limit=300; [ "$left" -lt "$limit" ] && limit=$left
+      tmp="$TMP_EXPORTS/$t"; rm -rf "$tmp"; mkdir -p "$tmp"
       mode=--export-release; [ "$t" = android-apk ] && mode=--export-debug
       # El AAB se arma con Gradle: necesita la plantilla de build de Android instalada en el proyecto.
       extra=(); [ "$t" = android-aab ] && extra=(--install-android-build-template)
       log=/tmp/export-$t.log
-      timeout 600 godot --headless --path /work/game "${extra[@]}" $mode "$preset" "$OUT/$dir/$file" > "$log" 2>&1
+      timeout "$limit" godot --headless --path /work/game "${extra[@]}" $mode "$preset" "$tmp/$file" > "$log" 2>&1
       rc=$?
       # Godot sale en 0 aunque el plugin de C# lance excepciones: el ejecutable quedaría sin los ensamblados.
-      if [ "$rc" -eq 0 ] && [ -s "$OUT/$dir/$file" ] && ! grep -qE 'System\.[A-Za-z.]*Exception' "$log"; then
-        status "$t" PASS
+      if [ "$rc" -eq 0 ] && [ -s "$tmp/$file" ] && ! grep -qE 'System\.[A-Za-z.]*Exception' "$log"; then
+        mkdir -p "$OUT/$dir" && cp -a "$tmp/." "$OUT/$dir/" && status "$t" PASS \
+          || status "$t" "FAIL: no se pudo copiar la exportación a la entrega"
+      elif [ "$rc" -eq 124 ]; then
+        status "$t" "FAIL: la exportación superó $limit s"
       elif grep -q 'services.gradle.org' "$log"; then
         status "$t" "FAIL: el AAB necesita Gradle y el sandbox no tiene red ni caché de Gradle"
       else
@@ -113,10 +128,11 @@ case "$1" in
           | grep -iE 'error|failed|cannot|exception|invalid|required|not installed|missing' | tail -3 | tr '\n' ' ' | cut -c1-280)
         status "$t" "FAIL: ${why:-la exportación terminó con código $rc}"
       fi
-      # Un export fallido no deja un archivo a medias en la entrega.
-      [ "$(cat "$OUT/status/$t")" = PASS ] || rm -f "$OUT/$dir/$file"
+      # Un export fallido no deja restos (.pck, data_*) en la entrega: lo temporal se borra siempre.
+      rm -rf "$tmp"
       echo "== export $t: $(cat "$OUT/status/$t")"
     done
+    rm -rf "$TMP_EXPORTS"
     # La copia de los presets no forma parte del producto.
     rm -f /work/game/export_presets.cfg ${CREATED_SLN:-} ;;
   *) echo "paso desconocido: $1"; exit 2 ;;
