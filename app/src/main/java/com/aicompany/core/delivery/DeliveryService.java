@@ -118,6 +118,13 @@ public class DeliveryService {
         }
         for (var r : stuck) {
             try {
+                // Una misión en estado de trabajo la retoma la recuperación y vuelve a empaquetar: no se rehace dos veces.
+                var mission = missions.find(r.missionId());
+                if (mission != null && mission.isPresent()
+                        && com.aicompany.core.recovery.MissionRecoveryService.WORKING.contains(mission.get().status())) {
+                    log.info("DELIVERY_RESUME mission={} skipped: la misión está en {}", r.missionId(), mission.get().status());
+                    continue;
+                }
                 redo(r.missionId(), r.increment());
             } catch (Exception ex) {
                 log.warn("DELIVERY_RESUME mission={} increment={} reason={}", r.missionId(), r.increment(), ex.getMessage());

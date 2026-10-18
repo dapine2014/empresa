@@ -109,7 +109,7 @@ class DeliveryServiceTest {
 
         service.deliver("M-1", 3, SHA, "GODOT_DOTNET_GAME", 0, verifiedRun(5, 5));
 
-        verify(events).publish(anyString(), any(), any(), any(), argThat(m -> !m.toString().contains("clave123")
+        verify(events).publish(eq("EMPRESA_DELIVERY_PACKAGED"), any(), any(), any(), argThat(m -> !m.toString().contains("clave123")
                 && !m.toString().contains("S0VZ")));
         verify(runner).packageJob(any(), any(), any(), eq(3), argThat(t -> t.contains("android-aab")), notNull());
     }
@@ -130,5 +130,24 @@ class DeliveryServiceTest {
         when(missions.verifiedCommit("M-1")).thenReturn(Optional.empty());
         var ex = assertThrows(IllegalStateException.class, () -> service.deliverVerified("M-1"));
         assertEquals("M-1 no tiene un incremento VERIFIED para entregar.", ex.getMessage());
+    }
+
+    @Test void resumeStuckSkipsMissionsInWorkingStatesAndRedoesStoppedOnes() {
+        when(deliveries.packaging()).thenReturn(List.of(
+                new DeliveryRecord("M-1", 1, "PACKAGING", null, 0, List.of(), null, "t"),
+                new DeliveryRecord("M-2", 1, "PACKAGING", null, 0, List.of(), null, "t")));
+        when(missions.find("M-1")).thenReturn(Optional.of(new com.aicompany.core.model.MissionResponse("M-1",
+                com.aicompany.core.model.MissionStatus.EVALUATING, "", 90, "", "", null, null, "TEAM-DEVELOPMENT")));
+        when(missions.find("M-2")).thenReturn(Optional.of(new com.aicompany.core.model.MissionResponse("M-2",
+                com.aicompany.core.model.MissionStatus.AWAITING_INVESTOR, "", 100, "", "", null, null, "TEAM-DEVELOPMENT")));
+        when(missions.verifiedCommit(anyString())).thenReturn(Optional.of(SHA));
+        when(missions.lastTeamPlanJson(anyString())).thenReturn(Optional.of("{\"stackProfile\":\"GODOT_DOTNET_GAME\"}"));
+        when(runner.packageJob(any(), any(), any(), anyInt(), any(), any())).thenReturn(Optional.of(new SandboxResult("PASS",
+                List.of(step("package:windows", "PASS", "")))));
+
+        service.resumeStuck();
+
+        verify(runner, never()).packageJob(eq("M-1"), any(), any(), anyInt(), any(), any());
+        verify(runner).packageJob(eq("M-2"), any(), any(), anyInt(), any(), any());
     }
 }

@@ -596,12 +596,18 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
             memory.recordVerifiedCommit(missionId, headSha);
             if (deliveryService != null) {
-                var inc = Math.max(1, requirementsMemory == null ? 1 : requirementsMemory.currentIncrement(missionId));
-                progress.advance(MissionStatus.EVALUATING, 90, "Entrega", "Empaquetando el incremento " + inc + " para entregar.");
-                var delivery = deliveryService.deliver(missionId, inc, headSha, plan.stackProfile(), repairRounds, sandboxResult);
-                if (delivery != null) {
-                    deliveryText = delivery.status() + " — "
-                            + (delivery.path() == null || delivery.path().isBlank() ? delivery.error() : delivery.path());
+                try {
+                    var inc = Math.max(1, requirementsMemory == null ? 1 : requirementsMemory.currentIncrement(missionId));
+                    progress.advance(MissionStatus.EVALUATING, 90, "Entrega", "Empaquetando el incremento " + inc + " para entregar.");
+                    var delivery = deliveryService.deliver(missionId, inc, headSha, plan.stackProfile(), repairRounds, sandboxResult);
+                    if (delivery != null) {
+                        deliveryText = delivery.status() + " — "
+                                + (delivery.path() == null || delivery.path().isBlank() ? delivery.error() : delivery.path());
+                    }
+                } catch (Exception ex) {
+                    // La entrega nunca cambia la validación (spec 2026-10-17).
+                    log.warn("MISSION {} - delivery step failed: {}", missionId, safeMessage(ex, "sin detalle"));
+                    deliveryText = "FAILED — " + safeMessage(ex, "sin detalle");
                 }
             }
         }

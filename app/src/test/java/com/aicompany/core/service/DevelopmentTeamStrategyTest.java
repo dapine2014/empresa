@@ -300,6 +300,22 @@ class DevelopmentTeamStrategyTest {
     }
 
     @Test
+    void aDeliveryStepFailureNeverChangesTheValidation() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        strategy.setDeliveryService(mock(com.aicompany.core.delivery.DeliveryService.class));
+        var reqs = mock(RequirementsMemoryService.class);
+        when(reqs.currentIncrement("M-1")).thenThrow(new IllegalStateException("neo4j caído"));
+        strategy.setRequirements(reqs);
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Entrega: FAILED — neo4j caído"), result.verifiableState());
+    }
+
+    @Test
     void theReviewReceivesTheRealSandboxResults() throws Exception {
         stubHappyPath();
         var reviewPrompt = ArgumentCaptor.forClass(String.class);

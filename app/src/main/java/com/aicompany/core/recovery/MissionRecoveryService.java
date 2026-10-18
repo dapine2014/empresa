@@ -32,7 +32,7 @@ public class MissionRecoveryService {
 
     private static final Logger log = LoggerFactory.getLogger(MissionRecoveryService.class);
     static final String DEVELOPMENT_TEAM = "TEAM-DEVELOPMENT";
-    static final Set<MissionStatus> WORKING = EnumSet.of(MissionStatus.CREATED, MissionStatus.PLANNING,
+    public static final Set<MissionStatus> WORKING = EnumSet.of(MissionStatus.CREATED, MissionStatus.PLANNING,
             MissionStatus.DELEGATING, MissionStatus.RESEARCHING, MissionStatus.WAITING_AGENT_RESULTS,
             MissionStatus.EVALUATING, MissionStatus.CONSOLIDATING, MissionStatus.EXECUTING);
 
