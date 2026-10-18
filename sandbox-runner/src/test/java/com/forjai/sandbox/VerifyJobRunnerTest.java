@@ -191,8 +191,9 @@ class VerifyJobRunnerTest {
         assertEquals("FAIL", result.steps().get(3).status());
         assertTrue(result.steps().get(3).outputTail().contains("falta el SDK"));
         assertEquals("FAIL", result.overall());
-        assertTrue(Files.exists(staging.resolve("M-1/incremento-2/juego/windows/Juego.exe")));
-        assertFalse(Files.exists(staging.resolve("M-1/incremento-2/status")));
+        var out = staging.resolve("M-1").resolve(result.stagingDir());
+        assertTrue(Files.exists(out.resolve("juego/windows/Juego.exe")));
+        assertFalse(Files.exists(out.resolve("status")));
     }
 
     @Test
@@ -201,12 +202,12 @@ class VerifyJobRunnerTest {
         var seen = new java.util.concurrent.atomic.AtomicReference<String>();
         var runner = new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s", Path.of("/deps")), packFake(java.util.Map.of(
                 "android-aab", "PASS"), (args, workDir) -> seen.set(readEnvFile(args))), staging);
-        runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3, List.of(PackageTarget.ANDROID_AAB),
+        var result = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3, List.of(PackageTarget.ANDROID_AAB),
                 new AndroidRelease(java.util.Base64.getEncoder().encodeToString("jks".getBytes()), "forjai", "s3cr3t"));
         assertTrue(seen.get().contains("GODOT_ANDROID_KEYSTORE_RELEASE_PATH=/work/.forjai/keystore/release.jks"));
         assertTrue(seen.get().contains("GODOT_ANDROID_KEYSTORE_RELEASE_USER=forjai"));
         assertTrue(seen.get().contains("FORJAI_TARGETS=android-aab"));
-        assertFalse(Files.exists(staging.resolve("M-1/incremento-3/keystore")));
+        assertFalse(Files.exists(staging.resolve("M-1").resolve(result.stagingDir()).resolve("keystore")));
         try (var files = Files.list(work)) { assertEquals(0, files.count()); }
     }
 
@@ -228,8 +229,9 @@ class VerifyJobRunnerTest {
         }), staging);
         var result = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 1,
                 List.of(PackageTarget.WINDOWS, PackageTarget.LINUX), null);
-        assertFalse(Files.exists(staging.resolve("M-1/incremento-1/juego/link"), java.nio.file.LinkOption.NOFOLLOW_LINKS));
-        assertTrue(Files.exists(staging.resolve("M-1/incremento-1/juego/windows/Juego.exe")));
+        var out = staging.resolve("M-1").resolve(result.stagingDir());
+        assertFalse(Files.exists(out.resolve("juego/link"), java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        assertTrue(Files.exists(out.resolve("juego/windows/Juego.exe")));
         assertEquals("FAIL", result.steps().get(3).status());
         assertTrue(result.steps().get(3).outputTail().contains("estado inválido"));
     }
@@ -247,5 +249,141 @@ class VerifyJobRunnerTest {
         assertEquals("package:android-aab", result.steps().get(1).name());
         assertTrue(result.steps().get(1).outputTail().contains("clave de Android inválida"));
         try (var files = Files.list(work)) { assertEquals(0, files.count()); }
+    }
+
+    private VerifyJobRunner packRunner(Path staging, ProcessExecutor executor) {
+        return new VerifyJobRunner(products, work, new PodmanCommandBuilder("unix:///s", Path.of("/deps")), executor, staging);
+    }
+
+    // Revisión final (3): dos empaquetados del mismo incremento nunca comparten el staging.
+    @Test
+    void eachPackJobHasItsOwnStagingDirectory() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var runner = packRunner(staging, packFake(java.util.Map.of("windows", "PASS")));
+        var first = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 2, List.of(PackageTarget.WINDOWS), null);
+        var second = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 2, List.of(PackageTarget.WINDOWS), null);
+        assertTrue(first.stagingDir().matches("incremento-2-[0-9a-f-]{36}"), first.stagingDir());
+        assertNotEquals(first.stagingDir(), second.stagingDir());
+        assertTrue(Files.exists(staging.resolve("M-1").resolve(first.stagingDir()).resolve("juego/windows/Juego.exe")));
+        assertTrue(Files.exists(staging.resolve("M-1").resolve(second.stagingDir()).resolve("juego/windows/Juego.exe")));
+        assertNull(runner(fake(step -> new ProcessExecutor.Execution(0, "", false)))
+                .verify("M-1", "a".repeat(40), ExecutionProfile.DOTNET_APP).stagingDir());
+    }
+
+    // Revisión final (5): con timeout, los targets que ya escribieron su estado lo conservan.
+    @Test
+    void aTimeoutOnlyMarksTheTargetsThatDidNotFinish() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var finished = packFake(java.util.Map.of("windows", "PASS", "macos", "FAIL: sin plantilla"));
+        ProcessExecutor timingOut = (command, directory, timeout) -> {
+            var e = finished.run(command, directory, timeout);
+            return command.get(command.size() - 1).equals("package") ? new ProcessExecutor.Execution(-1, "cortado", true) : e;
+        };
+        var result = packRunner(staging, timingOut).pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 1,
+                List.of(PackageTarget.WINDOWS, PackageTarget.MACOS, PackageTarget.LINUX), null);
+        assertEquals(List.of("PASS", "FAIL", "TIMEOUT"), result.steps().subList(2, 5).stream().map(SandboxResult.StepResult::status).toList());
+        assertTrue(Files.exists(staging.resolve("M-1").resolve(result.stagingDir()).resolve("juego/windows/Juego.exe")));
+    }
+
+    @Test
+    void thePackageStepFitsAllTargetsWithinTheClientTimeout() {
+        assertEquals(1800, ExecutionProfile.PACKAGE_STEP.timeoutSeconds());
+    }
+
+    static final AndroidRelease RELEASE = new AndroidRelease(
+            java.util.Base64.getEncoder().encodeToString("KEYSTORE-BYTES-0123456789".getBytes()), "subidas", "Cl4veSecreta");
+
+    // Revisión final (7): la contraseña y el alias nunca salen en un motivo ni en la salida.
+    @Test
+    void thePasswordAndAliasAreRedactedFromEveryOutput() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var base = packFake(java.util.Map.of("android-aab", "FAIL: keystore subidas con Cl4veSecreta inválida"));
+        ProcessExecutor leaky = (command, directory, timeout) -> {
+            var e = base.run(command, directory, timeout);
+            return command.get(command.size() - 1).equals("package")
+                    ? new ProcessExecutor.Execution(0, "pass=Cl4veSecreta alias=subidas", false) : e;
+        };
+        var result = packRunner(staging, leaky).pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3,
+                List.of(PackageTarget.WINDOWS, PackageTarget.ANDROID_AAB), RELEASE);
+        for (var s : result.steps()) {
+            assertFalse(s.outputTail().contains("Cl4veSecreta"), s.name() + ": " + s.outputTail());
+            assertFalse(s.outputTail().contains("subidas"), s.name() + ": " + s.outputTail());
+        }
+        assertTrue(result.steps().stream().anyMatch(s -> s.outputTail().contains("***")));
+    }
+
+    @Test
+    void anOutputFileWithKeyMaterialIsDiscardedAndAndroidFails() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var runner = packRunner(staging, packFake(java.util.Map.of("windows", "PASS", "android-aab", "PASS"), (args, workDir) -> {
+            try {
+                var android = Files.createDirectories(workDir.resolve(".forjai/package/juego/android"));
+                Files.writeString(android.resolve("Juego.aab"), "zip...Cl4veSecreta...zip");
+                Files.write(android.resolve("copia.jks"), Files.readAllBytes(workDir.resolve(".forjai/keystore/release.jks")));
+            } catch (java.io.IOException ex) {
+                throw new IllegalStateException(ex);
+            }
+        }));
+        var result = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3,
+                List.of(PackageTarget.WINDOWS, PackageTarget.ANDROID_AAB), RELEASE);
+        var out = staging.resolve("M-1").resolve(result.stagingDir());
+        assertFalse(Files.exists(out.resolve("juego/android/Juego.aab")));
+        assertFalse(Files.exists(out.resolve("juego/android/copia.jks")));
+        assertTrue(Files.exists(out.resolve("juego/windows/Juego.exe")));
+        assertEquals("PASS", result.steps().get(2).status());
+        assertEquals("FAIL", result.steps().get(3).status());
+        assertTrue(result.steps().get(3).outputTail().contains("la salida contenía material de la clave"));
+    }
+
+    @Test
+    void aDesktopTargetWhoseFilesCarriedKeyMaterialAlsoFails() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var runner = packRunner(staging, packFake(java.util.Map.of("windows", "PASS", "linux", "PASS", "android-aab", "PASS"),
+                (args, workDir) -> {
+                    try {
+                        var windows = Files.createDirectories(workDir.resolve(".forjai/package/juego/windows"));
+                        Files.writeString(windows.resolve("Juego.pck"), "...Cl4veSecreta...");
+                        Files.createDirectories(workDir.resolve(".forjai/package/juego/linux"));
+                        Files.writeString(workDir.resolve(".forjai/package/juego/linux/Juego.x86_64"), "elf");
+                    } catch (java.io.IOException ex) {
+                        throw new IllegalStateException(ex);
+                    }
+                }));
+        var result = runner.pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3,
+                List.of(PackageTarget.WINDOWS, PackageTarget.LINUX, PackageTarget.ANDROID_AAB), RELEASE);
+        assertEquals(List.of("FAIL", "PASS", "FAIL"), result.steps().subList(2, 5).stream().map(SandboxResult.StepResult::status).toList());
+        assertFalse(Files.exists(staging.resolve("M-1").resolve(result.stagingDir()).resolve("juego/windows/Juego.pck")));
+    }
+
+    @Test
+    void theReleaseKeyIsNotInTheJobDirDuringRestore() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var seenDuringRestore = new java.util.concurrent.atomic.AtomicBoolean();
+        var base = packFake(java.util.Map.of("android-aab", "PASS"));
+        ProcessExecutor executor = (command, directory, timeout) -> {
+            if (command.get(command.size() - 1).equals("restore")) {
+                var workDir = Path.of(command.stream().filter(a -> a.endsWith(":/work:Z")).findFirst().orElseThrow()
+                        .replace(":/work:Z", ""));
+                seenDuringRestore.set(Files.exists(workDir.resolve(".forjai/keystore")));
+                assertFalse(command.contains("--env-file"));
+            }
+            return base.run(command, directory, timeout);
+        };
+        packRunner(staging, executor).pack("M-1", "a".repeat(40), ExecutionProfile.GODOT_DOTNET_GAME, 3,
+                List.of(PackageTarget.ANDROID_AAB), RELEASE);
+        assertFalse(seenDuringRestore.get());
+    }
+
+    // Revisión final (7): un reinicio a mitad de un job no deja la clave ni el checkout en work-root.
+    @Test
+    void orphanJobAndEnvFilesAreRemovedAtStartup() throws Exception {
+        Files.createDirectories(work.resolve("job-viejo/.forjai/keystore"));
+        Files.writeString(work.resolve("job-viejo/.forjai/keystore/release.jks"), "k");
+        Files.writeString(work.resolve("env-viejo"), "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=x");
+        Files.writeString(work.resolve("otro.txt"), "queda");
+        runner(fake(step -> new ProcessExecutor.Execution(0, "", false))).cleanOrphans();
+        try (var files = Files.list(work)) {
+            assertEquals(List.of("otro.txt"), files.map(p -> p.getFileName().toString()).toList());
+        }
     }
 }

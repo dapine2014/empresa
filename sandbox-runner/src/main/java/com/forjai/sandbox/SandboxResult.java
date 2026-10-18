@@ -2,8 +2,16 @@ package com.forjai.sandbox;
 
 import java.util.List;
 
-/** Contrato de respuesta del runner (spec 2026-09-26 §2). company-core tiene su copia en model/SandboxResult. */
-public record SandboxResult(String overall, List<StepResult> steps) {
+/**
+ * Contrato de respuesta del runner (spec 2026-09-26 §2). company-core tiene su copia en model/SandboxResult.
+ * {@code stagingDir} (entrega del producto): en un PACKAGE, la carpeta propia del job dentro de
+ * {@code <staging-root>/<missionId>/} ({@code incremento-N-<jobId>}); null en los demás jobs.
+ */
+public record SandboxResult(String overall, List<StepResult> steps, String stagingDir) {
+
+    public SandboxResult(String overall, List<StepResult> steps) {
+        this(overall, steps, null);
+    }
 
     public static final String PASS = "PASS";
     public static final String FAIL = "FAIL";

@@ -17,10 +17,13 @@ public class RunnerConfig {
             @Value("${sandbox.deps-root}") String depsRoot,
             @Value("${sandbox.staging-root}") String stagingRoot,
             ProcessExecutor executor) {
-        return new VerifyJobRunner(Path.of(productsRoot).toAbsolutePath().normalize(),
+        var runner = new VerifyJobRunner(Path.of(productsRoot).toAbsolutePath().normalize(),
                 Path.of(workRoot).toAbsolutePath().normalize(),
                 new PodmanCommandBuilder(podmanUrl, Path.of(depsRoot).toAbsolutePath().normalize()), executor,
                 Path.of(stagingRoot).toAbsolutePath().normalize());
+        // Revisión final (7): lo que dejó un job cortado por un reinicio (checkout con la clave, env file) se borra.
+        runner.cleanOrphans();
+        return runner;
     }
 
     @Bean

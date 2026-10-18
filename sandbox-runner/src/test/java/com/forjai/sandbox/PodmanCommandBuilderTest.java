@@ -63,7 +63,7 @@ class PodmanCommandBuilderTest {
         var args = new PodmanCommandBuilder("unix:///s", Path.of("/deps"))
                 .run(ExecutionProfile.GODOT_DOTNET_GAME, ExecutionProfile.PACKAGE_STEP, Path.of("/w/job"), Path.of("/w/env-1"));
         assertTrue(args.containsAll(java.util.List.of("--env-file", "/w/env-1")));
-        assertTrue(args.contains("--timeout=1200"));
+        assertTrue(args.contains("--timeout=1800"));
         assertTrue(args.stream().noneMatch(a -> a.contains("PASSWORD")));
         assertEquals("package", args.get(args.size() - 1));
     }

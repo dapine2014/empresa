@@ -19,8 +19,11 @@ public enum ExecutionProfile {
     public record Step(String name, int timeoutSeconds) {
     }
 
-    /** Entrega del producto: empaqueta los targets pedidos (FORJAI_TARGETS) en /work/.forjai/package. */
-    public static final Step PACKAGE_STEP = new Step("package", 1200);
+    /**
+     * Entrega del producto: empaqueta los targets pedidos (FORJAI_TARGETS) en /work/.forjai/package. 1800 s: hasta 5
+     * targets de 300 s más el build Release; run.sh corta los que no entran antes de ~1700 s (revisión final, 5).
+     */
+    public static final Step PACKAGE_STEP = new Step("package", 1800);
 
     private static final List<Step> STEPS = List.of(
             new Step("restore", 300), new Step("build", 600), new Step("test", 600), new Step("smoke", 180));
