@@ -58,6 +58,7 @@ ollama:
 
 products:
   workspace-root: ${PRODUCTS_WORKSPACE_ROOT:${user.home}/forjai-products}
+  deliveries-root: ${DELIVERIES_ROOT:${user.home}/entregas-forja}
 
 evidence:
   web-search:
