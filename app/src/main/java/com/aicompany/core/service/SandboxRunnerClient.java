@@ -69,6 +69,45 @@ public class SandboxRunnerClient {
         }
     }
 
+    /** Entrega del producto: job PACKAGE (un paso por target). Nunca lanza; el body (con la clave) jamás se loguea. */
+    public Optional<SandboxResult> packageJob(String missionId, String commitSha, String stackProfile, int increment,
+                                              List<String> targets,
+                                              com.aicompany.core.delivery.AndroidSigningKeyService.Plain release) {
+        if (cancellations != null && cancellations.isCancelled(missionId)) {
+            throw new MissionCancellations.MissionCancelledException(missionId);
+        }
+        try {
+            lastError = null;
+            var body = new java.util.LinkedHashMap<String, Object>();
+            body.put("jobType", "PACKAGE");
+            body.put("missionId", missionId);
+            body.put("commitSha", commitSha);
+            body.put("stackProfile", stackProfile);
+            body.put("increment", increment);
+            body.put("targets", targets);
+            if (release != null) {
+                body.put("androidRelease", Map.of("keystoreBase64", release.keystoreBase64(),
+                        "alias", release.alias(), "password", release.password()));
+            }
+            var result = client.post().uri("/jobs")
+                    .header("X-Sandbox-Token", token == null ? "" : token)
+                    .body(body)
+                    .retrieve()
+                    .body(SandboxResult.class);
+            if (result == null) {
+                lastError = "El sandbox-runner no devolvió resultado.";
+                return Optional.empty();
+            }
+            return Optional.of(result);
+        } catch (MissionCancellations.MissionCancelledException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            lastError = "sandbox-runner no disponible: " + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+            log.warn("SANDBOX_UNAVAILABLE mission={} job=PACKAGE reason={}", missionId, lastError);
+            return Optional.empty();
+        }
+    }
+
     /** Parte 3: descarga aislada por el proxy con lista blanca. Nunca lanza (vacío + lastError). */
     public Optional<DependencyFetch> fetchDependencies(String ecosystem, List<DependencyRef> packages) {
         try {
