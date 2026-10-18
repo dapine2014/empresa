@@ -46,6 +46,8 @@ import type {
   ModelCostView,
   RequirementsDecision,
   RequirementsView,
+  DeliveryView,
+  AndroidSigningKeyStatus,
 } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -205,6 +207,20 @@ export const api = {
 
   interactionDesign: (missionId: string) =>
     request<InteractionDesignView>(`/api/company/missions/${missionId}/interaction-design`),
+  deliveries: (missionId: string) => request<DeliveryView[]>(`/api/company/missions/${missionId}/deliveries`),
+  generateDelivery: (missionId: string) =>
+    request<DeliveryView>(`/api/company/missions/${missionId}/deliveries`, { method: 'POST' }),
+  downloadDeliveryUrl: (missionId: string, increment: number) =>
+    `/api/company/missions/${missionId}/deliveries/${increment}/download`,
+  signingKey: (missionId: string) =>
+    request<AndroidSigningKeyStatus>(`/api/company/missions/${missionId}/android-signing-key`),
+  saveSigningKey: (missionId: string, command: { keystoreBase64: string; alias: string; password: string }) =>
+    request<AndroidSigningKeyStatus>(`/api/company/missions/${missionId}/android-signing-key`, {
+      method: 'PUT',
+      body: JSON.stringify(command),
+    }),
+  deleteSigningKey: (missionId: string) =>
+    request<void>(`/api/company/missions/${missionId}/android-signing-key`, { method: 'DELETE' }),
   missionEvents: (missionId: string, limit = 100) =>
     request<MissionEventView[]>(`/api/company/missions/${missionId}/events?limit=${limit}`),
   jointReview: (missionId: string) => request<JointReviewView[]>(`/api/company/missions/${missionId}/joint-review`),

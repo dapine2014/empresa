@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import CancelMissionButton from '../components/CancelMissionButton'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { AdjustTarget, ContractView, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, RequirementsStory, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
+import type { AdjustTarget, DeliveryView, ContractView, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, RequirementsStory, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -417,6 +417,187 @@ function MissionEventLog({ missionId, live }: { missionId: string; live: boolean
   )
 }
 
+/** Entregas (spec 2026-10-17): zip del incremento VERIFIED, descarga, generación manual y clave de Android. */
+function DeliveriesSection({ missionId, verified }: { missionId: string; verified: boolean }) {
+  const queryClient = useQueryClient()
+  const designQuery = useQuery({
+    queryKey: ['interactionDesign', missionId],
+    queryFn: () => api.interactionDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const query = useQuery({
+    queryKey: ['deliveries', missionId],
+    queryFn: () => api.deliveries(missionId),
+    refetchInterval: (q) => (q.state.data?.some((d) => d.status === 'PACKAGING') ? 5_000 : false),
+  })
+  const generate = useMutation({
+    mutationFn: () => api.generateDelivery(missionId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['deliveries', missionId] }),
+  })
+  const [copied, setCopied] = useState<number | null>(null)
+  const deliveries: DeliveryView[] = query.data ?? []
+  const isGame =
+    designQuery.data?.design?.experience === 'GAME' ||
+    deliveries.some((d) => d.targets.some((t) => t.name.startsWith('android-')))
+  const copyPath = (d: DeliveryView) => {
+    void navigator.clipboard
+      ?.writeText(d.path)
+      .then(() => {
+        setCopied(d.increment)
+        setTimeout(() => setCopied(null), 2000)
+      })
+      .catch(() => undefined)
+  }
+  return (
+    <section>
+      <h2>Entregas</h2>
+      {query.isLoading ? (
+        <p className="hint">Cargando entregas…</p>
+      ) : query.error ? (
+        <p className="error">No se pudieron cargar las entregas.</p>
+      ) : deliveries.length === 0 ? (
+        <p className="hint">Sin entregas todavía</p>
+      ) : (
+        <ul>
+          {deliveries.map((d) => (
+            <li key={d.increment}>
+              {statusDot(d.status)} <strong>Incremento {d.increment}</strong> — {d.status}
+              {d.status !== 'PACKAGING' && d.status !== 'FAILED' && (
+                <>
+                  {' · '}
+                  {(d.sizeBytes / (1024 * 1024)).toFixed(1)} MB
+                  {' · '}
+                  <a href={api.downloadDeliveryUrl(missionId, d.increment)} download>
+                    Descargar
+                  </a>
+                </>
+              )}
+              {d.path && (
+                <>
+                  {' · '}
+                  <code>{d.path}</code>{' '}
+                  <button type="button" onClick={() => copyPath(d)}>
+                    {copied === d.increment ? 'Copiado' : 'copiar'}
+                  </button>
+                </>
+              )}
+              {d.targets.length > 0 && (
+                <div>
+                  {d.targets.map((t) => (
+                    <span
+                      key={t.name}
+                      title={t.reason ?? undefined}
+                      style={{ marginRight: 8, color: t.status === 'PASS' ? 'green' : t.status === 'SKIPPED' ? 'gray' : 'crimson' }}
+                    >
+                      {statusDot(t.status)} {t.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {d.error && <p className="error">{d.error}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {(verified || deliveries.length > 0) && (
+        <p>
+          <button type="button" disabled={generate.isPending} onClick={() => generate.mutate()}>
+            Generar entrega
+          </button>
+          {generate.isPending && <span className="hint"> Empaquetando… (puede tardar varios minutos)</span>}
+        </p>
+      )}
+      {generate.isError && <p className="error">{generate.error.message}</p>}
+      {isGame && <AndroidSigningKeyCard missionId={missionId} />}
+    </section>
+  )
+}
+
+/** Clave de firma de Android del juego: solo el servidor la guarda (cifrada); aquí nunca se vuelve a mostrar. */
+function AndroidSigningKeyCard({ missionId }: { missionId: string }) {
+  const queryClient = useQueryClient()
+  const [file, setFile] = useState<File | null>(null)
+  const [alias, setAlias] = useState('')
+  const [password, setPassword] = useState('')
+  const [fileKey, setFileKey] = useState(0)
+  const query = useQuery({
+    queryKey: ['androidSigningKey', missionId],
+    queryFn: () => api.signingKey(missionId),
+  })
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['androidSigningKey', missionId] })
+  const save = useMutation({
+    mutationFn: async () => {
+      if (!file) throw new Error('Elige el archivo .jks o .p12.')
+      const keystoreBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
+        reader.onerror = () => reject(new Error('No se pudo leer el archivo.'))
+        reader.readAsDataURL(file)
+      })
+      return api.saveSigningKey(missionId, { keystoreBase64, alias, password })
+    },
+    onSuccess: () => {
+      setFile(null)
+      setAlias('')
+      setPassword('')
+      setFileKey((k) => k + 1)
+      void refresh()
+    },
+  })
+  const remove = useMutation({ mutationFn: () => api.deleteSigningKey(missionId), onSuccess: () => void refresh() })
+  const status = query.data
+  return (
+    <div className="decision-form">
+      <h3>Clave de Android</h3>
+      {status?.configured ? (
+        <p>
+          Alias <strong>{status.alias}</strong>
+          {status.updatedAt && <> — guardada el {new Date(status.updatedAt).toLocaleString()}</>}{' '}
+          <button type="button" className="danger" disabled={remove.isPending} onClick={() => remove.mutate()}>
+            Borrar
+          </button>
+        </p>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            save.mutate()
+          }}
+        >
+          <p>
+            <input
+              key={fileKey}
+              type="file"
+              accept=".jks,.p12,.keystore"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </p>
+          <p>
+            <input placeholder="Alias" value={alias} onChange={(e) => setAlias(e.target.value)} />{' '}
+            <input
+              type="password"
+              placeholder="Contraseña"
+              autoComplete="off"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />{' '}
+            <button type="submit" disabled={save.isPending || !file || !alias || !password}>
+              Guardar
+            </button>
+          </p>
+        </form>
+      )}
+      <p className="hint">
+        Godot usa la misma contraseña para el keystore y la clave. Respáldala: sin ella no podrás actualizar la app en
+        Google Play.
+      </p>
+      {save.isError && <p className="error">{save.error.message}</p>}
+      {remove.isError && <p className="error">{remove.error.message}</p>}
+    </div>
+  )
+}
+
 /** Revisión conjunta (spec 2026-10-15): Neo detecta contradicciones entre HU y diseño, Aria decide, Java aplica. */
 function MissionJointReview({ missionId }: { missionId: string }) {
   const query = useQuery({
@@ -644,6 +825,13 @@ export default function MissionDetailPage() {
         missionId={mission.missionId}
         live={!['COMPLETED', 'CANCELLED', 'FAILED', 'INTERRUPTED'].includes(mission.status)}
       />
+
+      {mission.teamId && (
+        <DeliveriesSection
+          missionId={mission.missionId}
+          verified={tasks.filter((t) => t.validationStatus).at(-1)?.validationStatus === 'VERIFIED'}
+        />
+      )}
 
       {mission.teamId && <MissionDatabase missionId={mission.missionId} />}
 

@@ -769,3 +769,16 @@ export interface JointReviewView {
   detail: string
   at: string
 }
+
+// Spec 2026-10-17 entrega del producto: DeliveryController.DeliveryView / AndroidSigningKeyService.Status.
+export interface DeliveryTarget { name: string; status: 'PASS' | 'FAIL' | 'TIMEOUT' | 'SKIPPED' | string; reason: string | null }
+export interface DeliveryView {
+  increment: number
+  status: 'PACKAGING' | 'READY' | 'PARTIAL' | 'FAILED' | string
+  path: string
+  sizeBytes: number
+  targets: DeliveryTarget[]
+  error: string | null
+  createdAt: string
+}
+export interface AndroidSigningKeyStatus { configured: boolean; alias: string | null; updatedAt: string | null }
