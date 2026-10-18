@@ -1,5 +1,6 @@
 package com.aicompany.core.delivery;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -32,5 +33,8 @@ class DockerTemplatesTest {
         assertTrue(DockerTemplates.dockerfile("FLUTTER_WEB_APP").contains("FROM nginx:"));
         assertTrue(DockerTemplates.dockerfile("FLUTTER_WEB_APP").contains("COPY app/ /usr/share/nginx/html/"));
         assertTrue(DockerTemplates.dockerfile("DOTNET_APP").contains("FROM mcr.microsoft.com/dotnet/aspnet:8.0"));
+        var dotnet = DockerTemplates.dockerfile("DOTNET_APP");
+        assertTrue(dotnet.contains("exec dotnet $(cat forjai-entry.txt)"));
+        assertFalse(dotnet.contains("ls *.dll"));
     }
 }

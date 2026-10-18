@@ -33,7 +33,7 @@ public final class DockerTemplates {
                 COPY app/ .
                 ENV ASPNETCORE_URLS=http://+:8080
                 EXPOSE 8080
-                ENTRYPOINT ["sh","-c","dotnet $(ls *.dll | head -1)"]
+                ENTRYPOINT ["sh","-c","exec dotnet $(cat forjai-entry.txt)"]
                 """;
     }
 
