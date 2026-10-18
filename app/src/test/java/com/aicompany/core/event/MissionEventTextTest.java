@@ -89,4 +89,13 @@ class MissionEventTextTest {
                 MissionEventText.summary("EMPRESA_MISSION_UPDATED", "Forjai", Map.of("status", "X", "currentStep", "paso",
                         "message", "a\n\n   b")));
     }
+
+    @Test void deliveryEvents() {
+        assertEquals("Entrega del incremento 3 (PARTIAL): ~/entregas-forja/M/incremento-3.zip",
+                MissionEventText.summary("EMPRESA_DELIVERY_PACKAGED", "delivery", Map.of("increment", 3,
+                        "status", "PARTIAL", "path", "~/entregas-forja/M/incremento-3.zip")));
+        assertEquals("Entrega del incremento 3 falló: sandbox-runner no disponible",
+                MissionEventText.summary("EMPRESA_DELIVERY_FAILED", "delivery", Map.of("increment", 3,
+                        "error", "sandbox-runner no disponible")));
+    }
 }

@@ -281,6 +281,24 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains("Compiló, pasaron 12 tests y arrancó en el sandbox."));
     }
 
+    // Entrega del producto (spec 2026-10-17): al quedar VERIFIED se empaqueta una vez con el HEAD y el estado lo cuenta.
+    @Test
+    void aVerifiedIncrementIsDeliveredOnceAndTheStateSaysWhere() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        when(delivery.deliver(eq("M-1"), anyInt(), anyString(), eq("GODOT_DOTNET_GAME"), anyInt(), any()))
+                .thenReturn(new com.aicompany.core.delivery.DeliveryRecord("M-1", 1, "READY",
+                        "/home/x/entregas-forja/M-1/incremento-1.zip", 10, List.of(), "", "t"));
+        strategy.setDeliveryService(delivery);
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(delivery, times(1)).deliver(eq("M-1"), anyInt(), eq(SHA_NEO), eq("GODOT_DOTNET_GAME"), anyInt(), any());
+        assertTrue(result.verifiableState().contains("Entrega: READY — /home/x/entregas-forja/M-1/incremento-1.zip"));
+    }
+
     @Test
     void theReviewReceivesTheRealSandboxResults() throws Exception {
         stubHappyPath();

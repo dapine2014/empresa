@@ -99,7 +99,27 @@ public class MissionRecoveryService {
             }
             collectOrphans();
             recoverAll();
+            resumeDeliveries();
         });
+    }
+
+    private com.aicompany.core.delivery.DeliveryService deliveryService;
+
+    /** Entrega del producto (spec 2026-10-17): al arrancar rehace las entregas que quedaron en PACKAGING (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeliveryService(@org.springframework.context.annotation.Lazy com.aicompany.core.delivery.DeliveryService deliveryService) {
+        this.deliveryService = deliveryService;
+    }
+
+    private void resumeDeliveries() {
+        if (deliveryService == null) {
+            return;
+        }
+        try {
+            deliveryService.resumeStuck();
+        } catch (Exception ex) {
+            log.warn("RECOVERY - could not resume stuck deliveries: {}", ex.getMessage());
+        }
     }
 
     /** Toda misión en estado de trabajo sin hilo vivo es huérfana; las que no son del Development Group quedan INTERRUPTED. */

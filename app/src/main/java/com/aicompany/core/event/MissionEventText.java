@@ -38,6 +38,9 @@ public final class MissionEventText {
                     : "Triage de " + who + ": " + String.join("; ", list(d, "verdicts"));
             case "EMPRESA_TASK_ATTEMPT_REJECTED" -> "Intento " + d.get("attempt") + " de " + who + " rechazado: "
                     + String.join("; ", list(d, "reasons"));
+            case "EMPRESA_DELIVERY_PACKAGED" -> "Entrega del incremento " + d.get("increment") + " (" + str(d, "status")
+                    + "): " + str(d, "path");
+            case "EMPRESA_DELIVERY_FAILED" -> "Entrega del incremento " + d.get("increment") + " falló: " + str(d, "error");
             case "EMPRESA_MODEL_SWITCHED" -> "Modelo de " + who + ": " + str(d, "from") + " → " + str(d, "to")
                     + " (" + str(d, "kind") + ")";
             default -> (eventType == null ? "EVENTO" : eventType.replaceFirst("^EMPRESA_", "").replace('_', ' '))

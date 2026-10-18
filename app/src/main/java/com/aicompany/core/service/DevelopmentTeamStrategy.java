@@ -581,6 +581,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Spec Diego ambientes §2: con el código VERIFIED, la cascada de ambientes corre ANTES de registrar el commit
         // verificado; solo una falla que un agente puede corregir es un chequeo que falla (revisión final, I1).
         var databaseText = "";
+        var deliveryText = "";
         var databaseStep = databaseStep(missionId, headSha, plan, status, true);
         if (databaseStep != null) {
             databaseText = databaseStep.text();
@@ -594,6 +595,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         if (status == StaticValidationStatus.VERIFIED) {
             // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
             memory.recordVerifiedCommit(missionId, headSha);
+            if (deliveryService != null) {
+                var inc = Math.max(1, requirementsMemory == null ? 1 : requirementsMemory.currentIncrement(missionId));
+                progress.advance(MissionStatus.EVALUATING, 90, "Entrega", "Empaquetando el incremento " + inc + " para entregar.");
+                var delivery = deliveryService.deliver(missionId, inc, headSha, plan.stackProfile(), repairRounds, sandboxResult);
+                if (delivery != null) {
+                    deliveryText = delivery.status() + " — "
+                            + (delivery.path() == null || delivery.path().isBlank() ? delivery.error() : delivery.path());
+                }
+            }
         }
 
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
@@ -613,6 +623,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
                         repairRounds, autofixRounds, dependencyOutcome, triageNotes)
                         + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText)
+                        + (deliveryText.isEmpty() ? "" : "\nEntrega: " + deliveryText)
                         + (stashNote.isEmpty() ? "" : "\n" + stashNote));
     }
 
@@ -1582,6 +1593,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 REGLAS DE CAPAS: domain no depende de nada fuera de su domain ni de frameworks; application solo de
                 domain; infrastructure/api/presentation/game dependen de application y domain.
                 """.formatted(profile, contexts, glossary);
+    }
+
+    private com.aicompany.core.delivery.DeliveryService deliveryService;
+
+    /** Entrega del producto (spec 2026-10-17): empaqueta el incremento al quedar VERIFIED (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeliveryService(com.aicompany.core.delivery.DeliveryService deliveryService) {
+        this.deliveryService = deliveryService;
     }
 
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
