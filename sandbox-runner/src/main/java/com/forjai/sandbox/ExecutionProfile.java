@@ -11,10 +11,10 @@ import java.util.Optional;
  */
 public enum ExecutionProfile {
 
-    DOTNET_APP("localhost/forjai-sandbox/dotnet-app:1", true),
-    GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:2", true),
+    DOTNET_APP("localhost/forjai-sandbox/dotnet-app:2", true),
+    GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:3", true),
     // Verificado en vivo: el SDK de Flutter crea bin/cache/lockfile en cada comando (falla con raíz de solo lectura).
-    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:1", false);
+    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:2", false);
 
     public record Step(String name, int timeoutSeconds) {
     }

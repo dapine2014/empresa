@@ -42,5 +42,29 @@ case "$1" in
       sleep 1
     done
     cat /tmp/api.log; echo "La API no respondió GET /health en 60 s"; exit 1 ;;
+  package)
+    # Entrega del producto: el proyecto ejecutable publicado en app/, con forjai-entry.txt para el Dockerfile.
+    set +e
+    OUT=/work/.forjai/package; mkdir -p "$OUT/status"
+    status() { echo "$1" > "$OUT/status/app"; echo "== package app: $1"; }
+    projects() { find /work -name '*.csproj' -not -path '*/.forjai/*' -print0 | sort -z | xargs -0 -r grep -l "$@"; }
+    CSPROJ=$(projects -E 'Sdk="Microsoft\.NET\.Sdk\.Web"' | head -n1)
+    if [ -z "$CSPROJ" ]; then
+      EXES=$(projects -iE '<OutputType>[[:space:]]*Exe[[:space:]]*</OutputType>')
+      [ "$(printf '%s' "$EXES" | grep -c .)" -eq 1 ] && CSPROJ=$EXES
+    fi
+    if [ -z "$CSPROJ" ]; then status "FAIL: no hay proyecto ejecutable"; exit 0; fi
+    ASM=$(sed -n 's/.*<AssemblyName>[[:space:]]*\([^<[:space:]]*\)[[:space:]]*<\/AssemblyName>.*/\1/p' "$CSPROJ" | head -n1)
+    [ -n "$ASM" ] || ASM=$(basename "$CSPROJ" .csproj)
+    rm -rf "$OUT/app"
+    if ! dotnet publish "$CSPROJ" -c Release --no-restore -o "$OUT/app" > /tmp/publish.log 2>&1; then
+      cat /tmp/publish.log
+      status "FAIL: $(grep -E 'error' /tmp/publish.log | tail -3 | tr '\n' ' ' | cut -c1-280)"
+    elif [ ! -f "$OUT/app/$ASM.dll" ]; then
+      status "FAIL: dotnet publish no dejó $ASM.dll"
+    else
+      echo "$ASM.dll" > "$OUT/app/forjai-entry.txt"
+      status PASS
+    fi ;;
   *) echo "paso desconocido: $1"; exit 2 ;;
 esac
