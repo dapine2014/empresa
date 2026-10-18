@@ -99,4 +99,23 @@ class AndroidSigningKeyServiceTest {
         assertTrue(ex.getMessage().contains("FORJAI_SECRETS_KEY"));
         verify(memory, never()).save(any(), any(), any(), any(), any());
     }
+
+    @Test
+    void aKeystoreWhoseKeyHasAnotherPasswordIsRejected() throws Exception {
+        var file = tmp.resolve("two.jks");
+        Process p;
+        try {
+            p = new ProcessBuilder("keytool", "-genkeypair", "-keystore", file.toString(), "-storetype", "JKS",
+                    "-alias", "forjai", "-storepass", "claveA123", "-keypass", "claveB123", "-dname", "CN=Forjai",
+                    "-keyalg", "RSA", "-validity", "10000").redirectErrorStream(true).start();
+        } catch (java.io.IOException ex) {
+            Assumptions.assumeTrue(false, "sin keytool");
+            return;
+        }
+        p.getInputStream().readAllBytes();
+        Assumptions.assumeTrue(p.waitFor() == 0, "keytool no creó el caso");
+        var b64 = Base64.getEncoder().encodeToString(Files.readAllBytes(file));
+        assertThrows(IllegalArgumentException.class, () -> service.save("M-1", b64, "forjai", "claveA123"));
+        verify(memory, never()).save(any(), any(), any(), any(), any());
+    }
 }

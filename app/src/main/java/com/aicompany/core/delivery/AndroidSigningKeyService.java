@@ -82,7 +82,7 @@ public class AndroidSigningKeyService {
             try {
                 var ks = KeyStore.getInstance(type);
                 ks.load(new ByteArrayInputStream(bytes), password.toCharArray());
-                return ks.containsAlias(alias);
+                return ks.containsAlias(alias) && ks.getKey(alias, password.toCharArray()) != null;
             } catch (Exception ex) {
                 // prueba el siguiente tipo
             }
