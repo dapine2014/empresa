@@ -2,11 +2,24 @@ package com.aicompany.core.model;
 
 import java.util.List;
 
-/** Resultado del sandbox-runner (mismo JSON que sandbox-runner/SandboxResult). */
-public record SandboxResult(String overall, List<StepResult> steps) {
+/**
+ * Resultado del sandbox-runner (mismo JSON que sandbox-runner/SandboxResult). {@code stagingDir}: en un PACKAGE, la
+ * carpeta propia del job ({@code incremento-N-<jobId>}) dentro de {@code .staging/<missionId>/}; null en los demás.
+ */
+public record SandboxResult(String overall, List<StepResult> steps, String stagingDir) {
 
-    /** QA casos de uso (2026-10-05): un test con su nombre y resultado ({@code PASSED|FAILED|SKIPPED}). */
-    public record TestCase(String name, String outcome) {
+    public SandboxResult(String overall, List<StepResult> steps) {
+        this(overall, steps, null);
+    }
+
+    /**
+     * QA casos de uso (2026-10-05): un test con su nombre y resultado ({@code PASSED|FAILED|SKIPPED}). {@code detail}
+     * (2026-10-15): en una partida simulada fallida, el paso y el motivo que manda el runner; si no, null.
+     */
+    public record TestCase(String name, String outcome, String detail) {
+        public TestCase(String name, String outcome) {
+            this(name, outcome, null);
+        }
     }
 
     public record StepResult(String name, String status, int exitCode, long durationMs, String outputTail,

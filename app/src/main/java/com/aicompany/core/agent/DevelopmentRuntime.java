@@ -157,7 +157,7 @@ public class DevelopmentRuntime {
                         !expectedProjects.isEmpty()),
                 result -> withExtraChecks(verifyGenerated(result, ownedPaths, expectedProjects, requiredPaths),
                         result, extraChecks),
-                "GENERATED"));
+                "GENERATED", "generate"));
     }
 
     public CompletableFuture<StaticReviewResult> review(
@@ -169,7 +169,7 @@ public class DevelopmentRuntime {
                         ceoService.reviewStaticWorkspace(agentId, attemptPrompt, agentPrompt, model),
                         filesBySha.values().stream().flatMap(Set::stream).collect(java.util.stream.Collectors.toSet())),
                 review -> verifyReview(review, missionId, filesBySha),
-                "COMPLETED"));
+                "COMPLETED", "review"));
     }
 
     /** Diagnóstico 360 (2026-10-03): el veredicto de Neo con reintento y la corrección exacta de Java. */
@@ -178,7 +178,7 @@ public class DevelopmentRuntime {
             Function<com.aicompany.core.agent.model.TestTriage, List<String>> validate) {
         return submit(taskId, missionId, agentId, () -> executeWithRetries(taskId, missionId, agentId, prompt,
                 (attemptPrompt, model, agentPrompt) -> ceoService.triageFailingTests(agentId, attemptPrompt, agentPrompt, model),
-                triage -> new Verdict(List.of(), validate.apply(triage)), "COMPLETED"));
+                triage -> new Verdict(List.of(), validate.apply(triage)), "COMPLETED", "triage"));
     }
 
     private <T> CompletableFuture<T> submit(String taskId, String missionId, String agentId, Supplier<T> work) {
@@ -196,7 +196,7 @@ public class DevelopmentRuntime {
 
     private <T> T executeWithRetries(
             String taskId, String missionId, String agentId, String prompt,
-            Attempt<T> attempt, Function<T, Verdict> verify, String successStatus) {
+            Attempt<T> attempt, Function<T, Verdict> verify, String successStatus, String step) {
 
         memory.updateTask(taskId, "RUNNING", "Agente iniciado.");
 
@@ -209,12 +209,23 @@ public class DevelopmentRuntime {
         try {
 
             String feedback = null;
+            var paidRetry = com.aicompany.core.service.PaidRetry.start(agentId, model, companyMemory, modelHealth);
 
-            for (int i = 0; i <= MAX_RESULT_RETRIES; i++) {
+            for (int i = 0; i <= MAX_RESULT_RETRIES + 1; i++) {
+
+                if (i > MAX_RESULT_RETRIES) {
+                    // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                    var paid = paidRetry.next(step);
+                    if (paid.isEmpty()) {
+                        break;
+                    }
+                    model = paid.get();
+                }
 
                 if (i > 0) {
                     events.publishTask("EMPRESA_TASK_RETRY", taskId, missionId, agentId, "RETRYING",
-                            "Reintentando. Intento " + (i + 1) + " de " + (MAX_RESULT_RETRIES + 1));
+                            i > MAX_RESULT_RETRIES ? "Reintentando con el respaldo pago " + model + "."
+                                    : "Reintentando. Intento " + (i + 1) + " de " + (MAX_RESULT_RETRIES + 1));
                 }
 
                 var attemptPrompt = feedback == null ? prompt : prompt + correctionBlock(feedback);
@@ -224,6 +235,7 @@ public class DevelopmentRuntime {
                 try {
                     result = attempt.call(attemptPrompt, model, agentPrompt);
                 } catch (Exception ex) {
+                    paidRetry.note(ex);
                     feedback = "- " + safeMessage(ex, "El agente no devolvió una respuesta procesable.");
                     continue;
                 }
@@ -239,7 +251,11 @@ public class DevelopmentRuntime {
 
                     var json = toJson(result);
                     memory.updateTask(taskId, successStatus, json);
-                    markIfDoneByFallback(taskId, agentId);
+                    if (paidRetry.used() != null) {
+                        memory.setTaskModelUsed(taskId, paidRetry.used());
+                    } else {
+                        markIfDoneByFallback(taskId, agentId);
+                    }
 
                     if ("COMPLETED".equals(successStatus)) {
                         events.publishTask("EMPRESA_TASK_COMPLETED", taskId, missionId, agentId, "COMPLETED", json);
@@ -250,11 +266,16 @@ public class DevelopmentRuntime {
                     return result;
                 }
 
+                // Bitácora (spec 2026-10-17): el rechazo con reintento queda con sus motivos.
+                events.publish("EMPRESA_TASK_ATTEMPT_REJECTED", missionId, taskId, agentId, Map.of(
+                        "attempt", i + 1,
+                        "reasons", verdict.retryable().stream().limit(3)
+                                .map(r -> r.length() <= 200 ? r : r.substring(0, 199) + "…").toList()));
                 feedback = "- " + String.join("\n- ", verdict.retryable());
             }
 
             throw new IllegalStateException("El agente " + agentId + " no produjo un resultado válido después de "
-                    + (MAX_RESULT_RETRIES + 1) + " intentos:\n" + feedback);
+                    + (MAX_RESULT_RETRIES + 1) + " intentos" + paidRetry.suffix() + ":\n" + feedback);
 
         } catch (RuntimeException ex) {
 

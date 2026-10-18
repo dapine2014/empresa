@@ -41,6 +41,7 @@ public class OpenAiCompatibleClient {
     private volatile List<String> checkModels = List.of();
     private volatile String thinkingOffParam = "";
     private volatile Object thinkingOffValue = Boolean.FALSE;
+    private volatile boolean promptCacheOff = false;
 
     /** Proveedores pagos (2026-10-04): nombre, si lleva las opciones de NVIDIA y con qué modelos se prueba una key. */
     public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels) {
@@ -49,6 +50,17 @@ public class OpenAiCompatibleClient {
 
     /** {@code thinkingOff}: "parámetro=valor" que apaga el razonamiento ("false"/"true" se mandan como booleanos). */
     public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels, String thinkingOff) {
+        configure(providerName, nvidiaOptions, checkModels, thinkingOff, false);
+    }
+
+    /**
+     * {@code promptCacheOff} (verificado en vivo 2026-10-18, Bedrock kimi-k3): por defecto cada llamada escribe el prompt
+     * entero en caché, cobrado a 1,25× la entrada, y casi nunca se relee (cada llamada empieza distinto);
+     * {@code prompt_cache_options.mode=explicit} sin marcadores no escribe ni cobra caché.
+     */
+    public void configure(String providerName, boolean nvidiaOptions, List<String> checkModels, String thinkingOff,
+                          boolean promptCacheOff) {
+        this.promptCacheOff = promptCacheOff;
         this.providerName = providerName;
         this.nvidiaOptions = nvidiaOptions;
         this.checkModels = List.copyOf(checkModels);
@@ -233,6 +245,9 @@ public class OpenAiCompatibleClient {
         if (!thinkingOffParam.isBlank()) {
             body.put(thinkingOffParam, thinkingOffValue);
         }
+        if (promptCacheOff) {
+            body.put("prompt_cache_options", Map.of("mode", "explicit"));
+        }
         if (json) {
             body.put("response_format", Map.of("type", "json_object"));
         }
@@ -267,6 +282,11 @@ public class OpenAiCompatibleClient {
                 var status = ex.getStatusCode().value();
                 var detail = "Modelo remoto " + model + " respondió HTTP " + status + ": "
                         + ex.getResponseBodyAsString().lines().findFirst().orElse("");
+                // Verificado en vivo (2026-10-15): NVIDIA retiró kimi-k3 con HTTP 410. Un modelo retirado o inexistente
+                // está caído: va al respaldo pago y al local, y no se reintenta.
+                if (status == 404 || status == 410) {
+                    throw new RemoteUnavailableException(detail, ex);
+                }
                 if (status != 429 && status < 500) {
                     throw new IllegalStateException(detail, ex);
                 }

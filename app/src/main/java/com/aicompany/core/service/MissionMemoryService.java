@@ -80,7 +80,8 @@ public class MissionMemoryService {
                 params.put("teamId", teamId);
                 tx.run("MERGE (m:Mission {id:$id}) SET m.name=$name, m.instruction=$instruction, "
                                 + "m.environment=$environment, m.status='CREATED', m.progress=0, "
-                                + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt"
+                                + "m.currentStep='Creada', m.message='Misión recibida', m.updatedAt=$updatedAt, "
+                                + "m.createdAt=coalesce(m.createdAt, $updatedAt)"
                                 + financialCriteriaSet + teamIdSet,
                         params);
                 tx.run("MATCH (m:Mission {id:$id}), (c:Company {id:'AI-COMPANY'}) MERGE (c)-[:HAS_MISSION]->(m)", Map.of("id", missionId));
@@ -150,7 +151,10 @@ public class MissionMemoryService {
     public void updateMission(String missionId, MissionStatus status, int progress, String currentStep, String message) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {
-                tx.run("MATCH (m:Mission {id:$id}) SET m.status=$status, m.progress=$progress, m.currentStep=$step, m.message=$message, m.updatedAt=$updatedAt",
+                // Cancelar una misión en curso (2026-10-15): una misión CANCELLED no vuelve a cambiar de estado aunque
+                // un hilo que seguía vivo intente avanzarla.
+                tx.run("MATCH (m:Mission {id:$id}) WHERE m.status <> 'CANCELLED' OR $status = 'CANCELLED' "
+                                + "SET m.status=$status, m.progress=$progress, m.currentStep=$step, m.message=$message, m.updatedAt=$updatedAt",
                         Map.of("id", missionId, "status", status.name(), "progress", progress,
                                 "step", currentStep, "message", message, "updatedAt", Instant.now().toString()));
                 return null;
@@ -177,12 +181,18 @@ public class MissionMemoryService {
         }
     }
 
-    public void setEvidenceRound(String missionId, int round) {
+    /**
+     * Revisión final Aria (12): CAS contra dos pedidos simultáneos (doble clic): solo uno pasa la ronda de {@code current}
+     * a {@code current + 1}; el otro recibe false y no escribe nada. Spec misiones durables §5: además la misión tiene que
+     * seguir en uno de los estados {@code allowed}, así una ronda lanzada por otro camino (fundador, orquestador,
+     * corrección automática) entre la lectura y el CAS nunca arranca una segunda en paralelo.
+     */
+    public boolean claimNextRound(String missionId, int current, java.util.Set<MissionStatus> allowed) {
+        var statuses = allowed.stream().map(MissionStatus::name).toList();
         try (var session = driver.session()) {
-            session.executeWrite(tx -> {
-                tx.run("MATCH (m:Mission {id:$id}) SET m.evidenceRound=$round", Map.of("id", missionId, "round", round));
-                return null;
-            });
+            return session.executeWrite(tx -> !tx.run("MATCH (m:Mission {id:$id}) WHERE coalesce(m.evidenceRound, 0) = $current "
+                    + "AND m.status IN $allowed SET m.evidenceRound = $current + 1 RETURN m.id",
+                    Map.of("id", missionId, "current", current, "allowed", statuses)).list().isEmpty());
         }
     }
 
@@ -213,56 +223,152 @@ public class MissionMemoryService {
         }
     }
 
-    /** Spec 2026-10-02 §3: resultado del último intento de crear la base (para el estado en chat y Missions). */
-    public void recordDatabaseApply(String missionId, String connectionName, List<Integer> applied,
-                                    Integer failedVersion, String text) {
-        try (var session = driver.session()) {
-            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.databaseConnection=$name, "
-                            + "m.databaseApplied = [v IN coalesce(m.databaseApplied, []) WHERE NOT v IN $applied] + $applied, "
-                            + "m.databaseFailedVersion=$failed, m.databaseLastResult=$text",
-                    databaseApplyParams(missionId, connectionName, applied, failedVersion, text)).consume());
+    /** Spec Diego ambientes §1: resultado de una conexión (ambiente) de la cascada. */
+    public record DatabaseApply(String connection, String environment, List<Integer> applied, Integer failedVersion,
+                                String text, String state) {
+    }
+
+    private static final tools.jackson.databind.json.JsonMapper APPLIES_JSON =
+            tools.jackson.databind.json.JsonMapper.builder().build();
+
+    private static final org.slf4j.Logger APPLIES_LOG = org.slf4j.LoggerFactory.getLogger(MissionMemoryService.class);
+
+    /** El JSON de {@code Mission.databaseApplies} existe pero no se puede leer. */
+    static final class UnreadableAppliesException extends RuntimeException {
+        UnreadableAppliesException(Throwable cause) {
+            super("databaseApplies ilegible", cause);
         }
     }
 
-    private static Map<String, Object> databaseApplyParams(String missionId, String connectionName,
-                                                           List<Integer> applied, Integer failedVersion, String text) {
+    /**
+     * Spec 2026-10-02 §3 + Spec Diego ambientes §1: resultado del último intento por conexión, en JSON en
+     * {@code Mission.databaseApplies} (clave = nombre de la conexión). Las migraciones aplicadas se acumulan.
+     * {@code state}: APPLIED, FAILED (también sin versión: la conexión no respondió) o SKIPPED (falló un ambiente previo).
+     * Si el JSON guardado no se puede leer no se escribe nada: sobrescribirlo perdería el historial de los demás ambientes.
+     */
+    public void recordDatabaseApply(String missionId, String connection, String environment, List<Integer> applied,
+                                    Integer failedVersion, String text, String state) {
+        Map<String, DatabaseApply> stored;
+        try {
+            stored = loadApplies(missionId, true);
+        } catch (UnreadableAppliesException ex) {
+            APPLIES_LOG.warn("No se registra el resultado de la base de {}: databaseApplies guardado es ilegible.", missionId);
+            return;
+        }
+        var all = new java.util.LinkedHashMap<>(stored);
+        var previous = all.get(connection);
+        var merged = new java.util.TreeSet<Integer>(previous == null ? List.of() : previous.applied());
+        merged.addAll(applied);
+        all.put(connection, new DatabaseApply(connection, environment, List.copyOf(merged), failedVersion, text, state));
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.databaseApplies=$json",
+                    Map.of("id", missionId, "json", APPLIES_JSON.writeValueAsString(all))).consume());
+        }
+    }
+
+    /**
+     * Resultado por conexión. Misiones anteriores a la cascada: una sola entrada armada con las propiedades viejas
+     * ({@code databaseConnection}, {@code databaseApplied}, {@code databaseFailedVersion}, {@code databaseLastResult}).
+     */
+    public Map<String, DatabaseApply> databaseApplies(String missionId) {
+        return loadApplies(missionId, false);
+    }
+
+    private Map<String, DatabaseApply> loadApplies(String missionId, boolean strict) {
+        try (var session = driver.session()) {
+            var row = session.run("MATCH (m:Mission {id:$id}) RETURN m.databaseApplies AS j, "
+                            + "m.databaseConnection AS c, coalesce(m.databaseApplied, []) AS a, "
+                            + "m.databaseFailedVersion AS f, m.databaseLastResult AS r", Map.of("id", missionId))
+                    .list().stream().findFirst().orElse(null);
+            if (row == null) {
+                return new java.util.LinkedHashMap<>();
+            }
+            var json = row.get("j").isNull() ? null : row.get("j").asString();
+            var legacyConnection = row.get("c").isNull() ? null : row.get("c").asString();
+            var legacyApplied = row.get("a").asList(v -> v.asInt());
+            var legacyFailed = row.get("f").isNull() ? null : row.get("f").asInt();
+            var legacyResult = row.get("r").isNull() ? null : row.get("r").asString();
+            try {
+                return parseApplies(json, legacyConnection, legacyApplied, legacyFailed, legacyResult);
+            } catch (UnreadableAppliesException ex) {
+                if (strict) {
+                    throw ex;
+                }
+                APPLIES_LOG.warn("databaseApplies de {} es ilegible: se usan las propiedades viejas.", missionId);
+                return parseApplies(null, legacyConnection, legacyApplied, legacyFailed, legacyResult);
+            }
+        }
+    }
+
+    /** Pura: el JSON si existe (ilegible = excepción); si no, una entrada con las propiedades viejas; si no, vacío. */
+    static Map<String, DatabaseApply> parseApplies(String json, String legacyConnection, List<Integer> legacyApplied,
+                                                   Integer legacyFailed, String legacyResult) {
+        var result = new java.util.LinkedHashMap<String, DatabaseApply>();
+        if (json != null) {
+            try {
+                var parsed = APPLIES_JSON.readValue(json,
+                        new tools.jackson.core.type.TypeReference<java.util.LinkedHashMap<String, DatabaseApply>>() {
+                        });
+                if (parsed == null) {
+                    throw new IllegalStateException("vacío");
+                }
+                result.putAll(parsed);
+                return result;
+            } catch (Exception ex) {
+                throw new UnreadableAppliesException(ex);
+            }
+        }
+        if (legacyConnection != null) {
+            result.put(legacyConnection, new DatabaseApply(legacyConnection, null,
+                    legacyApplied == null ? List.of() : legacyApplied, legacyFailed, legacyResult,
+                    legacyFailed == null ? "APPLIED" : "FAILED"));
+        }
+        return result;
+    }
+
+    /**
+     * Versiones aplicadas en alguna conexión de la misión (Spec Diego ambientes §2, inmutabilidad). Lectura estricta
+     * (revisión final): con {@code databaseApplies} ilegible lanza, y quien llama falla cerrado (todo inmutable).
+     */
+    public java.util.Set<Integer> appliedAnywhere(String missionId) {
+        var all = new java.util.TreeSet<Integer>();
+        loadApplies(missionId, true).values().forEach(d -> all.addAll(d.applied()));
+        return all;
+    }
+
+    /**
+     * Revisión final (I-4): el commit que quedó VERIFIED (el que se puede aplicar a pedido). Entrega del producto
+     * (revisión final, 2): con el número del incremento que verificó, para que «Generar entrega» no le ponga al commit
+     * de un incremento el número del que está en construcción.
+     */
+    public void recordVerifiedCommit(String missionId, String sha, Integer increment) {
+        // Sin número (no se pudo leer el incremento) se borra el anterior: nunca queda el de otro commit.
         var params = new java.util.HashMap<String, Object>();
         params.put("id", missionId);
-        params.put("name", connectionName);
-        params.put("applied", applied);
-        params.put("failed", failedVersion);
-        params.put("text", text);
-        return params;
-    }
-
-    public List<Integer> databaseApplied(String missionId) {
+        params.put("sha", sha);
+        params.put("inc", increment);
+        params.put("at", java.time.Instant.now().toString());
         try (var session = driver.session()) {
-            return session.run("MATCH (m:Mission {id:$id}) RETURN coalesce(m.databaseApplied, []) AS a", Map.of("id", missionId))
-                    .list(r -> r.get("a").asList(v -> v.asInt())).stream().findFirst().orElse(List.of());
+            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.verifiedCommit=$sha, m.verifiedIncrement=$inc, "
+                    + "m.verifiedAt=$at",
+                    params).consume());
         }
     }
 
-    public Optional<Integer> databaseFailedVersion(String missionId) {
+    /** El incremento del commit VERIFIED; vacío en misiones anteriores a guardarlo. */
+    public Optional<Integer> verifiedIncrement(String missionId) {
         try (var session = driver.session()) {
-            return session.run("MATCH (m:Mission {id:$id}) WHERE m.databaseFailedVersion IS NOT NULL "
-                    + "RETURN m.databaseFailedVersion AS v", Map.of("id", missionId))
-                    .list(r -> r.get("v").asInt()).stream().findFirst();
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.verifiedIncrement IS NOT NULL "
+                            + "RETURN m.verifiedIncrement AS n", Map.of("id", missionId))
+                    .list(r -> r.get("n").asInt()).stream().findFirst();
         }
     }
 
-    public Optional<String> databaseLastResult(String missionId) {
+    /** Cuándo se guardó el commit VERIFIED; vacío en misiones anteriores a guardarlo. */
+    public Optional<String> verifiedAt(String missionId) {
         try (var session = driver.session()) {
-            return session.run("MATCH (m:Mission {id:$id}) WHERE m.databaseLastResult IS NOT NULL "
-                    + "RETURN m.databaseLastResult AS r", Map.of("id", missionId))
-                    .list(r -> r.get("r").asString()).stream().findFirst();
-        }
-    }
-
-    /** Revisión final (I-4): el commit que quedó VERIFIED (el que se puede aplicar a pedido). */
-    public void recordVerifiedCommit(String missionId, String sha) {
-        try (var session = driver.session()) {
-            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$id}) SET m.verifiedCommit=$sha",
-                    Map.of("id", missionId, "sha", sha)).consume());
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.verifiedAt IS NOT NULL RETURN m.verifiedAt AS s",
+                    Map.of("id", missionId)).list(r -> r.get("s").asString()).stream().findFirst();
         }
     }
 
@@ -424,7 +530,10 @@ public class MissionMemoryService {
                         params);
 
                 tx.run("OPTIONAL MATCH (m:Mission {id:$missionId}) " +
-                                "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY]->(n) " +
+                                // 2026-10-15: también las HU de Aria y los diseños de Kael (quedaban huérfanos); 2026-10-16: el contrato; 2026-10-17: la bitácora.
+                                // El costo de modelos (ModelUsage) se conserva: es gasto real del mes.
+                                "OPTIONAL MATCH (m)-[:HAS_TASK|HAS_DECISION|HAS_OPPORTUNITY|HAS_REQUIREMENTS|HAS_CONTRACT"
+                                + "|HAS_INTERACTION_DESIGN|HAS_JOINT_REVIEW|HAS_EVENT|HAS_SIGNING_KEY|HAS_DELIVERY]->(n) " +
                                 "WITH m, collect(DISTINCT n) AS owned " +
                                 "FOREACH (n IN owned | DETACH DELETE n) " +
                                 "FOREACH (x IN CASE WHEN m IS NULL THEN [] ELSE [m] END | DETACH DELETE x)",
@@ -477,7 +586,9 @@ public class MissionMemoryService {
                 params.put("updatedAt", Instant.now().toString());
                 tx.run("MATCH (m:Mission {id:$missionId}), (a:Agent {id:$agentId}) " +
                                 "MERGE (t:AgentTask {id:$taskId}) SET t.missionId=$missionId, t.agentId=$agentId, " +
-                                "t.action=$action, t.kind=$kind, t.status='PENDING', t.updatedAt=$updatedAt " +
+                                // Spec misiones durables §2: retomar no pisa una tarea ya terminada.
+                                "t.action=$action, t.kind=$kind, t.status=CASE WHEN t.status = 'COMPLETED' THEN t.status ELSE 'PENDING' END, "
+                                + "t.updatedAt=$updatedAt " +
                                 "MERGE (m)-[:HAS_TASK]->(t) MERGE (a)-[:ASSIGNED_TASK]->(t) " +
                                 "MERGE (m)-[:INVOLVES_AGENT]->(a)",
                         params);
@@ -547,6 +658,15 @@ public class MissionMemoryService {
                         Map.of("agentId", agentId, "status", status));
                 return null;
             });
+        }
+    }
+
+    /** Cancelar una misión en curso (2026-10-15): sus tareas pendientes o en curso quedan CANCELLED. */
+    public int cancelOpenTasks(String missionId) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> tx.run("MATCH (t:AgentTask {missionId:$id}) WHERE t.status IN ['PENDING','RUNNING'] "
+                            + "SET t.status='CANCELLED', t.updatedAt=$at RETURN count(t) AS n",
+                    Map.of("id", missionId, "at", Instant.now().toString())).single().get("n").asInt());
         }
     }
 
@@ -788,6 +908,30 @@ public class MissionMemoryService {
                             nullableString(r.get("validationStatus")),
                             nullableString(r.get("staticChecks")),
                             nullableString(r.get("sandboxResult"))));
+        }
+    }
+
+    /** Spec misiones durables §1: al arrancar ningún agente está trabajando (sus hilos murieron con el proceso). */
+    public int resetWorkingAgents() {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> tx.run("MATCH (a:Agent {status:'WORKING'}) SET a.status = 'IDLE' "
+                    + "RETURN count(a) AS n").single().get("n").asInt());
+        }
+    }
+
+    /** Spec misiones durables §2: el plan de Neo guardado como resultado de su tarea de planificación. */
+    public Optional<String> planJson(String taskId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (t:AgentTask {id:$id, kind:'PLANNING', status:'COMPLETED'}) WHERE t.result IS NOT NULL "
+                    + "RETURN t.result AS r", Map.of("id", taskId)).list(r -> r.get("r").asString()).stream().findFirst();
+        }
+    }
+
+    /** Spec misiones durables §1: la más antigua se recupera primero (las anteriores a este campo no lo tienen). */
+    public Optional<Instant> createdAt(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.createdAt IS NOT NULL RETURN m.createdAt AS c",
+                    Map.of("id", missionId)).list(r -> Instant.parse(r.get("c").asString())).stream().findFirst();
         }
     }
 }

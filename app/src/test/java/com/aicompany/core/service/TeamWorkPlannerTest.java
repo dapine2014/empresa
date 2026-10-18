@@ -66,6 +66,19 @@ class TeamWorkPlannerTest {
         verify(events).publish(eq("EMPRESA_TEAM_PLAN_CREATED"), eq("MISSION-5"), anyString(), eq("growth-content"), anyMap());
     }
 
+    // FALTANTES (Bloque 1, m-2): el plan guardado que reutiliza una ronda se vuelve a validar con las reglas actuales,
+    // sin llamar al modelo ni crear tareas.
+    @Test
+    void aSavedPlanIsRevalidatedWithTheCurrentRulesWithoutTheModel() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+
+        assertTrue(planner.revalidate("MISSION-5", "TEAM-MARKETING-GROWTH", validPlan(), TeamExecutionMode.ANALYSIS).isEmpty());
+        assertFalse(planner.revalidate("MISSION-5", "TEAM-MARKETING-GROWTH", planWithOutsider(), TeamExecutionMode.ANALYSIS)
+                .isEmpty());
+        verifyNoInteractions(ceoService);
+        verify(memory, never()).createTask(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
     // Verificado en vivo (2026-09-29, glm-5.3): el líder omitía summary y se rechazaban planes válidos. Es un campo
     // descriptivo: Java lo arma desde las tareas en vez de gastar intentos.
     @Test
@@ -125,6 +138,21 @@ class TeamWorkPlannerTest {
         var inOrder = inOrder(memory);
         inOrder.verify(memory).setAgentStatus("growth-content", "WORKING");
         inOrder.verify(memory).setAgentStatus("growth-content", "IDLE");
+    }
+
+    @Test
+    void afterThreeInvalidPlansTheLeaderGetsOneMoreAttemptWithThePaidFallback() {
+        when(teamMemory.snapshot("TEAM-MARKETING-GROWTH")).thenReturn(marketing("ACTIVE"));
+        when(companyMemory.agentPaidFallbackModel("growth-content")).thenReturn("bedrock:kimi");
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), eq("qwen3:8b"))).thenReturn(planWithOutsider());
+        when(ceoService.planTeamWork(anyString(), anyString(), anyString(), eq("bedrock:kimi"))).thenReturn(validPlan());
+
+        var result = planner.plan("MISSION-5", "TEAM-MARKETING-GROWTH", "x", TeamExecutionMode.ANALYSIS);
+
+        assertFalse(result.plan().tasksOrEmpty().isEmpty());
+        verify(ceoService, times(3)).planTeamWork(anyString(), anyString(), anyString(), eq("qwen3:8b"));
+        verify(ceoService).planTeamWork(anyString(), contains("CORRECCIÓN"), anyString(), eq("bedrock:kimi"));
+        verify(memory).setTaskModelUsed("MISSION-5-GROWTH-CONTENT-PLAN", "bedrock:kimi");
     }
 
     @Test
@@ -208,7 +236,7 @@ class TeamWorkPlannerTest {
 
         assertTrue(prompt.getValue().contains("FLUTTER_WEB_APP"));
         assertTrue(prompt.getValue().contains("src/<Ctx>.Domain"));
-        assertFalse(prompt.getValue().contains("GODOT_DOTNET_GAME"), "Godot no está habilitado en fase 1");
+        assertTrue(prompt.getValue().contains("GODOT_DOTNET_GAME"), "Godot está habilitado en fase 1");
         assertTrue(prompt.getValue().contains("boundedContexts"));
         assertTrue(prompt.getValue().contains("ubiquitousLanguage"));
         assertEquals("FLUTTER_WEB_APP", result.plan().stackProfile());
@@ -306,15 +334,15 @@ class TeamWorkPlannerTest {
         var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Development Group", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Tech Lead", "TECH_LEAD", List.of("architecture"), "qwen3:8b"),
                 new TeamMemberInfo("backend", "Iris", "Backend", "BACKEND", List.of("backend"), "qwen3:8b"),
-                new TeamMemberInfo("interaction-design", "Kael", "Game", "GAME_DEV", List.of("godot"), "qwen3:8b"),
+                new TeamMemberInfo("ops", "Andrea", "DevOps", "DEVOPS", List.of("deploy"), "qwen3:8b"),
                 new TeamMemberInfo("frontend-ui", "Mila", "UI", "UI_UX", List.of("flutter", "ui"), "qwen3:8b"),
                 new TeamMemberInfo("qa", "Vera", "QA", "QA", List.of("qa", "tests"), "qwen3:8b")));
         when(teamMemory.snapshot("TEAM-DEVELOPMENT")).thenReturn(team);
         var godot = new TeamPlan("Juego", null, null, List.of(
                 new PlannedTask("backend", "WORK", "DOMAIN_MODEL", "Dominio", List.of("backend"), List.of()),
-                new PlannedTask("interaction-design", "WORK", "GAMEPLAY", "Juego", List.of("godot"), List.of()),
+                new PlannedTask("ops", "WORK", "DEPLOY", "Despliegue", List.of("deploy"), List.of()),
                 new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests", List.of("tests"), List.of())),
-                List.of(), "GODOT_DOTNET_GAME", List.of(new TeamPlan.BoundedContext("Combate", "Combate")),
+                List.of(), "FLUTTER_WEB_APP", List.of(new TeamPlan.BoundedContext("Combate", "Combate")),
                 dddPlan().ubiquitousLanguage());
         var prompt = ArgumentCaptor.forClass(String.class);
         when(ceoService.planTeamWork(anyString(), prompt.capture(), anyString(), anyString()))
@@ -324,8 +352,7 @@ class TeamWorkPlannerTest {
         planner.plan("M-1", "TEAM-DEVELOPMENT", "Un juego", TeamExecutionMode.DEVELOPMENT);
 
         var second = prompt.getAllValues().get(1);
-        assertTrue(second.contains("GODOT_DOTNET_GAME todavía no está habilitado"), second);
-        assertTrue(second.contains("interaction-design (GAME_DEV) todavía no está habilitado"), second);
+        assertTrue(second.contains("ops (DEVOPS) todavía no está habilitado"), second);
     }
 
     // Decisión del fundador (2026-10-01): Neo no ve ni puede asignar a un miembro apagado.

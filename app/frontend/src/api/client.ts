@@ -1,4 +1,9 @@
 import type {
+  FreeModelChain,
+  AdjustTarget,
+  InteractionDesignView,
+  JointReviewView,
+  MissionEventView,
   DatabaseConnectionForm,
   DatabaseConnectionInfo,
   MissionDatabaseStatus,
@@ -41,6 +46,8 @@ import type {
   ModelCostView,
   RequirementsDecision,
   RequirementsView,
+  DeliveryView,
+  AndroidSigningKeyStatus,
 } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -80,6 +87,9 @@ export const api = {
       body: JSON.stringify({ enabled }),
     }),
   modelsHealth: () => request<ModelHealth[]>('/api/company/models/health'),
+  freeModelChain: () => request<FreeModelChain>('/api/company/models/free-chain'),
+  updateFreeModelChain: (models: string[]) =>
+    request<FreeModelChain>('/api/company/models/free-chain', { method: 'PUT', body: JSON.stringify({ models }) }),
   updateAgentFallbackModel: (agentId: string, model: string) =>
     request<{ agentId: string; model: string }>(`/api/company/agents/${agentId}/fallback-model`, {
       method: 'PUT',
@@ -195,15 +205,49 @@ export const api = {
   requirements: (missionId: string) =>
     request<RequirementsView>(`/api/company/missions/${missionId}/requirements`),
 
-  decideRequirements: (missionId: string, decision: RequirementsDecision, instruction?: string) =>
+  interactionDesign: (missionId: string) =>
+    request<InteractionDesignView>(`/api/company/missions/${missionId}/interaction-design`),
+  deliveries: (missionId: string) => request<DeliveryView[]>(`/api/company/missions/${missionId}/deliveries`),
+  generateDelivery: (missionId: string) =>
+    request<DeliveryView>(`/api/company/missions/${missionId}/deliveries`, { method: 'POST' }),
+  downloadDeliveryUrl: (missionId: string, increment: number) =>
+    `/api/company/missions/${missionId}/deliveries/${increment}/download`,
+  signingKey: (missionId: string) =>
+    request<AndroidSigningKeyStatus>(`/api/company/missions/${missionId}/android-signing-key`),
+  saveSigningKey: (missionId: string, command: { keystoreBase64: string; alias: string; password: string }) =>
+    request<AndroidSigningKeyStatus>(`/api/company/missions/${missionId}/android-signing-key`, {
+      method: 'PUT',
+      body: JSON.stringify(command),
+    }),
+  deleteSigningKey: (missionId: string) =>
+    request<void>(`/api/company/missions/${missionId}/android-signing-key`, { method: 'DELETE' }),
+  missionEvents: (missionId: string, limit = 100) =>
+    request<MissionEventView[]>(`/api/company/missions/${missionId}/events?limit=${limit}`),
+  jointReview: (missionId: string) => request<JointReviewView[]>(`/api/company/missions/${missionId}/joint-review`),
+
+  decideRequirements: (
+    missionId: string,
+    decision: RequirementsDecision,
+    instruction?: string,
+    target: AdjustTarget = 'ARIA',
+  ) =>
     request<RequirementsView>(`/api/company/missions/${missionId}/requirements/decision`, {
       method: 'POST',
-      body: JSON.stringify({ decision, instruction: instruction ?? null }),
+      body: JSON.stringify({ decision, instruction: instruction ?? null, target }),
     }),
 
   buildIncrement: (missionId: string, increment: number) =>
     request<RequirementsView>(`/api/company/missions/${missionId}/increments/${increment}`, { method: 'POST' }),
 
+  resumeMission: (missionId: string) =>
+    request<MissionResponse>(`/api/company/missions/${missionId}/resume`, { method: 'POST' }),
+  /** Revisión 2026-10-06 §5 (manos humanas): verifica el último commit sin modelos. */
+  verifyMission: (missionId: string) =>
+    request<MissionResponse>(`/api/company/missions/${missionId}/verify`, { method: 'POST' }),
+
+  /** Cancelar una misión en curso (2026-10-15). */
+  cancelMission: (missionId: string) =>
+    request<MissionResponse>(`/api/company/missions/${missionId}/cancel`, { method: 'POST' }),
   deleteMission: (missionId: string) =>
     request<void>(`/api/company/missions/${missionId}`, { method: 'DELETE' }),
 

@@ -82,4 +82,51 @@ class SandboxRunnerClientTest {
                 java.util.List.of(new com.aicompany.core.model.DependencyRef("NUGET", "A", "1.0.0"))));
         assertNotNull(client.lastError());
     }
+
+    @Test
+    void packageJobSendsTargetsAndTheAndroidRelease() {
+        var builder = RestClient.builder().baseUrl("http://runner");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("http://runner/jobs"))
+                .andExpect(jsonPath("$.jobType").value("PACKAGE"))
+                .andExpect(jsonPath("$.increment").value(2))
+                .andExpect(jsonPath("$.targets[0]").value("windows"))
+                .andExpect(jsonPath("$.androidRelease.alias").value("forjai"))
+                .andRespond(withSuccess(RESULT, MediaType.APPLICATION_JSON));
+
+        var client = new SandboxRunnerClient(builder.build(), "t0k");
+        var release = new com.aicompany.core.delivery.AndroidSigningKeyService.Plain("QUJD", "forjai", "clave123");
+        assertTrue(client.packageJob("M-1", "a".repeat(40), "GODOT_DOTNET_GAME", 2, java.util.List.of("windows"), release).isPresent());
+        server.verify();
+    }
+
+    @Test
+    void packageJobFailureIsEmptyWithAReason() {
+        var builder = RestClient.builder().baseUrl("http://runner");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("http://runner/jobs")).andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        var client = new SandboxRunnerClient(builder.build(), "t0k");
+        assertTrue(client.packageJob("M-1", "a".repeat(40), "DOTNET_APP", 1, java.util.List.of("windows"), null).isEmpty());
+        assertNotNull(client.lastError());
+    }
+
+    // Revisión final (5): el job PACKAGE va por su propio cliente (timeout de 40 min) y trae la carpeta del job.
+    @Test
+    void packageJobUsesItsOwnClientAndReadsTheJobStagingDir() {
+        var verifyBuilder = RestClient.builder().baseUrl("http://runner");
+        var verifyServer = MockRestServiceServer.bindTo(verifyBuilder).build();
+        var packageBuilder = RestClient.builder().baseUrl("http://runner");
+        var packageServer = MockRestServiceServer.bindTo(packageBuilder).build();
+        packageServer.expect(requestTo("http://runner/jobs")).andExpect(jsonPath("$.jobType").value("PACKAGE"))
+                .andRespond(withSuccess("{\"overall\":\"PASS\",\"steps\":[],\"stagingDir\":\"incremento-1-abc\"}",
+                        MediaType.APPLICATION_JSON));
+
+        var client = new SandboxRunnerClient(verifyBuilder.build(), packageBuilder.build(), "t0k");
+        var result = client.packageJob("M-1", "a".repeat(40), "DOTNET_APP", 1, java.util.List.of("app"), null);
+
+        assertEquals("incremento-1-abc", result.orElseThrow().stagingDir());
+        packageServer.verify();
+        verifyServer.verify();
+    }
 }

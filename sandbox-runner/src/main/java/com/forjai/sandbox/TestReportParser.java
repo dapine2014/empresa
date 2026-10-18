@@ -27,10 +27,59 @@ public final class TestReportParser {
     private static final Pattern JSON_START = Pattern.compile("\"test\":\\{\"id\":(\\d+),\"name\":\"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final Pattern JSON_DONE_ID = Pattern.compile("\"testID\":(\\d+)");
 
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
+
     private TestReportParser() {
     }
 
     public static TestCounts parse(Path workDir) {
+        var base = parseReports(workDir);
+        var games = playthroughs(workDir);
+        if (games.isEmpty()) {
+            return base;
+        }
+        var tests = new ArrayList<>(base.tests());
+        tests.addAll(games);
+        var passed = (int) games.stream().filter(t -> "PASSED".equals(t.outcome())).count();
+        return new TestCounts(base.passed() + passed, base.failed() + games.size() - passed, tests);
+    }
+
+    /** Spec 2026-10-14 Kael §2.3: partidas simuladas del runner de Forjai; ausente o corrupto = ninguna. */
+    private static List<SandboxResult.TestCase> playthroughs(Path workDir) {
+        try {
+            var file = workDir.resolve(".forjai/playthroughs.json");
+            if (!Files.isRegularFile(file)) {
+                return List.of();
+            }
+            var out = new ArrayList<SandboxResult.TestCase>();
+            // Verificado en vivo (Pong, 2026-10-15): se lee como JSON (System.Text.Json escapa los no ASCII) y la
+            // partida fallida lleva su paso y su motivo, para que la corrección no sea a ciegas.
+            for (var item : JSON.readTree(file.toFile())) {
+                var name = item.path("name").asString("");
+                var outcome = item.path("outcome").asString("");
+                if (name.isEmpty() || !("PASSED".equals(outcome) || "FAILED".equals(outcome))) {
+                    continue;
+                }
+                var step = item.path("failedStep").asString("").strip();
+                var message = item.path("message").asString("").strip();
+                var detail = "FAILED".equals(outcome) && !(step + message).isEmpty()
+                        ? (step.isEmpty() ? message : message.isEmpty() ? step : step + ": " + message) : null;
+                out.add(new SandboxResult.TestCase("[juego] " + name, outcome, detail));
+            }
+            return out;
+        } catch (RuntimeException ex) {
+            return List.of();
+        }
+    }
+
+    /** Las partidas fallidas con su paso y motivo, para el final de la salida del paso test; "" si no hay. */
+    public static String failureDetails(List<SandboxResult.TestCase> tests) {
+        var lines = tests.stream().filter(t -> "FAILED".equals(t.outcome()) && t.detail() != null)
+                .map(t -> "- " + t.name() + ": " + t.detail() + "\n").toList();
+        return lines.isEmpty() ? "" : "\nPartidas simuladas fallidas (paso y motivo):\n" + String.join("", lines);
+    }
+
+    private static TestCounts parseReports(Path workDir) {
         try {
             var trx = workDir.resolve(".forjai/results.trx");
             if (Files.isRegularFile(trx)) {

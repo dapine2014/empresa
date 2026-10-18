@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import CancelMissionButton from '../components/CancelMissionButton'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { InvestorDecision, RequirementsDecision, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
+import type { AdjustTarget, DeliveryView, ContractView, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, RequirementsStory, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -13,6 +14,18 @@ function parseChecks(raw: string | null): StaticCheck[] {
   } catch {
     return []
   }
+}
+
+// Revisión final QA (M6): reporte de cobertura de escenarios que Java guarda en la tarea VALIDATION.
+const COVERAGE_REPORT = 'Reporte de cobertura de escenarios (Java, QA casos de uso):'
+
+function coverageLines(result: string | null): string[] {
+  if (!result || !result.startsWith(COVERAGE_REPORT)) return []
+  return result
+    .slice(COVERAGE_REPORT.length)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
 }
 
 function parseSandbox(raw: string | null): SandboxResult | null {
@@ -30,7 +43,68 @@ function sandboxDot(step: SandboxStep): string {
   return '🔴'
 }
 
-const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED'])
+const DECIDABLE = new Set(['AWAITING_INVESTOR', 'FAILED', 'BLOCKED'])
+
+/** Spec misiones durables §4: una BLOCKED/INTERRUPTED muestra su motivo en su propia sección (no dos veces). */
+function showsRecovery(mission: MissionResponse) {
+  return mission.status === 'INTERRUPTED' || mission.status === 'BLOCKED'
+}
+
+/** Spec misiones durables §4: motivo de una BLOCKED/INTERRUPTED y "Reanudar" para las INTERRUPTED. */
+function MissionRecovery({ mission }: { mission: MissionResponse }) {
+  const queryClient = useQueryClient()
+  const resume = useMutation({
+    mutationFn: () => api.resumeMission(mission.missionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['missionDetails', mission.missionId] })
+      void queryClient.invalidateQueries({ queryKey: ['missions'] })
+    },
+  })
+  if (!showsRecovery(mission)) return null
+  return (
+    <section>
+      <h2>{mission.status === 'BLOCKED' ? 'Bloqueada: espera tu indicación' : 'Interrumpida por un reinicio'}</h2>
+      <pre className="mission-message">{mission.message}</pre>
+      {mission.status === 'INTERRUPTED' && (
+        <button type="button" disabled={resume.isPending} onClick={() => resume.mutate()}>
+          Reanudar
+        </button>
+      )}
+      {resume.isError && <p className="error">{(resume.error as Error).message}</p>}
+    </section>
+  )
+}
+
+const VERIFIABLE = new Set(['BLOCKED', 'FAILED', 'AWAITING_INVESTOR', 'INTERRUPTED'])
+
+/**
+ * Revisión 2026-10-06 §5 (manos humanas): un desarrollador corrigió el código e hizo commit; Forjai verifica el último
+ * commit (chequeos, sandbox y escenarios) sin modelos.
+ */
+function MissionHumanVerify({ mission }: { mission: MissionResponse }) {
+  const queryClient = useQueryClient()
+  const verify = useMutation({
+    mutationFn: () => api.verifyMission(mission.missionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['missionDetails', mission.missionId] })
+      void queryClient.invalidateQueries({ queryKey: ['missions'] })
+    },
+  })
+  if (mission.teamId !== 'TEAM-DEVELOPMENT' || !VERIFIABLE.has(mission.status)) return null
+  return (
+    <div className="decision-form">
+      <button type="button" disabled={verify.isPending} onClick={() => verify.mutate()}>
+        Verificar (manos humanas)
+      </button>
+      <p className="hint">
+        Para cuando un desarrollador corrigió el código en ~/forjai-products/{mission.missionId} e hizo commit. Verifica el
+        último commit sin modelos; lo que no tenga commit no se verifica (si arranca la corrección automática, queda guardado
+        en git stash).
+      </p>
+      {verify.isError && <p className="error">{(verify.error as Error).message}</p>}
+    </div>
+  )
+}
 
 /** Spec 2026-10-02 §4: migraciones de Diego y "Aplicar esquema" (404 = la misión no declara base). */
 function MissionDatabase({ missionId }: { missionId: string }) {
@@ -50,7 +124,29 @@ function MissionDatabase({ missionId }: { missionId: string }) {
   return (
     <div className="decision-form">
       <h2>Base de datos</h2>
-      <p>Conexión: {query.data.connectionName || 'sin cargar (cárgala en Settings → Bases de datos)'}</p>
+      {query.data.environments.length === 0 ? (
+        <p>Sin conexión cargada (cárgala en Settings → Bases de datos)</p>
+      ) : (
+        <ul>
+          {query.data.environments.map((e) => {
+            const failed = query.data.environments.find((x) => x.state === 'FAILED')
+            const versions = e.applied.length > 0 ? e.applied.map((v) => `V${v}`).join(', ') : 'sin migraciones nuevas'
+            const text =
+              e.state === 'APPLIED'
+                ? `✅ ${versions}`
+                : e.state === 'FAILED'
+                  ? `❌ ${e.applied.length > 0 ? `aplicadas ${versions}, ` : ''}falló V${e.failedVersion}${e.detail ? `: ${e.detail}` : ''}`
+                  : e.state === 'SKIPPED'
+                    ? `— sin aplicar${failed ? `: falló ${failed.environment} en V${failed.failedVersion}` : ''}`
+                    : '⏸ sin aplicar'
+            return (
+              <li key={e.connection}>
+                {e.environment ?? '?'} ({e.connection}) {text}
+              </li>
+            )
+          })}
+        </ul>
+      )}
       <ul>
         {query.data.migrations.map((m) => (
           <li key={m.version}>
@@ -89,12 +185,46 @@ function MissionModelCost({ missionId }: { missionId: string }) {
   )
 }
 
+const KIND_LABEL: Record<string, string> = { MODULE: 'Módulo', SYSTEM: 'Sistema', LEVEL: 'Nivel', SCENE: 'Escena' }
+
+function ContractSection({ view }: { view: ContractView }) {
+  const c = view.contract
+  return (
+    <>
+      <h3>
+        Contrato (versión {view.version} — {view.status})
+      </h3>
+      <p>{c.summary}</p>
+      <ul>
+        {c.items.map((i) => (
+          <li key={i.id}>
+            <strong>{i.id}</strong> [{KIND_LABEL[i.kind] ?? i.kind}] {i.name} — {i.description}
+          </li>
+        ))}
+      </ul>
+      {c.outOfScope.length > 0 && <p>Fuera de alcance: {c.outOfScope.join('; ')}</p>}
+      <p>
+        Épicas: {c.useEpics ? 'sí' : 'no'} ({c.epicsReason})
+      </p>
+    </>
+  )
+}
+
 const INCREMENT_READY = new Set(['AWAITING_INVESTOR', 'COMPLETED', 'FAILED'])
 
 /** Spec 2026-10-03 Aria: requisitos de Aria, aprobación e incrementos (404 = la misión no tiene requisitos). */
 function MissionRequirements({ missionId, status }: { missionId: string; status: string }) {
   const queryClient = useQueryClient()
   const [adjustment, setAdjustment] = useState('')
+  const [target, setTarget] = useState<AdjustTarget>('ARIA')
+  const designQuery = useQuery({
+    queryKey: ['interactionDesign', missionId],
+    queryFn: () => api.interactionDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  // Solo un diseño en DRAFT se ajusta: uno aprobado, rechazado o reemplazado ya no admite ajuste a Kael.
+  const hasDesign = !!designQuery.data?.design && designQuery.data.status === 'DRAFT'
   const query = useQuery({
     queryKey: ['requirements', missionId],
     queryFn: () => api.requirements(missionId),
@@ -104,10 +234,11 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['requirements', missionId] })
     void queryClient.invalidateQueries({ queryKey: ['missionDetails', missionId] })
+    void queryClient.invalidateQueries({ queryKey: ['interactionDesign', missionId] })
   }
   const decide = useMutation({
     mutationFn: (decision: RequirementsDecision) =>
-      api.decideRequirements(missionId, decision, decision === 'ADJUST' ? adjustment : undefined),
+      api.decideRequirements(missionId, decision, decision === 'ADJUST' ? adjustment : undefined, effectiveTarget),
     onSuccess: () => {
       setAdjustment('')
       refresh()
@@ -118,7 +249,9 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
     onSuccess: refresh,
   })
   const view = query.data
-  if (!view || !view.spec) {
+  const contractWaiting = view?.contract?.status === 'DRAFT'
+  const effectiveTarget: AdjustTarget = hasDesign && !contractWaiting ? target : 'ARIA'
+  if (!view || (!view.spec && !view.contract)) {
     return null
   }
   const spec = view.spec
@@ -127,27 +260,25 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
   return (
     <div className="decision-form">
       <h2>Requisitos (Aria)</h2>
-      <p>
-        Versión {view.version} — {view.versionStatus}
-        {view.approvedVersion != null && <> — incremento construido: {view.builtIncrement} de {view.incrementsTotal}</>}
-      </p>
-      <p>{spec.summary}</p>
-      <h3>Roles</h3>
-      <ul>
-        {spec.roles.map((r) => (
-          <li key={r.name}>
-            <strong>{r.name}</strong> — {r.description}
-          </li>
-        ))}
-      </ul>
-      {spec.increments.map((inc) => (
-        <div key={inc.number}>
-          <h3>
-            Incremento {inc.number}: {inc.goal}
-          </h3>
-          {spec.userStories
-            .filter((s) => inc.userStoryIds.includes(s.id))
-            .map((s) => (
+      {view.contract && <ContractSection view={view.contract} />}
+      {spec && (
+        <>
+          <p>
+            Versión {view.version} — {view.versionStatus}
+            {view.approvedVersion != null && <> — incremento construido: {view.builtIncrement} de {view.incrementsTotal}</>}
+          </p>
+          {spec.experience && <p>Tipo: {spec.experience}</p>}
+          <p>{spec.summary}</p>
+          <h3>Roles</h3>
+          <ul>
+            {spec.roles.map((r) => (
+              <li key={r.name}>
+                <strong>{r.name}</strong> — {r.description}
+              </li>
+            ))}
+          </ul>
+          {spec.increments.map((inc) => {
+            const story = (s: RequirementsStory) => (
               <div key={s.id}>
                 <p>
                   <strong>{s.id}</strong> ({s.role}): quiero {s.iWant} para {s.soThat}
@@ -164,23 +295,52 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
                   ))}
                 </ul>
               </div>
-            ))}
-        </div>
-      ))}
-      {spec.assumptions.length > 0 && <p>Supuestos: {spec.assumptions.join('; ')}</p>}
-      {spec.outOfScope.length > 0 && <p>Fuera de alcance: {spec.outOfScope.join('; ')}</p>}
+            )
+            const stories = spec.userStories.filter((s) => inc.userStoryIds.includes(s.id))
+            const epics = spec.useEpics
+              ? (spec.contractItems ?? []).filter((i) => stories.some((s) => s.contractItem === i.id))
+              : []
+            return (
+              <div key={inc.number}>
+                <h3>
+                  Incremento {inc.number}: {inc.goal}
+                </h3>
+                {epics.length === 0
+                  ? stories.map(story)
+                  : epics.map((i) => (
+                      <div key={i.id}>
+                        <h4>
+                          Épica {i.id} [{KIND_LABEL[i.kind] ?? i.kind}] {i.name}: {i.description}
+                        </h4>
+                        {stories.filter((s) => s.contractItem === i.id).map(story)}
+                      </div>
+                    ))}
+              </div>
+            )
+          })}
+          {spec.assumptions.length > 0 && <p>Supuestos: {spec.assumptions.join('; ')}</p>}
+          {spec.outOfScope.length > 0 && <p>Fuera de alcance: {spec.outOfScope.join('; ')}</p>}
+        </>
+      )}
       {status === 'AWAITING_SPEC_APPROVAL' && (
         <div>
           <button disabled={decide.isPending} onClick={() => decide.mutate('APPROVE')}>
-            Aprobar
+            {contractWaiting ? 'Aprobar contrato' : 'Aprobar'}
           </button>{' '}
           <button disabled={decide.isPending} onClick={() => decide.mutate('REJECT')}>
-            Rechazar
+            {contractWaiting ? 'Rechazar contrato' : 'Rechazar'}
           </button>
+          <label>
+            Ajuste para{' '}
+            <select value={effectiveTarget} onChange={(e) => setTarget(e.target.value as AdjustTarget)}>
+              <option value="ARIA">Aria</option>
+              {hasDesign && !contractWaiting && <option value="KAEL">Kael</option>}
+            </select>
+          </label>
           <textarea
             value={adjustment}
             onChange={(e) => setAdjustment(e.target.value)}
-            placeholder="Qué debe cambiar Aria"
+            placeholder={`Qué debe cambiar ${effectiveTarget === 'KAEL' ? 'Kael' : 'Aria'}`}
           />
           <button disabled={decide.isPending || !adjustment.trim()} onClick={() => decide.mutate('ADJUST')}>
             Ajustar
@@ -194,6 +354,407 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
       )}
       {decide.isError && <p className="error">{decide.error.message}</p>}
       {build.isError && <p className="error">{build.error.message}</p>}
+    </div>
+  )
+}
+
+const SANDBOX_TYPES = ['SANDBOX_', 'REPAIR_', 'TEST_TRIAGE_']
+
+/** Bitácora (spec 2026-10-17): lo que pasó en la misión, del más nuevo al más viejo. */
+function MissionEventLog({ missionId, live }: { missionId: string; live: boolean }) {
+  const [agent, setAgent] = useState('')
+  const [sandboxOnly, setSandboxOnly] = useState(false)
+  const query = useQuery({
+    queryKey: ['missionEvents', missionId],
+    queryFn: () => api.missionEvents(missionId, 200),
+    refetchInterval: live ? 5_000 : false,
+  })
+  const events = query.data ?? []
+  const agents = Array.from(new Set(events.map((e) => e.agentName ?? 'Forjai')))
+  const shown = events.filter(
+    (e) =>
+      (agent === '' || (e.agentName ?? 'Forjai') === agent) &&
+      (!sandboxOnly || SANDBOX_TYPES.some((p) => e.type.startsWith('EMPRESA_' + p))),
+  )
+  return (
+    <section>
+      <h2>Bitácora</h2>
+      {query.isLoading ? (
+        <p className="hint">Cargando bitácora…</p>
+      ) : query.error ? (
+        <p className="error">No se pudo cargar la bitácora.</p>
+      ) : events.length === 0 ? (
+        <p className="hint">Sin bitácora (misión anterior al 2026-10-17).</p>
+      ) : (
+        <>
+          <p>
+            <select value={agent} onChange={(e) => setAgent(e.target.value)}>
+              <option value="">Todos los agentes</option>
+              {agents.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>{' '}
+            <label>
+              <input type="checkbox" checked={sandboxOnly} onChange={(e) => setSandboxOnly(e.target.checked)} /> solo
+              sandbox
+            </label>
+          </p>
+          {shown.length === 0 && <p className="hint">Sin eventos con este filtro.</p>}
+          <ul className="activity-list">
+            {shown.map((e) => (
+              <li key={e.id}>
+                <span className="activity-time">{new Date(e.at).toLocaleTimeString()}</span>
+                <span className="activity-type">{e.agentName ?? 'Forjai'}</span>
+                <span className="activity-desc">{e.summary}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  )
+}
+
+/** Entregas (spec 2026-10-17): zip del incremento VERIFIED, descarga, generación manual y clave de Android. */
+function DeliveriesSection({ missionId, verified }: { missionId: string; verified: boolean }) {
+  const queryClient = useQueryClient()
+  const designQuery = useQuery({
+    queryKey: ['interactionDesign', missionId],
+    queryFn: () => api.interactionDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const query = useQuery({
+    queryKey: ['deliveries', missionId],
+    queryFn: () => api.deliveries(missionId),
+    refetchInterval: (q) => (q.state.data?.some((d) => d.status === 'PACKAGING') ? 5_000 : false),
+  })
+  const generate = useMutation({
+    mutationFn: () => api.generateDelivery(missionId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['deliveries', missionId] }),
+  })
+  const [copied, setCopied] = useState<number | null>(null)
+  const deliveries: DeliveryView[] = query.data ?? []
+  const isGame =
+    designQuery.data?.design?.experience === 'GAME' ||
+    deliveries.some((d) => d.targets.some((t) => t.name.startsWith('android-')))
+  const copyPath = (d: DeliveryView) => {
+    void navigator.clipboard
+      ?.writeText(d.path)
+      .then(() => {
+        setCopied(d.increment)
+        setTimeout(() => setCopied(null), 2000)
+      })
+      .catch(() => undefined)
+  }
+  return (
+    <section>
+      <h2>Entregas</h2>
+      {query.isLoading ? (
+        <p className="hint">Cargando entregas…</p>
+      ) : query.error ? (
+        <p className="error">No se pudieron cargar las entregas.</p>
+      ) : deliveries.length === 0 ? (
+        <p className="hint">Sin entregas todavía</p>
+      ) : (
+        <ul>
+          {deliveries.map((d) => (
+            <li key={d.increment}>
+              {statusDot(d.status)} <strong>Incremento {d.increment}</strong> — {d.status}
+              {/* Una entrega FAILED igual puede tener zip (código y documentos): se descarga si hay ruta. */}
+              {d.status !== 'PACKAGING' && d.path !== '' && (
+                <>
+                  {' · '}
+                  {(d.sizeBytes / (1024 * 1024)).toFixed(1)} MB
+                  {' · '}
+                  <a href={api.downloadDeliveryUrl(missionId, d.increment)} download>
+                    Descargar
+                  </a>
+                </>
+              )}
+              {d.path && (
+                <>
+                  {' · '}
+                  <code>{d.path}</code>{' '}
+                  <button type="button" onClick={() => copyPath(d)}>
+                    {copied === d.increment ? 'Copiado' : 'copiar'}
+                  </button>
+                </>
+              )}
+              {d.targets.length > 0 && (
+                <div>
+                  {d.targets.map((t) => (
+                    <span
+                      key={t.name}
+                      title={t.reason ?? undefined}
+                      style={{ marginRight: 8, color: t.status === 'PASS' ? 'green' : t.status === 'SKIPPED' ? 'gray' : 'crimson' }}
+                    >
+                      {statusDot(t.status)} {t.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {d.error && <p className="error">{d.error}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {(verified || deliveries.length > 0) && (
+        <p>
+          <button type="button" disabled={generate.isPending} onClick={() => generate.mutate()}>
+            Generar entrega
+          </button>
+          {generate.isPending && <span className="hint"> Empaquetando… (puede tardar varios minutos)</span>}
+        </p>
+      )}
+      {generate.isError && <p className="error">{generate.error.message}</p>}
+      {isGame && <AndroidSigningKeyCard missionId={missionId} />}
+    </section>
+  )
+}
+
+/** Clave de firma de Android del juego: solo el servidor la guarda (cifrada); aquí nunca se vuelve a mostrar. */
+function AndroidSigningKeyCard({ missionId }: { missionId: string }) {
+  const queryClient = useQueryClient()
+  const [file, setFile] = useState<File | null>(null)
+  const [alias, setAlias] = useState('')
+  const [password, setPassword] = useState('')
+  const [fileKey, setFileKey] = useState(0)
+  const query = useQuery({
+    queryKey: ['androidSigningKey', missionId],
+    queryFn: () => api.signingKey(missionId),
+  })
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['androidSigningKey', missionId] })
+  const save = useMutation({
+    mutationFn: async () => {
+      if (!file) throw new Error('Elige el archivo .jks o .p12.')
+      const keystoreBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
+        reader.onerror = () => reject(new Error('No se pudo leer el archivo.'))
+        reader.readAsDataURL(file)
+      })
+      return api.saveSigningKey(missionId, { keystoreBase64, alias, password })
+    },
+    onSuccess: () => {
+      setFile(null)
+      setAlias('')
+      setPassword('')
+      setFileKey((k) => k + 1)
+      void refresh()
+    },
+  })
+  const remove = useMutation({ mutationFn: () => api.deleteSigningKey(missionId), onSuccess: () => void refresh() })
+  const status = query.data
+  return (
+    <div className="decision-form">
+      <h3>Clave de Android</h3>
+      {status?.configured ? (
+        <p>
+          Alias <strong>{status.alias}</strong>
+          {status.updatedAt && <> — guardada el {new Date(status.updatedAt).toLocaleString()}</>}{' '}
+          <button type="button" className="danger" disabled={remove.isPending} onClick={() => remove.mutate()}>
+            Borrar
+          </button>
+        </p>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            save.mutate()
+          }}
+        >
+          <p>
+            <input
+              key={fileKey}
+              type="file"
+              accept=".jks,.p12,.keystore"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </p>
+          <p>
+            <input placeholder="Alias" value={alias} onChange={(e) => setAlias(e.target.value)} />{' '}
+            <input
+              type="password"
+              placeholder="Contraseña"
+              autoComplete="off"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />{' '}
+            <button type="submit" disabled={save.isPending || !file || !alias || !password}>
+              Guardar
+            </button>
+          </p>
+        </form>
+      )}
+      <p className="hint">
+        Godot usa la misma contraseña para el keystore y la clave. Respáldala: sin ella no podrás actualizar la app en
+        Google Play.
+      </p>
+      {save.isError && <p className="error">{save.error.message}</p>}
+      {remove.isError && <p className="error">{remove.error.message}</p>}
+    </div>
+  )
+}
+
+/** Revisión conjunta (spec 2026-10-15): Neo detecta contradicciones entre HU y diseño, Aria decide, Java aplica. */
+function MissionJointReview({ missionId }: { missionId: string }) {
+  const query = useQuery({
+    queryKey: ['jointReview', missionId],
+    queryFn: () => api.jointReview(missionId),
+    refetchInterval: 10_000,
+  })
+  const reviews = query.data ?? []
+  if (reviews.length === 0) return null
+  return (
+    <section>
+      <h2>Revisión conjunta (Neo + Aria)</h2>
+      {reviews.map((r) => (
+        <div key={r.number}>
+          <p>
+            <strong>Ronda {r.round}</strong>: {r.status} (HU v{r.specVersion}, diseño v{r.designVersion})
+            {r.detail && <span className="hint"> — {r.detail}</span>}
+          </p>
+          <ul>
+            {r.contradictions.map((c) => {
+              const d = r.decisions.find((x) => x.id === c.id)
+              return (
+                <li key={c.id}>
+                  <code>{c.id}</code> ({c.requirementRefs.join(', ')} ↔ {c.designRefs.join(', ')}): {c.requirementSays} ↔{' '}
+                  {c.designSays}
+                  {d ? (
+                    <>
+                      {' '}
+                      → <strong>{d.side === 'DESIGN' ? 'diseño' : 'HU'}</strong>: {d.change}{' '}
+                      <span className="hint">({d.reason})</span>
+                    </>
+                  ) : (
+                    <> → ⚠ sin resolver</>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+/** Spec 2026-10-14 Kael: diseño de interacción (pantallas y flujos, o reglas del juego); 404 = sin diseño. */
+function MissionDesign({ missionId }: { missionId: string }) {
+  const query = useQuery({
+    queryKey: ['interactionDesign', missionId],
+    queryFn: () => api.interactionDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const view = query.data
+  if (!view?.design) {
+    return null
+  }
+  const { app, game } = view.design
+  const props = (list: DesignProperty[]) => list.map((p) => `${p.name}=${p.value ?? '—'}`).join(', ')
+  return (
+    <div className="decision-form">
+      <h2>Diseño (Kael)</h2>
+      <p>
+        Versión {view.version} — {view.status}
+      </p>
+      {app && (
+        <>
+          <h3>Pantallas</h3>
+          <ul>
+            {app.screens.map((s) => (
+              <li key={s.id}>
+                {s.id} {s.name} ({s.role}): {s.purpose} — {s.states.join(', ')}
+              </li>
+            ))}
+          </ul>
+          <h3>Flujos</h3>
+          <ul>
+            {app.flows.map((f) => (
+              <li key={f.story}>
+                {f.story}: {f.screens.join(' → ')}
+              </li>
+            ))}
+          </ul>
+          {app.frictionRisks.length > 0 && (
+            <>
+              <h3>Hipótesis</h3>
+              <ul>
+                {app.frictionRisks.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+      {game && (
+        <>
+          <h3>Estados</h3>
+          <p>{game.states.join(', ')}</p>
+          <ul>
+            {game.transitions.map((t) => (
+              <li key={`${t.from}-${t.to}-${t.trigger}`}>
+                {t.from} → {t.to} ({t.trigger})
+              </li>
+            ))}
+          </ul>
+          <h3>Controles</h3>
+          <ul>
+            {game.controls.map((c) => (
+              <li key={c.action}>
+                {c.action} [{c.key}]: {c.effect}
+              </li>
+            ))}
+          </ul>
+          <h3>Entidades</h3>
+          <ul>
+            {game.entities.map((e) => (
+              <li key={e.id}>
+                {e.name}: {props(e.properties)}
+              </li>
+            ))}
+          </ul>
+          <h3>Reglas</h3>
+          <ul>
+            {game.rules.map((r) => (
+              <li key={r.id}>
+                {r.id}: SI {r.condition} ENTONCES {r.effect}
+              </li>
+            ))}
+          </ul>
+          {(game.scenes ?? []).length > 0 && (
+            <>
+              <h3>Escenas</h3>
+              <ul>
+                {(game.scenes ?? []).map((s) => (
+                  <li key={s.id}>
+                    {s.id} {s.name} ({s.script}): {s.purpose}
+                  </li>
+                ))}
+              </ul>
+              <h3>Niveles</h3>
+              <ul>
+                {(game.levels ?? []).map((l) => (
+                  <li key={l.item}>
+                    {l.item} en {l.scene}: {props(l.parameters)}
+                    {l.advanceRule ? ` → ${l.advanceRule}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <p>Gana: {game.win.join('; ')}</p>
+          <p>Pierde: {game.lose.join('; ')}</p>
+          {game.difficulty.length > 0 && <p>Dificultad: {props(game.difficulty)}</p>}
+          {game.balanceHypotheses.length > 0 && <p>Hipótesis de balance: {game.balanceHypotheses.join('; ')}</p>}
+        </>
+      )}
     </div>
   )
 }
@@ -245,16 +806,33 @@ export default function MissionDetailPage() {
         {mission.environment === 'PRODUCTION' ? '🏢 PRODUCTION' : '🧪 TEST'}
         {mission.teamId && <>{' — '}👥 {mission.teamId}</>}
       </p>
-      <p className="mission-message">{mission.message}</p>
+      {!showsRecovery(mission) && <p className="mission-message">{mission.message}</p>}
+      <CancelMissionButton missionId={mission.missionId} status={mission.status} />
       <DeleteMissionButton
         missionId={mission.missionId}
         status={mission.status}
         onDeleted={() => navigate('/missions')}
       />
 
+      <MissionRecovery mission={mission} />
+      <MissionHumanVerify mission={mission} />
+
       <MissionModelCost missionId={mission.missionId} />
 
       {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
+      {mission.teamId && <MissionDesign missionId={mission.missionId} />}
+      {mission.teamId && <MissionJointReview missionId={mission.missionId} />}
+      <MissionEventLog
+        missionId={mission.missionId}
+        live={!['COMPLETED', 'CANCELLED', 'FAILED', 'INTERRUPTED'].includes(mission.status)}
+      />
+
+      {mission.teamId && (
+        <DeliveriesSection
+          missionId={mission.missionId}
+          verified={tasks.filter((t) => t.validationStatus).at(-1)?.validationStatus === 'VERIFIED'}
+        />
+      )}
 
       {mission.teamId && <MissionDatabase missionId={mission.missionId} />}
 
@@ -322,6 +900,26 @@ export default function MissionDetailPage() {
               ))}
             </ul>
             {(() => {
+              const lines = coverageLines(task.result)
+              if (lines.length === 0) return null
+              const coverage = parseChecks(task.staticChecks).find((check) => check.check === 'SCENARIO_COVERAGE')
+              return (
+                <>
+                  <h3>Cobertura de escenarios</h3>
+                  {coverage && (
+                    <p>
+                      {coverage.status === 'PASS' ? '🟢' : '🔴'} {coverage.detail}
+                    </p>
+                  )}
+                  <ul>
+                    {lines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </>
+              )
+            })()}
+            {(() => {
               const sandbox = parseSandbox(task.sandboxResult)
               if (!sandbox) return <p className="hint">El sandbox no corrió: la ejecución no está verificada.</p>
               return (
@@ -347,7 +945,7 @@ export default function MissionDetailPage() {
       <h2>Decisión del inversionista</h2>
       {!canDecide && (
         <p className="hint">
-          Solo se puede decidir sobre una misión en AWAITING_INVESTOR o FAILED (estado actual: {mission.status}).
+          Solo se puede decidir sobre una misión en AWAITING_INVESTOR, FAILED o BLOCKED (estado actual: {mission.status}).
         </p>
       )}
       {canDecide && (

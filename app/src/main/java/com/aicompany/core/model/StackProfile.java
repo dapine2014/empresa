@@ -190,16 +190,20 @@ public enum StackProfile {
         return Optional.empty();
     }
 
-    /** Capas que ofrece el perfil (por contexto y compartidas). */
+    /** Spec 2026-10-14 Kael §2.1: dentro de game/, las partidas son de Vera y el runner es de Forjai. */
+    public static final String PLAYTHROUGHS_ROOT = "game/playthroughs";
+    public static final String FORJAI_GAME_ROOT = "game/forjai";
+
     /** Fase del Development Group en que el perfil está habilitado (spec 2026-10-01). */
     public int phase() {
-        return this == GODOT_DOTNET_GAME ? 3 : 1;
+        return 1;
     }
 
     public boolean enabledNow() {
         return phase() <= DevelopmentPhase.CURRENT;
     }
 
+    /** Capas que ofrece el perfil (por contexto y compartidas). */
     public List<Layer> layers() {
         var layers = new ArrayList<Layer>();
         contextRoots.forEach(r -> layers.add(r.layer()));
@@ -335,6 +339,12 @@ public enum StackProfile {
                     + "iOS: nunca importes dart:html, dart:js, dart:js_util, dart:js_interop ni package:web (Forjai "
                     + "rechaza el repositorio).";
         };
+    }
+
+    /** FALTANTES (Bloque 1, m-6): para qué sirve el Development Group hoy, según los perfiles habilitados. */
+    public static String enabledUsages() {
+        return Arrays.stream(values()).filter(StackProfile::enabledNow).map(StackProfile::usage)
+                .collect(Collectors.joining("; "));
     }
 
     public static String describeAll() {

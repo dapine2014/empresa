@@ -12,6 +12,8 @@ export type MissionStatus =
   | 'AWAITING_SPEC_APPROVAL'
   | 'AWAITING_INVESTOR'
   | 'EXECUTING'
+  | 'INTERRUPTED'
+  | 'BLOCKED'
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELLED'
@@ -118,8 +120,20 @@ export interface TeamSnapshot {
   members: TeamMemberInfo[]
 }
 
+export interface MissionEventView {
+  id: string
+  type: string
+  at: string
+  agentId: string | null
+  agentName: string | null
+  taskId: string | null
+  summary: string
+  round: number | null
+  increment: number | null
+}
+
 export interface ActivityItem {
-  type: 'TASK' | 'MISSION' | 'EVIDENCE' | 'DECISION'
+  type: 'TASK' | 'MISSION' | 'EVIDENCE' | 'DECISION' | 'EVENT'
   missionId: string | null
   agentId: string | null
   description: string
@@ -253,6 +267,13 @@ export type PolicyKey =
   | 'MAX_EVIDENCE_ROUNDS'
   | 'ORCHESTRATOR_ENABLED'
   | 'MAX_AUTONOMOUS_PRODUCTS'
+  | 'PROSPECTING_ENABLED'
+  | 'MAX_PROSPECTS_PER_DAY'
+  | 'MAX_OUTREACH_PER_DAY'
+  | 'SPEC_APPROVAL_REQUIRED'
+  | 'MAX_AUTO_CORRECTIONS'
+  | 'MAX_MISSION_COST_USD'
+  | 'JOINT_REVIEW_ENABLED'
 
 export interface PolicyVersionSummary {
   version: number
@@ -366,6 +387,13 @@ export interface ModelHealth {
   since: string | null
   lastError: string | null
   affectedAgents: string[]
+}
+
+// Cadena de modelos gratis (2026-10-15): FreeModelChainController.FreeModelChainView.
+export interface FreeModelChain {
+  models: ModelHealth[]
+  updatedAt: string | null
+  updatedBy: string | null
 }
 
 export interface DependencyInfo {
@@ -577,7 +605,14 @@ export interface DatabaseConnectionForm {
 }
 
 export interface MissionDatabaseStatus {
-  connectionName: string | null
+  environments: {
+    connection: string
+    environment: 'TEST' | 'PRODUCTION' | null
+    applied: number[]
+    failedVersion: number | null
+    state: 'APPLIED' | 'FAILED' | 'SKIPPED' | 'PENDING'
+    detail: string | null
+  }[]
   migrations: { version: number; description: string; state: 'APPLIED' | 'PENDING' | 'FAILED' }[]
   lastResult: string | null
 }
@@ -591,7 +626,33 @@ export interface RequirementsScenario {
   then: string[]
 }
 
+// Contrato (spec 2026-10-16): la solicitud del cliente (ClientContract / ContractView en Java).
+export interface ContractItem {
+  id: string
+  kind: 'MODULE' | 'SYSTEM' | 'LEVEL' | 'SCENE'
+  name: string
+  description: string
+}
+
+export interface ClientContract {
+  summary: string
+  experience: 'APP' | 'GAME' | 'NONE'
+  items: ContractItem[]
+  outOfScope: string[]
+  useEpics: boolean
+  epicsReason: string
+}
+
+export interface ContractView {
+  version: number
+  status: string
+  approvedVersion: number | null
+  contract: ClientContract
+  summary: string
+}
+
 export interface RequirementsStory {
+  contractItem?: string | null
   id: string
   role: string
   iWant: string
@@ -608,6 +669,9 @@ export interface RequirementsSpec {
   roles: { name: string; description: string }[]
   userStories: RequirementsStory[]
   increments: { number: number; goal: string; userStoryIds: string[] }[]
+  experience?: 'APP' | 'GAME' | 'NONE' | null
+  contractItems?: ContractItem[] | null
+  useEpics?: boolean | null
 }
 
 export interface RequirementsView {
@@ -620,9 +684,46 @@ export interface RequirementsView {
   incrementsTotal: number
   spec: RequirementsSpec | null
   summary: string
+  contract?: ContractView | null
 }
 
 export type RequirementsDecision = 'APPROVE' | 'ADJUST' | 'REJECT'
+
+// Spec 2026-10-14 Kael: diseño de interacción (InteractionDesign / InteractionDesignView en Java).
+export interface DesignScreen { id: string; name: string; purpose: string; role: string; states: string[] }
+export interface DesignFlow { story: string; screens: string[]; actions: string[] }
+export interface AppDesign {
+  screens: DesignScreen[]
+  flows: DesignFlow[]
+  scenarioScreens: { scenario: string; screen: string }[]
+  frictionRisks: string[]
+}
+export interface DesignProperty { name: string; value: number | null }
+export interface GameDesign {
+  states: string[]
+  transitions: { from: string; to: string; trigger: string }[]
+  entities: { id: string; name: string; properties: DesignProperty[] }[]
+  controls: { action: string; key: string; effect: string }[]
+  rules: { id: string; condition: string; effect: string }[]
+  win: string[]
+  lose: string[]
+  difficulty: DesignProperty[]
+  scenarioRules: { scenario: string; target: string }[]
+  balanceHypotheses: string[]
+  scenes?: { id: string; name: string; script: string; purpose: string }[]
+  levels?: { item: string; scene: string; parameters: DesignProperty[]; advanceRule: string }[]
+}
+export interface InteractionDesign { experience: 'APP' | 'GAME'; app: AppDesign | null; game: GameDesign | null }
+export interface InteractionDesignView {
+  missionId: string
+  version: number | null
+  status: string | null
+  specVersion: number | null
+  approvedVersion: number | null
+  design: InteractionDesign | null
+  summary: string
+}
+export type AdjustTarget = 'ARIA' | 'KAEL'
 
 // Costo real por misión (2026-10-04): MissionController.ModelCostView.
 export interface ModelUsageRow {
@@ -641,3 +742,43 @@ export interface ModelCostView {
   calls: number
   rows: ModelUsageRow[]
 }
+
+// Revisión conjunta (spec 2026-10-15): JointReviewView.
+export interface JointReviewContradiction {
+  id: string
+  requirementRefs: string[]
+  designRefs: string[]
+  requirementSays: string
+  designSays: string
+  proposal: { side: 'DESIGN' | 'REQUIREMENTS'; change: string } | null
+}
+export interface JointReviewDecision {
+  id: string
+  side: 'DESIGN' | 'REQUIREMENTS'
+  change: string
+  reason: string
+}
+export interface JointReviewView {
+  number: number
+  round: number
+  specVersion: number
+  designVersion: number
+  status: 'COHERENT' | 'RESOLVED' | 'UNRESOLVED' | 'FAILED' | 'SKIPPED'
+  contradictions: JointReviewContradiction[]
+  decisions: JointReviewDecision[]
+  detail: string
+  at: string
+}
+
+// Spec 2026-10-17 entrega del producto: DeliveryController.DeliveryView / AndroidSigningKeyService.Status.
+export interface DeliveryTarget { name: string; status: 'PASS' | 'FAIL' | 'TIMEOUT' | 'SKIPPED' | string; reason: string | null }
+export interface DeliveryView {
+  increment: number
+  status: 'PACKAGING' | 'READY' | 'PARTIAL' | 'FAILED' | string
+  path: string
+  sizeBytes: number
+  targets: DeliveryTarget[]
+  error: string | null
+  createdAt: string
+}
+export interface AndroidSigningKeyStatus { configured: boolean; alias: string | null; updatedAt: string | null }

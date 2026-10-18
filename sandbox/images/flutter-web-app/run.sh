@@ -21,5 +21,17 @@ case "$1" in
     if grep -q "Uncaught" /tmp/chrome.log; then grep "Uncaught" /tmp/chrome.log; exit 1; fi
     if grep -Eq "flutter-view|flt-glass-pane" /tmp/dom.html; then echo "App Flutter presente en el DOM"; exit 0; fi
     echo "La app Flutter no apareció en el DOM"; exit 1 ;;
+  package)
+    # Entrega del producto: la web compilada queda en app/ (el Dockerfile de la entrega copia app/ a nginx).
+    # `flutter build web` no tiene --offline: sin red alcanza con los mismos flags del paso build.
+    set +e
+    OUT=/work/.forjai/package; mkdir -p "$OUT/status"
+    if flutter build web --release --no-web-resources-cdn --no-pub --no-wasm-dry-run > /tmp/package-web.log 2>&1 \
+       && [ -f /work/build/web/index.html ]; then
+      rm -rf "$OUT/app" && cp -r /work/build/web "$OUT/app" && echo PASS > "$OUT/status/web"
+    else
+      echo "FAIL: $(tail -3 /tmp/package-web.log | tr '\n' ' ' | cut -c1-280)" > "$OUT/status/web"
+    fi
+    cat /tmp/package-web.log; echo "== package web: $(cat "$OUT/status/web")" ;;
   *) echo "paso desconocido: $1"; exit 2 ;;
 esac

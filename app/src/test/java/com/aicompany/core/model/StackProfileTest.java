@@ -18,6 +18,12 @@ class StackProfileTest {
     }
 
     @Test
+    void godotIsEnabledAndListedInTheUsages() {
+        assertTrue(StackProfile.GODOT_DOTNET_GAME.enabledNow());
+        assertTrue(StackProfile.enabledUsages().contains("Juegos Godot con C#"), StackProfile.enabledUsages());
+    }
+
+    @Test
     void contextNameRulesDependOnTheLanguage() {
         assertTrue(StackProfile.DOTNET_APP.isValidContextName("Combate"));
         assertFalse(StackProfile.DOTNET_APP.isValidContextName("combate"));
@@ -62,7 +68,7 @@ class StackProfileTest {
     void theCatalogDescriptionShowsOnlyTheEnabledProfilesAndTheirStructure() {
         var all = StackProfile.describeAll();
         assertTrue(all.contains("DOTNET_APP") && all.contains("FLUTTER_WEB_APP"));
-        assertFalse(all.contains("GODOT_DOTNET_GAME"), "Godot es fase 3 (spec 2026-10-01)");
+        assertTrue(all.contains("GODOT_DOTNET_GAME"), "Godot es fase 1 (spec 2026-10-14 Kael)");
         assertTrue(all.contains("src/<Ctx>.Domain"));
         assertTrue(all.contains("lib/<ctx>/domain"));
     }
@@ -145,4 +151,15 @@ class StackProfileTest {
         var contract = StackProfile.DOTNET_APP.executionContract();
         assertTrue(contract.contains("Entity Framework Core NO está disponible"), contract);
     }
+
+    // FALTANTES (Bloque 1, m-6): lo que el modelo lee del Development Group sale de los perfiles habilitados (con juegos
+    // Godot desde la spec 2026-10-14 Kael).
+    @Test
+    void enabledUsagesListOnlyTheProfilesOfTheCurrentPhase() {
+        var usages = StackProfile.enabledUsages();
+        assertTrue(usages.contains(StackProfile.DOTNET_APP.usage()), usages);
+        assertTrue(usages.contains(StackProfile.FLUTTER_WEB_APP.usage()), usages);
+        assertTrue(usages.contains(StackProfile.GODOT_DOTNET_GAME.usage()), usages);
+    }
 }
+

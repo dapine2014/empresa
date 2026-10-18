@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TestReportParserTest {
 
@@ -100,5 +101,62 @@ class TestReportParserTest {
         Files.writeString(dir.resolve(".forjai/results.trx"),
                 "<TestRun><Results><UnitTestResult testId=\"a\" outcome=\"Passed\" testName=\"Ns.C.ESC_06_t(s: &quot;a&amp;b&quot;)\" /></Results></TestRun>");
         assertEquals(List.of(new SandboxResult.TestCase("Ns.C.ESC_06_t(s: \"a&b\")", "PASSED")), TestReportParser.parse(dir).tests());
+    }
+
+    @Test
+    void playthroughsAreAddedToTheTrxTests() throws Exception {
+        Files.createDirectories(work.resolve(".forjai"));
+        Files.writeString(work.resolve(".forjai/results.trx"), """
+                <TestRun><Results><UnitTestResult testName="Pong.Tests.ScoreTests.ESC_02_suma" outcome="Passed" /></Results>
+                <ResultSummary><Counters total="1" passed="1" failed="0" /></ResultSummary></TestRun>""");
+        Files.writeString(work.resolve(".forjai/playthroughs.json"),
+                "[{\"name\":\"ESC_01_mueve\",\"outcome\":\"PASSED\",\"failedStep\":\"\",\"message\":\"\"},"
+                + "{\"name\":\"ESC_03_pierde\",\"outcome\":\"FAILED\",\"failedStep\":\"paso 2\",\"message\":\"falló la aserción: game over\"}]");
+        var counts = TestReportParser.parse(work);
+        assertEquals(2, counts.passed());
+        assertEquals(1, counts.failed());
+        assertTrue(counts.tests().contains(new SandboxResult.TestCase("[juego] ESC_01_mueve", "PASSED")));
+        assertTrue(counts.tests().contains(new SandboxResult.TestCase("[juego] ESC_03_pierde", "FAILED", "paso 2: falló la aserción: game over")));
+    }
+
+    // Verificado en vivo (Pong, 2026-10-15): sin el paso y el motivo, el equipo corrigió a ciegas las mismas 4 partidas
+    // durante 3 rondas. System.Text.Json escapa los no ASCII (\u00F3) y las comillas (\u0022).
+    @Test
+    void aFailedPlaythroughCarriesItsStepAndMessage() throws Exception {
+        Files.createDirectories(work.resolve(".forjai"));
+        Files.writeString(work.resolve(".forjai/playthroughs.json"),
+                "[{\"name\":\"ESC_01_mueve\",\"outcome\":\"PASSED\",\"failedStep\":null,\"message\":null},"
+                + "{\"name\":\"ESC_03_rebota\",\"outcome\":\"FAILED\",\"failedStep\":\"paso 4\","
+                + "\"message\":\"fall\\u00F3 la aserci\\u00F3n: \\u0022la pelota rebota\\u0022\"}]");
+
+        var tests = TestReportParser.parse(work).tests();
+
+        assertEquals(new SandboxResult.TestCase("[juego] ESC_01_mueve", "PASSED"), tests.get(0));
+        assertEquals(new SandboxResult.TestCase("[juego] ESC_03_rebota", "FAILED",
+                "paso 4: falló la aserción: \"la pelota rebota\""), tests.get(1));
+    }
+
+    @Test
+    void theFailedPlaythroughsAreListedForTheOutput() {
+        var tests = List.of(new SandboxResult.TestCase("[juego] ESC_01_mueve", "PASSED"),
+                new SandboxResult.TestCase("[juego] ESC_03_rebota", "FAILED", "paso 4: falló la aserción: rebota"),
+                new SandboxResult.TestCase("Pong.Tests.X", "FAILED"));
+
+        assertEquals("\nPartidas simuladas fallidas (paso y motivo):\n- [juego] ESC_03_rebota: paso 4: falló la aserción: rebota\n",
+                TestReportParser.failureDetails(tests));
+        assertEquals("", TestReportParser.failureDetails(List.of(tests.get(0))));
+    }
+
+    @Test
+    void aMissingOrCorruptPlaythroughReportAddsNothing() throws Exception {
+        Files.createDirectories(work.resolve(".forjai"));
+        Files.writeString(work.resolve(".forjai/results.trx"), """
+                <TestRun><Results><UnitTestResult testName="A.B.C" outcome="Passed" /></Results>
+                <ResultSummary><Counters total="1" passed="1" failed="0" /></ResultSummary></TestRun>""");
+        assertEquals(1, TestReportParser.parse(work).tests().size());
+        Files.writeString(work.resolve(".forjai/playthroughs.json"), "[{\"name\":");
+        var counts = TestReportParser.parse(work);
+        assertEquals(1, counts.tests().size());
+        assertEquals(1, counts.passed());
     }
 }

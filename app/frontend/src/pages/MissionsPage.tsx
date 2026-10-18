@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { statusDot } from '../statusColor'
+import CancelMissionButton from '../components/CancelMissionButton'
 import DeleteMissionButton from '../components/DeleteMissionButton'
 
 function StartMissionForm() {
@@ -157,6 +158,7 @@ export default function MissionsPage() {
               <td>{mission.currentStep}</td>
               <td>{new Date(mission.updatedAt).toLocaleString()}</td>
               <td>
+                <CancelMissionButton missionId={mission.missionId} status={mission.status} />
                 <DeleteMissionButton missionId={mission.missionId} status={mission.status} />
               </td>
             </tr>

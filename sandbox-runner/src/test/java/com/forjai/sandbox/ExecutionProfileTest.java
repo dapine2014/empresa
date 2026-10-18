@@ -24,4 +24,11 @@ class ExecutionProfileTest {
             assertTrue(profile.image().startsWith("localhost/forjai-sandbox/"));
         }
     }
+
+    @Test
+    void imagesAreTheVersionsWithThePackageStep() {
+        assertEquals("localhost/forjai-sandbox/godot-dotnet-game:3", ExecutionProfile.GODOT_DOTNET_GAME.image());
+        assertEquals("localhost/forjai-sandbox/dotnet-app:2", ExecutionProfile.DOTNET_APP.image());
+        assertEquals("localhost/forjai-sandbox/flutter-web-app:2", ExecutionProfile.FLUTTER_WEB_APP.image());
+    }
 }

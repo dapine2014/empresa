@@ -14,10 +14,11 @@ public final class RemoteProviders {
 
     /**
      * {@code thinkingOff}: "parámetro=valor" propio del proveedor que apaga el razonamiento (Bedrock
-     * {@code reasoning_effort=none}, verificado en vivo 2026-10-04).
+     * {@code reasoning_effort=none}, verificado en vivo 2026-10-04). {@code promptCacheOff}: apaga el caché de prompts del
+     * proveedor (Bedrock, verificado en vivo 2026-10-18).
      */
     public record Provider(String name, String baseUrl, String apiKey, List<String> checkModels, boolean nvidiaOptions,
-                           String thinkingOff, java.time.Duration ownTotalTimeout) {
+                           String thinkingOff, java.time.Duration ownTotalTimeout, boolean promptCacheOff) {
 
         /** Lentitud como caída (decisión del fundador 2026-10-05): plazo propio del proveedor o, si no tiene, el general. */
         public java.time.Duration totalTimeout(java.time.Duration general) {
@@ -39,7 +40,8 @@ public final class RemoteProviders {
                     .map(String::strip).filter(m -> !m.isEmpty()).toList();
             return new Provider(name, baseUrl, env.getProperty(prefix + "api-key", ""), checks,
                     baseUrl.contains("nvidia.com"), env.getProperty(prefix + "thinking-off", ""),
-                    timeoutOf(env.getProperty(prefix + "total-timeout")));
+                    timeoutOf(env.getProperty(prefix + "total-timeout")),
+                    env.getProperty(prefix + "prompt-cache-off", Boolean.class, false));
         }).toList();
     }
 

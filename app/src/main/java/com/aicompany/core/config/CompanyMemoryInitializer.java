@@ -32,6 +32,7 @@ public class CompanyMemoryInitializer {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @org.springframework.core.annotation.Order(0)
     public void initializeAfterReady() {
         memory.initialize();
         memory.ensureLocalFallbacks();

@@ -14,6 +14,7 @@ import com.aicompany.core.agent.validation.DependencyManifest;
 import com.aicompany.core.agent.validation.MissingUsingFixer;
 import com.aicompany.core.agent.validation.OwnedPaths;
 import com.aicompany.core.event.CompanyEventPublisher;
+import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.AppComponent;
 import com.aicompany.core.model.ComponentScaffold;
 import com.aicompany.core.model.DependencyRef;
@@ -113,6 +114,50 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 ? com.aicompany.core.model.TaskIds.reviewTask(missionId, validation.agentId(), context.round())
                 : taskId(context, validation.agentId());
 
+        // Spec misiones durables §2: con workspace, primero se limpia y se lee lo ya commiteado de esta ronda.
+        var head = workspace.headIfAny(missionId);
+        var done = new LinkedHashMap<String, AgentTask>();
+        var stashNote = "";
+        if (head.isPresent()) {
+            var byId = memory.tasks(missionId).stream()
+                    .collect(Collectors.toMap(AgentTask::taskId, t -> t, (a, b) -> b));
+            try {
+                // Revisión 2026-10-06 §5 (fix 1): lo sin commit no se pierde, queda en git stash.
+                var stash = workspace.discardUncommitted(missionId);
+                if (stash != null && stash.isPresent()) {
+                    log.info("MISSION {} - uncommitted changes saved in git stash: {}", missionId, stash.get());
+                    stashNote = "Lo que estaba sin commit quedó guardado en git stash (" + stash.get() + ").";
+                }
+                var headTask = workspace.headTask(missionId).orElse(null);
+                var headRecord = headTask == null ? null : byId.get(headTask);
+                // Un commit "no registrado" es el que la tarea no tiene anotado (el reinicio cayó entre el commit y el
+                // registro). Verificado en vivo: una reparación deja la tarea RUNNING con su commit original, y ese commit
+                // NO se retrocede. El commit raíz tampoco: la tarea se regenera encima.
+                if (headRecord != null && TeamPlan.KIND_WORK.equals(headRecord.kind())
+                        && !head.get().equals(headRecord.commitSha()) && workspace.headHasParent(missionId)) {
+                    workspace.dropHeadCommit(missionId);
+                }
+            } catch (Exception ex) {
+                throw new IllegalStateException("No se pudo preparar el repositorio para retomar: "
+                        + safeMessage(ex, "error de Git"), ex);
+            }
+            for (var task : work) {
+                var record = byId.get(taskId(context, task.agentId()));
+                // Con commit, la entrega ya está hecha aunque una reparación cortada la haya dejado RUNNING: la
+                // verificación (con sus reparaciones) se repite entera.
+                if (record != null && record.commitSha() != null) {
+                    done.put(record.taskId(), record);
+                }
+            }
+            // Spec misiones durables §2: la decisión de retomar queda en el log (qué se salta y por qué).
+            log.info("MISSION {} - round {} with repository (HEAD {}): work {} -> skipped {}", missionId, context.round(),
+                    head.get(), work.stream().map(t -> {
+                        var r = byId.get(taskId(context, t.agentId()));
+                        return taskId(context, t.agentId()) + "=" + (r == null ? "missing" : r.status()
+                                + (r.commitSha() == null ? "" : "@" + r.commitSha().substring(0, Math.min(7, r.commitSha().length()))));
+                    }).toList(), done.keySet());
+        }
+
         for (var task : work) {
             createTask(context, task, TeamPlan.KIND_WORK, taskId(context, task.agentId()));
         }
@@ -121,7 +166,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var expectedProjects = ComponentScaffold.projectFiles(plan.resolvedComponents(), plan.contextNames());
         CommittedWork scaffold;
         try {
-            scaffold = context.round() > 0 ? existingScaffold(context) : commitProjectScaffold(context);
+            // Revisión 2026-10-06 §6: sin repositorio (aunque sea una ronda > 0) se escribe el scaffold de nuevo.
+            scaffold = head.isPresent() ? existingScaffold(context) : commitProjectScaffold(context);
         } catch (IllegalStateException ex) {
             // Sin estructura de proyectos no hay nada que generar: ninguna tarea queda colgada en PENDING.
             for (var task : plan.tasksOrEmpty().stream().filter(java.util.Objects::nonNull)
@@ -136,13 +182,20 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
         // contra clases que nunca vio y el código no compilaba. Se genera por capas (domain → application →
         // infrastructure → api/game/presentation → tests) y cada agente ve el código ya commiteado.
-        var ordered = orderTasks(work, plan);
+        var ordered = orderTasks(work, plan, agentId -> isQa(context, agentId));
         var failures = new ArrayList<String>();
         var committed = new ArrayList<CommittedWork>();
         var generationHead = scaffold == null ? null : scaffold.commitSha();
         var packagesByTask = new LinkedHashMap<PlannedTask, List<DevelopmentResult.PackageRequest>>();
         // Spec 2026-10-02 B1: archivos que escribe Java fuera del scaffold (api_routes.dart).
         var forjaiFiles = new ArrayList<String>();
+        // Juegos por niveles (spec 2026-10-16 contrato §4): las escenas del incremento, antes de que genere nadie.
+        var scenes = commitSceneSkeletons(context, generationHead);
+        if (scenes != null) {
+            committed.add(scenes);
+            generationHead = scenes.commitSha();
+        }
+        forjaiFiles.addAll(sceneSkeletonPaths(context));
 
         var routesCommitted = false;
         var appComponent = fullstackApp(plan);
@@ -163,6 +216,23 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 routesCommitted = true;
             }
 
+            var already = done.get(id);
+            if (already != null) {
+                // Spec misiones durables §2: ya commiteada antes del reinicio; sus paquetes salen del resultado guardado.
+                committed.add(new CommittedWork(id, task.agentId(), already.commitSha(),
+                        already.files() == null ? List.of() : already.files()));
+                generationHead = already.commitSha();
+                try {
+                    var saved = jsonMapper.readValue(already.result(), DevelopmentResult.class);
+                    if (!saved.packagesOrEmpty().isEmpty()) {
+                        packagesByTask.put(task, saved.packagesOrEmpty());
+                    }
+                } catch (Exception ex) {
+                    log.warn("MISSION {} - could not read the saved result of {}: {}", missionId, id, ex.getMessage());
+                }
+                continue;
+            }
+
             progress.advance(MissionStatus.WAITING_AGENT_RESULTS, 30 + (40 * i / ordered.size()), "Desarrollo por capas",
                     agentName(context, task.agentId()) + " (" + (i + 1) + "/" + ordered.size() + ") está generando "
                             + task.ownedPathsOrEmpty() + ".");
@@ -174,10 +244,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 result = context.round() > 0
                         ? generate(id, missionId, task.agentId(),
                                 buildWorkPrompt(context, task) + ROUND_RULE
+                                        + (isQa(context, task.agentId()) ? sceneSheetBlock(context, generationHead) : "")
                                         + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
                                 task.ownedPathsOrEmpty(), expectedProjects, List.of(), context, generationHead)
                         : generate(id, missionId, task.agentId(),
                                 buildWorkPrompt(context, task)
+                                        + (isQa(context, task.agentId()) ? sceneSheetBlock(context, generationHead) : "")
                                         + existingCode(missionId, generationHead, validatorModel(context, task.agentId())),
                                 task.ownedPathsOrEmpty(), expectedProjects, null, context, generationHead);
             } catch (Exception ex) {
@@ -272,6 +344,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var triageRounds = 0;
         var triageNotes = new ArrayList<String>();
         var autofixRounds = 0;
+        // Pong de 3 niveles (2026-10-17): los errores de la vuelta anterior, para marcar los que el dueño no corrigió.
+        var previousCompileErrors = new java.util.HashSet<String>();
 
         // Ciclo de corrección mínimo (MISSION-SANDBOX-VERIFY-10): si no compila, los errores reales del compilador
         // vuelven al dueño de cada archivo, se commitea la corrección y se verifica de nuevo (hasta MAX_REPAIR_ROUNDS).
@@ -295,9 +369,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             progress.advance(MissionStatus.EVALUATING, 80, "Sandbox", round == 0
                     ? "Compilando, corriendo tests y arrancando el código en el sandbox."
                     : "Ronda de corrección " + round + ": verificando de nuevo en el sandbox.");
+            // Bitácora (spec 2026-10-17): cada vuelta del sandbox queda como evento (inicio y fin).
+            events.publish("EMPRESA_SANDBOX_STARTED", missionId, null, "sandbox",
+                    Map.of("round", round, "commitSha", headSha == null ? "" : headSha));
             var verified = verifyComponents(missionId, headSha, components);
             sandboxResult = verified.orElse(null);
             sandboxError = verified.isEmpty() ? (components.size() == 1 ? sandbox.lastError() : lastSandboxError) : null;
+            if (sandboxResult != null) {
+                events.publish("EMPRESA_SANDBOX_FINISHED", missionId, null, "sandbox", sandboxData(sandboxResult, round));
+            }
 
             if (sandboxResult == null || sandboxResult.passed()) {
                 break;
@@ -349,11 +429,21 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             for (var entry : errorsByTask.entrySet()) {
                 var task = entry.getKey();
                 var id = taskId(context, task.agentId());
+                // Bitácora (spec 2026-10-17): qué se le pide corregir a cada dueño.
+                var repeatedCount = (int) entry.getValue().stream()
+                        .filter(e -> previousCompileErrors.contains(repairKey(e))).count();
+                events.publish("EMPRESA_REPAIR_REQUESTED", missionId, id, task.agentId(), Map.of(
+                        "errors", entry.getValue().size(), "repeated", repeatedCount,
+                        "files", entry.getValue().stream()
+                                .map(e -> String.valueOf(e.path()).substring(String.valueOf(e.path()).lastIndexOf('/') + 1))
+                                .distinct().toList()));
                 try {
                     var current = currentContents(missionId, headSha, entry.getValue());
                     var required = task.ownedPathsOrEmpty().stream().filter(owned -> entry.getValue().stream()
                             .anyMatch(e -> OwnedPaths.coveredByAny(List.of(owned), e.path()))).toList();
-                    var basePrompt = buildWorkPrompt(context, task) + repairBlock(entry.getValue(), current)
+                    var basePrompt = buildWorkPrompt(context, task)
+                            + repairBlock(entry.getValue(), current, previousCompileErrors)
+                            + (isQa(context, task.agentId()) ? sceneSheetBlock(context, headSha) : "")
                             + repositoryCode(missionId, headSha, "CÓDIGO ACTUAL DEL REPOSITORIO (incluye el tuyo, "
                             + "commit " + headSha + "); devuelve tus archivos corregidos y completos:",
                             validatorModel(context, task.agentId()));
@@ -396,6 +486,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 }
             }
 
+            previousCompileErrors.clear();
+            errorsByTask.values().forEach(list -> list.forEach(e -> previousCompileErrors.add(repairKey(e))));
+
             if (!repaired) {
                 break;
             }
@@ -415,8 +508,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             memory.recordSandboxResult(validationTaskId, toJson(sandboxResult));
             memory.recordEvidence(validationTaskId, missionId, "sandbox", sandboxEvidence(missionId, headSha, sandboxResult));
             events.publish("EMPRESA_SANDBOX_VERIFICATION_COMPLETED", missionId, validationTaskId, "sandbox",
-                    Map.of("overall", sandboxResult.overall(), "testsPassed", sandboxResult.testsPassed(),
-                            "testsFailed", sandboxResult.testsFailed()));
+                    sandboxData(sandboxResult, -1));
         }
 
         StaticReviewResult review = null;
@@ -430,10 +522,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Revisión final (I1): sin sandbox (dependencias pendientes, runner caído) no hay cobertura que medir: UNVALIDATED.
         if (coverageMode && sandboxResult != null) {
             var tests = sandboxResult.allTests();
-            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios, tests);
+            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult));
             checks = new ArrayList<>(checks);
             checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
             checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId), tests));
+            designConformance(missionId, headSha,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult)).ifPresent(checks::add);
             var report = com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
             reviewError = COVERAGE_REPORT + report;
             memory.updateTask(validationTaskId, "COMPLETED", COVERAGE_REPORT + report);
@@ -483,17 +578,58 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         var status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
                 : StaticValidationStatus.compute(checks, review, sandboxResult);
+        // Spec Diego ambientes §2: con el código VERIFIED, la cascada de ambientes corre ANTES de registrar el commit
+        // verificado; solo una falla que un agente puede corregir es un chequeo que falla (revisión final, I1).
+        var databaseText = "";
+        var deliveryText = "";
+        var databaseStep = databaseStep(missionId, headSha, plan, status, true);
+        if (databaseStep != null) {
+            databaseText = databaseStep.text();
+            if (databaseStep.check() != null) {
+                checks = new ArrayList<>(checks);
+                checks.add(databaseStep.check());
+                status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
+                        : StaticValidationStatus.compute(checks, review, sandboxResult);
+            }
+        }
         if (status == StaticValidationStatus.VERIFIED) {
             // Revisión final (I-4): "aplica el esquema" a pedido usa este commit, nunca el HEAD de una ronda en curso.
-            memory.recordVerifiedCommit(missionId, headSha);
-        }
-
-        // Spec 2026-10-02 §3: con el código VERIFIED, Java crea la base en el servidor del fundador.
-        var databaseText = "";
-        if (plan.databaseOrNull() != null) {
-            databaseText = status == StaticValidationStatus.VERIFIED && databaseApply != null
-                    ? databaseApply.apply(missionId, headSha, plan)
-                    : "no se aplicó (el código no está VERIFIED).";
+            // Entrega (revisión final, 2): con el número del incremento que verificó.
+            Integer inc = null;
+            var incrementError = "";
+            try {
+                inc = currentIncrement(missionId);
+            } catch (Exception ex) {
+                incrementError = safeMessage(ex, "sin detalle");
+                log.warn("MISSION {} - current increment unreadable: {}", missionId, incrementError);
+            }
+            memory.recordVerifiedCommit(missionId, headSha, inc);
+            if (deliveryService != null) {
+                if (inc == null) {
+                    deliveryText = "FAILED — " + incrementError;
+                } else {
+                    try {
+                        progress.advance(MissionStatus.EVALUATING, 90, "Entrega", "Empaquetando el incremento " + inc + " para entregar.");
+                        var delivery = deliveryService.deliver(missionId, inc, headSha, plan.stackProfile(), repairRounds, sandboxResult);
+                        if (delivery != null) {
+                            deliveryText = delivery.status() + " — "
+                                    + (delivery.path() == null || delivery.path().isBlank() ? delivery.error() : delivery.path());
+                        }
+                    } catch (MissionCancellations.MissionCancelledException ex) {
+                        throw ex;
+                    } catch (Exception ex) {
+                        // La entrega nunca cambia la validación (spec 2026-10-17).
+                        log.warn("MISSION {} - delivery step failed: {}", missionId, safeMessage(ex, "sin detalle"));
+                        deliveryText = "FAILED — " + safeMessage(ex, "sin detalle");
+                    }
+                }
+            }
+        } else if (deliveryService != null) {
+            // Revisión final (4): una entrega que un reinicio dejó en PACKAGING y cuya retoma no quedó VERIFIED queda FAILED.
+            var inc = currentIncrementOrNull(missionId);
+            if (inc != null) {
+                deliveryService.abandonInterrupted(missionId, inc);
+            }
         }
 
         memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
@@ -512,7 +648,208 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         sandboxSummary(sandboxResult, sandboxError)),
                 verifiableState(context, scaffold, committed, checks, status, failures, sandboxResult, sandboxError,
                         repairRounds, autofixRounds, dependencyOutcome, triageNotes)
-                        + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText));
+                        + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText)
+                        + (deliveryText.isEmpty() ? "" : "\nEntrega: " + deliveryText)
+                        + (stashNote.isEmpty() ? "" : "\n" + stashNote));
+    }
+
+    /** Resultado de la base para el estado verificable; {@code check} null = no suma chequeo (no cambia la validación). */
+    record DatabaseStep(StaticCheck check, String text) {
+    }
+
+    /**
+     * Spec Diego ambientes §2 + revisión final (C1, I1, I3), igual en {@link #execute} y en {@link #verifyHead}: con el
+     * código VERIFIED corre la cascada y Java clasifica. Aplicado → DATABASE_APPLIED PASS; SQL de una migración no
+     * aplicada en ningún ambiente → DATABASE_APPLIED FAIL (la corrección automática la arregla); sin conexión o
+     * problema del ambiente → sin chequeo: la validación queda VERIFIED, se registra el commit verificado y el texto
+     * dice qué falta (el fundador lo resuelve y escribe "aplica el esquema"). Null si el plan no declara base.
+     */
+    private DatabaseStep databaseStep(String missionId, String headSha, TeamPlan plan, StaticValidationStatus status,
+                                      boolean notifyFounder) {
+        if (plan.databaseOrNull() == null) {
+            return null;
+        }
+        if (status != StaticValidationStatus.VERIFIED || databaseApply == null) {
+            return new DatabaseStep(null, "no se aplicó (el código no está VERIFIED).");
+        }
+        com.aicompany.core.database.DatabaseApplyService.CascadeResult cascade;
+        try {
+            cascade = databaseApply.apply(missionId, headSha, plan, notifyFounder);
+        } catch (Exception ex) {
+            // apply no lanza; si igual pasa, es un problema del ambiente, nunca una corrección pagada.
+            return new DatabaseStep(null, "no se pudo aplicar el esquema (" + safeMessage(ex, "error") + ").");
+        }
+        return switch (cascade.outcome()) {
+            case APPLIED, NEEDS_CORRECTION -> new DatabaseStep(databaseAppliedCheck(cascade, headSha), cascade.text());
+            case NO_CONNECTION, ENVIRONMENT_PROBLEM -> new DatabaseStep(null, cascade.text());
+        };
+    }
+
+    /** Spec Diego ambientes §2: PASS si todos los ambientes quedaron aplicados; si no, FAIL con ambiente, conexión y error. */
+    static StaticCheck databaseAppliedCheck(com.aicompany.core.database.DatabaseApplyService.CascadeResult cascade,
+                                            String sha) {
+        if (cascade.allApplied()) {
+            return StaticCheck.pass("DATABASE_APPLIED", "Migraciones aplicadas en todos los ambientes.", sha, List.of());
+        }
+        var detail = new StringBuilder("No se aplicaron las migraciones en todos los ambientes:");
+        for (var env : cascade.environments()) {
+            if (env.failedVersion() != null || env.error() != null) {
+                detail.append(" ambiente ").append(env.environment()).append(" (conexión ").append(env.connection())
+                        .append(")");
+                if (env.failedVersion() != null) {
+                    detail.append(" falló en V").append(env.failedVersion());
+                }
+                detail.append(": ").append(env.error() == null ? "sin detalle" : env.error()).append(".");
+            }
+        }
+        if (detail.indexOf("ambiente ") < 0) {
+            detail.append(" ").append(cascade.text());
+        }
+        return StaticCheck.fail("DATABASE_APPLIED", detail.toString(), sha, List.of());
+    }
+
+    static final String HUMAN_AGENT = "human";
+    /** Agente de la tarea VALIDATION de la verificación humana (Vera; la crea MissionExecutor). */
+    public static final String HUMAN_VERIFY_AGENT = "qa";
+    static final String UNCOMMITTED_NOTE = "Hay cambios sin commit en el repositorio: NO se verificaron (solo cuenta el "
+            + "último commit). No se borran: si la corrección automática arranca, quedan guardados en git stash. Haz "
+            + "commit y vuelve a pedir \"verifica\".";
+
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): un desarrollador corrigió el código e hizo commit.
+     * Sobre el HEAD real corre los chequeos deterministas, el sandbox y la cobertura de escenarios con las mismas piezas
+     * que {@link #execute}, pero <b>sin ningún modelo</b>: sin auto-fix, sin correcciones, sin diagnóstico 360 y sin la
+     * revisión de Vera (sin escenarios de Aria queda UNVALIDATED). No toca el repositorio: lo no commiteado ni se verifica
+     * ni se borra, y el resultado lo dice. La tarea {@code validationTaskId} ya existe (la crea MissionExecutor).
+     */
+    public TeamExecutionResult verifyHead(TeamMissionContext context, String validationTaskId) {
+        var missionId = context.missionId();
+        var plan = context.plan();
+        var components = plan.resolvedComponents();
+        var headSha = workspace.headIfAny(missionId).orElseThrow(() -> new IllegalStateException(
+                "MISSION " + missionId + " no tiene repositorio con commits que verificar."));
+        var uncommitted = uncommittedNote(missionId);
+
+        List<String> files;
+        try {
+            files = workspace.filesAtCommit(missionId, headSha);
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudo leer el último commit: " + safeMessage(ex, "error de Git"), ex);
+        }
+        var committed = List.of(new CommittedWork(validationTaskId, HUMAN_AGENT, headSha, files));
+        var forjaiFiles = fullstackApp(plan).map(app -> List.of(app.prefix(ApiRoutesGenerator.PATH))).orElse(List.of());
+        // Los commits de un desarrollador no llevan el autor de un agente ni el trailer Forjai-Task: solo se valida HEAD,
+        // y todo lo que ya está en el repositorio está permitido.
+        var checks = staticValidator.validate(missionId, List.of(), components, plan.contextNames(), files, forjaiFiles);
+
+        var requestedRefs = headDependencies(missionId, headSha, plan);
+        var dependencyOutcome = requestedRefs.isEmpty()
+                ? new DependencyService.Outcome(List.of(), List.of(), null)
+                : dependencies.resolve(missionId, HUMAN_AGENT, requestedRefs);
+
+        SandboxResult sandboxResult = null;
+        String sandboxError;
+        if (components.isEmpty()) {
+            sandboxError = "Sandbox omitido: el plan no declara componentes que compilar.";
+        } else if (!checks.stream().allMatch(StaticCheck::passed)) {
+            sandboxError = "Sandbox omitido: los chequeos deterministas fallaron.";
+        } else if (!dependencyOutcome.pending().isEmpty() || dependencyOutcome.error() != null) {
+            sandboxError = "Dependencias pendientes de aprobación (🔴): "
+                    + dependencyOutcome.pending().stream().map(DependencyRef::id).toList()
+                    + (dependencyOutcome.error() == null ? "" : " — " + dependencyOutcome.error());
+        } else {
+            var verified = verifyComponents(missionId, headSha, components);
+            sandboxResult = verified.orElse(null);
+            sandboxError = verified.isEmpty() ? (components.size() == 1 ? sandbox.lastError() : lastSandboxError) : null;
+        }
+
+        if (sandboxResult != null) {
+            memory.recordSandboxResult(validationTaskId, toJson(sandboxResult));
+            memory.recordEvidence(validationTaskId, missionId, "sandbox", sandboxEvidence(missionId, headSha, sandboxResult));
+            events.publish("EMPRESA_SANDBOX_VERIFICATION_COMPLETED", missionId, validationTaskId, "sandbox",
+                    sandboxData(sandboxResult, -1));
+        }
+
+        var scenarios = scenarios(missionId);
+        var coverageMode = !scenarios.isEmpty();
+        String coverageReport = null;
+        if (coverageMode && sandboxResult != null) {
+            var rows = com.aicompany.core.agent.validation.ScenarioCoverage.compute(scenarios,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult));
+            checks = new ArrayList<>(checks);
+            checks.add(com.aicompany.core.agent.validation.ScenarioCoverage.check(rows));
+            checks.add(com.aicompany.core.agent.validation.TestSuiteGrowthGate.check(previousVerifiedTests(missionId),
+                    sandboxResult.allTests()));
+            designConformance(missionId, headSha,
+                    com.aicompany.core.agent.validation.ScenarioCoverage.componentTests(sandboxResult)).ifPresent(checks::add);
+            coverageReport = COVERAGE_REPORT + com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
+        }
+
+        var status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
+        // Revisión final (I3): la misma cascada y clasificación que execute, antes de registrar el commit verificado.
+        // Seguimiento: la verificación la pidió el fundador, el chat ya le muestra el problema: sin correo.
+        var databaseStep = databaseStep(missionId, headSha, plan, status, false);
+        if (databaseStep != null && databaseStep.check() != null) {
+            checks = new ArrayList<>(checks);
+            checks.add(databaseStep.check());
+            status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
+        }
+        var summary = "Verificación humana del commit " + headSha + " (sin modelos: sin correcciones, sin diagnóstico de "
+                + "tests ni revisión de un agente).\n"
+                + (uncommitted.isEmpty() ? "" : uncommitted + "\n")
+                + (coverageReport != null ? coverageReport
+                        : coverageMode ? "Sin sandbox no hay cobertura de escenarios que medir."
+                        : "Sin escenarios de Aria: sin la revisión de un agente el resultado no puede quedar VERIFIED.");
+        memory.updateTask(validationTaskId, "COMPLETED", summary);
+        events.publishTask("EMPRESA_TASK_COMPLETED", validationTaskId, missionId, HUMAN_VERIFY_AGENT, "COMPLETED",
+                "Verificación humana del commit " + headSha + ".");
+        if (status == StaticValidationStatus.VERIFIED) {
+            memory.recordVerifiedCommit(missionId, headSha, currentIncrementOrNull(missionId));
+        }
+        memory.recordStaticValidation(validationTaskId, status.name(), toJson(checks));
+        events.publish("EMPRESA_STATIC_VALIDATION_COMPLETED", missionId, validationTaskId, HUMAN_VERIFY_AGENT,
+                Map.of("validationStatus", status.name(), "failedChecks", checks.stream().filter(c -> !c.passed()).count()));
+
+        return new TeamExecutionResult.Development(
+                // Revisión final: verifyAsync solo usa el estado verificable; nadie consolida con el CEO tras una verificación humana.
+                "",
+                (uncommitted.isEmpty() ? "" : uncommitted + "\n")
+                        + verifiableState(context, null, committed, checks, status, List.of(), sandboxResult, sandboxError,
+                                0, 0, dependencyOutcome, List.of())
+                        + (databaseStep == null ? "" : "\nBase de datos: " + databaseStep.text()));
+    }
+
+    /** Aviso de lo no commiteado (vacío si no hay); nunca lanza. */
+    private String uncommittedNote(String missionId) {
+        try {
+            return workspace.hasUncommitted(missionId) ? UNCOMMITTED_NOTE : "";
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the git status: {}", missionId, ex.getMessage());
+            return "No se pudo saber si hay cambios sin commit: solo se verificó el último commit.";
+        }
+    }
+
+    /**
+     * Dependencias que declara HEAD (las que agregó el desarrollador): pub de cada pubspec.yaml y, en .NET, los
+     * PackageReference de los .csproj de la estructura que no son del perfil. Pasan por la misma política que las pedidas.
+     */
+    private List<DependencyRef> headDependencies(String missionId, String headSha, TeamPlan plan) {
+        var components = plan.resolvedComponents();
+        var refs = new ArrayList<>(dependencyRefs(components, List.of(), path -> readOrNull(missionId, headSha, path)));
+        if (components.stream().anyMatch(c -> c.profile().ecosystem() == StackProfile.Ecosystem.NUGET)) {
+            var projects = new LinkedHashMap<String, List<DependencyRef>>();
+            var headProjects = new LinkedHashMap<String, String>();
+            for (var project : ComponentScaffold.projectFiles(components, plan.contextNames())) {
+                projects.put(project, List.of());
+                var content = readOrNull(missionId, headSha, project);
+                if (content != null) {
+                    headProjects.put(project, content);
+                }
+            }
+            withPackagesInHead(projects, headProjects, components, plan.contextNames()).values().stream()
+                    .flatMap(List::stream).filter(r -> !refs.contains(r)).forEach(refs::add);
+        }
+        return refs;
     }
 
     private static StaticReviewResult withoutFindingsOn(StaticReviewResult review, List<String> generatedByForjai) {
@@ -856,6 +1193,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             var triage = runtime.triage(triageId, missionId, leader,
                     triagePrompt(context, failing, evidence, headSha),
                     t -> com.aicompany.core.agent.validation.TestTriageValidator.validate(t, failing, repoFiles)).join();
+            // Bitácora (spec 2026-10-17): el dictamen del diagnóstico queda como evento.
+            events.publish("EMPRESA_TEST_TRIAGE_COMPLETED", missionId, triageId, leader, Map.of("verdicts",
+                    triage.verdictsOrEmpty().stream().filter(java.util.Objects::nonNull)
+                            .map(v -> v.test() + " → " + v.verdict()).toList()));
 
             var codeWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
             var testWork = new LinkedHashMap<PlannedTask, List<com.aicompany.core.agent.model.TestTriage.Verdict>>();
@@ -918,6 +1259,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return changed ? head : null;
         } catch (Exception ex) {
             triageNotes.add("no se completó (" + safeMessage(ex, "sin detalle") + ")");
+            events.publish("EMPRESA_TEST_TRIAGE_COMPLETED", missionId, triageId, leader,
+                    Map.of("error", String.valueOf(safeMessage(ex, "sin detalle"))));
             log.warn("MISSION {} - test triage failed: {}", missionId, ex.getMessage());
             return null;
         }
@@ -1044,6 +1387,36 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return out;
     }
 
+    /** Bitácora (spec 2026-10-17): resultado de una vuelta del sandbox, con el primer paso que falló (round -1 = final). */
+    static Map<String, Object> sandboxData(SandboxResult result, int round) {
+        var failed = result.stepsOrEmpty().stream()
+                .filter(s -> "FAIL".equals(s.status()) || "TIMEOUT".equals(s.status()))
+                .map(s -> ComponentSandbox.stepName(s.name())).findFirst().orElse("");
+        var data = new LinkedHashMap<String, Object>();
+        data.put("round", round);
+        data.put("overall", result.overall() == null ? "" : result.overall());
+        data.put("failedStep", failed);
+        data.put("testsPassed", result.testsPassed());
+        data.put("testsFailed", result.testsFailed());
+        data.put("compileErrors", compileErrors(result).size());
+        return data;
+    }
+
+    /** El mismo error en el mismo archivo, aunque se haya corrido de línea. */
+    static String repairKey(CompilerErrorParser.CompilerError e) {
+        return e.path() + "|" + e.code() + "|" + e.message();
+    }
+
+    static String repairBlock(List<CompilerErrorParser.CompilerError> errors, Map<String, String> current,
+                              java.util.Set<String> previous) {
+        var repeated = errors.stream().filter(e -> previous.contains(repairKey(e))).count();
+        var warning = repeated == 0 ? "" : "\nATENCIÓN: " + repeated + " de estos errores ya estaban en tu corrección "
+                + "anterior y siguen idénticos (marcados REPETIDO): no los corregiste. Cambia ESAS líneas.";
+        return repairBlock(errors.stream().map(e -> previous.contains(repairKey(e))
+                ? new CompilerErrorParser.CompilerError(e.path(), e.line(), e.column(), e.code(), e.message()
+                        + " [REPETIDO]") : e).toList(), current) + warning;
+    }
+
     private static String repairBlock(List<CompilerErrorParser.CompilerError> errors, Map<String, String> current) {
         return """
 
@@ -1077,12 +1450,19 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * uno por capa; los tests siempre al final. Con un componente es el orden por capas de siempre.
      */
     static List<PlannedTask> orderTasks(List<PlannedTask> work, TeamPlan plan) {
+        return orderTasks(work, plan, agentId -> false);
+    }
+
+    /** Juegos por niveles (spec 2026-10-16 contrato §4): en un juego, QA (las partidas de Vera) va siempre al final. */
+    static List<PlannedTask> orderTasks(List<PlannedTask> work, TeamPlan plan, java.util.function.Predicate<String> isQa) {
         var components = plan.resolvedComponents();
         if (components.isEmpty()) {
             return work;
         }
+        var game = plan.hasComponent(StackProfile.GODOT_DOTNET_GAME);
         return work.stream()
-                .sorted(java.util.Comparator.comparingInt(task -> task.ownedPathsOrEmpty().stream()
+                .sorted(java.util.Comparator.comparingInt(task -> game && isQa.test(task.agentId()) ? 2_000
+                        : task.ownedPathsOrEmpty().stream()
                         .map(path -> rank(components, plan.contextNames(), path))
                         .min(Integer::compare).orElse(Integer.MAX_VALUE)))
                 .toList();
@@ -1241,6 +1621,29 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 """.formatted(profile, contexts, glossary);
     }
 
+    private com.aicompany.core.delivery.DeliveryService deliveryService;
+
+    /** El incremento en construcción o el último construido (mínimo 1). */
+    private int currentIncrement(String missionId) {
+        return Math.max(1, requirementsMemory == null ? 1 : requirementsMemory.currentIncrement(missionId));
+    }
+
+    /** Como {@link #currentIncrement}, pero null si no se pudo leer. */
+    private Integer currentIncrementOrNull(String missionId) {
+        try {
+            return currentIncrement(missionId);
+        } catch (Exception ex) {
+            log.warn("MISSION {} - current increment unreadable: {}", missionId, safeMessage(ex, "sin detalle"));
+            return null;
+        }
+    }
+
+    /** Entrega del producto (spec 2026-10-17): empaqueta el incremento al quedar VERIFIED (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeliveryService(com.aicompany.core.delivery.DeliveryService deliveryService) {
+        this.deliveryService = deliveryService;
+    }
+
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
     private com.aicompany.core.database.DatabaseApplyService databaseApply;
 
@@ -1299,6 +1702,126 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         this.requirementsMemory = requirementsMemory;
     }
 
+    private InteractionDesignMemoryService designs;
+
+    /** Spec 2026-10-14 Kael §1.4: el diseño aprobado de Kael para DESIGN_CONFORMANCE. Opcional: sin él, no se chequea. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setInteractionDesign(InteractionDesignMemoryService designs) {
+        this.designs = designs;
+    }
+
+    /**
+     * Juegos por niveles (spec 2026-10-16 contrato §4): spec y diseño de juego aprobados con escenas. Vacío sin ellos (apps,
+     * juegos anteriores) o si no se pueden leer: en ese caso rigen las reglas de antes, como en {@link #scenarios}.
+     */
+    java.util.Optional<com.aicompany.core.agent.validation.GameScenes.Approved> approvedGameScenes(String missionId) {
+        if (designs == null || requirementsMemory == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var design = designs.approved(missionId);
+            var spec = requirementsMemory.approved(missionId);
+            if (design == null || design.isEmpty() || spec == null || spec.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            var game = jsonMapper.readValue(design.get().designJson(),
+                    com.aicompany.core.agent.model.InteractionDesign.class).game();
+            if (game == null || game.scenes().isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            return java.util.Optional.of(new com.aicompany.core.agent.validation.GameScenes.Approved(
+                    jsonMapper.readValue(spec.get().specJson(), com.aicompany.core.agent.model.RequirementsSpec.class),
+                    game, Math.max(1, requirementsMemory.currentIncrement(missionId))));
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the approved game scenes: {}", missionId, safeMessage(ex, "sin detalle"));
+            return java.util.Optional.empty();
+        }
+    }
+
+    /** Las escenas de los incrementos 1..N con el prefijo del componente del juego. */
+    private List<DevelopmentResult.GeneratedFile> sceneSkeletons(TeamMissionContext context) {
+        var component = context.plan().resolvedComponents().stream()
+                .filter(c -> c.profile() == StackProfile.GODOT_DOTNET_GAME).findFirst();
+        if (component.isEmpty()) {
+            return List.of();
+        }
+        return approvedGameScenes(context.missionId())
+                .map(a -> com.aicompany.core.agent.validation.GameScenes.upTo(a.game(), a.spec(), a.increment()))
+                .orElse(List.of()).stream()
+                .map(s -> com.aicompany.core.model.GameSceneFiles.skeleton(s.script()))
+                .map(f -> new DevelopmentResult.GeneratedFile(component.get().prefix(f.path()), f.content()))
+                .toList();
+    }
+
+    List<String> sceneSkeletonPaths(TeamMissionContext context) {
+        return sceneSkeletons(context).stream().map(DevelopmentResult.GeneratedFile::path).toList();
+    }
+
+    /** Commitea las escenas que faltan en el HEAD (nunca pisa una existente); null si no hay nada que commitear. */
+    private CommittedWork commitSceneSkeletons(TeamMissionContext context, String headSha) {
+        var skeletons = sceneSkeletons(context);
+        var missing = skeletons.stream()
+                .filter(f -> headSha == null || readOrNull(context.missionId(), headSha, f.path()) == null).toList();
+        if (missing.isEmpty()) {
+            return null;
+        }
+        var id = context.missionId() + "-SCENES" + (context.round() > 0 ? "-R" + context.round() : "");
+        try {
+            var record = workspace.commitAgentWork(context.missionId(), id, "forjai", "Forjai",
+                    new DevelopmentResult("Escenas de Godot generadas por Forjai (script en el nodo raíz)", missing));
+            return new CommittedWork(id, "forjai", record.sha(), record.files());
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudieron generar las escenas del juego: "
+                    + safeMessage(ex, "error de Git"), ex);
+        }
+    }
+
+    /** Spec 2026-10-14 Kael §1.4: con diseño aprobado, el chequeo DESIGN_CONFORMANCE junto a la cobertura. */
+    private java.util.Optional<StaticCheck> designConformance(String missionId, String headSha,
+                                                              List<SandboxResult.TestCase> tests) {
+        if (designs == null || requirementsMemory == null || headSha == null) {
+            return java.util.Optional.empty();
+        }
+        // Revisión final (M-5): si ni siquiera se puede saber si hay diseño aprobado (Neo4j), no se chequea: una misión
+        // sin diseño no puede quedar FAILED por eso.
+        java.util.Optional<InteractionDesignMemoryService.Version> approved;
+        try {
+            approved = designs.approved(missionId);
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the approved design, skipping the conformance check: {}", missionId,
+                    safeMessage(ex, "sin detalle"));
+            return java.util.Optional.empty();
+        }
+        if (approved == null || approved.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        // Revisión Task 12: con diseño aprobado el chequeo falla cerrado.
+        try {
+            var spec = requirementsMemory.approved(missionId);
+            if (spec == null || spec.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            var design = jsonMapper.readValue(approved.get().designJson(),
+                    com.aicompany.core.agent.model.InteractionDesign.class);
+            var requirements = jsonMapper.readValue(spec.get().specJson(),
+                    com.aicompany.core.agent.model.RequirementsSpec.class);
+            var files = new LinkedHashMap<String, String>();
+            for (var path : workspace.filesAtCommit(missionId, headSha)) {
+                if (path.endsWith(".dart") || path.endsWith("project.godot") || path.contains("game/playthroughs/")) {
+                    files.put(path, workspace.readFileAtCommit(missionId, headSha, path));
+                }
+            }
+            return java.util.Optional.of(com.aicompany.core.agent.validation.DesignConformance.check(design, requirements,
+                    Math.max(1, requirementsMemory.currentIncrement(missionId)), files, tests));
+        } catch (Exception ex) {
+            var message = safeMessage(ex, "sin detalle");
+            log.warn("MISSION {} - could not check the design conformance: {}", missionId, message);
+            return java.util.Optional.of(StaticCheck.fail(com.aicompany.core.agent.validation.DesignConformance.CHECK,
+                    "No se pudo verificar la conformidad con el diseño (problema de lectura, no del código): " + message,
+                    headSha, List.of()));
+        }
+    }
+
     /** Escenarios de los incrementos 1..N (N = el que se construye o el último construido); vacío sin requisitos. */
     List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios(String missionId) {
         if (requirementsMemory == null) {
@@ -1332,11 +1855,29 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .anyMatch(m -> m.agentId().equals(agentId) && "QA".equals(m.roleCode()));
     }
 
-    private Map<String, String> testFiles(String missionId, String sha) {
-        var files = new LinkedHashMap<String, String>();
+    /**
+     * Revisión final QA (M4): los tests de un commit (inmutable) se leen de git una vez; cada generación los pedía de nuevo
+     * (cobertura de Vera y crecimiento de la suite). Pocos commits a la vez: se guardan los últimos {@code TEST_CACHE_SIZE}.
+     */
+    private static final int TEST_CACHE_SIZE = 16;
+    private final Map<String, Map<String, String>> testFilesByCommit = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Map<String, String>> eldest) {
+                    return size() > TEST_CACHE_SIZE;
+                }
+            });
+
+    Map<String, String> testFiles(String missionId, String sha) {
         if (sha == null) {
-            return files;
+            return new LinkedHashMap<>();
         }
+        var key = missionId + "@" + sha;
+        var cached = testFilesByCommit.get(key);
+        if (cached != null) {
+            return new LinkedHashMap<>(cached);
+        }
+        var files = new LinkedHashMap<String, String>();
         try {
             for (var path : workspace.filesAtCommit(missionId, sha)) {
                 if (com.aicompany.core.agent.validation.TestInventory.isTestFile(path)) {
@@ -1347,8 +1888,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 }
             }
         } catch (Exception ex) {
+            // Un fallo de lectura no se guarda: el próximo pedido lo intenta de nuevo.
             log.warn("MISSION {} - could not read the tests at {}: {}", missionId, sha, ex.getMessage());
+            return files;
         }
+        testFilesByCommit.put(key, java.util.Collections.unmodifiableMap(new LinkedHashMap<>(files)));
         return files;
     }
 
@@ -1363,16 +1907,33 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     }
 
     /** Spec QA §1: la regla de trazabilidad que recibe Vera. */
-    static String qaScenarioRule(List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios) {
+    static String qaScenarioRule(List<com.aicompany.core.agent.validation.ScenarioCoverage.Scenario> scenarios,
+                                 boolean game) {
         if (scenarios.isEmpty()) {
             return "";
         }
-        return "\n\nESCENARIOS A CUBRIR (QA, obligatorio): escribe al menos un test automatizado por escenario, con el id "
+        var base = "\n\nESCENARIOS A CUBRIR (QA, obligatorio): escribe al menos un test automatizado por escenario, con el id "
                 + "en el NOMBRE del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 descripción') o "
                 + "testWidgets('ESC-03 …')); un Trait o un comentario no cuentan. Cada test verifica el dado/cuando/entonces del "
                 + "escenario. No borres, renombres ni saltes tests que ya existen: la suite solo crece.\n"
                 + scenarios.stream().map(sc -> "- " + sc.id() + " " + sc.title() + " (incremento " + sc.increment() + ")")
                 .collect(Collectors.joining("\n")) + "\n";
+        if (!game) {
+            return base;
+        }
+        return base + """
+                PARTIDAS SIMULADAS (juego): además de los tests xUnit de las reglas, escribe en game/playthroughs/ una clase
+                por escenario de interacción (los asignados a un control en el diseño de Kael), con el id en el NOMBRE:
+                  using System.Collections.Generic; using Godot; using Forjai.Playthroughs;
+                  public sealed class ESC_03_descripcion : Playthrough {
+                      public override IEnumerable<Step> Steps(Node main) {
+                          yield return Press("move_right", frames: 30);   // solo acciones del diseño de Kael
+                          yield return Wait(frames: 10);
+                          yield return Assert(() => ((Main)main).Score == 1, "el puntaje es 1");
+                      }
+                  }
+                main es la escena principal real recién cargada (60 fps fijos, semilla 0). No escribas en game/forjai/.
+                """;
     }
 
     /**
@@ -1386,6 +1947,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         var checks = new ArrayList<java.util.function.Function<DevelopmentResult, List<String>>>();
         if (context.plan().databaseOrNull() != null) {
             checks.add(databaseChecks(context, headSha));
+        }
+        if (context.plan().hasComponent(StackProfile.GODOT_DOTNET_GAME)) {
+            checks.add(gameChecks(context, agentId, owned, headSha));
         }
         var api = apiChecks(context, owned, headSha);
         if (api != null) {
@@ -1637,6 +2201,142 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return ownsBackendApi(task.ownedPathsOrEmpty()) ? "\n\n" + StackProfile.FULLSTACK_API_RULE + "\n" : "";
     }
 
+    /** Contratos de las escenas del incremento, leídos del código commiteado en headSha (sin modelo). */
+    Map<String, List<com.aicompany.core.agent.validation.SceneSheet.Member>> sceneContracts(TeamMissionContext context,
+                                                                                               String headSha) {
+        var approved = approvedGameScenes(context.missionId());
+        if (approved.isEmpty() || headSha == null) {
+            return Map.of();
+        }
+        var a = approved.get();
+        var sources = new ArrayList<String>();
+        try {
+            for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                if (path.endsWith(".cs") && (path.startsWith("game/") || path.contains("/game/"))
+                        && !path.contains(StackProfile.PLAYTHROUGHS_ROOT + "/") && !path.contains(StackProfile.FORJAI_GAME_ROOT + "/")) {
+                    var content = readOrNull(context.missionId(), headSha, path);
+                    if (content != null) {
+                        sources.add(content);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the scene scripts: {}", context.missionId(), safeMessage(ex, "sin detalle"));
+            return Map.of();
+        }
+        var contracts = new LinkedHashMap<String, List<com.aicompany.core.agent.validation.SceneSheet.Member>>();
+        for (var s : nnScenes(a)) {
+            contracts.put(s.script(), com.aicompany.core.agent.validation.SceneSheet.extract(s.script(), sources));
+        }
+        return contracts;
+    }
+
+    private static List<com.aicompany.core.agent.model.InteractionDesign.Scene> nnScenes(
+            com.aicompany.core.agent.validation.GameScenes.Approved a) {
+        return com.aicompany.core.agent.validation.GameScenes.upTo(a.game(), a.spec(), a.increment());
+    }
+
+    /** Juegos por niveles (spec 2026-10-16 contrato §4): lo que recibe Vera; vacío si no es un juego con escenas. */
+    String sceneSheetBlock(TeamMissionContext context, String headSha) {
+        var contracts = sceneContracts(context, headSha);
+        if (contracts.isEmpty()) {
+            return "";
+        }
+        var approved = approvedGameScenes(context.missionId());
+        var main = approved.flatMap(a -> com.aicompany.core.agent.validation.GameScenes.main(a.game()))
+                .map(com.aicompany.core.agent.model.InteractionDesign.Scene::script).orElse("");
+        // Revisión final F1: el ejemplo usa un nivel real del incremento (1..N sobre los LEVEL del contrato).
+        var numbering = approved.map(a -> com.aicompany.core.agent.validation.GameScenes.levelNumbering(a.spec()))
+                .orElse("");
+        var example = approved.flatMap(a -> a.spec().gameLevelsOf(a.increment()).stream()
+                        .mapToInt(i -> com.aicompany.core.agent.validation.GameScenes.levelNumber(a.spec(), i.id()))
+                        .filter(n -> n > 0).boxed().findFirst())
+                .orElse(2);
+        return "\n\nFICHA DE LAS ESCENAS (Java lo leyó del código commiteado de Kael, commit " + headSha
+                + "): en las partidas solo puedes usar estos miembros de cada escena; cualquier otro no existe.\n"
+                + contracts.entrySet().stream().map(e -> "- " + e.getKey() + " ("
+                        + com.aicompany.core.agent.validation.GameScenes.scenePath(e.getKey())
+                        + (e.getKey().equals(main) ? ", escena principal" : "") + "): "
+                        + (e.getValue().isEmpty() ? "(sin miembros públicos)" : e.getValue().stream()
+                        .map(com.aicompany.core.agent.validation.SceneSheet::render).collect(Collectors.joining("; "))))
+                .collect(Collectors.joining("\n"))
+                + "\nAdemás puedes usar lo heredado de Godot: "
+                + com.aicompany.core.agent.validation.PlaythroughSheetGate.GODOT_MEMBERS_TEXT + "."
+                + (numbering.isEmpty() ? "" : "\n" + numbering)
+                + "\nPara otra escena que no sea la principal: public override string Scene => \"<script>\";. Para arrancar "
+                + "en un nivel: yield return Do(main => ((" + main + ")main).StartLevel(" + example + ")); antes de los Press/Wait.\n";
+    }
+
+    /** Spec 2026-10-14 Kael §2.2: assets, escena principal, azar inyectable y rutas reservadas, con reintento. */
+    private java.util.function.Function<DevelopmentResult, List<String>> gameChecks(TeamMissionContext context,
+                                                                                    String agentId, List<String> owned,
+                                                                                    String headSha) {
+        var component = context.plan().resolvedComponents().stream()
+                .filter(c -> c.profile() == StackProfile.GODOT_DOTNET_GAME).findFirst().orElse(null);
+        var rulesRoots = new ArrayList<String>();
+        for (var ctx : context.plan().contextNames()) {
+            for (var layer : List.of(StackProfile.Layer.DOMAIN, StackProfile.Layer.APPLICATION)) {
+                StackProfile.GODOT_DOTNET_GAME.resolveRoot(ctx, layer)
+                        .map(root -> component == null ? root : component.prefix(root)).ifPresent(rulesRoots::add);
+            }
+        }
+        var existing = new java.util.LinkedHashMap<String, String>();
+        try {
+            if (headSha != null) {
+                for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                    if ((path.startsWith("game/") || path.contains("/game/")) && path.endsWith(".tscn")) {
+                        existing.put(path, "");
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            existing.clear();
+        }
+        // Juegos por niveles (spec 2026-10-16 contrato §4): escenas del incremento, sus scripts y la escena principal.
+        var approved = approvedGameScenes(context.missionId());
+        var sceneScripts = new ArrayList<com.aicompany.core.agent.validation.GameSceneScriptsGate.SceneScript>();
+        var existingScripts = new java.util.LinkedHashMap<String, String>();
+        String mainScene = null;
+        if (approved.isPresent()) {
+            var a = approved.get();
+            for (var s : com.aicompany.core.agent.validation.GameScenes.upTo(a.game(), a.spec(), a.increment())) {
+                var path = component == null ? com.aicompany.core.agent.validation.GameScenes.scriptPath(s.script())
+                        : component.prefix(com.aicompany.core.agent.validation.GameScenes.scriptPath(s.script()));
+                sceneScripts.add(new com.aicompany.core.agent.validation.GameSceneScriptsGate.SceneScript(s.id(),
+                        s.script(), path, com.aicompany.core.agent.validation.GameScenes.hasLevels(a.game(), s.id())));
+                var content = headSha == null ? null : readOrNull(context.missionId(), headSha, path);
+                if (content != null) {
+                    existingScripts.put(path, content);
+                }
+            }
+            mainScene = com.aicompany.core.agent.validation.GameScenes.main(a.game())
+                    .map(s -> s.script() + ".tscn").orElse(null);
+        }
+        var forjaiScenes = java.util.Set.copyOf(sceneSkeletonPaths(context));
+        var expectedMain = mainScene;
+        var controls = approved.map(a -> a.game().controls())
+                .orElse(List.<com.aicompany.core.agent.model.InteractionDesign.Control>of());
+        var qa = isQa(context, agentId);
+        var contracts = qa ? sceneContracts(context, headSha)
+                : Map.<String, List<com.aicompany.core.agent.validation.SceneSheet.Member>>of();
+        return result -> {
+            var errors = new ArrayList<String>();
+            errors.addAll(com.aicompany.core.agent.validation.GameAssetGate.check(result.files()));
+            errors.addAll(com.aicompany.core.agent.validation.GameMainSceneGate.check(result.files(), existing, expectedMain));
+            errors.addAll(com.aicompany.core.agent.validation.GameInputMapGate.check(result.files(), controls));
+            errors.addAll(com.aicompany.core.agent.validation.InjectableRandomGate.check(result.files(), rulesRoots));
+            errors.addAll(com.aicompany.core.agent.validation.ReservedGamePathsGate.check(result.files(), qa, forjaiScenes));
+            if (qa && !contracts.isEmpty()) {
+                errors.addAll(com.aicompany.core.agent.validation.PlaythroughSheetGate.check(result.files(), contracts));
+            }
+            if (!qa) {
+                errors.addAll(com.aicompany.core.agent.validation.GameSceneScriptsGate.check(result.files(),
+                        existingScripts, sceneScripts, owned));
+            }
+            return errors;
+        };
+    }
+
     /** Spec 2026-10-02 §2.4: migraciones, secretos y contrato, con reintento al dueño del archivo. */
     private java.util.function.Function<DevelopmentResult, List<String>> databaseChecks(
             TeamMissionContext context, String headSha) {
@@ -1646,6 +2346,17 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // (un usuario "app" marcaba app.MapGet). Quedan los patrones de cadena de conexión con clave.
         List<String> forbidden = List.of();
         var existing = new java.util.LinkedHashMap<String, String>();
+        // Spec Diego ambientes §2: solo las migraciones aplicadas en algún ambiente son inmutables.
+        java.util.Set<Integer> applied;
+        try {
+            applied = memory.appliedAnywhere(context.missionId());
+        } catch (Exception ex) {
+            // Falla cerrado: sin saber qué se aplicó, toda migración commiteada es inmutable.
+            log.warn("MISSION {} - could not read the applied migrations; every committed migration stays immutable",
+                    context.missionId());
+            applied = null;
+        }
+        final var appliedEverywhere = applied;
         try {
             if (headSha != null) {
                 for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
@@ -1659,7 +2370,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         return result -> {
             var errors = new ArrayList<String>();
-            errors.addAll(com.aicompany.core.agent.validation.MigrationFilesGate.check(result.files(), existing));
+            errors.addAll(com.aicompany.core.agent.validation.MigrationFilesGate.check(result.files(), existing, appliedEverywhere));
+            // Spec Diego ambientes §3: sintaxis SQL sin base; el error vuelve al dueño con sentencia y línea.
+            errors.addAll(com.aicompany.core.agent.validation.MigrationSqlCheck.errors(result.files()));
             errors.addAll(com.aicompany.core.agent.validation.SecretLiteralGate.check(result.files(), forbidden));
             errors.addAll(com.aicompany.core.agent.validation.DatabaseContractGate.check(result.files(), hasDatabase, contract));
             return errors;
@@ -1692,7 +2405,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
         return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task)
-                + (isQa(context, task.agentId()) ? qaScenarioRule(scenarios(context.missionId())) : "");
+                + (isQa(context, task.agentId()) ? qaScenarioRule(scenarios(context.missionId()),
+                context.plan().hasComponent(StackProfile.GODOT_DOTNET_GAME)) : "");
     }
 
     private String buildWorkPromptBase(TeamMissionContext context, PlannedTask task) {

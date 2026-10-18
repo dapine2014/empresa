@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -109,5 +110,103 @@ class DevelopmentWorkspaceServiceTest {
                 new GeneratedFile(":notas.md", "literal")));
 
         assertEquals(List.of(":notas.md"), ws.filesAtCommit("MISSION-5", record.sha()));
+    }
+
+    // Spec misiones durables §2: el workspace se limpia antes de retomar.
+    @Test
+    void resumingDiscardsWhatWasNotCommittedAndReadsTheLastTask() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+        var dir = service.missionWorkspace("M-1");
+        Files.writeString(dir.resolve("src/A.cs"), "a medias");
+        Files.writeString(dir.resolve("src/B.cs"), "sin commit");
+
+        service.discardUncommitted("M-1");
+
+        assertEquals("class A {}", Files.readString(dir.resolve("src/A.cs")));
+        assertFalse(Files.exists(dir.resolve("src/B.cs")));
+        assertEquals(Optional.of("M-1-BACKEND"), service.headTask("M-1"));
+    }
+
+    // Revisión 2026-10-06 §5 (fix 1): lo no commiteado nunca se pierde: queda en git stash y el worktree vuelve a HEAD.
+    @Test
+    void uncommittedWorkIsStashedNeverLost() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+        var dir = service.missionWorkspace("M-1");
+        Files.writeString(dir.resolve("src/A.cs"), "editado a mano");
+        Files.writeString(dir.resolve("src/B.cs"), "sin commit");
+
+        var stash = service.discardUncommitted("M-1");
+
+        assertTrue(stash.orElseThrow().startsWith("Forjai: sin commit antes de retomar "), stash.toString());
+        assertEquals("class A {}", Files.readString(dir.resolve("src/A.cs")));
+        assertFalse(Files.exists(dir.resolve("src/B.cs")));
+        assertFalse(service.hasUncommitted("M-1"));
+        assertTrue(git.run(dir, "stash", "list").contains(stash.get()));
+        var saved = git.run(dir, "stash", "show", "-p", "--include-untracked", "stash@{0}");
+        assertTrue(saved.contains("editado a mano") && saved.contains("sin commit"), saved);
+    }
+
+    @Test
+    void aCleanWorkspaceHasNothingToStash() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+
+        assertEquals(Optional.empty(), service.discardUncommitted("M-1"));
+        assertTrue(git.run(service.missionWorkspace("M-1"), "stash", "list").isBlank());
+    }
+
+    // Revisión 2026-10-06 §5 (manos humanas): saber si quedaron cambios sin commit, sin tocarlos.
+    @Test
+    void knowsWhetherThereAreUncommittedChangesWithoutTouchingThem() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("primero", List.of(new GeneratedFile("src/A.cs", "class A {}"))));
+        assertFalse(service.hasUncommitted("M-1"));
+
+        var dir = service.missionWorkspace("M-1");
+        Files.writeString(dir.resolve("src/B.cs"), "sin commit");
+        assertTrue(service.hasUncommitted("M-1"));
+        assertEquals("sin commit", Files.readString(dir.resolve("src/B.cs")));
+
+        Files.delete(dir.resolve("src/B.cs"));
+        Files.writeString(dir.resolve("src/A.cs"), "editado a mano");
+        assertTrue(service.hasUncommitted("M-1"));
+        assertEquals("editado a mano", Files.readString(dir.resolve("src/A.cs")));
+    }
+
+    @Test
+    void anUnrecordedLastCommitCanBeDropped() throws Exception {
+        var service = workspace();
+        var first = service.commitAgentWork("M-1", "M-1-SCAFFOLD", "forjai", "Forjai",
+                new DevelopmentResult("scaffold", List.of(new GeneratedFile("a.txt", "1"))));
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("backend", List.of(new GeneratedFile("b.txt", "2"))));
+
+        service.dropHeadCommit("M-1");
+
+        assertEquals(Optional.of(first.sha()), service.headIfAny("M-1"));
+    }
+
+    @Test
+    void aMissionWithoutWorkspaceHasNoHead() {
+        assertEquals(Optional.empty(), workspace().headIfAny("M-NUEVA"));
+    }
+
+    // Spec misiones durables §2: el commit raíz no se puede retroceder; hay que saber si HEAD tiene padre.
+    @Test
+    void knowsWhetherHeadHasAParent() throws Exception {
+        var service = workspace();
+        service.commitAgentWork("M-1", "M-1-SCAFFOLD", "forjai", "Forjai",
+                new DevelopmentResult("base", List.of(new GeneratedFile("a.txt", "1"))));
+        assertFalse(service.headHasParent("M-1"));
+
+        service.commitAgentWork("M-1", "M-1-BACKEND", "backend", "Iris",
+                new DevelopmentResult("backend", List.of(new GeneratedFile("b.txt", "2"))));
+        assertTrue(service.headHasParent("M-1"));
     }
 }

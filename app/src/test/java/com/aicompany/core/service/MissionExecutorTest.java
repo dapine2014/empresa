@@ -67,6 +67,70 @@ class MissionExecutorTest {
             contradictionDetector, companyPolicyService, opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of()
     );
 
+    private MissionExecutor executorWith(java.util.concurrent.Executor pool) {
+        return new MissionExecutor(
+                memory, new AgentTaskBatchRunner(memory, runtime, events), ceoService, companyMemory, promptMemory,
+                "qwen2.5-coder:14b", pool, events, jsonMapper, contradictionDetector, companyPolicyService,
+                opportunityMemory, alertMailService, mock(TeamWorkPlanner.class), List.of());
+    }
+
+    // Spec misiones durables §2 y §5: una misión con hilo vivo está registrada; al terminar sale.
+    @Test
+    void aRunningMissionIsLiveUntilItsThreadEnds() {
+        var pending = new java.util.ArrayList<Runnable>();
+        var held = executorWith(pending::add);
+        held.executeAsync("M-1", "x");
+        assertTrue(held.isLive("M-1"));
+        assertEquals(java.util.Set.of("M-1"), held.liveMissionIds());
+        pending.forEach(Runnable::run);
+        assertFalse(held.isLive("M-1"));
+    }
+
+    // Cancelar una misión en curso (2026-10-15): una cancelada no arranca trabajo nuevo y su hilo no la avanza ni avisa.
+    @Test
+    void aCancelledMissionStartsNoNewWorkAndIsNotAdvanced() {
+        var cancellations = new MissionCancellations();
+        var pending = new java.util.ArrayList<Runnable>();
+        var held = executorWith(pending::add);
+        held.setCancellations(cancellations);
+        cancellations.cancel("M-1");
+
+        held.executeAsync("M-1", "x");
+
+        assertTrue(pending.isEmpty());
+        assertFalse(held.isLive("M-1"));
+        verify(memory, never()).updateMission(eq("M-1"), any(), anyInt(), anyString(), anyString());
+    }
+
+    @Test
+    void aMissionCancelledWhileRunningIsNotMovedToFailedByItsThread() {
+        var cancellations = new MissionCancellations();
+        executor.setCancellations(cancellations);
+        when(runtime.execute(anyString(), anyString(), anyString(), anyString(), anyString())).thenAnswer(inv -> {
+            cancellations.cancel("M-2");
+            throw new MissionCancellations.MissionCancelledException("M-2");
+        });
+
+        executor.executeAsync("M-2", "x");
+
+        verify(memory, never()).updateMission(eq("M-2"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+        verify(events, never()).publishMission(eq("EMPRESA_MISSION_FAILED"), eq("M-2"), anyString(), anyInt(), anyString(), anyString());
+        verifyNoInteractions(alertMailService);
+    }
+
+    // Review Task 4: el final de una ronda no desregistra la siguiente ronda de la misma misión.
+    @Test
+    void overlappingRegistrationsOfTheSameMissionStayLiveUntilBothEnd() {
+        var pending = new java.util.ArrayList<Runnable>();
+        var held = executorWith(pending::add);
+        held.executeAsync("M-1", "x");
+        held.executeAsync("M-1", "x");
+        pending.get(0).run();
+        assertTrue(held.isLive("M-1"));
+        pending.get(1).run();
+        assertFalse(held.isLive("M-1"));
+    }
+
     @Test
     void reachesAwaitingInvestorWhenAllAgentsSucceed() throws Exception {
         stubAgent("sales");
@@ -92,6 +156,15 @@ class MissionExecutorTest {
         verify(opportunityMemory).recordOpportunity("MISSION-1", "instrucción");
 
         verify(alertMailService).send(contains("MISSION-1"), anyString(), anyBoolean());
+    }
+
+    // Spec misiones durables §3: BLOCKED avisa por correo; INTERRUPTED no (no es una falla).
+    @Test
+    void blockedSendsMailAndInterruptedDoesNot() {
+        executor.block("M-1", "Se agotaron las 3 correcciones automáticas.");
+        verify(alertMailService).send(contains("M-1"), contains("Se agotaron"), eq(true));
+        executor.interrupt("M-2");
+        verify(alertMailService, never()).send(contains("M-2"), anyString(), anyBoolean());
     }
 
     @Test

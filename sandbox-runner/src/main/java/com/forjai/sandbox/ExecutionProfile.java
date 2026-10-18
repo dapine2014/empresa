@@ -11,13 +11,19 @@ import java.util.Optional;
  */
 public enum ExecutionProfile {
 
-    DOTNET_APP("localhost/forjai-sandbox/dotnet-app:1", true),
-    GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:1", true),
+    DOTNET_APP("localhost/forjai-sandbox/dotnet-app:2", true),
+    GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:3", true),
     // Verificado en vivo: el SDK de Flutter crea bin/cache/lockfile en cada comando (falla con raíz de solo lectura).
-    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:1", false);
+    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:2", false);
 
     public record Step(String name, int timeoutSeconds) {
     }
+
+    /**
+     * Entrega del producto: empaqueta los targets pedidos (FORJAI_TARGETS) en /work/.forjai/package. 1800 s: hasta 5
+     * targets de 300 s más el build Release; run.sh corta los que no entran antes de ~1700 s (revisión final, 5).
+     */
+    public static final Step PACKAGE_STEP = new Step("package", 1800);
 
     private static final List<Step> STEPS = List.of(
             new Step("restore", 300), new Step("build", 600), new Step("test", 600), new Step("smoke", 180));

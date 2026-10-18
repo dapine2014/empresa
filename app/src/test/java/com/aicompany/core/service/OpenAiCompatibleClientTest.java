@@ -101,6 +101,38 @@ class OpenAiCompatibleClientTest {
         server.verify();
     }
 
+    // Verificado en vivo (2026-10-18, Bedrock kimi-k3): por defecto cada llamada escribe el prompt entero en caché (cobrado
+    // a 1,25× la entrada) y casi nunca se relee; prompt_cache_options.mode=explicit sin marcadores lo apaga.
+    @Test
+    void bedrockTurnsThePromptCacheOff() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.prompt_cache_options.mode").value("explicit"))
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("bedrock", false, List.of("global.moonshotai.kimi-k3"), "reasoning_effort=none", true);
+
+        client.chat("global.moonshotai.kimi-k3", MESSAGES, true, 100);
+        server.verify();
+    }
+
+    @Test
+    void withoutTheOptionThePromptCacheIsUntouched() {
+        var builder = RestClient.builder().baseUrl("https://api.test/v1");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://api.test/v1/chat/completions"))
+                .andExpect(jsonPath("$.prompt_cache_options").doesNotExist())
+                .andRespond(withSuccess(OK, MediaType.APPLICATION_JSON));
+
+        var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+        client.configure("nvidia", true, List.of("m"), "");
+
+        client.chat("m", MESSAGES, true, 100);
+        server.verify();
+    }
+
     // Costo real por misión (2026-10-04): la respuesta trae los tokens usados.
     @Test
     void theReplyCarriesTheTokenUsage() {
@@ -154,6 +186,28 @@ class OpenAiCompatibleClientTest {
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-19): la API a veces responde 200 sin choices (intermitente: el
     // intento siguiente funcionó). Se reintenta como un 5xx y el error final muestra qué devolvió.
+    // Verificado en vivo (2026-10-15): NVIDIA retiró kimi-k3 con HTTP 410 ("reached its end of life"); como error del pedido
+    // no pasaba al respaldo pago ni al local. Un modelo retirado o inexistente es un modelo caído, sin reintentos.
+    @Test
+    void aRetiredModelIsAnAvailabilityFailureWithoutRetries() {
+        for (var status : List.of(HttpStatus.GONE, HttpStatus.NOT_FOUND)) {
+            var builder = RestClient.builder().baseUrl("https://api.test/v1");
+            var server = MockRestServiceServer.bindTo(builder).build();
+            server.expect(times(1), requestTo("https://api.test/v1/chat/completions"))
+                    .andRespond(withStatus(status).contentType(MediaType.APPLICATION_JSON)
+                            .body("{\"status\":" + status.value() + ",\"detail\":\"The model 'moonshotai/kimi-k3' has "
+                                    + "reached its end of life on 2026-10-15T08:00:00Z and is no longer available.\"}"));
+            var client = new OpenAiCompatibleClient(builder.build(), "k3y", Duration.ZERO);
+
+            var ex = assertThrows(RemoteUnavailableException.class,
+                    () -> client.chat("moonshotai/kimi-k3", MESSAGES, true, 100));
+
+            assertTrue(ex.getMessage().contains(String.valueOf(status.value())) && ex.getMessage().contains("end of life"),
+                    ex.getMessage());
+            server.verify();
+        }
+    }
+
     @Test
     void aResponseWithoutChoicesIsRetriedAndReported() {
         var builder = RestClient.builder().baseUrl("https://api.test/v1");

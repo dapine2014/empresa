@@ -26,6 +26,16 @@ public final class MigrationSet {
     private MigrationSet() {
     }
 
+    /** true si la ruta es una migración versionada ({@code db/postgres/migrations/V<n>__<desc>.sql}). */
+    public static boolean isMigrationPath(String path) {
+        return path != null && PATH.matcher(path).matches();
+    }
+
+    /** Nombre del archivo de la migración ({@code V<n>__<desc>.sql}). */
+    public static String fileName(Migration m) {
+        return "V" + m.version() + "__" + m.description() + ".sql";
+    }
+
     public static List<Migration> parse(Map<String, String> contentsByPath) {
         var result = new ArrayList<Migration>();
         contentsByPath.forEach((path, sql) -> {

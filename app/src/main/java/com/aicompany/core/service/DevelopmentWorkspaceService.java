@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Workspace real por misión = un repo Git real (spec §6). Cada agente
@@ -126,6 +127,72 @@ public class DevelopmentWorkspaceService {
 
     public String readFileAtCommit(String missionId, String sha, String path) throws IOException {
         return git.run(missionWorkspace(missionId), "show", sha + ":" + OwnedPaths.normalize(path));
+    }
+
+    /** Spec misiones durables §2: HEAD si la misión ya tiene repositorio con commits; vacío si no. */
+    public Optional<String> headIfAny(String missionId) {
+        var dir = missionWorkspace(missionId);
+        if (!Files.exists(dir.resolve(".git"))) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(git.run(dir, "rev-parse", "HEAD").trim());
+        } catch (IOException ex) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Spec misiones durables §2: el worktree vuelve a HEAD antes de trabajar encima (el proceso pudo morir a mitad).
+     * Revisión 2026-10-06 §5 (fix 1): nunca se pierde trabajo (p. ej. el de un desarrollador sin commit): lo modificado y
+     * lo sin seguimiento quedan en {@code git stash}. Devuelve el mensaje del stash, o vacío si no había nada.
+     */
+    public synchronized Optional<String> discardUncommitted(String missionId) throws IOException {
+        if (!hasUncommitted(missionId)) {
+            return Optional.empty();
+        }
+        var message = "Forjai: sin commit antes de retomar " + java.time.Instant.now();
+        git.run(missionWorkspace(missionId),
+                "-c", "user.name=Forjai company-core",
+                "-c", "user.email=company-core@forjai.local",
+                // Verificado con Git real: con GIT_LITERAL_PATHSPECS=1 (lo fija GitCommandRunner) "stash -u" guarda los
+                // archivos sin seguimiento pero no los saca del worktree. Acá no hay rutas de agentes.
+                "--no-literal-pathspecs",
+                "stash", "push", "-q", "-u", "-m", message);
+        if (hasUncommitted(missionId)) {
+            throw new IOException("git stash no dejó el repositorio limpio (lo sin commit sigue en " + message + ").");
+        }
+        return Optional.of(message);
+    }
+
+    /**
+     * Spec misiones durables, revisión 2026-10-06 §5 (manos humanas): true si quedaron cambios sin commit (modificados o
+     * sin seguimiento). Solo lee: nunca los borra.
+     */
+    public boolean hasUncommitted(String missionId) throws IOException {
+        return !git.run(missionWorkspace(missionId), "status", "--porcelain").isBlank();
+    }
+
+    /** Spec misiones durables §2: la tarea del último commit (trailer Forjai-Task). */
+    public Optional<String> headTask(String missionId) throws IOException {
+        var body = git.run(missionWorkspace(missionId), "log", "-1", "--format=%B");
+        return lines(body).stream().filter(l -> l.startsWith("Forjai-Task:"))
+                .map(l -> l.substring("Forjai-Task:".length()).strip()).findFirst();
+    }
+
+    /** Spec misiones durables §2: false si HEAD es el commit raíz (no se puede retroceder). */
+    public boolean headHasParent(String missionId) throws IOException {
+        try {
+            git.run(missionWorkspace(missionId), "rev-parse", "--verify", "-q", "HEAD~1");
+            return true;
+        } catch (IOException ex) {
+            return false;
+        }
+    }
+
+    /** Spec misiones durables §2: el último commit no llegó a registrarse en Neo4j; su tarea se repite. */
+    public synchronized void dropHeadCommit(String missionId) throws IOException {
+        git.run(missionWorkspace(missionId), "reset", "-q", "--hard", "HEAD~1");
     }
 
     public void deleteWorkspace(String missionId) throws IOException {

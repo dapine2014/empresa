@@ -20,11 +20,21 @@ public class SandboxRunnerClient {
     private static final Logger log = LoggerFactory.getLogger(SandboxRunnerClient.class);
 
     private final RestClient client;
+    private final RestClient packageClient;
     private final String token;
     private volatile String lastError;
 
     public SandboxRunnerClient(RestClient client, String token) {
+        this(client, client, token);
+    }
+
+    /**
+     * {@code packageClient}: el del job PACKAGE, con su propio read timeout (restore 300 s + package 1800 s no entran en
+     * los 30 min de {@code sandbox.runner.timeout}; revisión final, 5).
+     */
+    public SandboxRunnerClient(RestClient client, RestClient packageClient, String token) {
         this.client = client;
+        this.packageClient = packageClient;
         this.token = token;
     }
 
@@ -32,8 +42,19 @@ public class SandboxRunnerClient {
         return verify(missionId, commitSha, stackProfile, "");
     }
 
+    private MissionCancellations cancellations;
+
+    /** Cancelar una misión en curso (2026-10-15): una misión cancelada no lanza más jobs al sandbox. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCancellations(MissionCancellations cancellations) {
+        this.cancellations = cancellations;
+    }
+
     /** Spec 2026-10-02 B1 §3: VERIFY de la carpeta de un componente ("" = raíz). */
     public Optional<SandboxResult> verify(String missionId, String commitSha, String stackProfile, String componentDir) {
+        if (cancellations != null && cancellations.isCancelled(missionId)) {
+            throw new MissionCancellations.MissionCancelledException(missionId);
+        }
         try {
             lastError = null;
             var body = new java.util.LinkedHashMap<String, Object>(Map.of("jobType", "VERIFY", "missionId", missionId,
@@ -54,6 +75,45 @@ public class SandboxRunnerClient {
         } catch (Exception ex) {
             lastError = "sandbox-runner no disponible: " + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
             log.warn("SANDBOX_UNAVAILABLE mission={} reason={}", missionId, lastError);
+            return Optional.empty();
+        }
+    }
+
+    /** Entrega del producto: job PACKAGE (un paso por target). Nunca lanza; el body (con la clave) jamás se loguea. */
+    public Optional<SandboxResult> packageJob(String missionId, String commitSha, String stackProfile, int increment,
+                                              List<String> targets,
+                                              com.aicompany.core.delivery.AndroidSigningKeyService.Plain release) {
+        if (cancellations != null && cancellations.isCancelled(missionId)) {
+            throw new MissionCancellations.MissionCancelledException(missionId);
+        }
+        try {
+            lastError = null;
+            var body = new java.util.LinkedHashMap<String, Object>();
+            body.put("jobType", "PACKAGE");
+            body.put("missionId", missionId);
+            body.put("commitSha", commitSha);
+            body.put("stackProfile", stackProfile);
+            body.put("increment", increment);
+            body.put("targets", targets);
+            if (release != null) {
+                body.put("androidRelease", Map.of("keystoreBase64", release.keystoreBase64(),
+                        "alias", release.alias(), "password", release.password()));
+            }
+            var result = packageClient.post().uri("/jobs")
+                    .header("X-Sandbox-Token", token == null ? "" : token)
+                    .body(body)
+                    .retrieve()
+                    .body(SandboxResult.class);
+            if (result == null) {
+                lastError = "El sandbox-runner no devolvió resultado.";
+                return Optional.empty();
+            }
+            return Optional.of(result);
+        } catch (MissionCancellations.MissionCancelledException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            lastError = "sandbox-runner no disponible: " + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+            log.warn("SANDBOX_UNAVAILABLE mission={} job=PACKAGE reason={}", missionId, lastError);
             return Optional.empty();
         }
     }

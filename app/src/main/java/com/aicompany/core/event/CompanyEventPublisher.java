@@ -31,6 +31,14 @@ public class CompanyEventPublisher {
         this.topic = topic;
     }
 
+    private MissionEventLog missionEventLog;
+
+    /** Bitácora (spec 2026-10-17). Setter opcional: sin él, el publicador sigue como antes. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMissionEventLog(MissionEventLog missionEventLog) {
+        this.missionEventLog = missionEventLog;
+    }
+
     public void publish(
             String eventType,
             String missionId,
@@ -50,6 +58,15 @@ public class CompanyEventPublisher {
                 agentId,
                 data
         );
+
+        // Bitácora (spec 2026-10-17): se guarda antes de Kafka y una falla de Neo4j no lo frena.
+        if (missionEventLog != null && missionId != null) {
+            try {
+                missionEventLog.record(event);
+            } catch (RuntimeException ex) {
+                log.warn("MISSION_EVENT_LOG_FAILED mission={} type={} error={}", missionId, eventType, ex.getMessage());
+            }
+        }
 
         final String payload;
 

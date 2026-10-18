@@ -2,7 +2,11 @@ package com.forjai.sandbox;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Base64;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -22,7 +26,15 @@ public class VerifyJobRunner {
     private final PodmanCommandBuilder podman;
     private final ProcessExecutor executor;
 
+    private final Path stagingRoot;
+
     public VerifyJobRunner(Path productsRoot, Path workRoot, PodmanCommandBuilder podman, ProcessExecutor executor) {
+        this(productsRoot, workRoot, podman, executor, workRoot.resolve(".staging"));
+    }
+
+    public VerifyJobRunner(Path productsRoot, Path workRoot, PodmanCommandBuilder podman, ProcessExecutor executor,
+                           Path stagingRoot) {
+        this.stagingRoot = stagingRoot;
         this.productsRoot = productsRoot;
         this.workRoot = workRoot;
         this.podman = podman;
@@ -72,6 +84,301 @@ public class VerifyJobRunner {
         }
     }
 
+    /**
+     * PACKAGE (entrega del producto, spec 2026-10-17 §1): mismo checkout y restore que VERIFY, luego el paso fijo
+     * {@code package} con los targets pedidos. La salida queda en {@code stagingRoot/<missionId>/incremento-<N>-<jobId>}
+     * (una carpeta por job: dos empaquetados del mismo incremento nunca se pisan) y su nombre va en
+     * {@link SandboxResult#stagingDir()}. La clave de publicación se escribe recién después de restore, viaja por env
+     * file (permisos 600), nunca se copia ni se loguea: la contraseña y el alias se tachan de toda salida.
+     */
+    public SandboxResult pack(String missionId, String commitSha, ExecutionProfile profile, int increment,
+                              List<PackageTarget> targets, AndroidRelease release) {
+
+        var steps = new ArrayList<SandboxResult.StepResult>();
+        var jobId = UUID.randomUUID().toString();
+        var jobDir = workRoot.resolve("job-" + jobId);
+        var envFile = workRoot.resolve("env-" + jobId);
+        var redactor = new Redactor(release);
+
+        try {
+            Files.createDirectories(jobDir);
+
+            var checkout = checkout(missionId, commitSha, "", jobDir);
+            steps.add(checkout);
+            if (!SandboxResult.PASS.equals(checkout.status())) {
+                steps.add(skipped("restore"));
+                targets.forEach(t -> steps.add(skipped("package:" + t.id())));
+                return new SandboxResult(SandboxResult.FAIL, redactor.apply(steps));
+            }
+
+            if (release != null && (unsafeEnvValue(release.alias()) || unsafeEnvValue(release.password()))) {
+                targets.forEach(t -> steps.add(new SandboxResult.StepResult("package:" + t.id(), SandboxResult.FAIL, -1, 0,
+                        "clave de Android inválida (caracteres no permitidos)", 0, 0)));
+                return new SandboxResult(SandboxResult.FAIL, redactor.apply(steps));
+            }
+
+            // Revisión final (7): restore corre MSBuild del código generado; la clave todavía no existe en el job.
+            var restore = runStep(profile, profile.steps().get(0), jobDir);
+            steps.add(restore);
+            if (!SandboxResult.PASS.equals(restore.status())) {
+                targets.forEach(t -> steps.add(skipped("package:" + t.id())));
+                return new SandboxResult(SandboxResult.FAIL, redactor.apply(steps));
+            }
+
+            var env = new StringBuilder("FORJAI_TARGETS=")
+                    .append(String.join(",", targets.stream().map(PackageTarget::id).toList())).append('\n');
+            byte[] keystoreBytes = null;
+            if (release != null) {
+                keystoreBytes = Base64.getDecoder().decode(release.keystoreBase64());
+                var keystore = jobDir.resolve(".forjai/keystore/release.jks");
+                Files.createDirectories(keystore.getParent());
+                Files.write(keystore, keystoreBytes);
+                env.append("GODOT_ANDROID_KEYSTORE_RELEASE_PATH=/work/.forjai/keystore/release.jks\n")
+                        .append("GODOT_ANDROID_KEYSTORE_RELEASE_USER=").append(release.alias()).append('\n')
+                        .append("GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=").append(release.password()).append('\n');
+            }
+            try {
+                Files.createFile(envFile, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException ignored) {
+                // el sistema de archivos no tiene permisos POSIX
+                Files.createFile(envFile);
+            }
+            Files.writeString(envFile, env.toString());
+
+            var step = ExecutionProfile.PACKAGE_STEP;
+            var started = System.currentTimeMillis();
+            var execution = executor.run(podman.run(profile, step, jobDir, envFile), jobDir, step.timeoutSeconds() + 30L);
+            var duration = System.currentTimeMillis() - started;
+            var stepTail = tail(execution.output(), OUTPUT_TAIL_CHARS);
+
+            var packageDir = jobDir.resolve(".forjai/package");
+            for (var target : targets) {
+                var name = "package:" + target.id();
+                var statusFile = packageDir.resolve("status").resolve(target.id());
+                if (Files.exists(statusFile, LinkOption.NOFOLLOW_LINKS)
+                        && !Files.isRegularFile(statusFile, LinkOption.NOFOLLOW_LINKS)) {
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.FAIL, execution.exitCode(), duration,
+                            "estado inválido", 0, 0));
+                    continue;
+                }
+                var content = Files.exists(statusFile, LinkOption.NOFOLLOW_LINKS)
+                        ? Files.readString(statusFile).strip() : null;
+                if (content == null && execution.timedOut()) {
+                    // Revisión final (5): solo los targets que no llegaron a escribir su estado quedan TIMEOUT.
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.TIMEOUT, execution.exitCode(), duration,
+                            stepTail, 0, 0));
+                } else if ("PASS".equals(content)) {
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.PASS, execution.exitCode(), duration,
+                            stepTail, 0, 0));
+                } else {
+                    var reason = content == null ? stepTail
+                            : content.startsWith("FAIL:") ? content.substring(5).strip() : content;
+                    steps.add(new SandboxResult.StepResult(name, SandboxResult.FAIL, execution.exitCode(), duration,
+                            tail(reason, OUTPUT_TAIL_CHARS), 0, 0));
+                }
+            }
+
+            deleteQuietly(packageDir.resolve("status"));
+            deleteQuietly(jobDir.resolve(".forjai/keystore"));
+            if (release != null && Files.isDirectory(packageDir, LinkOption.NOFOLLOW_LINKS)) {
+                var discarded = discardKeyMaterial(packageDir, release.password(), keystoreBytes);
+                if (!discarded.isEmpty()) {
+                    failTargetsWithKeyMaterial(steps, discarded);
+                }
+            }
+
+            var missionStaging = stagingRoot.resolve(missionId).normalize();
+            if (!missionStaging.startsWith(stagingRoot) || missionStaging.equals(stagingRoot)) {
+                throw new IOException("missionId inválido para el staging.");
+            }
+            var stagingName = "incremento-" + increment + "-" + jobId;
+            var destination = missionStaging.resolve(stagingName);
+            Files.createDirectories(destination);
+            if (Files.isDirectory(packageDir, LinkOption.NOFOLLOW_LINKS)) {
+                copyTree(packageDir, destination);
+            }
+
+            var overall = steps.stream().allMatch(s -> SandboxResult.PASS.equals(s.status()))
+                    ? SandboxResult.PASS : SandboxResult.FAIL;
+            return new SandboxResult(overall, redactor.apply(steps), stagingName);
+
+        } catch (IOException | IllegalArgumentException ex) {
+            steps.add(new SandboxResult.StepResult("package", SandboxResult.FAIL, -1, 0,
+                    "No se pudo empaquetar: " + ex.getMessage(), 0, 0));
+            return new SandboxResult(SandboxResult.FAIL, redactor.apply(steps));
+        } finally {
+            deleteQuietly(jobDir);
+            try {
+                Files.deleteIfExists(envFile);
+            } catch (IOException ignored) {
+                // best-effort
+            }
+        }
+    }
+
+    static final String KEY_MATERIAL = "la salida contenía material de la clave";
+
+    /** Carpeta de la entrega de cada target (la de run.sh). */
+    private static String outputDir(String target) {
+        return switch (target) {
+            case "windows" -> "juego/windows/";
+            case "macos" -> "juego/macos/";
+            case "linux" -> "juego/linux/";
+            case "android-apk", "android-aab" -> "juego/android/";
+            default -> "app/";
+        };
+    }
+
+    /** Los targets Android siempre; los demás si se borró un archivo de su carpeta. */
+    private static void failTargetsWithKeyMaterial(List<SandboxResult.StepResult> steps, List<String> discarded) {
+        for (var i = 0; i < steps.size(); i++) {
+            var s = steps.get(i);
+            if (!s.name().startsWith("package:")) {
+                continue;
+            }
+            var target = s.name().substring("package:".length());
+            var dir = outputDir(target);
+            if (target.startsWith("android-") || discarded.stream().anyMatch(f -> f.startsWith(dir))) {
+                steps.set(i, new SandboxResult.StepResult(s.name(), SandboxResult.FAIL, s.exitCode(), s.durationMs(),
+                        KEY_MATERIAL + " (se descartó; si la contraseña es una palabra común, usa otra)", 0, 0));
+            }
+        }
+    }
+
+    /**
+     * Revisión final (7): el código generado corre en el paso package con la clave a su alcance. Antes de copiar al
+     * staging se borra todo archivo que contenga la contraseña o el keystore. Devuelve las rutas borradas (relativas).
+     */
+    static List<String> discardKeyMaterial(Path packageDir, String password, byte[] keystore) throws IOException {
+        var needles = new ArrayList<byte[]>();
+        if (password != null && !password.isEmpty()) {
+            needles.add(password.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        if (keystore != null && keystore.length > 0) {
+            needles.add(keystore);
+        }
+        var discarded = new ArrayList<String>();
+        try (var walk = Files.walk(packageDir)) {
+            for (var file : walk.filter(f -> Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)).toList()) {
+                for (var needle : needles) {
+                    if (contains(file, needle)) {
+                        Files.delete(file);
+                        discarded.add(packageDir.relativize(file).toString());
+                        break;
+                    }
+                }
+            }
+        }
+        return discarded;
+    }
+
+    /** Búsqueda por bloques (los compilados pesan cientos de MB): conserva el final de cada bloque para los cortes. */
+    private static boolean contains(Path file, byte[] needle) throws IOException {
+        var block = Math.max(1 << 20, needle.length * 2);
+        var buffer = new byte[block + needle.length];
+        var carry = 0;
+        try (var in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+            int read;
+            while ((read = in.read(buffer, carry, block)) > 0) {
+                var length = carry + read;
+                if (indexOf(buffer, length, needle) >= 0) {
+                    return true;
+                }
+                carry = Math.min(needle.length - 1, length);
+                System.arraycopy(buffer, length - carry, buffer, 0, carry);
+            }
+        }
+        return false;
+    }
+
+    private static int indexOf(byte[] haystack, int length, byte[] needle) {
+        outer:
+        for (var i = 0; i <= length - needle.length; i++) {
+            for (var j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    /** Tacha la contraseña y el alias (si tiene 4 caracteres o más) de toda salida y todo motivo. */
+    private record Redactor(AndroidRelease release) {
+        List<SandboxResult.StepResult> apply(List<SandboxResult.StepResult> steps) {
+            if (release == null) {
+                return steps;
+            }
+            return steps.stream().map(s -> new SandboxResult.StepResult(s.name(), s.status(), s.exitCode(), s.durationMs(),
+                    redact(s.outputTail()), s.testsPassed(), s.testsFailed(), s.tests())).toList();
+        }
+
+        private String redact(String text) {
+            if (text == null) {
+                return null;
+            }
+            var out = text;
+            if (release.password() != null && !release.password().isEmpty()) {
+                out = out.replace(release.password(), "***");
+            }
+            if (release.alias() != null && release.alias().length() >= 4) {
+                out = out.replace(release.alias(), "***");
+            }
+            return out;
+        }
+    }
+
+    /**
+     * Revisión final (7): un reinicio a mitad de un job deja su checkout (con la clave) y su env file en work-root.
+     * Se llama al arrancar, cuando ningún job corre.
+     */
+    public void cleanOrphans() {
+        if (!Files.isDirectory(workRoot)) {
+            return;
+        }
+        try (var entries = Files.list(workRoot)) {
+            for (var p : entries.toList()) {
+                var name = p.getFileName().toString();
+                if (name.startsWith("job-") || name.startsWith("env-")) {
+                    deleteQuietly(p);
+                }
+            }
+        } catch (IOException ignored) {
+            // best-effort
+        }
+    }
+
+    private static SandboxResult.StepResult skipped(String name) {
+        return new SandboxResult.StepResult(name, SandboxResult.SKIPPED, 0, 0, "Omitido: un paso anterior falló.", 0, 0);
+    }
+
+    /** Copia solo directorios y archivos regulares: la salida la escribió código generado, así que un symlink se omite. */
+    private static void copyTree(Path from, Path to) throws IOException {
+        Files.walkFileTree(from, new java.nio.file.SimpleFileVisitor<>() {
+            @Override
+            public java.nio.file.FileVisitResult preVisitDirectory(Path dir, java.nio.file.attribute.BasicFileAttributes attrs)
+                    throws IOException {
+                Files.createDirectories(to.resolve(from.relativize(dir).toString()));
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs)
+                    throws IOException {
+                if (attrs.isRegularFile() && !attrs.isSymbolicLink()) {
+                    Files.copy(file, to.resolve(from.relativize(file).toString()), StandardCopyOption.REPLACE_EXISTING,
+                            LinkOption.NOFOLLOW_LINKS);
+                }
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private static boolean unsafeEnvValue(String value) {
+        return value == null || value.contains("\n") || value.contains("\r") || value.contains("\0");
+    }
+
     private SandboxResult.StepResult checkout(String missionId, String commitSha, String componentDir, Path jobDir) {
 
         var started = System.currentTimeMillis();
@@ -116,8 +423,11 @@ public class VerifyJobRunner {
         var counts = "test".equals(step.name())
                 ? TestReportParser.parse(jobDir) : new TestReportParser.TestCounts(0, 0);
 
+        // Verificado en vivo (Pong, 2026-10-15): el paso y el motivo de cada partida fallida van al final de la salida,
+        // que es lo que la corrección le muestra al equipo.
+        var output = (execution.output() == null ? "" : execution.output()) + TestReportParser.failureDetails(counts.tests());
         return new SandboxResult.StepResult(step.name(), status, execution.exitCode(), duration,
-                tail(execution.output(), OUTPUT_TAIL_CHARS), counts.passed(), counts.failed(), counts.tests());
+                tail(output, OUTPUT_TAIL_CHARS), counts.passed(), counts.failed(), counts.tests());
     }
 
     static String tail(String output, int maxChars) {

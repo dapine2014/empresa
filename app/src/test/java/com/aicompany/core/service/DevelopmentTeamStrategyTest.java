@@ -2,7 +2,10 @@ package com.aicompany.core.service;
 
 import com.aicompany.core.agent.DevelopmentRuntime;
 import com.aicompany.core.agent.model.AgentResult;
+import com.aicompany.core.agent.model.ClientContract;
 import com.aicompany.core.agent.model.DevelopmentResult;
+import com.aicompany.core.agent.model.InteractionDesign;
+import com.aicompany.core.agent.model.RequirementsSpec;
 import com.aicompany.core.agent.model.DevelopmentResult.GeneratedFile;
 import com.aicompany.core.agent.model.StaticReviewResult;
 import com.aicompany.core.agent.model.TeamPlan;
@@ -44,6 +47,11 @@ class DevelopmentTeamStrategyTest {
     private final DevelopmentTeamStrategy strategy = new DevelopmentTeamStrategy(
             memory, runtime, workspace, validator, events, JsonMapper.builder().build(), sandbox, dependencies);
 
+    {
+        // Sin workspace previo (misión nueva) el flujo es el de siempre.
+        when(workspace.headIfAny(anyString())).thenReturn(Optional.empty());
+    }
+
     private static TeamMissionContext context() {
         var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", List.of(
                 new TeamMemberInfo("engineering", "Neo", "Arquitecto", "R", List.of("arquitectura backend"), "m"),
@@ -72,9 +80,9 @@ class DevelopmentTeamStrategyTest {
     }
 
     private void stubHappyPath() throws Exception {
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), eq("engineering"), eq("Neo"), any()))
@@ -119,7 +127,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void qaWithATestsTaskReviewsUnderItsOwnTaskId() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("tests/Combate.Tests/CombateTests.cs")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
@@ -213,7 +221,7 @@ class DevelopmentTeamStrategyTest {
     void workAndReviewPromptsCarryTheProfileContextsAndGlossary() throws Exception {
         stubHappyPath();
         var workPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), workPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/Atacar.cs")));
         var reviewPrompt = ArgumentCaptor.forClass(String.class);
         when(runtime.review(anyString(), anyString(), anyString(), reviewPrompt.capture(), anyMap()))
@@ -235,7 +243,7 @@ class DevelopmentTeamStrategyTest {
     void theOwnerOfAnEntryFilesFolderIsToldToCreateIt() throws Exception {
         stubHappyPath();
         var neoPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("game/project.godot")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -271,6 +279,94 @@ class DevelopmentTeamStrategyTest {
         verify(memory).recordSandboxResult(eq("M-1-QA"), anyString());
         assertTrue(result.verifiableState().contains("Tests PASS 12/12"));
         assertTrue(result.verifiableState().contains("Compiló, pasaron 12 tests y arrancó en el sandbox."));
+    }
+
+    // Entrega del producto (spec 2026-10-17): al quedar VERIFIED se empaqueta una vez con el HEAD y el estado lo cuenta.
+    @Test
+    void aVerifiedIncrementIsDeliveredOnceAndTheStateSaysWhere() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        when(delivery.deliver(eq("M-1"), anyInt(), anyString(), eq("GODOT_DOTNET_GAME"), anyInt(), any()))
+                .thenReturn(new com.aicompany.core.delivery.DeliveryRecord("M-1", 1, "READY",
+                        "/home/x/entregas-forja/M-1/incremento-1.zip", 10, List.of(), "", "t"));
+        strategy.setDeliveryService(delivery);
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(delivery, times(1)).deliver(eq("M-1"), anyInt(), eq(SHA_NEO), eq("GODOT_DOTNET_GAME"), anyInt(), any());
+        assertTrue(result.verifiableState().contains("Entrega: READY — /home/x/entregas-forja/M-1/incremento-1.zip"));
+    }
+
+    @Test
+    void aDeliveryStepFailureNeverChangesTheValidation() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        strategy.setDeliveryService(mock(com.aicompany.core.delivery.DeliveryService.class));
+        var reqs = mock(RequirementsMemoryService.class);
+        when(reqs.currentIncrement("M-1")).thenThrow(new IllegalStateException("neo4j caído"));
+        strategy.setRequirements(reqs);
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
+        assertTrue(result.verifiableState().contains("Entrega: FAILED — neo4j caído"), result.verifiableState());
+    }
+
+    // Entrega (revisión final, 2): el commit VERIFIED se guarda con el número del incremento que verificó.
+    @Test
+    void theVerifiedCommitIsRecordedWithItsIncrement() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        strategy.setDeliveryService(delivery);
+        var reqs = mock(RequirementsMemoryService.class);
+        when(reqs.currentIncrement("M-1")).thenReturn(2);
+        strategy.setRequirements(reqs);
+
+        strategy.execute(context(), progress);
+
+        verify(memory).recordVerifiedCommit("M-1", SHA_NEO, 2);
+        verify(delivery).deliver(eq("M-1"), eq(2), eq(SHA_NEO), anyString(), anyInt(), any());
+        verify(delivery, never()).abandonInterrupted(anyString(), anyInt());
+    }
+
+    // Entrega (revisión final, 12): cancelar la misión durante la entrega corta la misión, no se traga.
+    @Test
+    void aCancellationDuringTheDeliveryIsRethrown() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        when(delivery.deliver(any(), anyInt(), any(), any(), anyInt(), any()))
+                .thenThrow(new MissionCancellations.MissionCancelledException("M-1"));
+        strategy.setDeliveryService(delivery);
+
+        assertThrows(MissionCancellations.MissionCancelledException.class, () -> strategy.execute(context(), progress));
+    }
+
+    // Entrega (revisión final, 4): una validación que no queda VERIFIED cierra la entrega que un reinicio dejó a medias.
+    @Test
+    void aValidationThatIsNotVerifiedAbandonsAnInterruptedDelivery() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        var failed = new com.aicompany.core.database.DatabaseApplyService.EnvironmentResult(
+                "citas-prod", "PRODUCTION", List.of(1), 2, "columna x no existe", false);
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(failed), com.aicompany.core.database.DatabaseApplyService.Outcome.NEEDS_CORRECTION, "falló"));
+        strategy.setDatabaseApply(apply);
+        var delivery = mock(com.aicompany.core.delivery.DeliveryService.class);
+        strategy.setDeliveryService(delivery);
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        verify(delivery, never()).deliver(any(), anyInt(), any(), any(), anyInt(), any());
+        verify(delivery, atLeastOnce()).abandonInterrupted("M-1", 1);
     }
 
     @Test
@@ -323,11 +419,12 @@ class DevelopmentTeamStrategyTest {
     void anEvidenceRoundDoesNotRecreateTheScaffoldAndUsesSuffixedTaskIds() throws Exception {
         var base = context();
         var roundOne = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
         when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
-        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
@@ -351,7 +448,7 @@ class DevelopmentTeamStrategyTest {
         // Verificado en vivo (MISSION-E2E-ENG ronda 1): exigir un archivo en cada ruta obligaba a Iris a reenviar todo
         // su código; la API terminó fallando. En una ronda lo no devuelto queda como está en el repositorio.
         verify(runtime).generate(eq("M-1-FRONTEND-UI-R1"), eq("M-1"), eq("frontend-ui"),
-                argThat(p -> p.contains("devuelve solo los archivos que cambias")), anyList(), anyList(), eq(List.of()));
+                argThat(p -> p.contains("devuelve solo los archivos que cambias")), anyList(), anyList(), eq(List.of()), any());
     }
 
     // Verificado en vivo (MISSION-ARIA-CRM-1791093806, incremento 2): un contexto nuevo en una ronda no tenía sus .csproj
@@ -360,13 +457,14 @@ class DevelopmentTeamStrategyTest {
     void aRoundCommitsOnlyTheMissingScaffoldFiles() throws Exception {
         var base = context();
         var roundTwo = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 2);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
         when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
         when(workspace.missionWorkspace("M-1")).thenReturn(Path.of("/data/forjai-products/M-1"));
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), anyString())).thenReturn("contenido");
         when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Game.csproj"))).thenThrow(new java.io.IOException("no existe"));
         when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD-R2"), eq("forjai"), eq("Forjai"), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord("b".repeat(40), List.of("game/Game.csproj")));
-        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
         when(workspace.commitAgentWork(eq("M-1"), endsWith("-R2"), argThat(a -> !"forjai".equals(a)), anyString(), any()))
                 .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
@@ -389,11 +487,64 @@ class DevelopmentTeamStrategyTest {
                 argThat(allowed -> allowed.contains("db/postgres/migrations/V1__clientes.sql")), anyList());
     }
 
+    // Revisión 2026-10-06 §6: una ronda > 0 sin repositorio (nunca existió) escribe el scaffold de nuevo.
+    @Test
+    void aLaterRoundWithoutRepositoryWritesTheScaffold() throws Exception {
+        stubHappyPath();
+        var base = context();
+        var roundOne = new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI-R1"), eq("frontend-ui"), eq("Mila"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+
+        strategy.execute(roundOne, progress);
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any());
+        // El camino del scaffold existente (existingScaffold) no se usó: no leyó ningún archivo en un commit previo.
+        verify(workspace, never()).headSha("M-1");
+    }
+
+    // Spec 2026-10-14 Kael §2.2: un plan con juego pasa los gates de juego como chequeos de la generación.
+    @Test
+    @SuppressWarnings("unchecked")
+    void aGamePlanAppliesTheGameGatesToEveryGeneration() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var checks = ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(),
+                anyList(), checks.capture());
+        var gate = (java.util.function.Function<DevelopmentResult, List<String>>) checks.getValue();
+        assertEquals(List.of(), gate.apply(dev("src/Combate.Application/Ok.cs")));
+        var asset = gate.apply(new DevelopmentResult("r", List.of(new GeneratedFile("game/Main.tscn",
+                "[ext_resource type=\"Texture2D\" path=\"res://paleta.png\" id=\"2\"]"))));
+        assertTrue(asset.stream().anyMatch(e -> e.contains("asset externo")), asset.toString());
+        var random = gate.apply(new DevelopmentResult("r", List.of(new GeneratedFile("src/Combate.Domain/Dado.cs",
+                "var r = new Random();"))));
+        assertTrue(random.stream().anyMatch(e -> e.contains("azar")), random.toString());
+        // Mila no es QA: las partidas de Vera y el runner de Forjai le están vedados.
+        var reserved = gate.apply(new DevelopmentResult("r", List.of(
+                new GeneratedFile("game/playthroughs/ESC_01.cs", "x"), new GeneratedFile("game/forjai/Runner.cs", "x"))));
+        assertEquals(2, reserved.size(), reserved.toString());
+    }
+
     @Test
     void forjaiCommitsTheProjectScaffoldBeforeTheAgentsWork() throws Exception {
         stubHappyPath();
         var milaPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -403,7 +554,7 @@ class DevelopmentTeamStrategyTest {
         var inOrder = inOrder(workspace, runtime);
         inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"),
                 argThat(r -> r.files().stream().anyMatch(f -> f.path().equals("game/Game.csproj"))));
-        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
         assertTrue(milaPrompt.getValue().contains("los genera Forjai"), milaPrompt.getValue());
         // Verificado en vivo (MISSION-SANDBOX-VERIFY-6): la regla vieja "nadie va a ejecutar este código" era falsa
         // con el sandbox y se filtró textual dentro de Tarea.cs.
@@ -425,7 +576,7 @@ class DevelopmentTeamStrategyTest {
 
         verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
                 argThat(list -> list.contains("src/Combate.Domain/Combate.Domain.csproj")
-                        && list.contains("game/Game.csproj")));
+                        && list.contains("game/Game.csproj")), anyList(), any());
     }
 
     // Decisión del fundador (revisión 3, tras MISSION-SANDBOX-VERIFY-1..8): en paralelo cada agente escribía
@@ -436,9 +587,9 @@ class DevelopmentTeamStrategyTest {
         stubHappyPath();
         var milaPrompt = ArgumentCaptor.forClass(String.class);
         var neoPrompt = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
-        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-ENGINEERING"), anyString(), anyString(), neoPrompt.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -446,9 +597,9 @@ class DevelopmentTeamStrategyTest {
         strategy.execute(context(), progress);
 
         var inOrder = inOrder(runtime, workspace);
-        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
         inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), anyString(), anyString(), any());
-        inOrder.verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList());
+        inOrder.verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
         assertFalse(milaPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), milaPrompt.getValue());
         assertTrue(neoPrompt.getValue().contains("CÓDIGO YA ESCRITO POR EL EQUIPO"), neoPrompt.getValue());
         assertTrue(neoPrompt.getValue().contains("### web/ui/hud.js"), neoPrompt.getValue());
@@ -507,9 +658,9 @@ class DevelopmentTeamStrategyTest {
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")))
                 .thenReturn(pass);
         var milaPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), milaPrompts.capture(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -526,6 +677,37 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains("Rondas de corrección: 1"), result.verifiableState());
     }
 
+    // Bitácora (spec 2026-10-17): cada vuelta del sandbox y cada reparación quedan como evento.
+    @Test
+    void eachSandboxRoundAndEachRepairArePublished() throws Exception {
+        stubHappyPath();
+        var pass = Optional.of(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("build", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 3, 0),
+                new SandboxResult.StepResult("smoke", "PASS", 0, 1000, "", 0, 0))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")))
+                .thenReturn(pass);
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(events).publish(eq("EMPRESA_SANDBOX_STARTED"), eq("M-1"), isNull(), eq("sandbox"),
+                argThat(d -> Integer.valueOf(0).equals(d.get("round"))));
+        verify(events).publish(eq("EMPRESA_SANDBOX_FINISHED"), eq("M-1"), isNull(), eq("sandbox"),
+                argThat(d -> "FAIL".equals(d.get("overall")) && "build".equals(d.get("failedStep"))
+                        && ((Integer) d.get("compileErrors")) >= 1));
+        verify(events).publish(eq("EMPRESA_REPAIR_REQUESTED"), eq("M-1"), anyString(), anyString(),
+                argThat(d -> ((Integer) d.get("errors")) >= 1 && Integer.valueOf(0).equals(d.get("repeated"))));
+        verify(events).publish(eq("EMPRESA_SANDBOX_STARTED"), eq("M-1"), isNull(), eq("sandbox"),
+                argThat(d -> Integer.valueOf(1).equals(d.get("round"))));
+        verify(events).publish(eq("EMPRESA_SANDBOX_VERIFICATION_COMPLETED"), eq("M-1"), anyString(), eq("sandbox"),
+                argThat(d -> Integer.valueOf(-1).equals(d.get("round")) && "".equals(d.get("failedStep"))));
+    }
+
     private static DevelopmentResult corrected(String path) {
         return new DevelopmentResult("corregido", List.of(new GeneratedFile(path, "corregido")));
     }
@@ -533,7 +715,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void theCorrectionCycleStopsAfterTheMaximumRounds() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
@@ -567,9 +749,8 @@ class DevelopmentTeamStrategyTest {
         stubHappyPath();
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
-                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")));
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("src/Combate.Application/X.cs")))
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("reintentos agotados")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
@@ -580,7 +761,7 @@ class DevelopmentTeamStrategyTest {
         inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), anyString());
         inOrder.verify(memory).updateTask(eq("M-1-FRONTEND-UI"), eq("COMPLETED"), contains("se conserva el commit"));
         verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(),
-                contains("propias rutas o usa los tipos que sí existen"), anyList(), anyList(), eq(List.of("src/Combate.Application")));
+                contains("propias rutas o usa los tipos que sí existen"), anyList(), anyList(), eq(List.of("src/Combate.Application")), any());
     }
 
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-12): CS0246 por un "using" faltante de un tipo que existe en
@@ -611,7 +792,8 @@ class DevelopmentTeamStrategyTest {
         verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-AUTOFIX"), eq("forjai"), eq("Forjai"),
                 argThat(r -> r.files().get(0).content().contains("using System;\nusing Combate.Domain;\n")));
         verify(sandbox).verify("M-1", "6".repeat(40), "GODOT_DOTNET_GAME");
-        verify(runtime, never()).generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList());
+        verify(runtime, never()).generate(anyString(), anyString(), anyString(), contains("CORRECCIÓN DEL SANDBOX"),
+                anyList(), anyList(), anyList(), any());
         verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), anyString());
         assertTrue(result.verifiableState().contains("Correcciones automáticas de Forjai: 1"), result.verifiableState());
     }
@@ -627,7 +809,8 @@ class DevelopmentTeamStrategyTest {
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
         var repairPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
                         new DevelopmentResult.GeneratedFile("src/Combate.Application/X.cs",
                                 "linea1\nlinea2\n    var t = lista._tareas;\n")))))
@@ -638,9 +821,9 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context(), progress);
 
-        var first = repairPrompts.getAllValues().get(0);
+        var first = repairPrompts.getAllValues().get(1);
         assertTrue(first.contains("línea 3: var t = lista._tareas;"), first);
-        var second = repairPrompts.getAllValues().get(1);
+        var second = repairPrompts.getAllValues().get(2);
         assertTrue(second.contains("devolviste tus archivos SIN CAMBIOS"), second);
     }
 
@@ -657,14 +840,15 @@ class DevelopmentTeamStrategyTest {
                         + "for 'Estado' [/work/x.csproj]", 0, 0)));
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME"))).thenReturn(Optional.of(fail));
         var repairPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")))
                 .thenReturn(CompletableFuture.completedFuture(corrected("src/Combate.Application/X.cs")));
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
 
         strategy.execute(context(), progress);
 
-        var prompt = repairPrompts.getAllValues().get(0);
+        var prompt = repairPrompts.getAllValues().get(1);
         assertTrue(prompt.contains("otras definiciones de 'Estado'"), prompt);
         assertTrue(prompt.contains("línea 4: public enum Estado { A }"), prompt);
     }
@@ -681,7 +865,8 @@ class DevelopmentTeamStrategyTest {
         when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
                 .thenReturn(Optional.of(buildFailure("src/Combate.Application/X.cs")));
         var repairPrompts = ArgumentCaptor.forClass(String.class);
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), repairPrompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("igual", List.of(
                         new GeneratedFile("src/Combate.Application/X.cs", "x\n"),
                         new GeneratedFile("src/Combate.Application/Y.cs", "y\n")))));
@@ -690,14 +875,14 @@ class DevelopmentTeamStrategyTest {
 
         strategy.execute(context(), progress);
 
-        assertTrue(repairPrompts.getAllValues().get(1).contains("SIN CAMBIOS"), repairPrompts.getAllValues().get(1));
+        assertTrue(repairPrompts.getAllValues().get(2).contains("SIN CAMBIOS"), repairPrompts.getAllValues().get(2));
     }
 
     // Parte 3: los paquetes pedidos por un agente .NET entran al .csproj de su capa (commit de Forjai) antes de verificar.
     @Test
     void requestedNugetPackagesAreAddedToTheScaffoldBeforeVerifying() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("r",
                         List.of(new GeneratedFile("src/Combate.Application/X.cs", "x")),
                         List.of(new DevelopmentResult.PackageRequest("Newtonsoft.Json", "13.0.3")))));
@@ -720,7 +905,7 @@ class DevelopmentTeamStrategyTest {
     @Test
     void pendingDependenciesSkipTheSandboxAndLeaveItUnvalidated() throws Exception {
         stubHappyPath();
-        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(new DevelopmentResult("r",
                         List.of(new GeneratedFile("src/Combate.Application/X.cs", "x")),
                         List.of(new DevelopmentResult.PackageRequest("A", "1.0.0")))));
@@ -867,7 +1052,7 @@ class DevelopmentTeamStrategyTest {
         when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(CompletableFuture.completedFuture(cleanReview()));
         var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
-        when(apply.apply(eq("M-1"), anyString(), any())).thenReturn("Base de datos citas-dev-aws: aplicadas V1.");
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), com.aicompany.core.database.DatabaseApplyService.Outcome.APPLIED, "Base de datos citas-dev-aws: aplicadas V1."));
         strategy.setDatabaseApply(apply);
         var base = context();
         var plan = new TeamPlan(base.plan().summary(), null, null, base.plan().tasksOrEmpty(), List.of(),
@@ -877,8 +1062,229 @@ class DevelopmentTeamStrategyTest {
         var result = (TeamExecutionResult.Development) strategy.execute(
                 new TeamMissionContext("M-1", "crear un juego", base.team(), plan), progress);
 
-        verify(apply).apply(eq("M-1"), anyString(), eq(plan));
+        verify(apply).apply(eq("M-1"), anyString(), eq(plan), anyBoolean());
         assertTrue(result.verifiableState().contains("aplicadas V1"), result.verifiableState());
+    }
+
+    private TeamPlan databasePlan() {
+        var base = context().plan();
+        return new TeamPlan(base.summary(), null, null, base.tasksOrEmpty(), List.of(), base.stackProfile(),
+                base.boundedContexts(), base.ubiquitousLanguage(), new TeamPlan.DatabaseNeed("POSTGRESQL", "citas-dev-aws"));
+    }
+
+    // Spec Diego ambientes §2: todos los ambientes aplicados -> DATABASE_APPLIED PASS y se registra el commit verificado.
+    @Test
+    void allEnvironmentsAppliedAddsAPassingCheckAndRecordsTheVerifiedCommit() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(), com.aicompany.core.database.DatabaseApplyService.Outcome.APPLIED, "todo aplicado"));
+        strategy.setDatabaseApply(apply);
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && !json.contains("\"FAIL\"")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
+    }
+
+    // Spec Diego ambientes §2: un ambiente fallido es un chequeo FAIL, la validación FAILED y no hay commit verificado.
+    @Test
+    void aFailedEnvironmentFailsTheValidationWithoutRecordingTheVerifiedCommit() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        var failed = new com.aicompany.core.database.DatabaseApplyService.EnvironmentResult(
+                "citas-prod", "PRODUCTION", List.of(1), 2, "columna x no existe", false);
+        when(apply.apply(eq("M-1"), anyString(), any(), anyBoolean())).thenReturn(
+                new com.aicompany.core.database.DatabaseApplyService.CascadeResult(List.of(failed), com.aicompany.core.database.DatabaseApplyService.Outcome.NEEDS_CORRECTION, "falló"));
+        strategy.setDatabaseApply(apply);
+
+        var result = (TeamExecutionResult.Development) strategy.execute(
+                new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"), argThat(json -> json.contains("DATABASE_APPLIED")
+                && json.contains("PRODUCTION") && json.contains("citas-prod") && json.contains("V2")
+                && json.contains("columna x no existe")));
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+        assertTrue(result.verifiableState().contains("falló"), result.verifiableState());
+    }
+
+    // Sin base: ni cascada ni chequeo, como hoy.
+    @Test
+    void withoutADatabaseThereIsNoDatabaseCheck() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        strategy.setDatabaseApply(apply);
+
+        strategy.execute(context(), progress);
+
+        verify(apply, never()).apply(anyString(), anyString(), any(), anyBoolean());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+    }
+
+    // Falla cerrado: si no se puede leer qué se aplicó, editar una migración commiteada se rechaza.
+    @Test
+    void whenAppliedMigrationsCannotBeReadCommittedMigrationsStayImmutable() throws Exception {
+        stubHappyPath();
+        when(runtime.generate(anyString(), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenAnswer(inv -> CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        when(memory.appliedAnywhere("M-1")).thenThrow(new IllegalStateException("neo4j caído"));
+        var path = "db/postgres/migrations/V1__a.sql";
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of(path));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq(path))).thenReturn("CREATE TABLE a (id int);");
+
+        strategy.execute(new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        @SuppressWarnings("unchecked")
+        var checks = (org.mockito.ArgumentCaptor<java.util.function.Function<DevelopmentResult, List<String>>>)
+                (org.mockito.ArgumentCaptor<?>) org.mockito.ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime, atLeastOnce()).generate(anyString(), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), checks.capture());
+        var edit = new DevelopmentResult("r", List.of(new GeneratedFile(path, "CREATE TABLE a (id int, x int);")));
+        assertTrue(checks.getValue().apply(edit).stream().anyMatch(e -> e.contains("V1__a.sql")));
+    }
+
+    // Revisión final Diego ambientes (C1, I1, I3): la cascada real (DatabaseApplyService con conexiones y aplicador
+    // simulados) y la clasificación de Java.
+    private final com.aicompany.core.database.DatabaseConnectionService dbConnections =
+            mock(com.aicompany.core.database.DatabaseConnectionService.class);
+    private final com.aicompany.core.database.DatabaseSchemaApplier dbApplier =
+            mock(com.aicompany.core.database.DatabaseSchemaApplier.class);
+    private final AlertMailService dbMail = mock(AlertMailService.class);
+    private static final com.aicompany.core.database.DatabaseConnection DB_TEST = new com.aicompany.core.database.DatabaseConnection(
+            "C1", "citas-test", "POSTGRESQL", "test.secreto.example", 5432, "citas", "admin", "REQUIRE", null, "TEST",
+            "****1111", null, null);
+    private static final com.aicompany.core.database.DatabaseConnection DB_PROD = new com.aicompany.core.database.DatabaseConnection(
+            "C2", "citas-prod", "POSTGRESQL", "prod.secreto.example", 5432, "citas", "admin", "REQUIRE", null,
+            "PRODUCTION", "****2222", null, null);
+
+    private void realDatabaseApply(com.aicompany.core.database.DatabaseConnection... connections) throws Exception {
+        when(dbConnections.connectionsOf("M-1")).thenReturn(List.of(connections));
+        when(dbConnections.password(any())).thenReturn("S3cret");
+        var service = new com.aicompany.core.database.DatabaseApplyService(dbConnections, dbApplier, workspace, memory, events);
+        service.setAlertMail(dbMail);
+        strategy.setDatabaseApply(service);
+    }
+
+    private static com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult applied(Integer... versions) {
+        return new com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult(List.of(versions), null, null, false);
+    }
+
+    private static com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult failedAt(int version, String error) {
+        return failedAt(version, error, "42601");
+    }
+
+    private static com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult failedAt(int version, String error,
+                                                                                         String sqlState) {
+        return new com.aicompany.core.database.DatabaseSchemaApplier.ApplyResult(List.of(), version, error, false, sqlState);
+    }
+
+    private TeamExecutionResult.Development executeWithDatabase() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        return (TeamExecutionResult.Development) strategy.execute(
+                new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+    }
+
+    // C1: sin conexión no hay cascada ni falla: VERIFIED, commit verificado y la nota para cargarla.
+    @Test
+    void withoutAConnectionTheCodeStaysVerifiedWithAPendingNote() throws Exception {
+        realDatabaseApply();
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
+        assertTrue(result.verifiableState().contains("aplica el esquema de M-1"), result.verifiableState());
+        verifyNoInteractions(dbApplier, dbMail);
+    }
+
+    // I1 (a): el SQL de una migración no aplicada en ningún ambiente va a la corrección.
+    @Test
+    void aSqlErrorInAnUnappliedMigrationFailsTheValidation() throws Exception {
+        realDatabaseApply(DB_TEST, DB_PROD);
+        when(memory.appliedAnywhere("M-1")).thenReturn(java.util.Set.of(1, 2));
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any())).thenReturn(failedAt(3, "V3 falló: syntax error"));
+
+        executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("FAILED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && json.contains("syntax error")));
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+        verify(dbApplier, never()).apply(eq(DB_PROD), any(), anyList(), any(), any());
+        verifyNoInteractions(dbMail);
+    }
+
+    // I1 (b): una conexión que no responde no la arregla un modelo: VERIFIED, commit verificado y aviso al fundador.
+    @Test
+    void aConnectionErrorKeepsTheCodeVerifiedAndNotifiesTheFounder() throws Exception {
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any()))
+                .thenThrow(new IllegalStateException("Connection to test.secreto.example refused"));
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
+        assertTrue(result.verifiableState().contains("problema del ambiente")
+                && result.verifiableState().contains("aplica el esquema de M-1"), result.verifiableState());
+        assertFalse(result.verifiableState().contains("test.secreto.example"), result.verifiableState());
+        verify(dbMail).send(contains("M-1"), contains("problema del ambiente"), eq(true));
+        verify(events).publish(eq("EMPRESA_DATABASE_SCHEMA_FAILED"), eq("M-1"), eq("M-1-DATABASE"), eq("forjai"), anyMap());
+    }
+
+    // I1 (b): V3 aplicada en TEST que falla en PRODUCTION es un problema de datos del ambiente, no una corrección.
+    @Test
+    void aProductionFailureOfAVersionAppliedInTestIsAnEnvironmentProblem() throws Exception {
+        realDatabaseApply(DB_TEST, DB_PROD);
+        when(memory.appliedAnywhere("M-1")).thenReturn(java.util.Set.of(1, 2));
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any())).thenReturn(applied(3));
+        when(dbApplier.apply(eq(DB_PROD), any(), anyList(), any(), any()))
+                .thenReturn(failedAt(3, "V3 falló: duplicate key value"));
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
+        assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
+        verify(dbMail).send(contains("M-1"), anyString(), eq(true));
+    }
+
+    // Seguimiento: un timeout (57014) en una migración sin aplicar es del ambiente: VERIFIED y aviso, sin corrección pagada.
+    @Test
+    void aQueryTimeoutDuringAnUnappliedMigrationIsAnEnvironmentProblem() throws Exception {
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), any(), any()))
+                .thenReturn(failedAt(1, "V1 falló: canceling statement due to statement timeout", "57014"));
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
+        verify(dbMail).send(contains("M-1"), anyString(), eq(true));
+    }
+
+    // Menor: un error de memoria dentro de la cascada no escapa antes de registrar la validación.
+    @Test
+    void aMemoryErrorInsideTheCascadeIsAnEnvironmentProblem() throws Exception {
+        realDatabaseApply(DB_TEST);
+        doThrow(new IllegalStateException("neo4j caído")).when(memory)
+                .createTask(eq("M-1-DATABASE"), anyString(), anyString(), anyString());
+
+        var result = executeWithDatabase();
+
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("VERIFIED"), argThat(json -> !json.contains("DATABASE_APPLIED")));
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
+        assertTrue(result.verifiableState().contains("neo4j caído"), result.verifiableState());
     }
 
     // Revisión final (I-6): un usuario corto como "app" no puede marcar todo el código.
@@ -948,7 +1354,7 @@ class DevelopmentTeamStrategyTest {
         for (var id : List.of("M-1-BACKEND", "M-1-FRONTEND-UI")) {
             var result = CompletableFuture.completedFuture(id.endsWith("BACKEND")
                     ? dev("backend/src/Clientes.Api/Program.cs") : dev("app/lib/main.dart"));
-            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList())).thenReturn(result);
+            when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any())).thenReturn(result);
             when(runtime.generate(eq(id), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                     .thenReturn(result);
         }
@@ -1155,6 +1561,10 @@ class DevelopmentTeamStrategyTest {
         var result = (TeamExecutionResult.Development) strategy.execute(fullstackContext(), progress);
 
         verify(runtime).triage(anyString(), eq("M-1"), eq("engineering"), contains("Expected 201, Actual 500"), any());
+        // Bitácora (spec 2026-10-17): el veredicto del diagnóstico se publica.
+        verify(events).publish(eq("EMPRESA_TEST_TRIAGE_COMPLETED"), eq("M-1"), anyString(), eq("engineering"),
+                argThat(d -> d.get("verdicts") instanceof List<?> l && !l.isEmpty()
+                        && String.valueOf(l.get(0)).contains("CODE_WRONG")));
         verify(runtime, atLeastOnce()).generate(eq("M-1-BACKEND"), eq("M-1"), eq("backend"),
                 contains("Crear un cliente válido responde 201."), anyList(), anyList(), anyList(), any());
         verify(memory).recordStaticValidation(anyString(), eq("VERIFIED"), anyString());
@@ -1173,7 +1583,7 @@ class DevelopmentTeamStrategyTest {
         var plan = new TeamPlan(p.summary(), null, null, tasks, List.of(), p.stackProfile(), p.boundedContexts(),
                 p.ubiquitousLanguage(), null, p.components());
         var context = new TeamMissionContext("M-1", base.instruction(), base.team(), plan);
-        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList()))
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
         when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
                 .thenReturn(CompletableFuture.completedFuture(dev("backend/tests/Clientes.Tests/ClienteTests.cs")));
@@ -1357,5 +1767,742 @@ class DevelopmentTeamStrategyTest {
         strategy.execute(fullstackContext(), progress);
 
         verify(memory, never()).verifiedCommit("M-1");
+    }
+
+    // Revisión 2026-10-06 §5 (manos humanas): verifica HEAD sin llamar a ningún modelo ni tocar el repositorio.
+    @Test
+    void verifyHeadRunsChecksSandboxAndCoverageOnHeadWithoutAnyModel() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verifyNoInteractions(runtime);
+        verify(workspace, never()).commitAgentWork(any(), any(), any(), any(), any());
+        verify(sandbox).verify("M-1", head, "DOTNET_APP", "backend");
+        verify(sandbox).verify("M-1", head, "FLUTTER_WEB_APP", "app");
+        // Los commits del desarrollador no llevan autor de agente ni trailer: solo se valida HEAD.
+        verify(validator).validate(eq("M-1"), eq(List.of()), anyList(), anyList(), anyList(), anyList());
+        verify(memory).recordSandboxResult(eq("M-1-HUMAN-VERIFY-1"), anyString());
+        verify(memory).updateTask(eq("M-1-HUMAN-VERIFY-1"), eq("COMPLETED"), argThat(r -> r.contains("✅ ESC-01")));
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("VERIFIED"),
+                argThat(json -> json.contains("SCENARIO_COVERAGE") && json.contains("TEST_SUITE_GROWTH")));
+        verify(memory).recordVerifiedCommit("M-1", head, 1);
+        assertTrue(result.verifiableState().contains(head), result.verifiableState());
+    }
+
+    // ---- Spec 2026-10-14 Kael §1.4: DESIGN_CONFORMANCE ----
+
+    private static final com.aicompany.core.agent.model.InteractionDesign APP_DESIGN =
+            new com.aicompany.core.agent.model.InteractionDesign("APP",
+                    new com.aicompany.core.agent.model.InteractionDesign.AppDesign(
+                            List.of(new com.aicompany.core.agent.model.InteractionDesign.Screen("PANT-01", "Lista", "ver",
+                                    "vendedor", List.of())),
+                            List.of(new com.aicompany.core.agent.model.InteractionDesign.Flow("HU-01", List.of("PANT-01"),
+                                    List.of())),
+                            List.of(new com.aicompany.core.agent.model.InteractionDesign.ScenarioScreen("ESC-01", "PANT-01")),
+                            List.of("r")), null);
+
+    private void withApprovedDesign() throws Exception {
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(APP_DESIGN), "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+    }
+
+    // Con diseño aprobado, una pantalla sin su Key deja la validación FAILED aunque la cobertura esté completa.
+    @Test
+    void withAnApprovedDesignAScreenWithoutItsKeyFailsTheValidation() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("PANT-01")
+                        && json.contains("SCENARIO_COVERAGE")));
+    }
+
+    @Test
+    void withAnApprovedDesignFollowedTheValidationIsVerified() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("app/lib/main.dart")))
+                .thenReturn("Widget build(c) => Scaffold(key: const Key('PANT-01'));");
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("VERIFIED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE")));
+    }
+
+    // Sin diseño aprobado (misión NONE o anterior a Kael): el chequeo no existe.
+    @Test
+    void withoutAnApprovedDesignThereIsNoDesignConformance() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.empty());
+        strategy.setInteractionDesign(designs);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("VERIFIED"),
+                argThat(json -> !json.contains("DESIGN_CONFORMANCE")));
+    }
+
+    // Revisión Task 12: con diseño aprobado, un problema de lectura falla cerrado (nunca VERIFIED sin conformidad).
+    @Test
+    void aReadingProblemWithAnApprovedDesignFailsClosed() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("app/lib/main.dart")))
+                .thenThrow(new java.io.IOException("git show falló"));
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE")
+                        && json.contains("No se pudo verificar la conformidad con el diseño (problema de lectura, no del código)")
+                        && json.contains("git show falló")));
+    }
+
+    @Test
+    // Revisión final (M-5): si leer el diseño aprobado falla (Neo4j), no se sabe si hay diseño: una misión vieja sin
+    // diseño no puede quedar FAILED por eso. Falla cerrado solo cuando el diseño aprobado sí llegó.
+    void aFailingDesignLookupSkipsTheConformanceCheck() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenThrow(new IllegalStateException("Neo4j caído"));
+        strategy.setInteractionDesign(designs);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), anyString(), anyString());
+        verify(memory, never()).recordStaticValidation(anyString(), anyString(),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE")));
+    }
+
+    @Test
+    void aCorruptDesignFailsClosed() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(
+                new InteractionDesignMemoryService.Version(1, "{no es json", "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("problema de lectura")));
+    }
+
+    // Con un diseño GAME aprobado, una acción de control sin declarar en project.godot deja la validación FAILED.
+    @Test
+    void withAnApprovedGameDesignAnUndeclaredActionFailsTheValidation() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var game = new com.aicompany.core.agent.model.InteractionDesign("GAME", null,
+                new com.aicompany.core.agent.model.InteractionDesign.GameDesign(List.of("PLAYING"), List.of(), List.of(),
+                        List.of(new com.aicompany.core.agent.model.InteractionDesign.Control("move_right", "Right", "x")),
+                        List.of(new com.aicompany.core.agent.model.InteractionDesign.Rule("REGLA-01", "move_right", "avanza")),
+                        List.of(), List.of("REGLA-01"), List.of(),
+                        List.of(new com.aicompany.core.agent.model.InteractionDesign.ScenarioRule("ESC-01", "move_right")),
+                        List.of("h")));
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(game), "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("backend/src/Clientes.Api/Program.cs",
+                "app/lib/main.dart", "game/project.godot"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/project.godot"))).thenReturn("[input]\n");
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.execute(context, progress);
+
+        verify(memory).recordStaticValidation(eq("M-1-QA-REVIEW"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("move_right")));
+    }
+
+    @Test
+    void verifyHeadAlsoChecksTheDesignConformance() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        withApprovedDesign();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"),
+                argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("PANT-01")));
+    }
+
+    private TeamMissionContext withQaWorkAndDatabase() throws Exception {
+        var base = withQaWork();
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, p.tasksOrEmpty(), List.of(), p.stackProfile(),
+                p.boundedContexts(), p.ubiquitousLanguage(), new TeamPlan.DatabaseNeed("POSTGRESQL", ""), p.components());
+        return new TeamMissionContext("M-1", base.instruction(), base.team(), plan);
+    }
+
+    // Revisión final Diego ambientes (I3): "verifica" corre la misma cascada; un SQL roto sin aplicar deja FAILED.
+    @Test
+    void verifyHeadRunsTheCascadeAndASqlErrorFailsIt() throws Exception {
+        stubFullstack();
+        var context = withQaWorkAndDatabase();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head))).thenReturn(failedAt(1, "V1 falló: syntax error"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verifyNoInteractions(runtime);
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && json.contains("syntax error")));
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+        assertTrue(result.verifiableState().contains("Base de datos:"), result.verifiableState());
+    }
+
+    // Seguimiento: "verifica" lo pidió el fundador y el chat ya muestra el problema: no se le manda correo.
+    @Test
+    void verifyHeadDoesNotEmailAnEnvironmentProblem() throws Exception {
+        stubFullstack();
+        var context = withQaWorkAndDatabase();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head)))
+                .thenReturn(failedAt(1, "V1 falló: connection reset", "08006"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        assertTrue(result.verifiableState().contains("problema del ambiente"), result.verifiableState());
+        verifyNoInteractions(dbMail);
+    }
+
+    @Test
+    void verifyHeadAppliesTheSchemaBeforeRecordingTheVerifiedCommit() throws Exception {
+        stubFullstack();
+        var context = withQaWorkAndDatabase();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        realDatabaseApply(DB_TEST);
+        when(dbApplier.apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head))).thenReturn(applied(1));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        var order = inOrder(dbApplier, memory);
+        order.verify(dbApplier).apply(eq(DB_TEST), any(), anyList(), eq("M-1"), eq(head));
+        order.verify(memory).recordVerifiedCommit("M-1", head, 1);
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("VERIFIED"),
+                argThat(json -> json.contains("DATABASE_APPLIED") && !json.contains("\"FAIL\"")));
+    }
+
+    // Review Focus 5: lo no commiteado no se borra ni se verifica, y se avisa.
+    @Test
+    void verifyHeadDoesNotTouchUncommittedFilesAndSaysSo() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(workspace.hasUncommitted("M-1")).thenReturn(true);
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida"));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(workspace, never()).discardUncommitted(anyString());
+        verify(workspace, never()).dropHeadCommit(anyString());
+        verify(memory).updateTask(eq("M-1-HUMAN-VERIFY-1"), eq("COMPLETED"), argThat(r -> r.contains("sin commit")));
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("FAILED"), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+        assertTrue(result.verifiableState().contains("sin commit"), result.verifiableState());
+    }
+
+    // Sin escenarios de Aria la revisión sería de Vera (modelo): la verificación humana no la pide y queda UNVALIDATED.
+    @Test
+    void verifyHeadWithoutScenariosNeverAsksVeraAndIsUnvalidated() throws Exception {
+        stubFullstack();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 3, 0)))));
+
+        strategy.verifyHead(fullstackContext(), "M-1-HUMAN-VERIFY-1");
+
+        verifyNoInteractions(runtime);
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("UNVALIDATED"), anyString());
+    }
+
+    // Revisión final QA (M4): un commit no cambia; los tests de un SHA se leen de git una sola vez por generación de misión.
+    @Test
+    void theTestsOfACommitAreReadFromGitOnce() throws Exception {
+        when(workspace.filesAtCommit("M-1", "c".repeat(40))).thenReturn(List.of("tests/Crm.Tests/ClientesTests.cs", "src/X.cs"));
+        when(workspace.readFileAtCommit("M-1", "c".repeat(40), "tests/Crm.Tests/ClientesTests.cs")).thenReturn("[Fact] void ESC_01_x() {}");
+
+        var first = strategy.testFiles("M-1", "c".repeat(40));
+        var second = strategy.testFiles("M-1", "c".repeat(40));
+
+        assertEquals(first, second);
+        assertEquals(java.util.Set.of("tests/Crm.Tests/ClientesTests.cs"), first.keySet());
+        verify(workspace, times(1)).filesAtCommit("M-1", "c".repeat(40));
+    }
+
+    @Test
+    void aFailedReadIsNotCached() throws Exception {
+        when(workspace.filesAtCommit("M-1", "d".repeat(40))).thenThrow(new java.io.IOException("git show falló"))
+                .thenReturn(List.of("tests/Crm.Tests/ClientesTests.cs"));
+        when(workspace.readFileAtCommit("M-1", "d".repeat(40), "tests/Crm.Tests/ClientesTests.cs")).thenReturn("x");
+
+        assertTrue(strategy.testFiles("M-1", "d".repeat(40)).isEmpty());
+        assertEquals(1, strategy.testFiles("M-1", "d".repeat(40)).size());
+    }
+
+    /** Misión de 2 tareas WORK (Neo, Mila) + revisión de Vera, lista para ejecutar y retomar. */
+    private TeamMissionContext resumableContext() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        return context();
+    }
+
+    // Spec misiones durables §2: retomar salta las tareas ya commiteadas (con sus paquetes) y limpia el workspace.
+    @Test
+    void resumingSkipsCommittedTasksAndCleansTheWorkspace() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "COMPLETED", "{\"summary\":\"api\",\"files\":[],\"packages\":[{\"name\":\"Npgsql\",\"version\":\"8.0.5\"}]}",
+                java.time.Instant.now(), "WORK", "/w", "a".repeat(40), List.of("game/Game.cs"), null, null)));
+
+        strategy.execute(context, progress);
+
+        verify(workspace).discardUncommitted("M-1");
+        verify(workspace, never()).dropHeadCommit("M-1");
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), anyList(), any());
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), any(), any());
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), any(), any(), any(), any(), any(), any(), any());
+        // La otra tarea sí se genera; los paquetes de la ya hecha llegan al commit de dependencias.
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING"), any(), any(), any());
+    }
+
+    // Revisión 2026-10-06 §5 (fix 1): verificación humana FAILED con cambios sin commit → la corrección que sigue los
+    // guarda en git stash (nunca un reset destructivo) y el estado verificable lo dice.
+    @Test
+    void aCorrectionAfterAFailedHumanVerificationStashesTheUncommittedWork() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headTask("M-1")).thenReturn(Optional.empty());
+        when(workspace.hasUncommitted("M-1")).thenReturn(true);
+        when(memory.tasks("M-1")).thenReturn(List.of());
+        when(workspace.discardUncommitted("M-1")).thenReturn(Optional.of("Forjai: sin commit antes de retomar 2026-10-06T12:00:00Z"));
+
+        var human = (TeamExecutionResult.Development) strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+        verify(workspace, never()).discardUncommitted(anyString());
+        assertTrue(human.verifiableState().contains("git stash"), human.verifiableState());
+
+        // La limpieza con stash es la misma en toda ronda con repositorio (la corrección es una ronda más).
+        var result = (TeamExecutionResult.Development) strategy.execute(context, progress);
+
+        verify(workspace).discardUncommitted("M-1");
+        verify(workspace, never()).dropHeadCommit(anyString());
+        assertTrue(result.verifiableState().contains("quedó guardado en git stash (Forjai: sin commit antes de retomar"),
+                result.verifiableState());
+    }
+
+    // Fix 4: sin componentes el sandbox no corre, pero no porque fallaran los chequeos.
+    @Test
+    void verifyHeadWithoutComponentsSaysSo() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        var p = context.plan();
+        var noComponents = new TeamPlan(p.summary(), null, null, p.tasksOrEmpty(), List.of(), null, p.boundedContexts(),
+                p.ubiquitousLanguage());
+        when(validator.validate(eq("M-1"), anyList(), anyList(), anyList(), anyList(), anyList()))
+                .thenReturn(List.of(StaticCheck.pass("DDD_LAYERS", "ok", null, List.of())));
+
+        var result = (TeamExecutionResult.Development) strategy.verifyHead(
+                new TeamMissionContext("M-1", "x", context.team(), noComponents), "M-1-HUMAN-VERIFY-1");
+
+        assertFalse(result.verifiableState().contains("chequeos deterministas fallaron"), result.verifiableState());
+        assertTrue(result.verifiableState().contains("no declara componentes"), result.verifiableState());
+    }
+
+    // Review Focus 1: el último commit es de una tarea que no quedó COMPLETED -> se retrocede y la tarea se repite.
+    @Test
+    void anUnrecordedLastCommitIsDroppedAndItsTaskRepeated() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headHasParent("M-1")).thenReturn(true);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "RUNNING", null, java.time.Instant.now(), "WORK", null, null, null, null, null)));
+
+        strategy.execute(context, progress);
+
+        verify(workspace).dropHeadCommit("M-1");
+        verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
+    }
+
+    // Verificado en vivo (MISSION-DUR-1791333307): un reinicio durante una ronda de reparación deja la tarea WORK en
+    // RUNNING con su commit original; esa entrega no se regenera ni se retrocede (la verificación se repite entera).
+    @Test
+    void aTaskInterruptedDuringARepairKeepsItsCommittedDelivery() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("b".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("b".repeat(40));
+        when(workspace.headHasParent("M-1")).thenReturn(true);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "RUNNING", "{\"summary\":\"api\",\"files\":[]}", java.time.Instant.now(), "WORK", "/w", "b".repeat(40),
+                List.of("src/Api/X.cs"), null, null)));
+
+        try {
+            strategy.execute(context, progress);
+        } catch (IllegalStateException ignored) {
+            // El resto del flujo (otras tareas, sandbox) no está armado en este test; lo que importa es lo de arriba.
+        }
+
+        verify(workspace, never()).dropHeadCommit("M-1");
+        verify(runtime, never()).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any());
+    }
+
+    // El commit raíz no se retrocede (la tarea se regenera encima).
+    @Test
+    void anUnrecordedRootCommitIsNotDropped() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headHasParent("M-1")).thenReturn(false);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-ENGINEERING"));
+        when(memory.tasks("M-1")).thenReturn(List.of(new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE",
+                "RUNNING", null, java.time.Instant.now(), "WORK", null, null, null, null, null)));
+
+        strategy.execute(context, progress);
+
+        verify(workspace, never()).dropHeadCommit(anyString());
+    }
+
+    // Ronda 0 con workspace: el scaffold existente se reutiliza (no se vuelve a escribir encima del código).
+    @Test
+    void aRound0WithWorkspaceReusesTheScaffold() throws Exception {
+        var context = resumableContext();
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.headTask("M-1")).thenReturn(Optional.empty());
+        when(memory.tasks("M-1")).thenReturn(List.of());
+
+        strategy.execute(context, progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), any(), any(), any());
+    }
+
+    @Test
+    void inAGameVeraAlsoWritesPlaythroughs() {
+        var rule = DevelopmentTeamStrategy.qaScenarioRule(
+                List.of(new com.aicompany.core.agent.validation.ScenarioCoverage.Scenario("ESC-01", "mueve", 1)), true);
+        assertTrue(rule.contains("game/playthroughs/") && rule.contains(": Playthrough") && rule.contains("Press("), rule);
+    }
+
+    @Test
+    void outsideAGameVeraGetsNoPlaythroughRule() {
+        var rule = DevelopmentTeamStrategy.qaScenarioRule(
+                List.of(new com.aicompany.core.agent.validation.ScenarioCoverage.Scenario("ESC-01", "mueve", 1)), false);
+        assertFalse(rule.contains("Playthrough"), rule);
+    }
+
+    private static final RequirementsSpec LEVELED = new RequirementsSpec("Pong", List.of(), List.of(),
+            List.of(new RequirementsSpec.Role("jugador", "d")),
+            List.of(new RequirementsSpec.UserStory("HU-01", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-01"),
+                    new RequirementsSpec.UserStory("HU-02", "jugador", "q", "p", List.of("c"), List.of(), List.of(), "MOD-02")),
+            List.of(new RequirementsSpec.Increment(1, "N1", List.of("HU-01")),
+                    new RequirementsSpec.Increment(2, "Fin", List.of("HU-02"))), "GAME",
+            List.of(new ClientContract.Item("MOD-01", "LEVEL", "Nivel 1", "x"),
+                    new ClientContract.Item("MOD-02", "SCENE", "Game over", "x")), true);
+
+    private static final InteractionDesign.GameDesign LEVELED_GAME = new InteractionDesign.GameDesign(List.of(),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            List.of(new InteractionDesign.Scene("ESCENA-01", "Cancha", "Main", "x"),
+                    new InteractionDesign.Scene("ESCENA-02", "Fin", "GameOver", "x")),
+            List.of(new InteractionDesign.LevelDesign("MOD-01", "ESCENA-01", List.of(), "REGLA-01"),
+                    new InteractionDesign.LevelDesign("MOD-02", "ESCENA-02", List.of(), "")));
+
+    private void withLeveledGame(int increment) throws Exception {
+        var mapper = JsonMapper.builder().build();
+        var requirements = mock(RequirementsMemoryService.class);
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                mapper.writeValueAsString(LEVELED), "APPROVED", "", java.time.Instant.now())));
+        when(requirements.currentIncrement("M-1")).thenReturn(increment);
+        strategy.setRequirements(requirements);
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                mapper.writeValueAsString(new InteractionDesign("GAME", null, LEVELED_GAME)), "APPROVED", 1, "")));
+        strategy.setInteractionDesign(designs);
+    }
+
+    // Juegos por niveles (spec 2026-10-16 contrato §4): en un juego, Vera genera después del dueño de game aunque Neo la
+    // ponga antes y las dos rutas caigan en la capa GAME.
+    @Test
+    void inAGameQaGoesLast() {
+        var plan = context().plan();
+        var vera = new PlannedTask("qa", "WORK", "TESTS", "Partidas", List.of("QA"), List.of("game/playthroughs"));
+        var neo = new PlannedTask("engineering", "WORK", "GAME", "Juego", List.of("x"), List.of("game"));
+        var ordered = DevelopmentTeamStrategy.orderTasks(List.of(vera, neo), plan, "qa"::equals);
+        assertEquals(List.of("engineering", "qa"), ordered.stream().map(PlannedTask::agentId).toList());
+    }
+
+    // Vera recibe la ficha leído del código commiteado de la escena (sin modelo).
+    @Test
+    void veraGetsTheSceneSheetFromTheCommittedCode() throws Exception {
+        var context = leveledQaContext();
+        var prompt = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), prompt.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("game/playthroughs/ESC_01_x.cs")));
+
+        strategy.execute(context, progress);
+
+        assertTrue(prompt.getValue().contains("FICHA DE LAS ESCENAS"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("- Main (game/Main.tscn, escena principal): int Level { get; }; "
+                + "void StartLevel(int level); int Puntaje"), prompt.getValue());
+        // Revisión final F1-F2: la numeración de los niveles, lo heredado de Godot y un nivel real del incremento.
+        assertTrue(prompt.getValue().contains("Level y StartLevel usan 1..N: 1 = MOD-01 Nivel 1"), prompt.getValue());
+        assertTrue(prompt.getValue().contains("Además puedes usar lo heredado de Godot: GetNode, GetNodeOrNull, HasNode"),
+                prompt.getValue());
+        assertTrue(prompt.getValue().contains("Do(main => ((Main)main).StartLevel(1))"), prompt.getValue());
+    }
+
+    // Revisión final F3: la corrección del sandbox para Vera también lleva la ficha de las escenas.
+    @Test
+    void veraRepairPromptCarriesTheSceneSheet() throws Exception {
+        var context = leveledQaContext();
+        var pass = Optional.of(new SandboxResult("PASS", List.of(
+                new SandboxResult.StepResult("build", "PASS", 0, 1000, "", 0, 0),
+                new SandboxResult.StepResult("test", "PASS", 0, 1000, "", 3, 0),
+                new SandboxResult.StepResult("smoke", "PASS", 0, 1000, "", 0, 0))));
+        when(sandbox.verify(eq("M-1"), anyString(), eq("GODOT_DOTNET_GAME")))
+                .thenReturn(Optional.of(buildFailure("game/playthroughs/ESC_01_x.cs")))
+                .thenReturn(pass);
+        var prompts = ArgumentCaptor.forClass(String.class);
+        when(runtime.generate(eq("M-1-QA"), anyString(), anyString(), prompts.capture(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("game/playthroughs/ESC_01_x.cs")))
+                .thenReturn(CompletableFuture.completedFuture(corrected("game/playthroughs/ESC_01_x.cs")));
+
+        strategy.execute(context, progress);
+
+        var repair = prompts.getAllValues().stream().filter(p -> p.contains("CORRECCIÓN DEL SANDBOX")).findFirst()
+                .orElseThrow(() -> new AssertionError(prompts.getAllValues().toString()));
+        assertTrue(repair.contains("FICHA DE LAS ESCENAS"), repair);
+    }
+
+    private TeamMissionContext leveledQaContext() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(null);
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenReturn(List.of("game/Main.cs", "game/Main.tscn"));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.cs"))).thenReturn(
+                "public partial class Main : Node2D { public int Level { get; private set; } public void StartLevel(int level) { } public int Puntaje; }");
+        var base = context();
+        var tasks = new ArrayList<>(base.plan().tasksOrEmpty());
+        tasks.add(2, new PlannedTask("qa", "WORK", "TESTS", "Partidas", List.of("QA"), List.of("game/playthroughs")));
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, tasks, List.of(), p.stackProfile(), p.boundedContexts(),
+                p.ubiquitousLanguage());
+        var members = base.team().members().stream()
+                .map(m -> m.agentId().equals("qa")
+                        ? new TeamMemberInfo(m.agentId(), m.name(), m.role(), "QA", m.capabilities(), m.model()) : m)
+                .toList();
+        var team = new TeamSnapshot("TEAM-DEVELOPMENT", "Engineering Team", "ACTIVE", "engineering", members);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-QA"), eq("qa"), eq("Vera"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("7".repeat(40),
+                        List.of("game/playthroughs/ESC_01_x.cs")));
+        when(runtime.review(eq("M-1-QA-REVIEW"), eq("M-1"), eq("qa"), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        return new TeamMissionContext("M-1", "crear un juego", team, plan);
+    }
+
+    // Juegos por niveles (spec 2026-10-16 contrato §4): Forjai commitea la escena de cada nivel del incremento, antes de Kael.
+    @Test
+    void forjaiCommitsTheSceneSkeletonsOfTheIncrementBeforeTheAgents() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        // stubHappyPath devuelve "contenido" para cualquier ruta: la escena tiene que faltar en el HEAD.
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(null);
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var inOrder = inOrder(workspace, runtime);
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"), any());
+        inOrder.verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().map(GeneratedFile::path).toList().equals(List.of("game/Main.tscn"))));
+        inOrder.verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), any());
+    }
+
+    // Review Focus 2: sin escenas en el diseño (juego viejo) no hay commit de escenas.
+    @Test
+    void withoutScenesThereIsNoSceneCommit() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), anyString(), anyString(), any());
+    }
+
+    @Test
+    void sceneSkeletonPathsFollowTheIncrement() throws Exception {
+        withLeveledGame(1);
+        assertEquals(List.of("game/Main.tscn"), strategy.sceneSkeletonPaths(context()));
+        withLeveledGame(2);
+        assertEquals(List.of("game/Main.tscn", "game/GameOver.tscn"), strategy.sceneSkeletonPaths(context()));
+    }
+
+    private void stubRoundOne(String mainTscnAtHead) throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("a".repeat(40)));
+        when(workspace.headSha("M-1")).thenReturn("a".repeat(40));
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(mainTscnAtHead);
+        when(runtime.generate(eq("M-1-ENGINEERING-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/index.html")));
+        when(runtime.generate(eq("M-1-FRONTEND-UI-R1"), anyString(), anyString(), anyString(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(CompletableFuture.completedFuture(dev("web/ui/hud.js")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-ENGINEERING-R1"), eq("engineering"), eq("Neo"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_NEO, List.of("web/index.html")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI-R1"), eq("frontend-ui"), eq("Mila"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord(SHA_MILA, List.of("web/ui/hud.js")));
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES-R1"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+    }
+
+    private static TeamMissionContext roundOne() {
+        var base = context();
+        return new TeamMissionContext(base.missionId(), base.instruction(), base.team(), base.plan(), 1);
+    }
+
+    @Test
+    void inARoundAnExistingSceneIsNeverOverwritten() throws Exception {
+        stubRoundOne("[gd_scene]");
+
+        strategy.execute(roundOne(), progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES-R1"), anyString(), anyString(), any());
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), anyString(), anyString(), any());
+    }
+
+    @Test
+    void inARoundAMissingSceneIsCommittedWithTheRoundSuffix() throws Exception {
+        stubRoundOne(null);
+
+        strategy.execute(roundOne(), progress);
+
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCENES-R1"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().map(GeneratedFile::path).toList().equals(List.of("game/Main.tscn"))));
+    }
+
+    @Test
+    void ifTheDesignCannotBeReadThereAreNoScenesAndTheMissionContinues() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        var designs = mock(InteractionDesignMemoryService.class);
+        when(designs.approved("M-1")).thenThrow(new RuntimeException("Neo4j caído"));
+        strategy.setInteractionDesign(designs);
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        assertTrue(strategy.approvedGameScenes("M-1").isEmpty());
+        strategy.execute(context(), progress);
+
+        verify(workspace, never()).commitAgentWork(eq("M-1"), eq("M-1-SCENES"), anyString(), anyString(), any());
+        verify(runtime).generate(eq("M-1-FRONTEND-UI"), anyString(), anyString(), anyString(), anyList(),
+                anyList(), anyList(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void withScenesTheOwnerOfGameMustWriteTheirScriptsAndCannotWriteTheScenes() throws Exception {
+        stubHappyPath();
+        withLeveledGame(1);
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.cs"))).thenReturn(null);
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("game/Main.tscn"))).thenReturn(null);
+        when(workspace.commitAgentWork(eq("M-1"), eq("M-1-SCENES"), eq("forjai"), eq("Forjai"), any()))
+                .thenReturn(new DevelopmentWorkspaceService.CommitRecord("8".repeat(40), List.of("game/Main.tscn")));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var checks = ArgumentCaptor.forClass(java.util.function.Function.class);
+        verify(runtime).generate(eq("M-1-ENGINEERING"), anyString(), anyString(), anyString(), anyList(), anyList(),
+                anyList(), checks.capture());
+        var gate = (java.util.function.Function<DevelopmentResult, List<String>>) checks.getValue();
+        var errors = gate.apply(new DevelopmentResult("r", List.of(new GeneratedFile("game/Main.tscn", "x"))));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("game/Main.tscn es de Forjai")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("Falta game/Main.cs")), errors.toString());
+    }
+
+    // Pong de 3 niveles (2026-10-17): dentro de la ronda, el error que el dueño no corrigió vuelve marcado.
+    @Test
+    void repairBlockMarksTheErrorsThatSurvivedThePreviousRepair() {
+        var repeated = new com.aicompany.core.agent.validation.CompilerErrorParser.CompilerError(
+                "game/playthroughs/ESC_07.cs", 170, 22, "CS1501", "No overload for method 'Do' takes 2 arguments");
+        var fresh = new com.aicompany.core.agent.validation.CompilerErrorParser.CompilerError(
+                "game/playthroughs/ESC_07.cs", 12, 1, "CS0103", "The name 'x' does not exist");
+        var previous = java.util.Set.of(DevelopmentTeamStrategy.repairKey(new com.aicompany.core.agent.validation
+                .CompilerErrorParser.CompilerError("game/playthroughs/ESC_07.cs", 162, 22, "CS1501",
+                "No overload for method 'Do' takes 2 arguments")));
+
+        var block = DevelopmentTeamStrategy.repairBlock(List.of(repeated, fresh), Map.of(), previous);
+
+        assertTrue(block.contains("CS1501: No overload for method 'Do' takes 2 arguments [REPETIDO]"), block);
+        assertFalse(block.contains("does not exist [REPETIDO]"), block);
+        assertTrue(block.contains("ATENCIÓN: 1 de estos errores ya estaban en tu corrección anterior"), block);
+        assertFalse(DevelopmentTeamStrategy.repairBlock(List.of(fresh), Map.of(), java.util.Set.of()).contains("ATENCIÓN"));
     }
 }

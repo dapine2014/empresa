@@ -16,7 +16,7 @@ class MissionControllerCostTest {
     @Test
     void theModelCostCarriesTotalCallsAndRows() {
         var costs = mock(ModelCostService.class);
-        var controller = new MissionController(mock(MissionService.class));
+        var controller = new MissionController(mock(MissionService.class), mock(com.aicompany.core.recovery.MissionRecoveryService.class));
         controller.setModelCost(costs);
         var row = new ModelUsageMemoryService.Row("bedrock", "global.moonshotai.kimi-k3", 3, 900_000, 0, 60_000, 3.6);
         when(costs.missionCost("M-9")).thenReturn(new ModelCostService.Summary(List.of(row)));

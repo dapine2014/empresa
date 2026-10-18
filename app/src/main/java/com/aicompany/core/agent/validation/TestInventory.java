@@ -1,5 +1,7 @@
 package com.aicompany.core.agent.validation;
 
+import com.aicompany.core.model.StackProfile;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -21,17 +23,35 @@ public final class TestInventory {
     private static final Pattern DART = Pattern.compile("\\b(?:test|testWidgets)\\s*\\(\\s*(['\"])(.*?)\\1");
     private static final Pattern DART_SKIP = Pattern.compile("\\bskip\\s*:\\s*(true|['\"])");
 
+    private static final Pattern PLAYTHROUGH = Pattern.compile(
+            "\\bclass\\s+(\\w+)\\s*:\\s*(?:Forjai\\.Playthroughs\\.)?Playthrough\\b");
+
     private TestInventory() {
     }
 
     public static boolean isTestFile(String path) {
-        return TestTriageValidator.isTestFile(path) && (path.endsWith(".cs") || path.endsWith(".dart"));
+        return (TestTriageValidator.isTestFile(path) && (path.endsWith(".cs") || path.endsWith(".dart")))
+                || isPlaythrough(path);
+    }
+
+    /** Spec 2026-10-14 Kael §2.3: las partidas simuladas de Vera cuentan como tests (el nombre de la clase lleva el ESC). */
+    static boolean isPlaythrough(String path) {
+        var p = OwnedPaths.normalize(path);
+        return p.endsWith(".cs") && (p.startsWith(StackProfile.PLAYTHROUGHS_ROOT + "/")
+                || p.contains("/" + StackProfile.PLAYTHROUGHS_ROOT + "/"));
     }
 
     public static Map<String, Boolean> of(Map<String, String> files) {
         var tests = new LinkedHashMap<String, Boolean>();
         files.forEach((path, content) -> {
             if (content == null || !isTestFile(path)) {
+                return;
+            }
+            if (isPlaythrough(path)) {
+                var m = PLAYTHROUGH.matcher(content);
+                while (m.find()) {
+                    tests.put(m.group(1), false);
+                }
                 return;
             }
             if (path.endsWith(".cs")) {

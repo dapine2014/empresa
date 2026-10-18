@@ -7,7 +7,14 @@ import java.util.stream.Collectors;
 /** Spec 2026-10-03 Aria §2-§3: el spec aprobado como texto (armado por Java) para los prompts y el chat. */
 public final class RequirementsText {
 
+    public static final String EXPERIENCE_LINE = "TIPO DE EXPERIENCIA: ";
+
     private RequirementsText() {
+    }
+
+    private static String storyIds(RequirementsSpec spec, int increment, String itemId) {
+        return spec.storiesOf(increment).stream().filter(s -> itemId.equals(s.contractItem()))
+                .map(RequirementsSpec.UserStory::id).collect(Collectors.joining(", "));
     }
 
     /** Se antepone a la instrucción que reciben Neo y el equipo: solo las HU del incremento, el resto explícito. */
@@ -25,25 +32,38 @@ public final class RequirementsText {
         var later = spec.userStoriesOrEmpty().stream()
                 .filter(s -> spec.storiesOf(increment).stream().noneMatch(i -> i.id().equals(s.id())))
                 .map(RequirementsSpec.UserStory::id).collect(Collectors.joining(", "));
+        var experience = spec.experienceOrNull() == null ? "" : EXPERIENCE_LINE + spec.experienceOrNull().name() + "\n";
+        var epics = !spec.epics() ? "" : "Épicas de este incremento:\n" + spec.itemsOf(increment).stream()
+                .map(i -> "- " + i.id() + " [" + ContractText.kindLabel(i.kind()) + "] " + i.name() + ": "
+                        + i.description() + " — " + storyIds(spec, increment, i.id()))
+                .collect(Collectors.joining("\n")) + "\n";
         return """
                 REQUISITOS APROBADOS POR EL FUNDADOR (Aria, Product Owner): INCREMENTO %d de %d — %s
-                Roles: %s
-                Construye SOLO estas historias, con estos escenarios (cada escenario debe poder probarse):
+                %sRoles: %s
+                %sConstruye SOLO estas historias, con estos escenarios (cada escenario debe poder probarse):
                 %s
                 NO construyas en este incremento: %s
                 Fuera de alcance del producto: %s
-                """.formatted(increment, total, goal,
+                """.formatted(increment, total, goal, experience,
                 spec.rolesOrEmpty().stream().map(RequirementsSpec.Role::name).collect(Collectors.joining(", ")),
-                stories, later.isEmpty() ? "(nada; es el último incremento)" : later,
+                epics, stories, later.isEmpty() ? "(nada; es el último incremento)" : later,
                 spec.outOfScopeOrEmpty().isEmpty() ? "(nada declarado)" : String.join("; ", spec.outOfScopeOrEmpty()));
     }
 
     public static String summary(RequirementsSpec spec) {
-        var increments = spec.incrementsOrEmpty().stream().map(i -> "Incremento " + i.number() + " (" + i.goal() + "): "
-                        + spec.storiesOf(i.number()).stream().map(s -> s.id() + " " + s.iWant())
-                        .collect(Collectors.joining(", ")))
+        var increments = spec.incrementsOrEmpty().stream().map(i -> {
+                    var body = !spec.epics()
+                            ? spec.storiesOf(i.number()).stream().map(s -> s.id() + " " + s.iWant())
+                                    .collect(Collectors.joining(", "))
+                            : spec.itemsOf(i.number()).stream().map(item -> "Épica " + item.id() + " " + item.name()
+                                    + " — " + spec.storiesOf(i.number()).stream()
+                                    .filter(s -> item.id().equals(s.contractItem()))
+                                    .map(s -> s.id() + " " + s.iWant()).collect(Collectors.joining(", ")))
+                                    .collect(Collectors.joining(" · "));
+                    return "Incremento " + i.number() + " (" + i.goal() + "): " + body;
+                })
                 .collect(Collectors.joining(". "));
-        return "Roles: " + spec.rolesOrEmpty().stream().map(RequirementsSpec.Role::name).collect(Collectors.joining(", "))
+        return (spec.experienceOrNull() == null ? "" : "Tipo: " + spec.experienceOrNull().name() + ". ") + "Roles: " + spec.rolesOrEmpty().stream().map(RequirementsSpec.Role::name).collect(Collectors.joining(", "))
                 + ". " + increments + ". Supuestos: " + String.join("; ", spec.assumptionsOrEmpty())
                 + ". Fuera de alcance: " + String.join("; ", spec.outOfScopeOrEmpty()) + ".";
     }

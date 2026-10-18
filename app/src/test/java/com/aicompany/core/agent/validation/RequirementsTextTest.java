@@ -2,6 +2,7 @@ package com.aicompany.core.agent.validation;
 
 import com.aicompany.core.agent.model.RequirementsSpec;
 import com.aicompany.core.agent.model.RequirementsSpec.*;
+import com.aicompany.core.agent.model.ClientContract;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -39,5 +40,51 @@ class RequirementsTextTest {
         assertTrue(summary.contains("Incremento 1 (MVP: clientes): HU-01 registrar un cliente"), summary);
         assertTrue(summary.contains("Supuestos: Un cliente tiene varias oportunidades"), summary);
         assertTrue(summary.contains("Fuera de alcance: Reportes"), summary);
+    }
+
+    @Test
+    void theIncrementBlockCarriesTheExperienceLine() {
+        var game = new RequirementsSpec(SPEC.summary(), SPEC.assumptions(), SPEC.outOfScope(), SPEC.roles(),
+                SPEC.userStories(), SPEC.increments(), "GAME");
+        assertTrue(RequirementsText.incrementBlock(game, 1).contains("TIPO DE EXPERIENCIA: GAME"));
+        assertTrue(RequirementsText.summary(game).contains("Tipo: GAME"));
+        assertFalse(RequirementsText.incrementBlock(SPEC, 1).contains("TIPO DE EXPERIENCIA"));
+    }
+
+    private static final RequirementsSpec PONG = new RequirementsSpec("Pong", List.of(), List.of(),
+            List.of(new Role("jugador", "juega")),
+            List.of(new UserStory("HU-01", "jugador", "mover la paleta", "devolver", List.of("c"), List.of(),
+                            List.of(new Scenario("ESC-01", "mueve", List.of("d"), List.of("c"), List.of("e"))), "MOD-01"),
+                    new UserStory("HU-02", "jugador", "jugar hasta 50 puntos", "ganar", List.of("c"), List.of(),
+                            List.of(new Scenario("ESC-02", "punto", List.of("d"), List.of("c"), List.of("e"))), "MOD-02"),
+                    new UserStory("HU-03", "jugador", "que la pelota acelere", "un reto", List.of("c"), List.of(),
+                            List.of(new Scenario("ESC-03", "rápida", List.of("d"), List.of("c"), List.of("e"))), "MOD-03")),
+            List.of(new Increment(1, "Nivel 1 jugable", List.of("HU-01", "HU-02")),
+                    new Increment(2, "Más velocidad", List.of("HU-03"))), "GAME",
+            List.of(new ClientContract.Item("MOD-01", "SYSTEM", "Controles", "paletas"),
+                    new ClientContract.Item("MOD-02", "LEVEL", "Nivel 1", "pelota normal hasta 50 puntos"),
+                    new ClientContract.Item("MOD-03", "LEVEL", "Nivel 2", "la pelota aumenta de velocidad")), true);
+
+    // Contrato (spec 2026-10-16 contrato §2): con épicas, el fundador y el equipo ven las HU agrupadas por ítem.
+    @Test
+    void theSummaryGroupsTheStoriesByEpic() {
+        var summary = RequirementsText.summary(PONG);
+        assertTrue(summary.contains("Incremento 1 (Nivel 1 jugable): Épica MOD-01 Controles — HU-01 mover la paleta"
+                + " · Épica MOD-02 Nivel 1 — HU-02 jugar hasta 50 puntos"), summary);
+        assertTrue(summary.contains("Incremento 2 (Más velocidad): Épica MOD-03 Nivel 2 — HU-03 que la pelota acelere"), summary);
+    }
+
+    @Test
+    void theIncrementBlockListsItsEpics() {
+        var block = RequirementsText.incrementBlock(PONG, 2);
+        assertTrue(block.contains("Épicas de este incremento:\n- MOD-03 [Nivel] Nivel 2: la pelota aumenta de velocidad — HU-03"), block);
+        assertFalse(block.contains("- MOD-02 [Nivel]"), block);
+    }
+
+    // Review Focus 3: sin épicas (app pequeña o misión vieja) los textos no cambian.
+    @Test
+    void withoutEpicsTheTextsDoNotChange() {
+        assertFalse(RequirementsText.summary(SPEC).contains("Épica"), RequirementsText.summary(SPEC));
+        assertFalse(RequirementsText.incrementBlock(SPEC, 1).contains("Épicas de este incremento"));
     }
 }

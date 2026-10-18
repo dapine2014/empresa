@@ -103,10 +103,10 @@ public class DependencyFetcher {
                 "-e", "HTTPS_PROXY=" + proxyUrl, "-e", "HTTP_PROXY=" + proxyUrl, "-e", "https_proxy=" + proxyUrl,
                 "-v", jobDir + ":/fetch:Z", "-w", "/fetch/proj"));
         if ("NUGET".equals(ecosystem)) {
-            args.addAll(List.of("localhost/forjai-sandbox/dotnet-app:1", "dotnet", "restore", "Fetch.csproj",
+            args.addAll(List.of(ExecutionProfile.DOTNET_APP.image(), "dotnet", "restore", "Fetch.csproj",
                     "--packages", "/fetch/packages", "--source", "https://api.nuget.org/v3/index.json"));
         } else {
-            args.addAll(List.of("-e", "PUB_CACHE=/fetch/packages", "localhost/forjai-sandbox/flutter-web-app:1",
+            args.addAll(List.of("-e", "PUB_CACHE=/fetch/packages", ExecutionProfile.FLUTTER_WEB_APP.image(),
                     "flutter", "--no-version-check", "pub", "get"));
         }
         return args;

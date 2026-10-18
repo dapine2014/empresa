@@ -48,6 +48,30 @@ public class RequirementsWriter {
         this.defaultModel = defaultModel;
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Intento extra con el respaldo pago (2026-10-16): opcional; sin él no se mira si los modelos están DOWN. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
+    private ContractMemoryService contracts;
+
+    /** Contrato (spec 2026-10-16 contrato §2): opcional; sin él (o sin contrato aprobado) Aria escribe desde el pedido. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setContracts(ContractMemoryService contracts) {
+        this.contracts = contracts;
+    }
+
+    private Optional<com.aicompany.core.agent.model.ClientContract> approvedContract(String missionId) {
+        if (contracts == null) {
+            return Optional.empty();
+        }
+        return contracts.approved(missionId).map(v -> json.readValue(v.contractJson(),
+                com.aicompany.core.agent.model.ClientContract.class));
+    }
+
     public Written write(String missionId, String instruction, Optional<RequirementsSpec> previous, String adjustment) {
         var nextVersion = requirements.latest(missionId).map(v -> v.version() + 1).orElse(1);
         var taskId = missionId + "-REQUIREMENTS" + (nextVersion > 1 ? "-V" + nextVersion : "");
@@ -57,10 +81,20 @@ public class RequirementsWriter {
         try {
             var model = company.agentModel(ARIA, defaultModel);
             var agentPrompt = prompts.activePrompt(ARIA);
-            var base = prompt(instruction, previous, adjustment);
+            var contract = approvedContract(missionId);
+            var base = prompt(instruction, previous, adjustment, contract);
             String feedback = null;
             String understood = null;
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            var paidRetry = PaidRetry.start(ARIA, model, company, modelHealth);
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS + 1; attempt++) {
+                if (attempt > MAX_ATTEMPTS) {
+                    // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                    var paid = paidRetry.next("requirements");
+                    if (paid.isEmpty()) {
+                        break;
+                    }
+                    model = paid.get();
+                }
                 var prompt = feedback == null ? base : base + """
 
                         CORRECCIÓN DEL INTENTO ANTERIOR (Java rechazó el spec por esto; corrígelo todo):
@@ -73,7 +107,9 @@ public class RequirementsWriter {
                 RequirementsSpec spec;
                 try {
                     spec = ceo.writeRequirements(ARIA, prompt, agentPrompt, model);
+                    spec = spec == null ? null : spec.withContract(contract.orElse(null));
                 } catch (Exception ex) {
+                    paidRetry.note(ex);
                     feedback = "- " + (ex.getMessage() == null ? "Respuesta no procesable." : ex.getMessage());
                     continue;
                 }
@@ -82,6 +118,9 @@ public class RequirementsWriter {
                     var specJson = json.writeValueAsString(spec);
                     var version = requirements.saveDraft(missionId, specJson, adjustment);
                     missions.updateTask(taskId, "COMPLETED", specJson);
+                    if (paidRetry.used() != null) {
+                        missions.setTaskModelUsed(taskId, paidRetry.used());
+                    }
                     log.info("MISSION {} - requirements v{} accepted stories={}", missionId, version,
                             spec.userStoriesOrEmpty().size());
                     return new Written(version, spec);
@@ -91,7 +130,7 @@ public class RequirementsWriter {
                 log.warn("MISSION {} - requirements rejected attempt={} errors={} understood={}", missionId, attempt,
                         feedback, understood.length() > 4000 ? understood.substring(0, 4000) + "…" : understood);
             }
-            var message = "Aria no produjo requisitos válidos después de " + MAX_ATTEMPTS + " intentos:\n" + feedback;
+            var message = "Aria no produjo requisitos válidos después de " + MAX_ATTEMPTS + " intentos" + paidRetry.suffix() + ":\n" + feedback;
             missions.updateTask(taskId, "FAILED", message);
             throw new IllegalStateException(message);
         } finally {
@@ -99,15 +138,28 @@ public class RequirementsWriter {
         }
     }
 
-    private String prompt(String instruction, Optional<RequirementsSpec> previous, String adjustment) {
+    private String prompt(String instruction, Optional<RequirementsSpec> previous, String adjustment,
+                          Optional<com.aicompany.core.agent.model.ClientContract> contract) {
+        var source = contract.isEmpty() ? "PEDIDO DEL FUNDADOR:\n" + instruction
+                : "CONTRATO APROBADO POR EL CLIENTE (la fuente de todo lo que escribes):\n"
+                  + com.aicompany.core.agent.validation.ContractText.forPrompt(contract.get())
+                  + "PEDIDO ORIGINAL (referencia): " + instruction;
+        var contractRules = contract.isEmpty() ? "" : """
+                - contractItem: cada historia dice a qué ítem del contrato pertenece (MOD-NN). Todo ítem del contrato
+                  tiene al menos una historia; no escribas historias de algo que el contrato no pidió. experience es la
+                  del contrato.
+                - increments: un módulo, nivel o escena por incremento cuando se puede usar o jugar solo; si no,
+                  agrúpalos y explica por qué en el goal. En un juego, un nivel o escena va completo en un solo
+                  incremento y el incremento 1 debe ser jugable de punta a punta. Un SYSTEM puede crecer en varios.
+                """;
         var base = """
                 Eres Aria, Product Owner del Development Group de Forjai. Decides QUÉ se construye, nunca CÓMO
                 (tecnología, arquitectura y código son del equipo). Convierte el pedido del fundador en requisitos.
 
-                PEDIDO DEL FUNDADOR:
                 %s
 
                 REGLAS:
+                - experience: GAME si el pedido es un juego; APP si las personas usan el producto con pantallas; NONE solo si no tiene ninguna interfaz (API o servicio).
                 - roles: quién usa el producto (p. ej. comprador, administrador, paciente, jugador, sistema externo),
                   cada uno con name y description. Cada historia usa uno de esos roles en "role".
                 - userStories: HU-01, HU-02… con iWant, soThat, acceptanceCriteria (verificables) y scenarios ESC-01,
@@ -118,15 +170,19 @@ public class RequirementsWriter {
                 - assumptions: cada ambigüedad del pedido y cómo la resolviste. outOfScope: lo que dejas afuera a
                   propósito. No inventes requisitos: lo que agregues va como supuesto.
                 - Español, frases cortas.
+                """.formatted(source) + contractRules + """
 
                 Responde SOLO este JSON, con exactamente estos nombres de campos (las listas siempre como listas):
-                {"summary": "...", "assumptions": ["..."], "outOfScope": ["..."],
+                {"summary": "...", "experience": "APP|GAME|NONE", "assumptions": ["..."], "outOfScope": ["..."],
                  "roles": [{"name": "...", "description": "..."}],
                  "userStories": [{"id": "HU-01", "role": "<name de un rol>", "iWant": "...", "soThat": "...",
                    "acceptanceCriteria": ["..."], "dependsOn": ["HU-.."],
                    "scenarios": [{"id": "ESC-01", "title": "...", "given": ["..."], "when": ["..."], "then": ["..."]}]}],
                  "increments": [{"number": 1, "goal": "...", "userStoryIds": ["HU-01", "HU-02"]}]}
-                """.formatted(instruction);
+                """;
+        if (contract.isPresent()) {
+            base = base.replace("\"dependsOn\": [\"HU-..\"],", "\"dependsOn\": [\"HU-..\"], \"contractItem\": \"MOD-01\",");
+        }
         if (previous.isEmpty()) {
             return base;
         }

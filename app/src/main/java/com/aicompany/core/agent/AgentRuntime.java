@@ -201,8 +201,11 @@ public class AgentRuntime {
             // anterior, no solo del intento actual.
             var confirmedEvidenceUrls = new LinkedHashSet<String>();
             String validationFeedback = null;
+            // Decisión del fundador (2026-10-16): agotados los intentos, uno más con el respaldo pago.
+            var paidRetry = com.aicompany.core.service.PaidRetry.start(agentId, model, companyMemory, modelHealth);
+            var lastAttempt = MAX_RESULT_RETRIES;
 
-            for (int attempt = 0; attempt <= MAX_RESULT_RETRIES; attempt++) {
+            for (int attempt = 0; attempt <= lastAttempt; attempt++) {
 
                 var prompt = buildPrompt(
                         agentId,
@@ -249,7 +252,9 @@ public class AgentRuntime {
                             missionId,
                             agentId,
                             "RETRYING",
-                            "Reintentando resultado del agente. Intento "
+                            attempt > MAX_RESULT_RETRIES
+                                    ? "Reintentando resultado del agente con el respaldo pago " + model + "."
+                                    : "Reintentando resultado del agente. Intento "
                                     + (attempt + 1)
                                     + " de "
                                     + (MAX_RESULT_RETRIES + 1)
@@ -279,7 +284,17 @@ public class AgentRuntime {
                                     "El agente no devolvió una respuesta procesable."
                             );
 
-                    if (attempt == MAX_RESULT_RETRIES) {
+                    paidRetry.note(ex);
+
+                    if (attempt == lastAttempt) {
+
+                        var paid = paidRetry.next("agent-task");
+                        if (paid.isPresent()) {
+                            model = paid.get();
+                            lastAttempt++;
+                            validationFeedback = reason;
+                            continue;
+                        }
 
                         // Último intento: sí queremos el stack trace completo,
                         // esto ya no se va a reintentar.
@@ -297,7 +312,7 @@ public class AgentRuntime {
                                         + " no produjo un resultado "
                                         + "procesable después de "
                                         + (MAX_RESULT_RETRIES + 1)
-                                        + " intentos: "
+                                        + " intentos" + paidRetry.suffix() + ": "
                                         + reason,
                                 ex
                         );
@@ -357,14 +372,21 @@ public class AgentRuntime {
                                     binding.errors()
                             );
 
-                    if (attempt == MAX_RESULT_RETRIES) {
+                    if (attempt == lastAttempt) {
+
+                        var paid = paidRetry.next("agent-task");
+                        if (paid.isPresent()) {
+                            model = paid.get();
+                            lastAttempt++;
+                            continue;
+                        }
 
                         throw new IllegalStateException(
                                 "El agente " + agentId
                                         + " buscó evidencia real pero no la "
                                         + "citó en su resultado después de "
                                         + (MAX_RESULT_RETRIES + 1)
-                                        + " intentos: "
+                                        + " intentos" + paidRetry.suffix() + ": "
                                         + validationFeedback
                         );
                     }
@@ -386,12 +408,19 @@ public class AgentRuntime {
                                 validation.errors()
                         );
 
-                if (attempt == MAX_RESULT_RETRIES) {
+                if (attempt == lastAttempt) {
+
+                    var paid = paidRetry.next("agent-task");
+                    if (paid.isPresent()) {
+                        model = paid.get();
+                        lastAttempt++;
+                        continue;
+                    }
 
                     throw new IllegalStateException(
                             "Resultado de agente inválido después de "
                                     + (MAX_RESULT_RETRIES + 1)
-                                    + " intentos: "
+                                    + " intentos" + paidRetry.suffix() + ": "
                                     + validationFeedback
                     );
                 }
@@ -430,7 +459,11 @@ public class AgentRuntime {
                     resultJson
             );
 
-            markIfDoneByFallback(taskId, agentId);
+            if (paidRetry.used() != null) {
+                memory.setTaskModelUsed(taskId, paidRetry.used());
+            } else {
+                markIfDoneByFallback(taskId, agentId);
+            }
 
             memory.recordEvidence(
                     taskId,

@@ -292,6 +292,39 @@ class ProductOrchestratorTest {
         assertTrue(saved.isEmpty());
     }
 
+    // Spec misiones durables §3: BLOCKED e INTERRUPTED esperan al fundador; el ciclo no avanza ni falla.
+    @Test
+    void aBlockedOrInterruptedBuildIsWaitingForTheFounder() {
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        for (var status : List.of(MissionStatus.BLOCKED, MissionStatus.INTERRUPTED)) {
+            building(p, status);
+            when(products.view("P1")).thenReturn(Optional.of(view(p, List.of())));
+            orchestrator.tick();
+        }
+        verify(automation, never()).buildFinished(anyString());
+        assertTrue(saved.isEmpty());
+    }
+
+    // Revisión final Aria (16): la construcción espera los requisitos de Aria; el ciclo lo anota una vez y no avanza.
+    @Test
+    void aBuildWaitingForTheRequirementsIsAnnouncedOnce() {
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        building(p, MissionStatus.AWAITING_SPEC_APPROVAL);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of())));
+        when(runs.steps("RUN-1")).thenReturn(List.of());
+
+        orchestrator.tick();
+
+        verify(runs).addStep(eq("RUN-1"), eq("AWAITING_REQUIREMENTS"), contains("MISSION-B"));
+        verify(automation, never()).buildFinished(anyString());
+        assertTrue(saved.isEmpty());
+
+        when(runs.steps("RUN-1")).thenReturn(List.of(new com.aicompany.core.model.OrchestratorStep(java.time.Instant.now(),
+                "AWAITING_REQUIREMENTS", "x")));
+        orchestrator.tick();
+        verify(runs, times(1)).addStep(eq("RUN-1"), eq("AWAITING_REQUIREMENTS"), anyString());
+    }
+
     @Test
     void aFinishedBuildThatMeetsEverythingEndsTheRunAsReady() {
         var building = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
@@ -311,7 +344,7 @@ class ProductOrchestratorTest {
         var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
         building(p, MissionStatus.AWAITING_INVESTOR);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción asociada con su validación en VERIFIED."))));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(0);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(0);
 
         orchestrator.tick();
 
@@ -320,12 +353,52 @@ class ProductOrchestratorTest {
         assertTrue(saved.isEmpty() || lastSaved().status() == OrchestratorStatus.BUILDING);
     }
 
+    // Revisión final misiones durables (3): la corrección automática se ocupa; el orquestador no pide su propia ronda.
+    @Test
+    void aFailedBuildUnderAutomaticCorrectionIsWaitedForAndAnnouncedOnce() {
+        var recovery = mock(com.aicompany.core.recovery.MissionRecoveryService.class);
+        orchestrator.setRecovery(recovery);
+        when(recovery.willCorrect("MISSION-B")).thenReturn(true);
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        building(p, MissionStatus.FAILED);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción verificada."))));
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(0);
+        when(runs.steps("RUN-1")).thenReturn(List.of());
+
+        orchestrator.tick();
+
+        verify(missions, never()).recordDecision(anyString(), any());
+        verify(automation, never()).buildFinished(anyString());
+        verify(runs).addStep(eq("RUN-1"), eq("AUTO_CORRECTION"), contains("MISSION-B"));
+        assertTrue(saved.isEmpty());
+
+        when(runs.steps("RUN-1")).thenReturn(List.of(new com.aicompany.core.model.OrchestratorStep(java.time.Instant.now(),
+                "AUTO_CORRECTION", "x")));
+        orchestrator.tick();
+        verify(runs, times(1)).addStep(eq("RUN-1"), eq("AUTO_CORRECTION"), anyString());
+    }
+
+    @Test
+    void aFailedBuildTheCorrectionWillNotTakeGetsTheOrchestratorRound() {
+        var recovery = mock(com.aicompany.core.recovery.MissionRecoveryService.class);
+        orchestrator.setRecovery(recovery);
+        when(recovery.willCorrect("MISSION-B")).thenReturn(false);
+        var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
+        building(p, MissionStatus.FAILED);
+        when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción verificada."))));
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(0);
+
+        orchestrator.tick();
+
+        verify(missions).recordDecision(eq("MISSION-B"), any());
+    }
+
     @Test
     void withoutRoundsLeftTheRunFailsWithWhatIsMissing() {
         var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
         building(p, MissionStatus.FAILED);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción verificada."))));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(2);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(2);
 
         orchestrator.tick();
 
@@ -473,7 +546,7 @@ class ProductOrchestratorTest {
         building(p, MissionStatus.FAILED);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta el cliente objetivo."))));
         when(ceo.proposeProductSheet(anyString(), anyString(), anyString())).thenReturn(sheet(null, 39, 5));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(0);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(0);
 
         orchestrator.tick();
 
@@ -487,7 +560,7 @@ class ProductOrchestratorTest {
         var p = product("P1", CatalogStatus.IN_CONSTRUCTION, "product", "SOFTWARE", 1);
         building(p, MissionStatus.FAILED);
         when(products.view("P1")).thenReturn(Optional.of(view(p, List.of("Falta una misión de construcción asociada con su validación en VERIFIED."))));
-        when(missionMemory.evidenceRound("MISSION-B")).thenReturn(2);
+        when(missions.evidenceRoundsUsed("MISSION-B")).thenReturn(2);
 
         orchestrator.tick();
 

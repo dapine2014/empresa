@@ -28,6 +28,20 @@ class MissionServiceTest {
     private final TeamMemoryService teamMemory = mock(TeamMemoryService.class);
     private final DevelopmentWorkspaceService workspace = mock(DevelopmentWorkspaceService.class);
 
+    // Bitácora (spec 2026-10-17): la API acota el límite y sin bitácora devuelve vacío.
+    @Test
+    void eventsAreCappedAndEmptyWithoutLog() {
+        var service = new MissionService(mock(MissionMemoryService.class), mock(MissionExecutor.class),
+                mock(CompanyEventPublisher.class), teamMemory, workspace);
+        assertEquals(List.of(), service.events("M-1", 100));
+        var log = mock(com.aicompany.core.event.MissionEventLog.class);
+        service.setMissionEventLog(log);
+        service.events("M-1", 10_000);
+        verify(log).recent("M-1", 500);
+        service.events("M-1", 0);
+        verify(log).recent("M-1", 1);
+    }
+
     @Test
     void startPersistsMissionAndSubmitsItForAsynchronousExecution() {
         var memory = mock(MissionMemoryService.class);
@@ -162,8 +176,39 @@ class MissionServiceTest {
     private final MissionService roundService =
             new MissionService(roundMemory, roundExecutor, roundEvents, teamMemory, workspace, policies);
 
+    {
+        when(roundMemory.claimNextRound(anyString(), anyInt(), anySet())).thenReturn(true);
+    }
+
     private static MissionResponse mission(String id, MissionStatus status) {
         return new MissionResponse(id, status, "TEST", 95, "x", "x", Instant.parse("2026-09-27T00:00:00Z"), null);
+    }
+
+    // Spec misiones durables §3: sobre una BLOCKED, "más evidencia" sigue con la indicación sin gastar rondas de evidencia.
+    @Test
+    void aFounderIndicationOnABlockedMissionIsACorrectionRound() {
+        var recovery = mock(com.aicompany.core.recovery.RecoveryMemoryService.class);
+        roundService.setRecoveryMemory(recovery);
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.BLOCKED)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(5);
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(1.0);
+        when(roundMemory.tasks("MISSION-1")).thenReturn(List.of());
+        when(roundMemory.claimNextRound(eq("MISSION-1"), eq(5), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)))).thenReturn(true);
+        when(roundExecutor.correctAsync(anyString(), anyInt(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+
+        roundService.recordDecision("MISSION-1", new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "usa otra librería"));
+
+        verify(roundMemory).claimNextRound(eq("MISSION-1"), eq(5), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)));
+        verify(recovery).addCorrectionRound(eq("MISSION-1"), argThat(r -> r.round() == 6 && r.byFounder() && r.failures().size() == 1));
+        verify(roundExecutor).correctAsync(eq("MISSION-1"), eq(6), argThat(s -> s.startsWith("INDICACIÓN DEL FUNDADOR: usa otra librería")));
+        verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void aBlockedMissionCanBeApprovedOrRejected() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.BLOCKED)));
+        roundService.recordDecision("MISSION-1", new DecisionCommand(InvestorDecision.APPROVE, "así está bien"));
+        verify(roundMemory).updateMission(eq("MISSION-1"), eq(MissionStatus.COMPLETED), anyInt(), anyString(), anyString());
     }
 
     @Test
@@ -180,7 +225,7 @@ class MissionServiceTest {
         assertEquals(1, response.evidenceRound());
         verify(roundMemory).recordDecision(eq("MISSION-1"), anyString(), eq(InvestorDecision.REQUEST_MORE_EVIDENCE),
                 eq("Quiero precios reales"));
-        verify(roundMemory).setEvidenceRound("MISSION-1", 1);
+        verify(roundMemory).claimNextRound(eq("MISSION-1"), eq(0), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)));
         verify(roundExecutor).reexecuteAsync("MISSION-1", "Buscar un servicio", 1, "Quiero precios reales");
     }
 
@@ -207,6 +252,20 @@ class MissionServiceTest {
                 new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));
 
         assertTrue(ex.getMessage().contains("2 de 2"), ex.getMessage());
+        verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
+        verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
+    }
+
+    // Revisión final Aria (12): dos "pide más evidencia" simultáneos (doble clic) lanzan una sola ronda.
+    @Test
+    void aConcurrentRequestThatLosesTheRoundRecordsNothing() {
+        when(roundMemory.find("MISSION-1")).thenReturn(Optional.of(mission("MISSION-1", MissionStatus.AWAITING_INVESTOR)));
+        when(roundMemory.evidenceRound("MISSION-1")).thenReturn(0);
+        when(policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS)).thenReturn(2.0);
+        when(roundMemory.claimNextRound(eq("MISSION-1"), eq(0), argThat(s -> s.contains(MissionStatus.BLOCKED) && s.contains(MissionStatus.FAILED) && s.contains(MissionStatus.AWAITING_INVESTOR)))).thenReturn(false);
+
+        assertThrows(IllegalStateException.class, () -> roundService.recordDecision("MISSION-1",
+                new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, "más")));
         verify(roundMemory, never()).recordDecision(any(), any(), any(), any());
         verify(roundExecutor, never()).reexecuteAsync(any(), any(), anyInt(), any());
     }
@@ -324,6 +383,17 @@ class MissionServiceTest {
         assertFalse(service.delete("MISSION-404"));
         verify(memory, never()).deleteMission(anyString());
         verifyNoInteractions(eventPublisher);
+    }
+
+    // Spec misiones durables §4: INTERRUPTED y BLOCKED se pueden borrar.
+    @Test
+    void interruptedAndBlockedMissionsCanBeDeleted() {
+        for (var status : List.of(MissionStatus.INTERRUPTED, MissionStatus.BLOCKED)) {
+            var memory = mock(MissionMemoryService.class);
+            when(memory.find("M-X")).thenReturn(Optional.of(missionIn("M-X", status)));
+            var service = new MissionService(memory, mock(MissionExecutor.class), mock(CompanyEventPublisher.class), teamMemory, workspace);
+            assertTrue(service.delete("M-X"));
+        }
     }
 
     @Test

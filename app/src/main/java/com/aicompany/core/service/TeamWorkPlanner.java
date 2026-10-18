@@ -77,6 +77,14 @@ public class TeamWorkPlanner {
         this.defaultAgentModel = defaultAgentModel;
     }
 
+    private ModelHealthService modelHealth;
+
+    /** Intento extra con el respaldo pago (2026-10-16): opcional; sin él no se mira si los modelos están DOWN. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setModelHealth(ModelHealthService modelHealth) {
+        this.modelHealth = modelHealth;
+    }
+
     private AgentAvailability agentAvailability;
 
     /** Decisión del fundador (2026-10-01): el líder solo ve a los miembros encendidos (opcional en tests). */
@@ -108,6 +116,18 @@ public class TeamWorkPlanner {
     /** Equipo real (Neo4j) para una ronda de evidencia que reutiliza el plan guardado. */
     public TeamSnapshot teamSnapshot(String teamId) {
         return teamMemory.snapshot(teamId);
+    }
+
+    /**
+     * FALTANTES (Bloque 1, m-2): una ronda de evidencia reutiliza el plan guardado; antes se vuelve a validar con las reglas
+     * y el equipo encendido de hoy (un plan de TEAM-ENGINEERING podía darle código a Neo). Sin modelo ni tareas: el plan
+     * guardado ya tiene sus rutas resueltas.
+     */
+    public java.util.List<String> revalidate(String missionId, String teamId, TeamPlan plan, TeamExecutionMode mode) {
+        var connections = databaseConnections == null
+                ? java.util.List.<com.aicompany.core.database.DatabaseConnection>of()
+                : databaseConnections.connectionsOf(missionId);
+        return validator.validate(plan, onlyEnabledMembers(teamMemory.snapshot(teamId)), mode, connections);
     }
 
     public TeamPlanResult plan(String missionId, String teamId, String instruction, TeamExecutionMode mode, int round) {
@@ -152,7 +172,18 @@ public class TeamWorkPlanner {
             String previousPlanJson = null;
             var maxRetries = mode == TeamExecutionMode.DEVELOPMENT ? MAX_DEVELOPMENT_PLAN_RETRIES : MAX_PLAN_RETRIES;
 
-            for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            var paidRetry = PaidRetry.start(leaderId, model, companyMemory, modelHealth);
+
+            for (int attempt = 0; attempt <= maxRetries + 1; attempt++) {
+
+                if (attempt > maxRetries) {
+                    // Decisión del fundador (2026-10-16): un intento más con el respaldo pago, con la corrección.
+                    var paid = paidRetry.next("team-plan");
+                    if (paid.isEmpty()) {
+                        break;
+                    }
+                    model = paid.get();
+                }
 
                 var prompt = feedback == null ? basePrompt : basePrompt + correctionBlock(feedback, previousPlanJson);
 
@@ -161,6 +192,7 @@ public class TeamWorkPlanner {
                 try {
                     plan = ceoService.planTeamWork(leaderId, prompt, leaderPrompt, model);
                 } catch (Exception ex) {
+                    paidRetry.note(ex);
                     feedback = "- " + safeMessage(ex, "Respuesta no procesable.");
                     publishRejected(missionId, taskId, leaderId, attempt, feedback);
                     continue;
@@ -182,12 +214,15 @@ public class TeamWorkPlanner {
                 var errors = new ArrayList<String>(validator.validate(plan, team, mode, connections));
                 resolverErrors.stream().filter(error -> !errors.contains(error)).forEach(errors::add);
                 if (mode == TeamExecutionMode.DEVELOPMENT) {
-                    errors.addAll(com.aicompany.core.agent.validation.RequestedComponents.errors(instruction, plan));
+                    errors.addAll(instructionRules(instruction, plan, team));
                 }
 
                 if (errors.isEmpty()) {
 
                     memory.updateTask(taskId, "COMPLETED", toJson(plan));
+                    if (paidRetry.used() != null) {
+                        memory.setTaskModelUsed(taskId, paidRetry.used());
+                    }
 
                     events.publish("EMPRESA_TEAM_PLAN_CREATED", missionId, taskId, leaderId,
                             Map.of("teamId", teamId, "tasks", plan.tasksOrEmpty().size()));
@@ -204,7 +239,7 @@ public class TeamWorkPlanner {
             }
 
             var message = "El líder " + leaderId + " no produjo un plan válido para " + teamId
-                    + " después de " + (maxRetries + 1) + " intentos:\n" + feedback;
+                    + " después de " + (maxRetries + 1) + " intentos" + paidRetry.suffix() + ":\n" + feedback;
 
             memory.updateTask(taskId, "FAILED", message);
 
@@ -379,5 +414,12 @@ public class TeamWorkPlanner {
 
     private String safeMessage(Exception ex, String defaultMessage) {
         return ex.getMessage() == null || ex.getMessage().isBlank() ? defaultMessage : ex.getMessage();
+    }
+
+    /** Spec 2026-10-14 Kael (Review Focus 1): con el tipo declarado por Aria manda ExperienceRule, no la heurística. */
+    static java.util.List<String> instructionRules(String instruction, TeamPlan plan, TeamSnapshot team) {
+        return com.aicompany.core.agent.validation.ExperienceRule.declared(instruction).isPresent()
+                ? com.aicompany.core.agent.validation.ExperienceRule.errors(instruction, plan, team)
+                : com.aicompany.core.agent.validation.RequestedComponents.errors(instruction, plan);
     }
 }

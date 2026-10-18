@@ -51,13 +51,15 @@ EMPRESA_FALLBACK_DOWN, EMPRESA_FALLBACK_UP (`ModelHealthService.probeFallbacks`,
 
 EMPRESA_ORCHESTRATOR_STARTED, EMPRESA_ORCHESTRATOR_CHOSE, EMPRESA_ORCHESTRATOR_BUILDING, EMPRESA_ORCHESTRATOR_READY, EMPRESA_ORCHESTRATOR_FAILED, EMPRESA_ORCHESTRATOR_STOPPED (`ProductOrchestrator`, `agentId="orchestrator"`, sin `missionId`; spec `2026-09-28-orquestador-de-producto-design.md`): pasos del ciclo de producto autónomo. `data`: `{runId}`, `{runId, productId, reason}`, `{runId, productId, missionId, teamId}` y `{runId, detail}` para los tres finales (`STOPPED` = el fundador pausó o retiró el producto). EMPRESA_ORCHESTRATOR_PAUSED: el orquestador se pausó solo tras 2 ciclos seguidos en `FAILED` (contados desde la última vez que se encendió); `data` `{reason}`.
 
+EMPRESA_FREE_MODEL_CHAIN_UPDATED (`FreeModelChainService`, `agentId="human"`): el fundador guardó la cadena de modelos gratis desde Settings. `data: {models}` (la lista en orden).
+
 EMPRESA_API_KEY_UPDATED (`ApiKeyService`, `agentId="human"`): el fundador cambió la key de un proveedor de modelos desde Settings, después de que NVIDIA la aceptara. `data: {provider}`. Nunca lleva la key ni parte de ella.
 
 EMPRESA_AGENT_ENABLED_CHANGED (`AgentEnabledController`, `agentId="human"`): el fundador encendió o apagó un agente desde Agents. `data: {agentId, enabled}`. Un agente apagado nunca recibe una llamada al modelo.
 
 EMPRESA_DATABASE_CONNECTION_SAVED, EMPRESA_DATABASE_CONNECTION_DELETED (`DatabaseConnectionService`, `agentId="human"`): el fundador guardó (tras probarla) o borró una conexión de base de datos. `data: {connectionId, name, engine}` / `{connectionId}`. Nunca lleva host, usuario ni clave.
 
-EMPRESA_DATABASE_SCHEMA_APPLIED, EMPRESA_DATABASE_SCHEMA_FAILED (`DatabaseApplyService`, `agentId="forjai"`, `taskId=<missionId>-DATABASE`): Java aplicó las migraciones de Diego en el servidor del fundador, o falló. `data: {connectionName, applied, failedVersion?, error?}`; el error nunca incluye la clave.
+EMPRESA_DATABASE_SCHEMA_APPLIED, EMPRESA_DATABASE_SCHEMA_FAILED (`DatabaseApplyService`, `agentId="forjai"`, `taskId=<missionId>-DATABASE`): Java aplicó las migraciones de Diego en el servidor del fundador, o falló. `data: {connectionName, environment, applied, failedVersion?, error?}` (uno por conexión de la cascada TEST → PRODUCTION; las posteriores a una falla no publican nada); el error nunca incluye la clave.
 
 EMPRESA_MISSION_DELETED (`MissionService.delete`, `agentId="human"` siempre): se publica cuando el fundador borra una misión terminada (`AWAITING_INVESTOR`/`FAILED`/`COMPLETED`/`CANCELLED`) vía `DELETE /api/company/missions/{missionId}` — limpieza de misiones de prueba. `data: {previousStatus}`. Nunca se publica para `MISSION-001` (protegida), una misión en curso, ni una con clientes/ventas reales (esas se rechazan antes de borrar). Es el último evento de ese `missionId`: su historial previo en Kafka queda, pero ya no existe en Neo4j.
 
@@ -83,8 +85,52 @@ EMPRESA_OUTREACH_DRAFTED, EMPRESA_OUTREACH_APPROVED, EMPRESA_OUTREACH_SENT, EMPR
 
 EMPRESA_REQUIREMENTS_READY (`MissionExecutor`, `agentId="product-owner"`; spec `2026-10-03-aria-v1-design.md`): Aria escribió requisitos válidos y la misión quedó en `AWAITING_SPEC_APPROVAL`. `data: {version, stories}`.
 
-EMPRESA_REQUIREMENTS_APPROVED, EMPRESA_REQUIREMENTS_REJECTED (`MissionService.decideRequirements`, `agentId="human"`): el fundador aprobó (la misión sigue con el plan de Neo del incremento 1) o rechazó (la misión queda `CANCELLED`) la versión vigente. `data: {version}`. Con `SPEC_APPROVAL_REQUIRED = 0` la versión queda `APPROVED` por `policy` sin este evento.
+EMPRESA_REQUIREMENTS_APPROVED, EMPRESA_REQUIREMENTS_REJECTED (`MissionService.decideRequirements`, `agentId="human"`): el fundador aprobó (la misión sigue con el plan de Neo del incremento 1) o rechazó (la misión queda `CANCELLED`) la versión vigente. `data: {version}`. El rechazo publica además `EMPRESA_MISSION_UPDATED` con `CANCELLED`. Con `SPEC_APPROVAL_REQUIRED = 0` la versión queda `APPROVED` por `policy` y se publican igual `EMPRESA_REQUIREMENTS_READY` y `EMPRESA_REQUIREMENTS_APPROVED` (`agentId="policy"`, `data: {version, approvedBy: "policy"}`).
 
 EMPRESA_REQUIREMENTS_ADJUSTED (`MissionExecutor`, `agentId="human"`): Aria rehízo los requisitos con el ajuste del fundador (versión nueva, vuelve a esperar aprobación). `data: {version, instruction}`.
 
+EMPRESA_INTERACTION_DESIGN_READY (`MissionExecutor`, `agentId="interaction-design"`; spec `2026-10-14-kael-hibrido-design.md`): Kael diseñó la interacción (apps) o el juego sobre las HU de Aria, con un diseño válido. Solo en misiones con `experience` `APP`/`GAME`. `data: {version, specVersion}` (`specVersion` = la versión de HU sobre la que se hizo). Orden en el flujo: `EMPRESA_REQUIREMENTS_READY` primero, después este.
+
+EMPRESA_INTERACTION_DESIGN_ADJUSTED (`MissionExecutor`, `agentId="human"`): Kael rehizo el diseño por un ajuste del fundador dirigido a él (`target: KAEL`, chat «para MISSION-X, Kael: …»); la misión vuelve a esperar aprobación. `data: {version, instruction}`. Un ajuste a Aria publica `EMPRESA_REQUIREMENTS_ADJUSTED` y, al rediseñar Kael sobre las HU nuevas, `EMPRESA_INTERACTION_DESIGN_READY`.
+
+`EMPRESA_REQUIREMENTS_APPROVED` y `EMPRESA_REQUIREMENTS_REJECTED` siguen siendo la decisión conjunta de HU y diseño; en misiones con diseño, `EMPRESA_REQUIREMENTS_APPROVED` agrega `interactionDesignVersion` a `data` (opcional: ausente en misiones sin diseño, `NONE` o anteriores a Kael).
+
 EMPRESA_INCREMENT_STARTED (`MissionExecutor.buildIncrementAsync`, `agentId="human"`): arrancó el incremento N sobre el mismo repositorio, como ronda de la misión que no consume `MAX_EVIDENCE_ROUNDS`. `data: {increment, round}`.
+
+EMPRESA_MISSION_RESUMED (`MissionExecutor.resumeAsync`, `agentId="system"`; spec misiones durables): una misión del Development Group se retomó tras un reinicio (o con "reanuda MISSION-X" / `POST /missions/{id}/resume`). `data: {stage, round, kind}` — `stage` = `ResumePoint.Stage` (dónde sigue), `round` = ronda en curso, `kind` = `ResumePoint.Kind`.
+
+EMPRESA_MISSION_INTERRUPTED (`MissionExecutor.interrupt`, `agentId="system"`): la misión no se pudo retomar (huérfana de discovery u otro equipo, o del Development Group sin punto de retoma) y quedó `INTERRUPTED`. `data: {}`.
+
+EMPRESA_MISSION_CORRECTION_STARTED (`MissionExecutor.correctAsync`, `agentId="system"`): arrancó una ronda de corrección automática (o la que pide el fundador con indicación) para una misión con validación `FAILED`. `data: {round}`.
+
+EMPRESA_MISSION_BLOCKED (`MissionExecutor.block`, `agentId="system"`): un freno (`MAX_AUTO_CORRECTIONS` o `MAX_MISSION_COST_USD`; "sin avance" ya no bloquea desde la revisión 2026-10-06) detuvo la corrección; la misión queda `BLOCKED` y manda correo. `data: {reason}`.
+
+EMPRESA_CORRECTION_STRATEGY_PROPOSED (`MissionExecutor`, `agentId="engineering"`; revisión 2026-10-06): ante un error persistente, Neo propuso una estrategia nueva (con búsqueda web) para la ronda de corrección. `data: {round, fingerprint, sources}` — `fingerprint` = identidad de la falla repetida, `sources` = URL leídas.
+
+EMPRESA_JOINT_REVIEW_COMPLETED (`JointReviewService`, `agentId="engineering"`; spec revisión conjunta): terminó una ronda de la revisión conjunta de Neo y Aria. `data: {round, status, contradictions, resolvedBy: {requirements, design}}` — `status` = `COHERENT|RESOLVED|UNRESOLVED|FAILED|SKIPPED`, `resolvedBy` = cuántas contradicciones se resolvieron cambiando las HU o el diseño.
+EMPRESA_CONTRACT_READY (`MissionExecutor`, `agentId` = Aria; spec contrato 2026-10-16): Aria dejó el contrato del cliente en `DRAFT` y la misión espera al fundador ("Contrato listo (Aria)"). `data: {version, items}` — `items` = cantidad de ítems `MOD-NN` del contrato.
+
+EMPRESA_CONTRACT_APPROVED (`MissionService`, `agentId="human"`, o `MissionExecutor`, `agentId="policy"`): se aprobó el contrato (botón o chat del fundador, o la policy). `data: {version}`, más `approvedBy: "policy"` cuando lo aprobó la policy.
+
+EMPRESA_CONTRACT_ADJUSTED (`MissionExecutor`, `agentId="human"`): el fundador pidió ajustar el contrato; Aria lo reescribe en una versión nueva. `data: {version, instruction}`.
+
+EMPRESA_CONTRACT_REJECTED (`MissionService`, `agentId="human"`): el fundador rechazó el contrato. `data: {version}`.
+
+## Bitácora (2026-10-17)
+
+Eventos que antes solo quedaban en el log. `MissionEventText` los resume en español y `MissionEventLog` los guarda por misión.
+
+| Tipo | agentId | data |
+|---|---|---|
+| `EMPRESA_SANDBOX_STARTED` | `sandbox` | `round` (int, vuelta del ciclo), `commitSha` |
+| `EMPRESA_SANDBOX_FINISHED` | `sandbox` | `round`, `overall`, `failedStep` (`""` si pasó), `testsPassed`, `testsFailed`, `compileErrors` (int) |
+| `EMPRESA_REPAIR_REQUESTED` | el agente dueño | `errors` (int), `repeated` (int), `files` (nombres de archivo, sin carpetas ni repetidos) |
+| `EMPRESA_TEST_TRIAGE_COMPLETED` | el líder | `verdicts` (lista `"<test> → <VERDICT>"`), o bien `error` (texto) |
+| `EMPRESA_TASK_ATTEMPT_REJECTED` | el agente de la tarea | `attempt` (int, 1-based), `reasons` (las 3 primeras, de 200 caracteres como máximo) |
+| `EMPRESA_MODEL_SWITCHED` | el actor | `operation`, `from`, `to`, `kind` (`FREE` \| `PAID` \| `LOCAL`); solo dentro de una misión |
+| `EMPRESA_DELIVERY_PACKAGED` | `delivery` | `increment` (int), `status` (`READY` \| `PARTIAL` \| `FAILED`), `targets` (ids de los compilados generados), `path` (zip de la entrega). Nunca lleva la clave de Android |
+| `EMPRESA_DELIVERY_FAILED` | `delivery` | `increment` (int), `error` (texto; se rompió el empaquetado, no solo un target) |
+
+`EMPRESA_SANDBOX_VERIFICATION_COMPLETED` (resultado final, una sola vez) suma `round` (-1), `failedStep` y `compileErrors`.
+
+`EMPRESA_MODEL_SWITCHED` se deduplica por `missionId|actor|from|to|kind` (una vez cada 10 minutos). No hay `kind` `PAID_RETRY`: el reintento pago de `DevelopmentRuntime` queda como `EMPRESA_TASK_RETRY` con su motivo en el resumen.

@@ -2,6 +2,7 @@ package com.aicompany.core.agent.validation;
 
 import com.aicompany.core.agent.model.TeamPlan;
 import com.aicompany.core.agent.model.TeamPlan.PlannedTask;
+import com.aicompany.core.model.TeamExecutionMode;
 import com.aicompany.core.model.TeamMemberInfo;
 import com.aicompany.core.model.TeamSnapshot;
 import org.junit.jupiter.api.Test;
@@ -103,6 +104,28 @@ class TeamPlanResolverTest {
 
         assertEquals(List.of(), of(result.plan(), "engineering").get(0).ownedPaths());
         assertEquals(List.of(), of(result.plan(), "interaction-design").get(0).ownedPaths());
+    }
+
+    @Test
+    void veraOwnsThePlaythroughsInAGame() {
+        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", "Pong", List.of(
+                t("interaction-design", "WORK", "godot"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+
+        var vera = of(result.plan(), "qa").stream().filter(x -> "WORK".equals(x.kind())).findFirst().orElseThrow();
+        assertTrue(vera.ownedPaths().contains("game/playthroughs"), vera.ownedPaths().toString());
+        var kael = of(result.plan(), "interaction-design").get(0);
+        assertTrue(kael.ownedPaths().contains("game"), kael.ownedPaths().toString());
+        assertEquals(List.of(), result.errors());
+    }
+
+    @Test
+    void aResolvedGodotPlanWithKaelAndVeraPassesTheValidator() {
+        var result = resolver.resolve(plan("GODOT_DOTNET_GAME", "Pong", List.of(
+                t("interaction-design", "WORK", "godot"), t("qa", "WORK", "tests"))), DEVELOPMENT);
+        var vera = of(result.plan(), "qa").stream().filter(x -> "WORK".equals(x.kind())).findFirst().orElseThrow();
+        assertTrue(vera.ownedPaths().contains("game/playthroughs"));
+        var errors = new TeamPlanValidator().validate(result.plan(), DEVELOPMENT, TeamExecutionMode.DEVELOPMENT);
+        assertEquals(List.of(), errors);
     }
 
     @Test

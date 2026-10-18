@@ -25,9 +25,11 @@ import com.aicompany.core.model.AgentTask;
 import com.aicompany.core.model.DecisionCommand;
 import com.aicompany.core.model.InvestorDecision;
 import com.aicompany.core.model.MissionResponse;
+import com.aicompany.core.model.RequirementsView;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.OpportunitySummary;
 import com.aicompany.core.model.PolicyKey;
+import com.aicompany.core.model.JointReviewView;
 import com.aicompany.core.model.ProductStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +42,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -91,8 +94,11 @@ public class ChatIntentRouter {
     private static final Pattern TEAM_ID_TOKEN =
             Pattern.compile("\\bTEAM-[A-Z]+(?:-[A-Z]+)*\\b");
 
+    /** Revisión final QA (M7): un id de misión nunca termina en guion ("MISSION-9-" → MISSION-9). */
+    private static final String MISSION_REF = "MISSION-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*";
+
     private static final Pattern MISSION_ID =
-            Pattern.compile("(?i)(MISSION-[\\w-]+)");
+            Pattern.compile("(?i)(MISSION-\\w+(?:-\\w+)*)");
 
     private static final Pattern APPROVE =
             Pattern.compile("(?i)\\b(aprueba|apruebo|aprobar)\\b");
@@ -333,6 +339,7 @@ public class ChatIntentRouter {
 
         var agents = companyMemory.agents();
         var mentions = MentionResolver.resolve(message, agents);
+        var normalized = normalize(message);
 
         if (!mentions.unknown().isEmpty()) {
             var known = agents.stream().map(a -> a.get("name") + " (" + a.get("id") + ")")
@@ -340,11 +347,215 @@ public class ChatIntentRouter {
             return List.of(ceoReply("No conozco a " + mentions.unknown() + " en Forjai. Agentes: " + known + "."));
         }
 
+        // Bitácora (spec 2026-10-17): «¿qué hace Iris?» sin @ lo responde Java, sin modelo.
+        if (mentions.agentIds().isEmpty() && !MISSION_ID.matcher(message).find()
+                && STATUS_QUESTION.matcher(normalized).find()) {
+            var named = agents.stream().filter(a -> a.get("name") != null && Pattern.compile("\\b" + Pattern.quote(
+                    normalize(String.valueOf(a.get("name")))) + "\\b").matcher(normalized).find()).toList();
+            if (!named.isEmpty()) {
+                return named.stream().map(a -> {
+                    var id = String.valueOf(a.get("id"));
+                    var name = String.valueOf(a.get("name"));
+                    var off = disabledReply(a, id, name);
+                    return off != null ? off : new ChatReply(id, name, describe(id, name));
+                }).toList();
+            }
+        }
+
         if (!mentions.agentIds().isEmpty()) {
             return mentions.agentIds().stream().map(id -> agentReply(id, message, agents)).toList();
         }
 
+        // Bitácora (spec 2026-10-17): la bitácora de una misión y la de desarrollo las arma Java.
+        // Sin «¿¡» ni «?!.» de los bordes: normalize no los quita y «¿qué está pasando en desarrollo?» no matcheaba.
+        var bare = normalized.replaceAll("^[¿¡\\s]+|[?!.\\s]+$", "");
+        // Entrega del producto (spec 2026-10-17): dónde está el zip, generarlo y las últimas entregas, todo en Java.
+        if (deliveryService != null) {
+            var delivery = deliveryReply(message, bare);
+            if (delivery != null) {
+                return List.of(delivery);
+            }
+        }
+        if (MISSION_LOG.matcher(bare).find()) {
+            var id = MISSION_ID.matcher(message);
+            if (id.find()) {
+                var missionId = id.group(1).toUpperCase(Locale.ROOT);
+                if (missionMemory.find(missionId).isEmpty()) {
+                    return List.of(ceoReply(missionId + " no existe."));
+                }
+                conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+                var lines = events(missionId, 15).stream().map(AgentActivity::eventLine).toList();
+                return List.of(ceoReply(lines.isEmpty() ? missionId + ": sin bitácora (misión anterior al 2026-10-17)"
+                        : "Bitácora de " + missionId + " (hora Colombia, más reciente primero):\n- " + String.join("\n- ", lines)));
+            }
+        }
+        if (DEVELOPMENT_LOG.matcher(bare).matches()) {
+            var states = liveStates(true);
+            return List.of(ceoReply(states.isEmpty() ? "No hay misiones activas en desarrollo."
+                    : states.stream().map(s -> AgentActivity.missionBlock(s, 5)).collect(Collectors.joining("\n\n"))));
+        }
+
         return List.of(ceoReply(resolve(message)));
+    }
+
+    private com.aicompany.core.delivery.DeliveryService deliveryService;
+    private com.aicompany.core.delivery.DeliveryPaths deliveryPaths;
+
+    /** Entrega del producto (spec 2026-10-17). Sin el bean, las reglas de entrega no aplican. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeliveryService(com.aicompany.core.delivery.DeliveryService deliveryService) {
+        this.deliveryService = deliveryService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeliveryPaths(com.aicompany.core.delivery.DeliveryPaths deliveryPaths) {
+        this.deliveryPaths = deliveryPaths;
+    }
+
+    private static final Pattern DELIVERY_QUERY = Pattern.compile("(entregas?|donde esta|descargar)( de| la)? mission-");
+    private static final Pattern DELIVERY_MAKE = Pattern.compile("genera(r)? (la )?entrega( de)? mission-");
+    private static final Pattern DELIVERY_LIST = Pattern.compile("^entregas$");
+
+    private ChatReply deliveryReply(String message, String bare) {
+        var make = DELIVERY_MAKE.matcher(bare).find();
+        if (!make && !DELIVERY_QUERY.matcher(bare).find()) {
+            if (!DELIVERY_LIST.matcher(bare).matches()) {
+                return null;
+            }
+            var recent = deliveryService.recent(5);
+            return ceoReply(recent == null || recent.isEmpty() ? "Todavía no hay entregas."
+                    : "Últimas entregas:\n- " + recent.stream().map(r -> r.missionId() + ": " + deliveryLine(r))
+                    .collect(Collectors.joining("\n- ")));
+        }
+        var id = MISSION_ID.matcher(message);
+        if (!id.find()) {
+            return null;
+        }
+        var missionId = id.group(1).toUpperCase(Locale.ROOT);
+        if (missionMemory.find(missionId).isEmpty()) {
+            return ceoReply(missionId + " no existe.");
+        }
+        conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+        if (make) {
+            try {
+                var made = deliveryService.deliverVerified(missionId);
+                return ceoReply(missionId + ": " + deliveryDetail(made));
+            } catch (IllegalStateException ex) {
+                return ceoReply(ex.getMessage());
+            }
+        }
+        var found = deliveryService.list(missionId);
+        if (found == null || found.isEmpty()) {
+            return ceoReply(missionId + ": sin entrega todavía. Si tiene un incremento VERIFIED, usa «Generar entrega» en "
+                    + "la misión o escribe «genera la entrega de " + missionId + "».");
+        }
+        return ceoReply(missionId + ": " + deliveryDetail(found.get(0)));
+    }
+
+    private String deliveryLine(com.aicompany.core.delivery.DeliveryRecord r) {
+        var where = r.path() == null || r.path().isBlank() ? "sin archivo" : displayPath(r.path());
+        return "incremento " + r.increment() + " (" + r.status() + "): " + where;
+    }
+
+    private String deliveryDetail(com.aicompany.core.delivery.DeliveryRecord r) {
+        var sb = new StringBuilder(deliveryLine(r));
+        if (r.error() != null && !r.error().isBlank()) {
+            sb.append("\nMotivo: ").append(r.error());
+        }
+        if (r.targets() != null) {
+            r.targets().stream().filter(t -> !"PASS".equals(t.status())).forEach(t -> sb.append("\n- ").append(t.name())
+                    .append(" (").append(t.status()).append(")")
+                    .append(t.reason() == null || t.reason().isBlank() ? "" : ": " + t.reason()));
+        }
+        return sb.toString();
+    }
+
+    private String displayPath(String path) {
+        return deliveryPaths == null ? path : deliveryPaths.display(path);
+    }
+
+    private com.aicompany.core.event.MissionEventLog missionEventLog;
+
+    /** Bitácora (spec 2026-10-17). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMissionEventLog(com.aicompany.core.event.MissionEventLog missionEventLog) {
+        this.missionEventLog = missionEventLog;
+    }
+
+    static final Pattern STATUS_QUESTION = Pattern.compile(
+            "(que (estas|esta|estan) (haciendo|realizando|trabajando)|en que (estas|esta|andas|anda)\\b"
+                    + "|que (haces|hace)(?!\\s+falta\\b)(\\s+@?[\\p{L}\\p{N}_-]+)?\\s*[?!.]*\\s*$)");
+    private static final Pattern MISSION_LOG = Pattern.compile("(que paso|bitacora|historial)( en| de)? mission-");
+    private static final Pattern DEVELOPMENT_LOG = Pattern.compile("^(que (esta pasando|pasa) en desarrollo|bitacora)\\??$");
+    static final String REAL_DATA_RULE = "Responde solo con lo que está en estos datos. No prometas tiempos, avisos ni pasos "
+            + "que no figuren aquí; si algo no está, di que no lo sabes. Las misiones que no aparecen aquí no están activas.";
+    static final String STATE_RULE = "Sobre misiones y trabajo en curso responde solo con este estado; no prometas tiempos "
+            + "ni avisos; las misiones que no aparecen aquí no están activas.";
+    private static final java.util.Set<String> LOG_READERS = java.util.Set.of("engineering", "product-owner");
+
+    /** Misiones vivas con sus tareas y eventos; nunca lanza si la memoria devuelve null o vacío. */
+    private List<AgentActivity.MissionState> liveStates(boolean developmentOnly) {
+        var all = missionMemory.findAll(200);
+        if (all == null) {
+            return List.of();
+        }
+        return all.stream()
+                .filter(m -> m != null && AgentActivity.live(m.status()))
+                .filter(m -> !developmentOnly || "TEAM-DEVELOPMENT".equals(m.teamId()))
+                .map(m -> stateOf(m, 20))
+                .toList();
+    }
+
+    private AgentActivity.MissionState stateOf(MissionResponse mission, int maxEvents) {
+        var tasks = missionMemory.tasks(mission.missionId());
+        return new AgentActivity.MissionState(mission, tasks == null ? List.of() : tasks, events(mission.missionId(), maxEvents));
+    }
+
+    private List<com.aicompany.core.model.MissionEventView> events(String missionId, int limit) {
+        try {
+            var found = missionEventLog == null ? null : missionEventLog.recent(missionId, limit);
+            return found == null ? List.of() : found;
+        } catch (Exception ex) {
+            return List.of();
+        }
+    }
+
+    private String describe(String agentId, String name) {
+        return AgentActivity.describe(agentId, name, liveStates(false), Instant.now());
+    }
+
+    /** Bitácora (spec 2026-10-17): Neo y Aria leen la bitácora; los demás, su estado real. Nunca el historial solo. */
+    private MissionData withRealState(MissionData data, String message, String agentId, String name) {
+        String block;
+        String rule = REAL_DATA_RULE;
+        if ("ceo".equals(agentId)) {
+            return data;
+        }
+        if (LOG_READERS.contains(agentId)) {
+            var id = MISSION_ID.matcher(message);
+            String empty = "No hay misiones activas en desarrollo.";
+            List<AgentActivity.MissionState> states;
+            if (id.find()) {
+                var missionId = id.group(1).toUpperCase(Locale.ROOT);
+                var found = missionMemory.find(missionId);
+                states = found == null || found.isEmpty() ? List.of() : List.of(stateOf(found.get(), 20));
+                empty = missionId + ": no existe.";
+            } else {
+                states = liveStates(true).stream().limit(3).toList();
+            }
+            block = "BITÁCORA REAL DE DESARROLLO (Java):\n" + (states.isEmpty() ? empty
+                    : states.stream().map(s -> AgentActivity.missionBlock(s, 20)).collect(Collectors.joining("\n\n")));
+        } else if (!MISSION_ID.matcher(message).find()) {
+            block = "ESTADO REAL (Java):\n" + describe(agentId, name);
+            rule = STATE_RULE;
+        } else {
+            return data;
+        }
+        var body = data.injected() && data.message().startsWith(CeoService.JAVA_MEMORY_DATA_MARKER)
+                ? data.message().substring(CeoService.JAVA_MEMORY_DATA_MARKER.length()).strip()
+                : "MENSAJE DEL FUNDADOR:\n" + message;
+        return new MissionData(CeoService.JAVA_MEMORY_DATA_MARKER + "\n" + block + "\n" + rule + "\n\n" + body,
+                true, data.anyValidated());
     }
 
     private boolean isGovernance(String message) {
@@ -359,19 +570,173 @@ public class ChatIntentRouter {
                 || MISSION_START.matcher(message).find()
                 || detectFreeMissionStart(normalize(message))
                 || detectDecision(message) != null
-                || isRequirementsCommand(message);
+                || isRequirementsCommand(message)
+                || RESUME.matcher(normalize(message)).find()
+                || VERIFY.matcher(normalize(message)).find()
+                || CANCEL.matcher(normalize(message)).find();
+    }
+
+    /** Cancelar una misión en curso (2026-10-15): "cancela MISSION-X". */
+    private static final Pattern CANCEL = Pattern.compile("(?i)^\\s*(?:por favor\\s+)?cancela(?:r)?\\s+(?:la\\s+misi[oó]n\\s+)?("
+            + MISSION_REF + ")\\b");
+
+    private String handleCancel(String message) {
+        var m = CANCEL.matcher(normalize(message));
+        if (!m.find()) {
+            return null;
+        }
+        var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        try {
+            missionService.cancel(missionId, "human");
+            return missionId + " cancelada. El trabajo en curso se detiene en su próximo paso (la llamada al modelo que ya "
+                    + "estaba corriendo termina sola); no se retoma.";
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
+    }
+
+    /** Revisión 2026-10-06 §5 (manos humanas): "verifica MISSION-X". */
+    private static final Pattern VERIFY = Pattern.compile("(?i)^\\s*verifica(?:r)?\\s+(" + MISSION_REF + ")\\b");
+
+    private String handleVerify(String message) {
+        var m = VERIFY.matcher(normalize(message));
+        if (!m.find() || recoveryService == null) {
+            return null;
+        }
+        var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        try {
+            recoveryService.verify(missionId);
+            return "Verificando " + missionId + " sobre el último commit, sin modelos. Te aviso el resultado.";
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
+    }
+
+    private static final Pattern RESUME = Pattern.compile("(?i)^\\s*(?:reanuda|retoma|reanudar|retomar)\\s+(" + MISSION_REF + ")\\b");
+
+    private com.aicompany.core.recovery.MissionRecoveryService recoveryService;
+    private com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryService(com.aicompany.core.recovery.MissionRecoveryService recoveryService) {
+        this.recoveryService = recoveryService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryMemory(com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory) {
+        this.recoveryMemory = recoveryMemory;
+    }
+
+    /** Spec misiones durables §4: "reanuda MISSION-X" (gobernanza). */
+    private String handleResume(String message) {
+        var m = RESUME.matcher(normalize(message));
+        if (!m.find() || recoveryService == null) {
+            return null;
+        }
+        var missionId = m.group(1).toUpperCase(Locale.ROOT);
+        try {
+            recoveryService.resume(missionId);
+            return "Retomé " + missionId + " donde quedó, sin gastar rondas. Te aviso cuando vuelva a esperar tu decisión.";
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return "No se pudo: " + ex.getMessage();
+        }
+    }
+
+    /** Spec misiones durables §4: línea de la recuperación en "dame un status". */
+    private String recoveryLine(List<MissionResponse> all) {
+        var parts = new ArrayList<String>();
+        if (recoveryService != null && !recoveryService.resumedSinceStart().isEmpty()) {
+            parts.add("Retomadas tras el reinicio: " + String.join(", ", recoveryService.resumedSinceStart()) + ".");
+        }
+        if (recoveryMemory != null) {
+            var max = (int) companyPolicyService.activeValue(PolicyKey.MAX_AUTO_CORRECTIONS);
+            var correcting = all.stream().filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR
+                            && m.status() != MissionStatus.FAILED && m.status() != MissionStatus.COMPLETED
+                            && m.status() != MissionStatus.CANCELLED && m.status() != MissionStatus.BLOCKED
+                            && m.status() != MissionStatus.INTERRUPTED && m.status() != MissionStatus.AWAITING_SPEC_APPROVAL)
+                    .flatMap(m -> {
+                        var rounds = recoveryMemory.correctionRounds(m.missionId());
+                        var round = missionMemory.evidenceRound(m.missionId());
+                        var current = rounds.stream().filter(r -> r.round() == round).findFirst();
+                        if (current.isEmpty()) {
+                            return java.util.stream.Stream.<String>empty();
+                        }
+                        if (current.get().byFounder()) {
+                            return java.util.stream.Stream.of(m.missionId() + " (con tu indicación)");
+                        }
+                        // Revisión final (8): la misma cuenta que el freno (automáticas del incremento tras la última del fundador).
+                        // Revisión 2026-10-06 §5: también desde la última verificación humana (marca de reinicio).
+                        var increment = current.get().increment();
+                        var n = com.aicompany.core.recovery.CorrectionRound.automaticSinceFounder(
+                                rounds.stream().filter(r -> r.round() <= round).toList(), increment,
+                                recoveryMemory.counterResetAfter(m.missionId(), increment)).size();
+                        return java.util.stream.Stream.of(m.missionId() + " (ronda " + n + " de " + max + ")");
+                    }).toList();
+            if (!correcting.isEmpty()) {
+                parts.add("En corrección automática: " + String.join(", ", correcting) + ".");
+            }
+            // Revisión 2026-10-06 §3: la última estrategia nueva de cada misión en corrección, con el dominio de su fuente.
+            var strategyLines = all.stream().filter(m -> correcting.stream().anyMatch(c -> c.startsWith(m.missionId() + " ")))
+                    .map(m -> recoveryMemory.strategies(m.missionId()).stream().reduce((a, b) -> b)
+                            .map(st -> m.missionId() + ": nueva estrategia: " + shorten(st.strategy())
+                                    + sourceSuffix(st.sources())))
+                    .flatMap(java.util.Optional::stream).toList();
+            if (!strategyLines.isEmpty()) {
+                parts.add(String.join(" ", strategyLines.stream().map(l -> l + ".").toList()));
+            }
+        }
+        var blocked = all.stream().filter(m -> m.status() == MissionStatus.BLOCKED).map(MissionResponse::missionId).toList();
+        if (!blocked.isEmpty()) {
+            parts.add("Bloqueadas (esperan tu indicación): " + String.join(", ", blocked) + ".");
+        }
+        var interrupted = all.stream().filter(m -> m.status() == MissionStatus.INTERRUPTED).map(MissionResponse::missionId).toList();
+        if (!interrupted.isEmpty()) {
+            parts.add("Interrumpidas: " + String.join(", ", interrupted) + " (\"reanuda <misión>\").");
+        }
+        return parts.isEmpty() ? "" : " " + String.join(" ", parts);
     }
 
     /** Spec 2026-10-03 Aria §2: los comandos de requisitos son gobernanza (antes de las menciones). */
-    private static boolean isRequirementsCommand(String message) {
+    private boolean isRequirementsCommand(String message) {
         var normalized = normalize(message);
         return BUILD_INCREMENT.matcher(normalized).find() || SHOW_STORIES.matcher(normalized).find()
                 || APPROVE_STORIES.matcher(normalized).find() || REJECT_STORIES.matcher(normalized).find()
-                || ADJUST_STORIES.matcher(message).find();
+                || SHOW_DESIGN.matcher(normalized).find() || SHOW_CONTRACT.matcher(normalized).find()
+                || ADJUST_KAEL.matcher(message).find()
+                || requirementsAdjustment(message) != null || reviewQuery(normalized) != null;
+    }
+
+    /**
+     * Revisión final Aria (13): "para MISSION-X: …" es un ajuste a Aria solo si la misión espera la aprobación de sus
+     * requisitos; si no, el mensaje sigue el ruteo normal (p. ej. "para MISSION-X: pide más evidencia …").
+     */
+    private Matcher requirementsAdjustment(String message) {
+        var adjust = ADJUST_STORIES.matcher(message);
+        if (!adjust.find()) {
+            return null;
+        }
+        var missionId = adjust.group(1).toUpperCase(Locale.ROOT);
+        var waiting = missionService.requirements(missionId)
+                .map(v -> MissionStatus.AWAITING_SPEC_APPROVAL.name().equals(v.status())).orElse(false);
+        return waiting ? adjust : null;
+    }
+
+    private boolean contractWaiting(String missionId) {
+        return missionService.requirements(missionId).map(RequirementsView::contract)
+                .map(c -> "DRAFT".equals(c.status())).orElse(false);
     }
 
     private ChatReply ceoReply(String text) {
         return new ChatReply("ceo", companyMemory.agentName("ceo").orElse("CEO"), text);
+    }
+
+    /** Decisión del fundador (2026-10-01): un agente apagado no responde y su modelo no se llama. */
+    private ChatReply disabledReply(Map<String, Object> agent, String agentId, String name) {
+        if (Boolean.FALSE.equals(agent.get("enabled"))) {
+            return new ChatReply(agentId, name, name + " está apagada/o: mientras Forjai se entrena solo trabajan Alex "
+                    + "y el Development Group. Se activa en Agents.");
+        }
+        return null;
     }
 
     private ChatReply agentReply(String agentId, String message, List<Map<String, Object>> agents) {
@@ -379,13 +744,18 @@ public class ChatIntentRouter {
         var agent = agents.stream().filter(a -> agentId.equals(a.get("id"))).findFirst().orElseThrow();
         var name = String.valueOf(agent.get("name"));
 
-        // Decisión del fundador (2026-10-01): un agente apagado no responde y su modelo no se llama.
-        if (Boolean.FALSE.equals(agent.get("enabled"))) {
-            return new ChatReply(agentId, name, name + " está apagada/o: mientras Forjai se entrena solo trabajan Alex "
-                    + "y el Development Group. Se activa en Agents.");
+        var off = disabledReply(agent, agentId, name);
+        if (off != null) {
+            return off;
         }
 
-        var data = missionData(message, agentId);
+        // Bitácora (spec 2026-10-17): el estado lo responde Java, sin modelo.
+        if (STATUS_QUESTION.matcher(normalize(message)).find() && !MISSION_ID.matcher(message).find()) {
+            return new ChatReply(agentId, name, describe(agentId, name));
+        }
+
+        var missionData = missionData(message, agentId);
+        var data = withRealState(missionData, message, agentId, name);
 
         try {
             String text;
@@ -400,7 +770,7 @@ public class ChatIntentRouter {
                         data.message(), this::answerMemoryTopic, promptMemory.activePrompt(agentId),
                         companyMemory.agentModel(agentId, defaultCeoModel));
             }
-            return new ChatReply(agentId, name, flagValidationOverclaim("ceo".equals(agentId) ? text : cutForeignSpeakers(text, agentId, agents), data));
+            return new ChatReply(agentId, name, flagValidationOverclaim("ceo".equals(agentId) ? text : cutForeignSpeakers(text, agentId, agents), missionData));
         } catch (Exception ex) {
             return new ChatReply(agentId, name, name + " no pudo responder: "
                     + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
@@ -610,6 +980,20 @@ public class ChatIntentRouter {
             return handleProspectConvert(prospectConvert.group(1));
         }
 
+        // Va antes de PRODUCT_COMMAND, que también acepta "reanuda <algo>".
+        var resumeReply = handleResume(message);
+        if (resumeReply != null) {
+            return resumeReply;
+        }
+        var cancelReply = handleCancel(message);
+        if (cancelReply != null) {
+            return cancelReply;
+        }
+        var verifyReply = handleVerify(message);
+        if (verifyReply != null) {
+            return verifyReply;
+        }
+
         var productCommand = PRODUCT_COMMAND.matcher(normalize(message));
         if (productCommand.matches()) {
             return handleProductCommand(productCommand.group(1), productCommand.group(2), message);
@@ -733,9 +1117,9 @@ public class ChatIntentRouter {
     private static final Pattern DATABASE_USE = Pattern.compile(
             "\\busa(?:r)?\\s+(?:la\\s+)?base\\s+(?:de\\s+datos\\s+)?([a-z0-9]+(?:-[a-z0-9]+)+|[a-z0-9]*[0-9][a-z0-9]*)\\b");
     private static final Pattern DATABASE_APPLY =
-            Pattern.compile("(?i)\\baplica(?:r)?\\s+el\\s+esquema\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+            Pattern.compile("(?i)\\baplica(?:r)?\\s+el\\s+esquema\\s+de\\s+(" + MISSION_REF + ")");
     private static final Pattern DATABASE_STATUS =
-            Pattern.compile("(?i)c[oó]mo\\s+va\\s+la\\s+base\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+            Pattern.compile("(?i)c[oó]mo\\s+va\\s+la\\s+base\\s+de\\s+(" + MISSION_REF + ")");
 
     private com.aicompany.core.database.DatabaseConnectionService databaseConnections;
     private com.aicompany.core.database.DatabaseApplyService databaseApply;
@@ -763,13 +1147,13 @@ public class ChatIntentRouter {
     }
 
     private static final Pattern MISSION_COST = Pattern.compile(
-            "(?i)\\bcuanto\\s+(?:costo|cuesta|ha\\s+costado|gasto|se\\s+gasto\\s+en)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\bcuanto\\s+(?:costo|cuesta|ha\\s+costado|gasto|se\\s+gasto\\s+en)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern MONTH_COST = Pattern.compile(
             "(?i)\\bcuanto\\s+(?:hemos\\s+gastado|se\\s+ha\\s+gastado|gastamos|llevamos(?:\\s+gastado)?|cuestan?)\\b.*\\bmodelos?\\b");
 
     private static final Pattern SCENARIO_COVERAGE = Pattern.compile(
             "(?i)(?:\\b(?:que|cuales)\\s+escenarios\\b|\\bcobertura\\s+de\\s+(?:escenarios|tests|pruebas)\\b"
-                    + "|\\bescenarios\\s+(?:cubre|cubiertos|faltan|fallan)\\b)[^.;]*?(MISSION-[A-Za-z0-9-]+)");
+                    + "|\\bescenarios\\s+(?:cubre|cubiertos|faltan|fallan)\\b)[^.;]*?(" + MISSION_REF + ")");
     private static final tools.jackson.databind.json.JsonMapper CHECKS_JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
     /** QA casos de uso (spec 2026-10-05 §6): la cobertura de escenarios de la última validación, armada en Java. */
@@ -779,19 +1163,50 @@ public class ChatIntentRouter {
             return null;
         }
         var missionId = m.group(1).toUpperCase(Locale.ROOT);
-        var latest = missionMemory.tasks(missionId).stream()
-                .filter(t -> "VALIDATION".equals(t.kind()) && t.staticChecks() != null
-                        && t.staticChecks().contains("SCENARIO_COVERAGE"))
-                .max(java.util.Comparator.comparing(AgentTask::updatedAt, java.util.Comparator.nullsFirst(
-                        java.util.Comparator.naturalOrder())));
+        var latest = latestCoverage(missionId);
         if (latest.isEmpty()) {
             return missionId + " no tiene cobertura de escenarios (misión sin requisitos de Aria o sin validar).";
         }
+        var coverage = latest.get();
+        return "Cobertura de escenarios de " + missionId + " (validación " + coverage.validationStatus() + "): "
+                + coverage.detail() + (coverage.report().isBlank() ? "" : "\n" + coverage.report());
+    }
+
+    private record Coverage(String validationStatus, String detail, String report) {
+        /** "17/19" al inicio del detalle de SCENARIO_COVERAGE (lo arma ScenarioCoverage.check). */
+        String ratio() {
+            var m = COVERAGE_RATIO.matcher(detail);
+            return m.find() ? m.group(1) : "?";
+        }
+    }
+
+    private static final Pattern COVERAGE_RATIO = Pattern.compile("^(\\d+/\\d+)");
+
+    /** La cobertura de escenarios de la última validación de la misión (QA casos de uso), si la tiene. */
+    private Optional<Coverage> latestCoverage(String missionId) {
+        return latestCheck(missionId, "SCENARIO_COVERAGE").map(c -> c.coverage());
+    }
+
+    private record CheckResult(String status, String detail, Coverage coverage) {
+    }
+
+    /** El chequeo estático {@code check} de la última validación de la misión, si lo tiene. */
+    private Optional<CheckResult> latestCheck(String missionId, String check) {
+        var latest = missionMemory.tasks(missionId).stream()
+                .filter(t -> "VALIDATION".equals(t.kind()) && t.staticChecks() != null
+                        && t.staticChecks().contains(check))
+                .max(java.util.Comparator.comparing(AgentTask::updatedAt, java.util.Comparator.nullsFirst(
+                        java.util.Comparator.naturalOrder())));
+        if (latest.isEmpty()) {
+            return Optional.empty();
+        }
         var detail = "";
+        var status = "";
         try {
             for (var node : CHECKS_JSON.readTree(latest.get().staticChecks())) {
-                if ("SCENARIO_COVERAGE".equals(node.path("check").asString())) {
+                if (check.equals(node.path("check").asString())) {
                     detail = node.path("detail").asString();
+                    status = node.path("status").asString();
                 }
             }
         } catch (Exception ex) {
@@ -799,8 +1214,7 @@ public class ChatIntentRouter {
         }
         var report = latest.get().result() == null ? "" : latest.get().result()
                 .replace(DevelopmentTeamStrategy.COVERAGE_REPORT, "");
-        return "Cobertura de escenarios de " + missionId + " (validación " + latest.get().validationStatus() + "): "
-                + detail + (report.isBlank() ? "" : "\n" + report);
+        return Optional.of(new CheckResult(status, detail, new Coverage(latest.get().validationStatus(), detail, report)));
     }
 
     /** Costo real por misión (2026-10-04): respuesta armada en Java desde (:ModelUsage). */
@@ -841,6 +1255,45 @@ public class ChatIntentRouter {
         return names;
     }
 
+    /** Una línea por ambiente (Spec Diego ambientes §4): versiones aplicadas, y el motivo si no se aplicó. */
+    static String databaseStatusText(String id, com.aicompany.core.database.DatabaseApplyService.MissionDatabaseStatus s) {
+        var failed = s.environments().stream().filter(e -> "FAILED".equals(e.state())).findFirst().orElse(null);
+        var lines = new java.util.ArrayList<String>();
+        for (var e : s.environments()) {
+            var head = e.environment() + " (" + e.connection() + ")";
+            switch (e.state()) {
+                case "APPLIED" -> lines.add(head + " ✅ " + (e.applied().isEmpty() ? "sin migraciones nuevas" : versionRange(e.applied())));
+                case "FAILED" -> lines.add(head + " ❌ " + (e.applied().isEmpty() ? "" : "aplicadas " + versionRange(e.applied()) + ", ")
+                        + "falló V" + e.failedVersion() + (e.detail() == null ? "" : ": " + e.detail()));
+                case "SKIPPED" -> lines.add(head + " — sin aplicar" + (failed == null ? ""
+                        : ": falló " + failed.environment() + " en V" + failed.failedVersion()));
+                default -> lines.add(head + " ⏸ sin aplicar");
+            }
+        }
+        if (lines.isEmpty()) {
+            lines.add("sin conexión cargada (se carga en Settings → Bases de datos)");
+        }
+        return "Base de " + id + ":\n" + String.join("\n", lines)
+                + (s.migrations().isEmpty() ? "" : "\nMigraciones: " + s.migrations().stream()
+                .map(m -> "V" + m.version() + " " + m.description()).collect(java.util.stream.Collectors.joining("; ")));
+    }
+
+    /** [1,2,3] -> "V1–V3"; [1,3] -> "V1, V3". */
+    private static String versionRange(List<Integer> versions) {
+        var sorted = versions.stream().sorted().toList();
+        var parts = new java.util.ArrayList<String>();
+        int i = 0;
+        while (i < sorted.size()) {
+            int j = i;
+            while (j + 1 < sorted.size() && sorted.get(j + 1) == sorted.get(j) + 1) {
+                j++;
+            }
+            parts.add(j > i ? "V" + sorted.get(i) + "–V" + sorted.get(j) : "V" + sorted.get(i));
+            i = j + 1;
+        }
+        return String.join(", ", parts);
+    }
+
     /** Comandos y consultas de bases de datos; null si el mensaje no es de este tema. */
     private String databaseReply(String message) {
         var apply = DATABASE_APPLY.matcher(message);
@@ -854,11 +1307,7 @@ public class ChatIntentRouter {
         var status = DATABASE_STATUS.matcher(message);
         if (status.find() && databaseApply != null) {
             var id = status.group(1).toUpperCase(java.util.Locale.ROOT);
-            return databaseApply.status(id).map(s -> "Base de " + id + " (" + s.connectionName() + "): "
-                    + (s.migrations().isEmpty() ? "sin migraciones" : s.migrations().stream()
-                    .map(m -> "V" + m.version() + " " + m.description() + " — " + m.state())
-                    .collect(java.util.stream.Collectors.joining("; ")))
-                    + (s.lastResult() == null ? "" : ". Último resultado: " + s.lastResult()))
+            return databaseApply.status(id).map(s -> databaseStatusText(id, s))
                     .orElse(id + " no declara base de datos.");
         }
         var normalized = normalize(message);
@@ -933,16 +1382,70 @@ public class ChatIntentRouter {
 
     /** Spec 2026-10-03 Aria §2: comandos de requisitos; van antes que la decisión del inversionista. */
     private static final Pattern SHOW_STORIES = Pattern.compile(
-            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cuales son)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(" + MISSION_REF + ")");
+    /** Spec 2026-10-14 Kael: ver el diseño de interacción y ajustarlo solo con Kael ("para MISSION-X, Kael: …"). */
+    private static final Pattern SHOW_DESIGN = Pattern.compile(
+            "(?i)^\\s*(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:el\\s+)?dise(?:n|ñ)o"
+                    + "(?:\\s+(?:de\\s+kael|de\\s+interaccion|del\\s+juego|de\\s+pantallas))?\\s+de\\s+(" + MISSION_REF + ")");
+    /** Contrato (spec 2026-10-16): "muéstrame el contrato de MISSION-X". */
+    private static final Pattern SHOW_CONTRACT = Pattern.compile(
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:el\\s+)?contrato\\s+de\\s+(" + MISSION_REF + ")");
+    /** Revisión conjunta (spec 2026-10-15): "muéstrame la revisión de MISSION-X" (responde aunque no haya revisión). */
+    private static final Pattern SHOW_REVIEW = Pattern.compile(
+            "(?i)\\b(?:muestrame|mostrame|ver|dame|cual es)\\s+(?:la\\s+)?revision(?:\\s+conjunta)?\\s+de\\s+("
+                    + MISSION_REF + ")");
+    /**
+     * Revisión conjunta: "¿qué contradicciones … MISSION-X?" se responde con la revisión solo si la misión tiene una; si
+     * no, sigue el ruteo normal (p. ej. las contradicciones del CEO en un discovery).
+     */
+    private static final Pattern REVIEW_CONTRADICTIONS = Pattern.compile("(?i)\\bcontradicciones\\b.*?(" + MISSION_REF + ")");
+    private static final Pattern ADJUST_KAEL = Pattern.compile(
+            "(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*,\\s*kael\\s*:\\s*(.+)$", Pattern.DOTALL);
     private static final Pattern APPROVE_STORIES = Pattern.compile(
-            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\b(?:apruebo|aprueba|aprobar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos|contrato)\\b.*?(" + MISSION_REF + ")");
     private static final Pattern REJECT_STORIES = Pattern.compile(
-            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos)\\b.*?(MISSION-[A-Za-z0-9-]+)");
-    private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(MISSION-[A-Za-z0-9-]+)\\s*:\\s*(.+)$",
+            "(?i)\\b(?:rechazo|rechaza|rechazar)\\s+(?:\\S+\\s+){0,3}?(?:hu|historias|requisitos|contrato)\\b.*?(" + MISSION_REF + ")");
+    private static final Pattern ADJUST_STORIES = Pattern.compile("(?i)^\\s*para\\s+(" + MISSION_REF + ")\\s*:\\s*(.+)$",
             Pattern.DOTALL);
-    private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos)\\b");
+    private static final Pattern REQUIREMENTS_WORD = Pattern.compile("\\b(?:hu|historias|requisitos|contrato)\\b");
     private static final Pattern BUILD_INCREMENT = Pattern.compile(
-            "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(MISSION-[A-Za-z0-9-]+)");
+            "(?i)\\bconstru(?:ye|ir|i)\\s+el\\s+incremento\\s+(\\d+)\\s+de\\s+(" + MISSION_REF + ")");
+
+    private record ReviewQuery(String missionId, List<JointReviewView> reviews) {
+    }
+
+    /**
+     * Revisión conjunta: la consulta explícita ("muéstrame la revisión de MISSION-X") siempre; la de "contradicciones"
+     * solo si la misión tiene revisión conjunta (si no, null y el mensaje sigue a las reglas siguientes).
+     */
+    private ReviewQuery reviewQuery(String normalized) {
+        var explicit = SHOW_REVIEW.matcher(normalized);
+        if (explicit.find()) {
+            var missionId = explicit.group(1).toUpperCase(Locale.ROOT);
+            return new ReviewQuery(missionId, missionService.jointReviews(missionId));
+        }
+        var contradictions = REVIEW_CONTRADICTIONS.matcher(normalized);
+        if (contradictions.find()) {
+            var missionId = contradictions.group(1).toUpperCase(Locale.ROOT);
+            var reviews = missionService.jointReviews(missionId);
+            return reviews.isEmpty() ? null : new ReviewQuery(missionId, reviews);
+        }
+        return null;
+    }
+
+    private static String formatReview(JointReviewView r) {
+        var lines = new ArrayList<String>();
+        lines.add("Ronda " + r.round() + ": " + r.status() + " (HU v" + r.specVersion() + ", diseño v" + r.designVersion() + ")"
+                + (r.detail() == null || r.detail().isBlank() ? "" : " — " + r.detail()));
+        for (var c : r.contradictions()) {
+            var decision = r.decisions().stream().filter(d -> d.id().equals(c.id())).findFirst();
+            lines.add("- " + c.id() + " (" + String.join(", ", c.requirementRefs()) + " ↔ " + String.join(", ", c.designRefs())
+                    + "): " + c.requirementSays() + " ↔ " + c.designSays()
+                    + decision.map(d -> " → " + ("DESIGN".equals(d.side()) ? "diseño" : "HU") + ": " + d.change()
+                    + " (" + d.reason() + ")").orElse(" → sin resolver"));
+        }
+        return String.join("\n", lines);
+    }
 
     private String handleRequirements(String message) {
         var normalized = normalize(message);
@@ -953,6 +1456,29 @@ public class ChatIntentRouter {
                 missionService.buildIncrement(missionId, Integer.parseInt(build.group(1)));
                 return "Arrancó el incremento " + build.group(1) + " de " + missionId
                         + " sobre el mismo repositorio. Te aviso cuando termine.";
+            }
+            var adjustKael = ADJUST_KAEL.matcher(message);
+            if (adjustKael.find()) {
+                var missionId = adjustKael.group(1).toUpperCase(Locale.ROOT);
+                missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
+                        RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjustKael.group(2).strip(),
+                        RequirementsDecisionCommand.Target.KAEL));
+                return "Le pasé el ajuste a Kael; te aviso cuando el diseño de " + missionId + " esté listo.";
+            }
+            var showContract = SHOW_CONTRACT.matcher(normalized);
+            if (showContract.find()) {
+                var missionId = showContract.group(1).toUpperCase(Locale.ROOT);
+                return missionService.requirements(missionId).map(RequirementsView::contract)
+                        .map(c -> c.summary() + " (" + c.status() + ")")
+                        .orElse(missionId + " no tiene contrato de Aria.");
+            }
+            var showDesign = SHOW_DESIGN.matcher(normalized);
+            if (showDesign.find()) {
+                var missionId = showDesign.group(1).toUpperCase(Locale.ROOT);
+                return missionService.interactionDesign(missionId)
+                        .map(v -> "Diseño de Kael de " + missionId + " (versión " + v.version() + ", " + v.status() + "): "
+                                + v.summary())
+                        .orElse(missionId + " no tiene diseño de Kael.");
             }
             var show = SHOW_STORIES.matcher(normalized);
             if (show.find()) {
@@ -966,23 +1492,47 @@ public class ChatIntentRouter {
             var approve = APPROVE_STORIES.matcher(normalized);
             if (approve.find()) {
                 var missionId = approve.group(1).toUpperCase(Locale.ROOT);
+                var contractPending = contractWaiting(missionId);
+                // Se consulta antes de decidir, para saber si había diseño de Kael que aprobar junto con las HU.
+                var withDesign = missionService.interactionDesign(missionId)
+                        .map(v -> "DRAFT".equals(v.status()) || "APPROVED".equals(v.status())).orElse(false);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
-                return "Requisitos de " + missionId + " aprobados: Neo planifica el incremento 1.";
+                if (contractPending) {
+                    return "Contrato de " + missionId + " aprobado: Aria escribe las historias de usuario.";
+                }
+                return "Requisitos" + (withDesign ? " y diseño" : "") + " de " + missionId
+                        + " aprobados: Neo planifica el incremento 1.";
             }
             var reject = REJECT_STORIES.matcher(normalized);
             if (reject.find()) {
                 var missionId = reject.group(1).toUpperCase(Locale.ROOT);
+                var contractPending = contractWaiting(missionId);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+                if (contractPending) {
+                    return "Contrato de " + missionId + " rechazado: la misión quedó cancelada.";
+                }
                 return "Requisitos de " + missionId + " rechazados: la misión quedó cancelada.";
             }
-            var adjust = ADJUST_STORIES.matcher(message);
-            if (adjust.find()) {
+            var adjust = requirementsAdjustment(message);
+            if (adjust != null) {
                 var missionId = adjust.group(1).toUpperCase(Locale.ROOT);
+                var contractPending = contractWaiting(missionId);
                 missionService.decideRequirements(missionId, new RequirementsDecisionCommand(
                         RequirementsDecisionCommand.RequirementsDecision.ADJUST, adjust.group(2).strip()));
-                return "Le pasé el ajuste a Aria; te aviso cuando las historias de " + missionId + " estén listas.";
+                return contractPending
+                        ? "Le pasé el ajuste a Aria; te aviso cuando el contrato de " + missionId + " esté listo."
+                        : "Le pasé el ajuste a Aria; te aviso cuando las historias de " + missionId + " estén listas.";
+            }
+            // Revisión final (2): después de los comandos que deciden ("para MISSION-X: hay contradicciones …" es un ajuste).
+            var review = reviewQuery(normalized);
+            if (review != null) {
+                if (review.reviews().isEmpty()) {
+                    return review.missionId() + " no tiene revisión conjunta de Neo y Aria.";
+                }
+                return "Revisión conjunta de " + review.missionId() + ":\n" + review.reviews().stream()
+                        .map(ChatIntentRouter::formatReview).collect(Collectors.joining("\n"));
             }
         } catch (IllegalStateException | IllegalArgumentException ex) {
             return "No se pudo: " + ex.getMessage();
@@ -1313,11 +1863,73 @@ public class ChatIntentRouter {
                 ? "Sales, Product, Finance, Engineering y QA"
                 : teamMemory.snapshot(teamId).members().stream().map(TeamMemberInfo::name)
                         .collect(Collectors.joining(", "));
-        // Verificado en vivo (2026-10-04): las rondas de incremento no cuentan como evidencia.
+        var corrections = recoveryMemory == null ? List.<com.aicompany.core.recovery.CorrectionRound>of()
+                : recoveryMemory.correctionRounds(missionId);
+        // Revisión final (7): la indicación del fundador sobre una BLOCKED es una ronda de corrección, no de evidencia.
+        var correction = corrections.stream().filter(c -> c.round() == round).findFirst();
+        if (correction.isPresent()) {
+            var indication = correction.get().founderIndication().replaceAll("\\s+", " ");
+            return "Arrancó una ronda de corrección sobre " + missionId + (indication.isEmpty() ? ""
+                    : " con tu indicación: \"" + (indication.length() > 200 ? indication.substring(0, 200) + "…" : indication)
+                    + "\"") + ". No consume rondas de evidencia y pone en cero las correcciones automáticas del incremento. "
+                    + "Trabajan: " + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
+        }
+        // Verificado en vivo (2026-10-04): las rondas de incremento no cuentan como evidencia; las de corrección tampoco.
         var increments = incrementRoundsOf(missionId);
-        var evidenceNumber = round - (int) increments.keySet().stream().filter(r -> r < round).count();
+        var evidenceNumber = round - (int) increments.keySet().stream().filter(r -> r < round).count()
+                - (int) corrections.stream().filter(c -> c.round() < round && !increments.containsKey(c.round())).count();
         return "Arrancó la ronda " + evidenceNumber + " de " + max + " de más evidencia sobre " + missionId + ". Trabajan: "
                 + who + ". Te aviso por aquí y por correo cuando vuelva a esperar tu decisión.";
+    }
+
+    private static final String STRATEGY_PREFIX = "ESTRATEGIA NUEVA (error persistente): ";
+
+    /** Revisión 2026-10-06 §3: ", estrategia: "…" (fuente: dominio)" si el pedido de la ronda lleva la estrategia nueva. */
+    private static String strategyForChat(com.aicompany.core.recovery.CorrectionRound round) {
+        var request = round.request() == null ? "" : round.request().strip();
+        if (!request.startsWith(STRATEGY_PREFIX)) {
+            return "";
+        }
+        var lines = request.substring(STRATEGY_PREFIX.length()).split("\\R", 3);
+        var sources = lines.length > 1 && lines[1].startsWith("Fuentes: ")
+                ? java.util.Arrays.stream(lines[1].substring("Fuentes: ".length()).split(",")).map(String::strip)
+                        .filter(u -> !u.isEmpty()).toList()
+                : List.<String>of();
+        return ", estrategia: \"" + shorten(lines[0]) + "\"" + sourceSuffix(sources);
+    }
+
+    /** " (fuente: dominio)" con el host de la primera fuente; vacío si no hay o no se puede leer. */
+    private static String sourceSuffix(List<String> sources) {
+        for (var url : sources) {
+            try {
+                var host = java.net.URI.create(url.strip()).getHost();
+                if (host != null && !host.isBlank()) {
+                    return " (fuente: " + host + ")";
+                }
+            } catch (IllegalArgumentException ignored) {
+                // una fuente ilegible no tumba el chat
+            }
+        }
+        return "";
+    }
+
+    private static String shorten(String text) {
+        var t = text == null ? "" : text.replaceAll("\\s+", " ").strip();
+        return t.length() > 200 ? t.substring(0, 200) + "…" : t;
+    }
+
+    /** Spec misiones durables §4: el pedido de una corrección en una línea (sin el encabezado de Java si es automática). */
+    private static String correctionRequestForChat(com.aicompany.core.recovery.CorrectionRound round) {
+        var request = round.request() == null ? "" : round.request().strip();
+        if (request.startsWith(STRATEGY_PREFIX)) {
+            // Revisión 2026-10-06 §3: Java antepuso la estrategia (se muestra aparte); el pedido sigue tras la línea en blanco.
+            var cut = request.indexOf("\n\n");
+            request = cut < 0 ? "" : request.substring(cut + 2).strip();
+        }
+        var lines = request.split("\\R", 2);
+        var text = !round.byFounder() && lines.length > 1 ? lines[1] : request;
+        text = text.replaceAll("\\s+", " ").strip();
+        return text.length() > 200 ? text.substring(0, 200) + "…" : text;
     }
 
     /** Rondas de una misión: vacío si nunca pidió más evidencia (misiones previas a la feature incluidas). */
@@ -1332,7 +1944,12 @@ public class ChatIntentRouter {
         tasks.forEach(t -> byRound.computeIfAbsent(TaskIds.roundOf(t.taskId()), k -> new ArrayList<>()).add(t));
         // Verificado en vivo (2026-10-04): las rondas de incremento se etiquetan aparte y no consumen el límite.
         var increments = incrementRoundsOf(missionId);
-        var evidenceRounds = java.util.stream.IntStream.rangeClosed(1, round).filter(r -> !increments.containsKey(r))
+        // Spec misiones durables §4: las rondas de corrección tampoco consumen el límite de evidencia.
+        var corrections = recoveryMemory == null ? Map.<Integer, com.aicompany.core.recovery.CorrectionRound>of()
+                : recoveryMemory.correctionRounds(missionId).stream().collect(Collectors.toMap(
+                        com.aicompany.core.recovery.CorrectionRound::round, c -> c, (a, b) -> a));
+        var evidenceRounds = java.util.stream.IntStream.rangeClosed(1, round)
+                .filter(r -> !increments.containsKey(r) && !corrections.containsKey(r))
                 .boxed().toList();
         var used = evidenceRounds.size();
         var lines = new ArrayList<String>();
@@ -1341,7 +1958,11 @@ public class ChatIntentRouter {
             // Los pedidos se alinean desde el final: uno registrado antes de existir las rondas no disparó ninguna.
             var position = evidenceRounds.indexOf(r);
             var index = requests.size() - used + position;
-            var label = r == 0 ? "Ronda 0" : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
+            var label = r == 0 ? "Ronda 0" : corrections.containsKey(r)
+                    ? "Ronda " + r + " (corrección" + (corrections.get(r).byFounder() ? " con tu indicación" : " automática")
+                            + strategyForChat(corrections.get(r))
+                            + ", pedido: \"" + correctionRequestForChat(corrections.get(r)) + "\")"
+                    : increments.containsKey(r) ? "Ronda " + r + " (incremento " + increments.get(r) + ")"
                     : "Ronda " + r + " (pedido: \""
                     + (position >= 0 && index >= 0 && index < requests.size() ? requests.get(index) : "") + "\")";
             lines.add(" " + label + ": " + list.stream().map(t -> t.agentId() + "=" + t.action() + " " + t.status())
@@ -1508,6 +2129,7 @@ public class ChatIntentRouter {
         COMPANY_STATUS,
         DEPENDENCIES,
         MODELS,
+        FREE_CHAIN,
         OUTREACH_DRAFTS,
         OUTREACH_STATUS,
         PROSPECTS,
@@ -1593,6 +2215,11 @@ public class ChatIntentRouter {
         // Spec orquestador (2026-09-28).
         if (normalized.contains("orquestador")) {
             return new QueryMatch(QueryIntent.ORCHESTRATOR, null);
+        }
+
+        // Cadena de modelos gratis (2026-10-15): antes que la regla general de modelos.
+        if (normalized.matches(".*\\bmodelos? (gratis|gratuitos?)\\b.*") || normalized.contains("cadena de modelos")) {
+            return new QueryMatch(QueryIntent.FREE_CHAIN, null);
         }
 
         // Spec salud de modelos (2026-09-28).
@@ -1755,6 +2382,7 @@ public class ChatIntentRouter {
             case "DEPENDENCIES" -> formatPendingDependencies();
             case "PRODUCTS" -> formatCatalog();
             case "MODELS" -> formatModelsHealth();
+            case "FREE_CHAIN" -> formatFreeChain();
             case "OUTREACH_DRAFTS" -> formatDrafts();
             case "OUTREACH_STATUS" -> formatOutreachStatus();
             case "PROSPECTS" -> formatProspects();
@@ -1835,8 +2463,28 @@ public class ChatIntentRouter {
         var awaitingSpec = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_SPEC_APPROVAL)
                 .map(MissionResponse::missionId).toList();
         var specLine = awaitingSpec.isEmpty() ? ""
-                : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec)
-                        + " (\"muéstrame las HU de <misión>\").";
+                : " Requisitos de Aria esperando tu aprobación: " + String.join(", ", awaitingSpec.stream()
+                        .map(id -> contractWaiting(id) ? id + " (contrato)"
+                                : missionService.interactionDesign(id).isPresent() ? id + " (HU + diseño)" : id).toList())
+                        + " (\"muéstrame el contrato de <misión>\"; \"muéstrame las HU de <misión>\"; "
+                        + "\"muéstrame el diseño de <misión>\").";
+        // Revisión final QA (M6): cobertura N/M de las misiones que esperan tu decisión (cualquier entorno).
+        var coverage = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
+                .flatMap(m -> latestCoverage(m.missionId()).map(c -> m.missionId() + " " + c.ratio()).stream())
+                .toList();
+        var coverageLine = coverage.isEmpty() ? ""
+                : " Cobertura de escenarios: " + String.join(", ", coverage)
+                        + " (\"¿qué escenarios cubre <misión>?\").";
+
+        // Spec 2026-10-14 Kael: la conformidad con el diseño, donde se lista la cobertura.
+        var conformance = all.stream().filter(m -> m.status() == MissionStatus.AWAITING_INVESTOR)
+                .flatMap(m -> latestCheck(m.missionId(), com.aicompany.core.agent.validation.DesignConformance.CHECK)
+                        .map(c -> m.missionId() + " " + c.status() + " (" + c.detail() + ")").stream())
+                .toList();
+        var conformanceLine = conformance.isEmpty() ? ""
+                : " Conformidad con el diseño: " + String.join(", ", conformance) + ".";
+
+        var recoveryLine = recoveryLine(all);
 
         var missions = all.stream()
                 .filter(m -> "PRODUCTION".equals(m.environment()))
@@ -1847,7 +2495,9 @@ public class ChatIntentRouter {
                         && m.status() != MissionStatus.AWAITING_SPEC_APPROVAL
                         && m.status() != MissionStatus.FAILED
                         && m.status() != MissionStatus.COMPLETED
-                        && m.status() != MissionStatus.CANCELLED)
+                        && m.status() != MissionStatus.CANCELLED
+                        && m.status() != MissionStatus.BLOCKED
+                        && m.status() != MissionStatus.INTERRUPTED)
                 .count();
 
         var awaitingInvestor = missions.stream()
@@ -1860,7 +2510,8 @@ public class ChatIntentRouter {
 
         var rerunning = missions.stream()
                 .filter(m -> m.status() != MissionStatus.AWAITING_INVESTOR && m.status() != MissionStatus.FAILED
-                        && m.status() != MissionStatus.COMPLETED && m.status() != MissionStatus.CANCELLED)
+                        && m.status() != MissionStatus.COMPLETED && m.status() != MissionStatus.CANCELLED
+                        && m.status() != MissionStatus.BLOCKED && m.status() != MissionStatus.INTERRUPTED)
                 .filter(m -> missionMemory.evidenceRound(m.missionId()) > 0)
                 .count();
 
@@ -1894,7 +2545,36 @@ public class ChatIntentRouter {
                 finance.revenueUsd(), finance.costsUsd(), finance.profitUsd(), finance.balanceUsd(),
                 countProducts(catalog, CatalogStatus.READY_TO_SELL), countProducts(catalog, CatalogStatus.IN_CONSTRUCTION),
                 countProducts(catalog, CatalogStatus.IDEA)
-        ) + specLine + orchestratorLine() + downModelsLine();
+        ) + specLine + coverageLine + conformanceLine + recoveryLine + databasePendingLine(all) + orchestratorLine() + downModelsLine();
+    }
+
+    /**
+     * Revisión final Diego ambientes (I1): misiones detenidas con el código VERIFIED y un ambiente de base fallido. Una
+     * falla que un agente corrige deja la validación FAILED, así que lo que queda acá es un problema del ambiente que
+     * resuelve el fundador. Nunca lanza.
+     */
+    String databasePendingLine(List<MissionResponse> all) {
+        var pending = new ArrayList<String>();
+        for (var m : all) {
+            if (m.status() != MissionStatus.AWAITING_INVESTOR && m.status() != MissionStatus.COMPLETED
+                    && m.status() != MissionStatus.FAILED && m.status() != MissionStatus.BLOCKED) {
+                continue;
+            }
+            try {
+                var failed = missionMemory.databaseApplies(m.missionId()).values().stream()
+                        .filter(a -> "FAILED".equals(a.state())).toList();
+                if (failed.isEmpty() || !"VERIFIED".equals(missionMemory.lastValidationStatus(m.missionId()).orElse(null))) {
+                    continue;
+                }
+                pending.add(m.missionId() + " (" + failed.stream().map(a -> a.environment() + " " + a.connection()
+                        + (a.failedVersion() == null ? ": no se pudo aplicar" : ": falló V" + a.failedVersion()))
+                        .collect(Collectors.joining(", ")) + ")");
+            } catch (RuntimeException ex) {
+                log.warn("CHAT_STATUS could not read the database of {}: {}", m.missionId(), ex.getMessage());
+            }
+        }
+        return pending.isEmpty() ? "" : " Base pendiente por un problema del ambiente: " + String.join(", ", pending)
+                + " (resuélvelo y escribe \"aplica el esquema de <misión>\").";
     }
 
     /** Keys de modelos (2026-09-29): solo la pista, el origen y quién usa cada proveedor; nunca la key. */
@@ -2197,8 +2877,11 @@ public class ChatIntentRouter {
     /** Decisión del fundador (2026-10-04): con el gratis caído lo atiende el respaldo pago o, si no, el suplente local. */
     private String downSuffix(String agentId, String model) {
         var effective = modelHealth.effectiveModel(agentId, model);
-        if (effective != null && CeoService.remoteModel(effective).isPresent()) {
+        if (effective != null && effective.equals(modelHealth.paidFallbackFor(agentId))) {
             return " (caído: lo atiende su respaldo pago " + effective + ")";
+        }
+        if (effective != null && CeoService.remoteModel(effective).isPresent()) {
+            return " (caído: lo atiende el siguiente modelo gratis " + effective + ")";
         }
         return " (caído: usa su suplente " + modelHealth.fallbackFor(agentId) + ")";
     }
@@ -2393,6 +3076,26 @@ public class ChatIntentRouter {
                         + ")"
                         : "✅ " + ModelHealthService.shortName(h.model()) + " (" + String.join(", ", h.affectedAgents()) + ")")
                 .collect(Collectors.joining("; ")) + "." + fallbacksLine();
+    }
+
+    /** Cadena de modelos gratis (2026-10-15): el orden en que se prueban antes del respaldo pago, con su estado. */
+    private String formatFreeChain() {
+        var chain = modelHealth.freeChainSnapshot();
+        if (chain.isEmpty()) {
+            return "No hay cadena de modelos gratis: si el modelo de un agente cae, pasa directo a su respaldo pago "
+                    + "(Bedrock) y luego al suplente local. Se configura en Settings → Modelos gratis.";
+        }
+        var lines = new ArrayList<String>();
+        for (int i = 0; i < chain.size(); i++) {
+            var h = chain.get(i);
+            var who = h.affectedAgents().isEmpty() ? "" : " — principal de " + String.join(", ", h.affectedAgents());
+            lines.add((i + 1) + ". " + ("DOWN".equals(h.status())
+                    ? "⚠ " + h.model() + " caído desde " + SINCE.format(h.since()) + " (" + h.lastError() + ")"
+                    : "✅ " + h.model()) + who);
+        }
+        return "Cadena de modelos gratis (si el modelo de un agente de la cadena cae, se prueban los demás en este orden, "
+                + "saltando los caídos; si fallan todos, el respaldo pago en Bedrock y después el suplente local):\n"
+                + String.join("\n", lines);
     }
 
     /** Decisión del fundador (2026-10-03): si el suplente local no está disponible, los agentes no tienen respaldo. */

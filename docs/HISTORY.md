@@ -991,3 +991,260 @@ Spec `2026-10-03-aria-v1-design.md`, plan `2026-10-03-aria-v1.md`, rama `aria-v1
 Spec `2026-10-05-qa-casos-de-uso-design.md` (decisiones del fundador: 100 % de cobertura para `VERIFIED`, sin revisión con BLOCKER de Vera, la suite solo crece), plan `2026-10-05-qa-casos-de-uso.md`, rama `qa-casos-de-uso`. Revisión final independiente con formatos reales (TRX de la imagen .NET y reporter JSON de `package:test`): 2 Critical — el reporter real de Flutter pone `"type"` al final de cada línea (los tests de la app llegaban sin nombre) y el TRX de vstest no trae los `Trait` (se quitaron como opción: el id va en el nombre del test) — y 4 Important (sin sandbox → `UNVALIDATED`; la cobertura en el chat va después de la gobernanza; crecimiento por escenario y nombre normalizado; inventario de C#/Dart), corregidos con test. Cambio de conteo: en Flutter un test `skipped` ya no cuenta como aprobado.
 
 **Verificado en vivo** (`MISSION-QA-CRM-1791180128`, kimi, 25 min): Aria escribió primero un MVP con autenticación, búsqueda y paginación no pedidas; el fundador lo ajustó ("una prueba debe ser simple: caso de uso a caso de prueba") y Aria dejó 5 escenarios (crear cliente, email duplicado, campos vacíos, listar, ver detalle). Vera escribió un test por escenario en el backend y en la app (`ESC_01_…` en xUnit, `test('… ESC-01 …')` en Flutter); sandbox backend 5/5 y app 6/6; `SCENARIO_COVERAGE` 5/5, `TEST_SUITE_GROWTH` sin suite anterior; **`VERIFIED`** sin llamar al modelo para la revisión de Vera. Costo medido: US$ 0,04 (23 llamadas; NVIDIA gratis salvo una pasada a Bedrock).
+
+## Aria: cierre de los menores de la revisión (2026-10-05)
+
+Rama `aria-cierre` (sobre `qa-casos-de-uso`). Los cinco menores diferidos de la revisión final de Aria v1 (ledger `.superpowers/sdd/2026-10-03-aria-v1`, ítems 12–16), cada uno con test:
+- (12) Doble clic: una decisión sobre los requisitos reclama la versión con un CAS (`claimDecision`) y un incremento o "pide más evidencia" reclaman el número de ronda (`claimNextRound`, reemplaza a `setEvidenceRound`); el pedido que pierde falla sin escribir nada. La carrera de las rondas de evidencia era la misma y quedó cubierta con el mismo CAS.
+- (13) "para MISSION-X: …" solo es un ajuste a Aria con la misión en `AWAITING_SPEC_APPROVAL`; antes "para MISSION-X: pide más evidencia …" terminaba en "No se pudo".
+- (14) El rechazo de requisitos publica `EMPRESA_MISSION_UPDATED`; con `SPEC_APPROVAL_REQUIRED = 0` se publican `READY` y `APPROVED` (`agentId="policy"`).
+- (15) `PolicyKey` completo en `types.ts` y etiqueta de `SPEC_APPROVAL_REQUIRED` en Settings (`Record<PolicyKey, string>`: una policy sin etiqueta no compila).
+- (16) El orquestador cuenta las rondas sin los incrementos (`MissionService.evidenceRoundsUsed`, la misma cuenta del endpoint) y anota una vez `AWAITING_REQUIREMENTS` cuando la construcción espera los requisitos; las misiones del Development Group anteriores a Aria (`predatesRequirements`) hacen sus rondas con el plan de Neo y sin exigir a Aria.
+
+Sin verificación en vivo (cambios de gobernanza cubiertos por la suite: 1137 tests).
+
+## Neo: pendientes del bloque 1 (2026-10-05)
+
+Rama `neo-cierre` (sobre `aria-cierre`), cada uno con test:
+- (m-2) Una ronda de evidencia reutilizaba el último plan guardado sin validarlo: un plan de `TEAM-ENGINEERING` podía darle código a Neo, o incluir a un agente apagado. Ahora `TeamWorkPlanner.revalidate` lo pasa por `TeamPlanValidator` con el equipo encendido y las conexiones de la misión (sin modelo ni tareas; el plan guardado ya tiene sus rutas resueltas) y, si no pasa, Neo replanifica con el pedido del inversionista. **Verificado contra Neo4j real (solo lectura)**: los planes guardados de las 17 misiones recientes del Development Group (B1, DBA, NEMO, ARIA, QA) siguen pasando, así que las rondas de misiones buenas no replanifican de más.
+- (m-4) Se quitó la rama de "lista concatenada" de `capabilityError`: `isAtomic` rechaza antes cualquier coma.
+- (m-6) La descripción del Development Group que lee el modelo (`query_company_memory`) sale de los perfiles habilitados (`StackProfile.enabledUsages()`): sin "juegos" hasta la fase 3.
+
+## Vera: menores de la revisión de QA (2026-10-05)
+
+Rama `neo-cierre`. Diferidos de la revisión final de QA casos de uso (ledger `.superpowers/sdd/2026-10-05-qa-casos-de-uso`), cada uno con test:
+- (M4) Los tests de un commit se leían de git en cada generación (cobertura de Vera y crecimiento de la suite, a veces dos veces). Ahora `DevelopmentTeamStrategy.testFiles` guarda los últimos 16 commits (un SHA es inmutable); un fallo de lectura no se guarda.
+- (M6) El reporte de cobertura marca cada test con su componente (`[backend]`, `[app]`; con un solo componente, el nombre tal cual) y cada escenario como nuevo (incremento en curso) o heredado. "dame un status" muestra "Cobertura de escenarios: MISSION-X 17/19" para las misiones en `AWAITING_INVESTOR`, y el detalle de la misión en Missions tiene la sección "Cobertura de escenarios".
+- (M7) Un id de misión nunca termina en guion: `MISSION_REF` para todos los comandos del chat ("MISSION-9-" → `MISSION-9`).
+- (M8) Ya estaba anotado arriba (en Flutter un test `skipped` no cuenta como aprobado).
+
+## Misiones durables y corrección automática (2026-10-05)
+
+Rama `misiones-durables`. Implementado:
+- Estados `INTERRUPTED` (huérfana de discovery/otros equipos, o del Development Group sin retomar) y `BLOCKED` (un freno disparó; decide el fundador: "pide más evidencia" con indicación = ronda de corrección `byFounder` que reinicia el contador y no consume `MAX_EVIDENCE_ROUNDS`; APPROVE → `COMPLETED`; REJECT → `CANCELLED`). Ambos borrables; `BLOCKED` manda correo; el orquestador los trata como espera.
+- Policies `MAX_AUTO_CORRECTIONS` (3, por incremento) y `MAX_MISSION_COST_USD` (5), más el freno fijo de "sin progreso" (2 rondas de corrección sin bajar la cantidad de fallas).
+- Paquete `recovery`: `ResumePoint` + `MissionSnapshot`, `CorrectionReport`, `CorrectionRound` + `RecoveryMemoryService` (`Mission.correctionRounds`), `MissionRecoveryService` (pasada al arrancar tras `CompanyMemoryInitializer`; cada 5 min y al terminar una misión; una misión de desarrollo a la vez).
+- `MissionExecutor`: contador vivo por misión (`isLive`), `resumeAsync`, `correctAsync`, `interrupt`, `block`. `DevelopmentTeamStrategy` limpia el workspace al retomar, reutiliza el scaffold y salta las `WORK` ya `COMPLETED` con commit; `createTask` ya no reinicia `COMPLETED`; `claimDecision` guarda `pendingAdjustment`.
+- `POST /api/company/missions/{id}/resume`, chat "reanuda MISSION-X" y líneas de status, botón "Reanudar" en Missions. Eventos `EMPRESA_MISSION_RESUMED|INTERRUPTED|CORRECTION_STARTED|BLOCKED`.
+
+Verificación en vivo: pendiente.
+
+## Misiones durables: revisión 2026-10-06
+
+Rama `misiones-durables`. Cambios acordados con el fundador:
+- Defaults `MAX_AUTO_CORRECTIONS` 20 y `MAX_MISSION_COST_USD` 10. "Sin avance" ya no bloquea: `MissionRecoveryService.needsStrategy` lanza la ronda con una estrategia nueva.
+- `CorrectionStrategist` (error persistente = primera falla actual presente en los dos reportes previos; búsqueda web en inglés, hasta 3 páginas; Neo propone con `format`; Java valida fuentes y no repetir; nunca lanza). La ronda antepone "ESTRATEGIA NUEVA (error persistente)", se guarda en `Mission.correctionStrategies` y publica `EMPRESA_CORRECTION_STRATEGY_PROPOSED`. El chat la muestra con el dominio de su fuente.
+- `BLOCKED` se acepta como `FAILED` para construir el siguiente incremento y aplicar el esquema. Una ronda > 0 sin repositorio queda `BLOCKED` solo si la misión ya tenía commits; si falló antes del código, se vuelve a escribir el scaffold.
+- Manos humanas: "verifica MISSION-X" / `POST /missions/{id}/verify` / botón en Missions verifican el HEAD sin modelos (tarea `<misión>-HUMAN-VERIFY-<n>`), ponen en cero el contador (`correctionCounterResets`) y se retoman tras un reinicio (`HUMAN_VERIFY`).
+- `discardUncommitted` ahora aparta con `git stash push -u` en vez de borrar: el trabajo sin commit nunca se pierde.
+- Revisión final: la verificación humana FAILED ya no se confunde con una a medias al retomar; sin validación del estado actual no se busca estrategia; el pedido de la ronda se guarda antes que la estrategia "intentada"; la estrategia lleva una guarda contra instrucciones de las páginas; las rondas del fundador guardan `failures`.
+- Políticas verificadas contra el Neo4j real (solo lectura, 2026-10-06): `MAX_AUTO_CORRECTIONS` y `MAX_MISSION_COST_USD` no estaban sembradas, así que rigen los defaults 20 y 10 en el primer despliegue; sin migración, los cambios posteriores van por Settings.
+
+Verificación en vivo: pendiente.
+
+### Misiones durables: verificación en vivo (2026-10-07)
+
+`MISSION-DUR-1791333307` (TEST, Development Group, "API de clientes: crear con email único y listar", solo .NET; HU de Aria aprobadas por el fundador: 2 HU, 6 escenarios). Despliegue de la rama `misiones-durables` sin misiones vivas; Spring arranca sin ciclos de beans y el pase de arranque corre ("WORKING -> IDLE").
+- **Reinicio 1, durante la generación** (Iris commiteada, Diego a medias): la recuperación detectó la huérfana pero falló con `NullPointerException` (`RecoveryMemoryService`: `findFirst()` sobre una lista con `null` cuando la misión no tiene rondas de corrección; los tests mockean ese servicio). Arreglado (`filter(Objects::nonNull)`, como `instructionOf`) y redesplegado: la misión se retomó sola (`GENERATE`, ronda 0), **Iris no se regeneró** (mismo commit `453c63a`), Diego se repitió, Vera escribió los tests.
+- **Reinicio 2, durante la verificación**: Iris se regeneraba entera. Causa (instrumentada con un log nuevo de la decisión de retomar): las rondas de reparación y el diagnóstico 360 reusan el id de la tarea WORK y la dejan RUNNING con su commit original; además la regla de "commit no registrado" (por estado) podía retroceder el commit bueno. Arreglo: con `commitSha` la entrega está hecha (la verificación se repite entera) y solo se retrocede un HEAD cuyo SHA no coincide con el registrado. Redesplegado: **`VERIFY`, las 3 tareas saltadas**, directo al sandbox.
+- Resultado: reparación de Iris (errores de tipeo en `Program.cs` que Vera había reportado), ajuste de tests de Vera y **`VERIFIED`** con todos los chequeos en PASS y **6/6 escenarios**. Costo US$ 0,12 (2 llamadas a Bedrock: kimi-k3 de NVIDIA cayó a las 02:21 UTC y el respaldo pago respondió; 8 gratis). "dame un status" mostró "Retomadas tras el reinicio: MISSION-DUR-1791333307" y la cobertura 6/6.
+- **Manos humanas**: "verifica MISSION-DUR-1791333307" por chat → tarea `-HUMAN-VERIFY-1` **`VERIFIED`**, **cero llamadas a modelos** (contador de costo sin cambios, ningún `REMOTE_MODEL_METRICS` en la ventana).
+- No se ejercitó en vivo la corrección automática ni la estrategia con búsqueda web (la misión llegó a `VERIFIED`); quedan cubiertas por la suite (1273 tests).
+
+## Diego: migraciones en todos los ambientes y chequeo de SQL (2026-10-07)
+
+Rama `diego-ambientes` (sobre `misiones-durables`), spec `2026-10-07-diego-ambientes-design.md`. Decisión del fundador: él entrega los ambientes; el DBA crea las bases y aplica las migraciones en cada uno según lo requiere la aplicación; los tests no van a la base (se mockean), así que PostgreSQL en el sandbox queda descartado.
+- Cascada TEST -> PRODUCTION (`EnvironmentCascade`, `DatabaseApplyService.apply` -> `CascadeResult`): corte tras la primera falla, estado por conexión en `Mission.databaseApplies` con respaldo a las propiedades viejas, eventos de esquema con `environment`.
+- Chequeo `DATABASE_APPLIED`: una falla deja la validación en `FAILED` (corrección automática) y `verifiedCommit` solo se guarda con todo aplicado.
+- `MigrationFilesGate` falla cerrado ante un `databaseApplies` ilegible y solo prohíbe editar migraciones aplicadas en algún ambiente.
+- `MigrationSqlCheck` con JSqlParser 5.4: se acotó a `CREATE TABLE`/`CREATE INDEX` e `INSERT` (el parser no es fiable con el resto de PostgreSQL) más chequeos estructurales por sentencia.
+- Chat y Missions: una línea por ambiente ("TEST (x) V1-V3", "PRODUCTION (y) sin aplicar: falló TEST en V3", la fallida con su error redactado).
+- Revisión final (decisiones del controlador sobre los hallazgos): **Java clasifica la falla de la cascada**. Solo el SQL de una migración que no está aplicada en ningún ambiente (ni antes de la cascada ni en un ambiente anterior de la misma) es `DATABASE_APPLIED` `FAIL` y va a la corrección automática; un problema de infraestructura (sin respuesta, autenticación, timeout, crear la base, git/memoria/eventos, toda falla sin versión) o una versión ya aplicada en TEST que falla en PRODUCTION (datos distintos entre ambientes) no lo arregla ningún modelo: el código queda `VERIFIED` con su `verifiedCommit`, se avisa por correo y el status del chat lo lista hasta que el fundador lo resuelve y pide "aplica el esquema". Costo aceptado: PRODUCTION puede quedar atrás de TEST mientras tanto. Sin conexiones no hay cascada ni falla (antes dejaba `FAILED` y una corrección pagada imposible de resolver). "verifica MISSION-X" corre la misma cascada. Los errores de PostgreSQL ya no traen valores de filas (`logServerErrorDetail=false` y sin líneas `Detail:`/`Where:`/`Hint:`): iban a modelos remotos, búsquedas y Kafka. `appliedAnywhere` es estricta (ilegible → todo inmutable) y `CREATE TABLE … AS` no se parsea (falso positivo con `WITH NO DATA`).
+- Seguimiento (aprobado por el fundador 2026-10-08): (1) la clasificación mira también el SQLState del error (`ApplyResult.sqlState`/`EnvironmentResult.sqlState`): conexión, autenticación, recursos, timeouts (57014), `55P03`, `42501` y deadlock/serialización son del ambiente aunque la versión no esté aplicada; sin SQLState también. (2) `DatabaseErrorScrubber` enmascara valores entre comillas y `Key (…)=(…)` del mensaje principal de PostgreSQL (los identificadores simples en minúscula se conservan) en las cuatro rutas de error del aplicador y en el `catch` de `applyOne`. (3) `verifyHead` llama a la cascada con `notifyFounder=false`. Cubierto por tests unitarios y por el test con PostgreSQL efímero (57014 y 22P02 reales).
+
+Verificación en vivo: pendiente. El fundador tiene hoy una conexión TEST ("prueba") y va a agregar una PRODUCTION; falta una misión real con dos ambientes (y una migración rota en TEST para ver el corte).
+
+## Kael híbrido (2026-10-14)
+
+Rama `kael-hibrido` (sobre `diego-ambientes`), spec `2026-10-14-kael-hibrido-design.md`. `FALTANTES` marcaba a Kael como «siguiente rol a corregir»: su prompt (v2) era el de un diseñador de interacción, pero el pipeline lo tenía como `GAME_DEV` de la fase 3, excluido de todo plan. Decisiones del fundador (2026-10-14):
+1. Kael es híbrido: **diseña en apps y en juegos, y programa juegos**.
+2. El juego objetivo es **2D simple y jugable, sin assets externos** (formas, colores y texto generados).
+3. La evidencia de «jugable» es **reglas (tests de dominio por escenario) + partida simulada** en el sandbox sobre la escena real; el fundador no necesita jugarlo para aprobar.
+4. Las partidas las escribe **Vera** y las ejecuta un **runner fijo de Forjai** dentro de Godot (descartados: simular contra la capa Application sin Godot, e inputs estructurados por Aria inyectados por Java).
+5. Kael tiene **respaldo de Domain y Application** en juegos (no necesita a Iris) y usa **kimi-k3** como los demás que programan.
+6. El diseño de Kael se aprueba **junto con las HU de Aria**, en la misma parada `AWAITING_SPEC_APPROVAL`.
+7. **Aria declara el tipo de experiencia** (`APP`, `GAME`, `NONE`) y el fundador lo aprueba con las HU; Kael solo participa en `APP`/`GAME`.
+
+**Spike (Task 0)**: viable. `dotnet build game/Game.csproj` deja `game/.godot/mono/temp/bin/Debug/Game.dll` y Godot 4.3 .NET headless lo carga sin `--build-solutions`; `Input.ParseInputEvent(InputEventAction)` mueve `Input.IsActionPressed` sin ventana (30 frames pasan `X >= 25` y fallan `X >= 100`); `await SceneTree.SignalName.PhysicsFrame` basta; el JSON sale en el orden `name`, `outcome`, `failedStep`, `message` (con no-ASCII escapado, un parser lo decodifica); PASS → rc 0 y una aserción falsa → rc 1; funciona con la raíz de solo lectura y `HOME` en tmpfs; `--import` no hace falta. Hallazgos que cambiaron la implementación: sin el ensamblado compilado (build fallido o `build --no-restore` sin `restore`) el runner gira al 100 % de CPU sin terminar y sin escribir JSON (visto más de 4 minutos), así que `run.sh` lo envuelve en `timeout 120` y quita `--import`; y `<Nullable>enable</Nullable>` en el `Game.csproj` del scaffold elimina 4 warnings CS8632. El sandbox real ya monta `/deps/nuget` (el `NuGet.Config` de la imagen lo declara como fallback folder).
+
+Refinamientos de la implementación sobre el spec (decididos durante la ejecución): el validador exige cada `ESC-NN` asignado **una sola vez** y cada control usado como palabra completa (el código del plan lo incumplía); el candado de la decisión se libera al empezar el rediseño de Kael; `EMPRESA_INTERACTION_DESIGN_READY` sale después de `EMPRESA_REQUIREMENTS_READY`; un rol requerido ausente o apagado es error de plan (la misión queda `FAILED` con el motivo); la excepción del solapamiento `game`/`game/playthroughs` vive en `TeamPlanValidator` y la exclusividad la garantiza `ReservedGamePathsGate`; los comentarios C# se ignoran en los gates y `RandomNumberGenerator`/`GD.Randfn` cuentan como azar no inyectable; `DESIGN_CONFORMANCE` falla cerrado ante un error de lectura; y la corrección de `DESIGN_CONFORMANCE` usa el ciclo genérico en vez del ruteo por dueño del spec (pendiente en FALTANTES).
+
+**Revisión final** (revisión de toda la rama, 2026-10-15): (1) el bloque `GAME` del prompt solo llevaba las reglas apuntadas por un escenario del incremento: una regla sin escenario (rebote en la pared) o con un control en la condición no llegaba a ningún prompt; ahora van todas salvo las que solo apuntan escenarios de otros incrementos, más tres reglas de Godot para Kael (input solo por `[input]`, sin `Quit`/`ChangeSceneToFile`/`ReloadCurrentScene` ni rutas `/root/…`, estado verificado como propiedades públicas), también en el prompt v3 del plan. (2) Runner: `GD.Seed(0)` por partida (no una vez) y la escena principal colgada de la raíz como `CurrentScene`; `run.sh` falla con un mensaje `FORJAI:` si el runner no escribe `playthroughs.json` (un `Quit` del juego terminaba en rc 0 sin resultados). La verificación manual de esta revisión (imagen `godot-dotnet-game:2` reconstruida con el mismo tag, copia del spike, `--network=none --read-only`, `/deps/nuget` montado, `run.sh restore → build → test`) encontró **dos bugs reales del runner que el spike no podía ver** (copió el C# del plan, no el de `GameRunnerFiles`): el text block de Java convertía `\"` en `"` y el C# generado **no compilaba** (todo juego habría fallado el build), y en `_Ready` la raíz rechaza `AddChild` («Parent node is busy setting up children»), así que el runner espera un frame antes de la primera partida. Con eso: PASS → `test` rc 0 y `[{"name":"ESC_01_avanza","outcome":"PASSED",…}]`; con un `GetTree().Quit()` en `Main.cs` → `test` rc 1 con «FORJAI: el runner de partidas no escribió resultados (¿el juego llamó Quit o cambió de escena?)». (3) El prompt de Kael (corrección y diseño anterior) muestra el diseño plano, no el envoltorio, y un diseño anterior de otra experiencia se ignora. (4) HU y diseño se aprueban en una sola transacción (`approveWithDesign`) y el ajuste a Kael reclama la decisión y guarda el ajuste juntos (`claimDecisionForKael`); una app o un juego no se aprueba ni se ajusta antes de que Kael termine su diseño. (5) `DESIGN_CONFORMANCE` falla cerrado solo con un diseño aprobado en la mano: si falla la consulta del diseño (Neo4j), se omite, para no tumbar misiones sin diseño. (6) Missions ofrece el ajuste a Kael solo con su diseño en `DRAFT`. Quedan en FALTANTES: el respaldo de `GAME_DEV` no atado al perfil Godot, `APP`/`GAME` sin prohibir componentes extra y el retome con la policy en 0.
+
+**Despliegue** (2026-10-15, OK del fundador, sin misiones vivas): `company-core` y `sandbox-runner` reconstruidos y levantados (el contenedor del runner estaba caído desde un reinicio del 2026-10-09, exit 127); prompt de Kael v3 (reglas de Godot del plan) y modelo `nvidia:moonshotai/kimi-k3` con los respaldos de Iris (`bedrock:global.moonshotai.kimi-k3`, `qwen3-coder:30b`).
+
+**Verificado en vivo — CRM `APP`** (`MISSION-KAEL-CRM-1792045685`, TEST, "Una app simple para registrar clientes (nombre y email) y verlos en una lista, con su detalle."): Aria (nemotron) escribió `experience: APP`, 3 HU y 7 escenarios en 1 incremento y Kael (kimi) 3 pantallas (`PANT-01` lista con `empty`, `PANT-02` nuevo cliente con `error`, `PANT-03` detalle), flujos e hipótesis de fricción, ambos válidos al primer intento → `AWAITING_SPEC_APPROVAL` "Requisitos y diseño listos (Aria + Kael)". En el chat, "muéstrame el diseño de MISSION-X" respondió sin modelo y "para MISSION-X, Kael: en Nuevo cliente agrega el estado loading…" produjo el diseño v2 (`PANT-02` con `loading` y `error`) con las HU intactas en v1; "apruebo las HU de MISSION-X" aprobó HU v1 + diseño v2 juntos (lock liberado tras el ajuste). Neo planificó solo `FLUTTER_WEB_APP` (Aria supuso persistencia local); Mila y Vera generaron al primer intento, sin rondas de corrección: **`VERIFIED`** con `SCENARIO_COVERAGE` 7/7 y **`DESIGN_CONFORMANCE` PASS** (las 3 `Key('PANT-NN')`). Costo US$ 0 (13 llamadas NVIDIA); generación + sandbox ~17 min.
+
+**Falsa alarma: "consolidación colgada 5 h 34 min"**. Tras el `VERIFIED`, el CEO tardó de 07:19 a 12:53 UTC en consolidar y cayó al suplente local. Causa raíz (journal del sistema): **la tapa del portátil se cerró a las 02:19:10 hora local, el mismo segundo en que empezó la consolidación, y el equipo estuvo suspendido hasta las 07:43:56**; el plazo total de 12 min (`OpenAiCompatibleClient.postWithDeadline`) cuenta tiempo despierto (reloj monotónico) y venció 9 min 48 s después de despertar. El código funcionó bien. El incidente del 2026-10-03 que motivó ese plazo ("una llamada quedó colgada 5 h 27 min") **también fue una suspensión** (`PM: suspend entry` 08:42 → `suspend exit` 13:55 ese día): el diagnóstico de entonces (NVIDIA mantenía la conexión) era incorrecto; el plazo sigue siendo útil.
+
+Pendiente: Pong `GAME` (spec §6).
+
+## NVIDIA retiró kimi-k3: modelo retirado = modelo caído (2026-10-15)
+
+La primera corrida del Pong (`MISSION-KAEL-PONG-1792075277`) falló en el diseño de Kael: NVIDIA respondió `HTTP 410 Gone — The model 'moonshotai/kimi-k3' has reached its end of life on 2026-10-15T08:00:00Z`. Los 8 agentes de desarrollo (Iris, Andrea, Diego, Neo, Mila, Kael, Vera, Orion) lo tenían como principal. Causa de que no pasara al respaldo: `OpenAiCompatibleClient` trataba todo 4xx (salvo 429) como error del pedido (`IllegalStateException`), así que ni Bedrock ni el local se intentaron y el writer reintentó 3 veces en vano. Arreglo (rama `modelo-retirado`): 404/410 lanzan `RemoteUnavailableException` sin reintentos → `ModelHealthService` lo cuenta y la llamada sigue al respaldo pago y al local. Decisión del fundador: **primero los modelos gratuitos y luego el de pago en Bedrock** → los 8 pasan a `nvidia:moonshotai/kimi-k2.6` (gratis, sin probar en el Development Group), respaldo pago `bedrock:global.moonshotai.kimi-k3`, suplente local `qwen3-coder:30b`. Alternativas gratis anotadas: glm-5.3, deepseek-v4.1-flash.
+
+## Cadena de modelos gratis antes de Bedrock (2026-10-15)
+
+Tras el cambio a kimi-k2.6 se vio en vivo que ningún gratis de NVIDIA era fiable solo: kimi-k2.6 respondió `404 Not found for account`, glm-5.3, glm-5.3-flash y deepseek-v4.1-flash cortaron a los 90 s y solo nemotron-3-super-120b respondió (200 en 3 s, pero esa familia fue descartada para desarrollo). Con un solo gratis por agente todo terminaba pagado en Bedrock. Decisión del fundador: «primero validar con los modelos gratuitos y pasar automáticamente a Bedrock si los modelos gratis fallan o están caídos», con **una cadena global** (no una por agente). Diseño acordado en el chat (rama `modelo-retirado`): `FreeModelChainService` con la lista ordenada editable en Settings (semilla `kimi-k2.6 → glm-5.3 → deepseek-v4.1-flash → nemotron-3-super`: kimi primero por ser la familia probada, nemotron al final por haber fallado en desarrollo), recorrida en `CeoService.viaFallback` antes del respaldo pago; «validar» = `ping` corto cada 60 s a cada modelo de la cadena para marcar caído a un gratis saturado antes de que una misión lo espere 6 min. Aplica solo a los agentes cuyo principal está en la cadena (hoy los 8 de desarrollo).
+
+Primer día en vivo de la cadena (Pong, 2026-10-15): el chequeo rápido marcó caídos a kimi-k2.6 (404) y glm-5.3 antes de aprobar, el plan de Neo lo hizo deepseek-v4.1-flash en 50 s y casi todo lo demás nemotron-3-super; 32 llamadas, una sola en Bedrock (US$0,03). Con 20 s el ping descartaba a deepseek aunque respondía llamadas reales en ~50 s → decisión del fundador: **plazo del chequeo 60 s** (`remote-models.probe-timeout`, también para el ping de los caídos y la prueba de keys).
+
+Bug visto en vivo el mismo día: glm-5.3 respondía el ping pero daba 504 a las llamadas reales (3 reintentos de ~5 min). El ping exitoso del chequeo borraba los fallos de las llamadas reales y, cuando llegaba a `DOWN`, el ping lo devolvía en <3 min: Kael perdía ~16 min por intento con glm antes de pasar a nemotron. Arreglo (decisión del fundador): el ping ya no borra fallos y un modelo devuelto por ping queda a prueba (un fallo real lo tumba de nuevo). Mientras tanto el fundador quitó glm-5.3 de la cadena desde Settings (en caliente, sin reinicio): kimi-k2.6 → deepseek-v4.1-flash → nemotron-3-super.
+
+Pong, rondas de corrección 2 y 3 (2026-10-15): compilaba y pasaban los 9 tests unitarios, pero fallaban siempre las mismas 4 partidas simuladas (ESC-03, 05, 06 y 09). Causa: el `TestReportParser` del sandbox-runner descartaba el `failedStep` y el `message` que escribe el runner de Godot, así que Neo, Kael y Vera corregían sabiendo solo «FAILED». Arreglo (decisión del fundador): `TestCase.detail` en runner y company-core, el detalle al final de la salida del paso `test` y en `SCENARIO_COVERAGE`. Requiere redesplegar sandbox-runner y company-core.
+
+Limpieza y cancelación (2026-10-15): a pedido del fundador se borraron las 4 misiones de prueba (CRM, los dos Pong y MISSION-DUR) con el borrado de Forjai; quedaron 7 nodos huérfanos (HU de Aria y diseños de Kael) porque la cascada no los conocía: se borraron y la cascada se corrigió. El costo de modelos (`ModelUsage`) se conservó a propósito (gasto real). Pedido del fundador: un botón para cancelar misiones en curso (ver ARCHITECTURE «Cancelar una misión en curso»).
+
+## Revisión conjunta Neo + Aria (2026-10-15)
+
+En el Pong `MISSION-KAEL-PONG-1792113455` el diseño de Kael contradecía las HU de Aria cinco veces y nadie lo detectó: aceleración del 5 % contra «velocidad constante», game over en `x > 640` con una pantalla de 800×600, paleta a la izquierda cuando el game over es por la derecha, y dos rebotes sin dirección (la pelota invierte cada frame mientras se superpone; muy probablemente la causa de las 4 partidas que fallaron igual en 4 rondas del Pong anterior). Las corrigió a mano el asistente, actuando como Neo y Aria.
+
+Decisión del fundador: «cuando se generan contradicciones el líder técnico decide junto con el PO». Entre las alternativas eligió la revisión conjunta: Neo detecta y propone, Aria (dueña del alcance) decide y Java aplica, de modo que al fundador le llega todo coherente y sigue aprobando el resultado. Tope de 2 rondas (la segunda solo detecta), nunca bloquea la misión, y con la policy `JOINT_REVIEW_ENABLED` en 0 se apaga. Spec: `docs/superpowers/specs/2026-10-15-revision-conjunta-design.md`. Falta la prueba en vivo (ver FALTANTES).
+
+## Pong 3: BLOCKED tras 20 correcciones (2026-10-16)
+
+`MISSION-KAEL-PONG-1792113455` (diseño corregido a mano 5 veces, actuando como Neo + Aria, antes de existir la revisión conjunta): agotó las 20 correcciones automáticas del incremento 1 y quedó `BLOCKED` (258 llamadas, US$ 0; todo el código con nemotron-3-super porque kimi-k2.6 da 404 y deepseek estaba caído). Causas, de las 16 rondas: (1) `Main.tscn` escrito a mano por Kael sin el script en el nodo raíz → con el build verde, las 9 partidas cayeron en el paso 0 (`NullReferenceException`); (2) sin contrato entre Kael y Vera, las partidas usaban miembros de `Main` que no existían o cambiaban de nombre entre rondas; (3) errores de sintaxis C# recurrentes (`} expected`). Además el portátil se suspendió por inactividad de GNOME pese al `systemd-inhibit` (faltaba `idle` en `--what`) y la consolidación quedó colgada 7,5 h hasta el despertar. Decisión del fundador sobre juegos: HU por escena o nivel, acordadas antes de construir, y cada nivel en su incremento cuando se pueda entregar solo (diseño en curso: niveles/escenas en Aria y Kael, esqueletos de escena de Forjai y contrato de escena para Vera).
+
+## Contrato, épicas y juegos por niveles (2026-10-16)
+
+Spec `2026-10-16-contrato-epicas-y-juegos-design.md`, entrega A. Partió del Pong 3 (sección anterior): `Main.tscn` sin script en la raíz, partidas de Vera sobre miembros que Kael no exponía y ningún documento de origen entre el pedido y las HU.
+
+Decisiones del fundador (2026-10-16): un juego es igual que una aplicación (solo suma animación y sonido), así que los módulos se cambian por escenas o niveles y todo funciona igual; faltaba el contrato, la solicitud del cliente (qué quiere y los módulos o niveles pedidos, sin mucho detalle) que hoy levanta Aria por el fundador, y de él salen las épicas, las HU y los documentos que ingeniería necesita; las épicas son opcionales (una aplicación pequeña no las necesita), Aria propone si las lleva y el fundador lo aprueba con el contrato; un nivel que se entrega solo va en su propio incremento («permite corregir errores tempranos»); primero la entrega A, después la B.
+
+Rulings del plan: (1) la experiencia la manda el contrato: `withContract` la copia al spec en vez de rechazar y gastar un intento; (2) la única etapa nueva de retome es `CONTRACT_ADJUSTMENT` (escribir el contrato queda en `REQUIREMENTS`, un contrato en `DRAFT` se retoma en `AWAIT_APPROVAL`); (3) `RequirementsWriter.write` mantiene sus 4 argumentos y lee el contrato por un setter opcional, para no romper los stubs de los tests; (4) Kael recibe aparte la lista de niveles y escenas del contrato, para que un juego de un nivel sin épicas vea su ítem. Aparte: los esqueletos `.tscn` van en `GameSceneFiles` y en un commit `-SCENES` propio, no en `ProjectScaffold`, que no conoce el diseño y lo llaman también los cálculos de paquetes. Durante la implementación: el validador devuelve el error en vez de lanzar, y la ficha de escena (`SceneSheet`) usa lookahead negativo de palabras reservadas para no engañar a Vera.
+
+Verificación manual del runner (podman, perfil Godot .NET): `Scene`/`Do` con restore y build rc 0 y test rc 1 como se esperaba; `ESC_01_nivel2` y `ESC_02_menu` PASSED y `ESC_03_falla` FAILED con «debe fallar». Se usó un proyecto trivial porque el Pong de `~/forjai-products` tiene `JuegoService.cs` roto (CS1513).
+
+Pendiente: el despliegue (junto con la revisión conjunta, con OK del fundador), la prueba en vivo del Pong de 3 niveles con contrato y la entrega B (refinar HU tras cada entrega, ajustar lo construido y cambiar un contrato aprobado).
+
+## Intento extra con Bedrock tras respuestas inválidas (2026-10-16)
+
+`MISSION-PONG-NIVELES-1792188926` quedó `FAILED` en el diseño: Kael, con `nemotron-3-super`, ignoró 3 veces la corrección «El control move_left no se usa en ninguna regla». Bedrock no se probó porque el respaldo pago solo entraba cuando la llamada fallaba o el modelo estaba caído, no cuando respondía mal. Decisión del fundador: el orden es **NVIDIA gratis → Bedrock → mejor local**, los 17 agentes con `bedrock:global.moonshotai.kimi-k3` como respaldo pago, y **un intento extra con Bedrock** cuando el gratis agota los intentos con respuestas inválidas. Implementado en Java (`PaidRetry`, ver ARCHITECTURE «Respaldo pago») en todos los ciclos de validación con reintento; sin respaldo pago configurado todo sigue igual.
+
+## Pong de 3 niveles: incremento 1 VERIFIED y ajustes de Kael (2026-10-17)
+
+`MISSION-PONG-NIVELES-1792199290`: el incremento 1 falló la primera validación (ESC-01..03 sin test aprobado) y la corrección automática lo dejó `VERIFIED` en la ronda R10 (9 correcciones; 13/13 tests, 3/3 escenarios). El fundador lo jugó en local (Godot 4.3 mono en `~/godot`, copia en `~/pong-nivel1`) y aprobó; arrancó el incremento 2. Dos fallas del diseño de Kael que ningún gate veía: el nivel 2 tenía los mismos parámetros que el 1 y ninguna regla de aceleración (REGLA-02 devolvía la pelota a 200; solo ESC-04 de Aria la exige), y `project.godot` traía `physical_keycode` 40 para Enter (Godot usa 4194309; las partidas simuladas presionan la acción, no la tecla). Decisión del fundador («si prepara los ajustes de kael»): `GodotKeys` + `GameInputMapGate` + chequeo en `DESIGN_CONFORMANCE`, y niveles distintos con parámetros usados en reglas (`InteractionDesignValidator.validateLevelDifferences`). Entran al redesplegar company-core, sin misión viva.
+
+Incremento 2 (mismo día): el triage de tests (Neo decide si está mal el código o el test) se cayó con `NullPointerException` en las rondas R11-R13: `TestTriageValidator` hacía `Set.of(...).contains(verdict)` y el modelo devolvió un veredicto sin `verdict`. Ahora es un error con reintento. Sin triage, la corrección no sabía que el único test que fallaba (ESC-04: compara `velocidad_y` con signo, -157,65 contra 150) estaba mal escrito por Vera.
+
+Incremento 3 (mismo día): R16 y R17 fallaron con los mismos errores en las mismas líneas (`Do(...)` de 2 argumentos en ESC-07/08 de Vera; `Main.cs:126` de Kael), aunque los dos dijeron haberlos corregido; Vera en R17 escribió tests nuevos sin tocar las partidas. Decisión del fundador («si implementa el ajuste»): Java marca los errores de compilación repetidos de la ronda anterior (`CorrectionReport.withRepeated`) y de la vuelta anterior de la reparación (`[REPETIDO]`).
+
+## Bitácora de misión (2026-10-17)
+
+Causa: en el Pong de 3 niveles el fundador preguntó «@Iris ¿qué está realizando?» y «@Neo …»; los dos respondieron sobre `MISSION-KAEL-CRM-1792045685` (ya borrada) y Neo inventó tiempos («finalizando la planificación del incremento 1», avisar a Aria «en ~10-15 minutos»): el modelo solo recibía el historial del chat y rellenaba lo que faltaba.
+
+Decisión del fundador (aprobada 2026-10-17): «hay un historial de eventos que Forjai debería leer… Neo debe saber todo lo que pasa a nivel de desarrollo junto con la Scrum (Aria); así el proyecto esté corriendo en el sandbox, uno de los dos debe saber». Además, las preguntas de estado las responde Java. Spec `2026-10-17-bitacora-de-mision-design.md`.
+
+Rulings del plan: (1) `MissionEvent.at` se guarda con formato fijo de 9 decimales UTC para que el orden y el tope de 500 sean cronológicos (`Instant.toString()` varía de largo). (2) Se agregó `EMPRESA_SANDBOX_FINISHED` por vuelta (el spec solo traía 5 eventos nuevos); el evento final `EMPRESA_SANDBOX_VERIFICATION_COMPLETED` sale una sola vez y suma `round` -1, `failedStep` y `compileErrors`. (3) La regla dura «Responde solo con lo que está en estos datos…» quedó solo para Neo y Aria; los demás agentes reciben su estado con una regla acotada a misiones y el CEO no recibe bloque. (4) `STATUS_QUESTION` se acotó tras la ronda de revisión (sin «estado de»; «qué hace/haces» solo al final; con `@` y `MISSION-X` va al modelo con los datos). (5) Con incrementos relanzados, el resumen para Neo junta todos los intentos del mismo N. (6) `MissionEventLog.record` es síncrono (sin executor nuevo).
+
+Pendiente: la verificación en vivo (preguntar a @Iris y @Neo con una misión en curso y ver la línea de tiempo en Missions); no se desplegó.
+
+## nemotron-3-super fuera de la cadena gratis para código (2026-10-17)
+
+En el incremento 3 del Pong, Iris (backend) cayó de kimi-k2.6 a `nvidia/nemotron-3-super-120b-a12b`, el modelo gratis de la cadena que seguía UP. Cada reparación reescribía entero `src/Pong.Domain/MotorPong.cs` (518 líneas, ~25.000 caracteres) y lo dejaba sin compilar. Los errores cambiaban de una ronda a otra: 53, 75, 7. Entre ellos había `.append` en minúscula (sintaxis de Java), saltos de línea sin escapar dentro de strings y un raw string sin cerrar, todo en un bloque de logging JSON que había pedido la corrección automática. Pasaron de R32 a R35 sin converger.
+
+kimi-k2.6 no es una caída pasajera: NVIDIA responde 404 «Function … Not found for account», es decir que está retirado de la cuenta.
+
+Decisión del fundador: nemotron-3-super está bien para planificar, clasificar, armar estrategias y hacer el triage (Neo), pero no para generar código. Para código el orden es kimi-k2.6 cuando esté arriba, después Bedrock kimi-k3 y, si Bedrock cae, el mejor modelo local (qwen3-coder:30b).
+
+Se aplicó en vivo, sin reiniciar:
+- La cadena gratis quedó en `kimi-k2.6, deepseek-v4.1-flash`, sin nemotron-3-super.
+- Neo (`engineering`) pasó a tener `nvidia:nvidia/nemotron-3-super-120b-a12b` como modelo principal.
+
+Como kimi-k2.6 está retirado, hoy los agentes que generan código trabajan con Bedrock, que es pago.
+
+## Pong de 3 niveles: incremento 3 VERIFIED (2026-10-17)
+
+A las 21:11 UTC el incremento 3 llegó a BLOCKED después de agotar las 20 correcciones automáticas. En ese punto ya solo quedaban 2 errores CS0120 en un test de Vera (`Pelota.Radio` usado como estático). Se desplegó todo lo que había en la rama: los ajustes de Kael, el triage, el marcado REPETIDO y la bitácora. Se verificó en vivo:
+- «@Iris ¿qué estás haciendo?» lo responde Java y nombra solo las misiones reales;
+- la bitácora registra los eventos desde ese momento.
+
+El costo de la misión iba en US$ 9,07, con el tope en US$ 10. El fundador subió `MAX_MISSION_COST_USD` a US$ 20 (versión 2). La corrección se relanzó con `REQUEST_MORE_EVIDENCE` y una indicación concreta: corregir solo esas líneas y no agregar logging ni JSON en el dominio.
+
+En la bitácora se ve cómo fueron bajando los tests en rojo, ronda por ronda:
+
+| Ronda | Tests OK | Tests en rojo |
+|---|---|---|
+| R37 | 26 | 6 |
+| R38 | 30 | 2 |
+| R39 | 39 | 2 |
+| R40 | 44 | 1 |
+| R41 | 45 | 1 |
+| R42 | 47 | 0 (PASS) |
+
+Quedó VERIFIED a las 21:52 UTC con 47/47 tests y 8/8 escenarios. La suite pasó de 25 a 47 tests. La misión costó en total US$ 15,27.
+
+Pendiente: el triage de Neo con nemotron-3-super falló en R37 y R39 porque no produjo un JSON válido, ni siquiera en el intento extra con Bedrock.
+
+## Entrega del producto (2026-10-17)
+
+El Pong de 3 niveles quedó VERIFIED y el fundador preguntó dónde estaba el aplicativo: el producto era solo un repositorio git local y lo compilado del sandbox se descartaba. Spec: `docs/superpowers/specs/2026-10-17-entrega-del-producto-design.md`.
+
+Decisiones del fundador:
+- Un zip por incremento VERIFIED en `entregas-forja/`; si el contrato dice otra cosa, manda el contrato.
+- Juegos: Windows, macOS, Linux y Android. Web solo si el contrato la pide y con el juego en GDScript (Godot 4.3 y 4.7.2 no exportan C# a Web).
+- Ninguna contraseña en el zip: `.env.example` y la nota «la contraseña está en Settings».
+- Android: el `.apk` siempre; el `.aab` solo en el último incremento y solo si el fundador o el cliente cargó la clave de publicación.
+- La documentación la escribe Java, no un modelo.
+
+Rulings durante la implementación: una sola contraseña para la clave de Android (Godot); keystore en el job dir con env-file; paso `package` de 1200 s; «Generar entrega» solo para el incremento VERIFIED actual; la verificación humana no empaqueta sola; `WEB` en el contrato de un juego no es error del validador; la dll de entrada de .NET va en `app/forjai-entry.txt`; los eventos usan el agente `delivery`; el título de `ENTREGA.md` es el `missionId`.
+
+Prueba en vivo del paso `package` con podman sin red sobre el commit `dd0a0e0` del Pong: windows, macos, linux y android-apk PASS en 111 s, y el Linux exportado corre. Flutter PASS (REGRESION-FLUTTER-341). .NET PASS con una webapi armada a mano (no hay misión .NET). `android-aab` falla de forma controlada: el AAB necesita Gradle y el sandbox no tiene red ni caché de Gradle (pendiente: precargar Gradle 8.2 y AGP en la imagen). Imágenes: `godot-dotnet-game:3` (4,68 GB), `dotnet-app:2` (1,27 GB), `flutter-web-app:2` (5,23 GB); se subieron los tags en vez de reconstruir en el lugar.
+
+Revisión final (tanda de correcciones, 2026-10-18): el paso `package` pasa a 1800 s (300 s por target y tope global de 1700 s en `run.sh`; lo que no entra queda «FAIL: sin tiempo») y el job `PACKAGE` usa su propio read timeout en company-core (`sandbox.runner.package-timeout`, 40 min) porque restore 300 s + package 1800 s no entraban en los 30 min del cliente. «Generar entrega» usa el incremento guardado junto al commit VERIFIED (`Mission.verifiedIncrement`; en misiones anteriores, el último construido) y se rechaza con la misión trabajando. Re-verificado con podman sin red sobre `dd0a0e0` con la imagen `godot-dotnet-game:3` reconstruida: windows, macos, linux y android-apk PASS en 114 s; un `android-aab` fallido no deja restos en `juego/android/`, y con el reloj cerca del tope el target siguiente queda «FAIL: sin tiempo».
+
+La verificación de punta a punta con el despliegue (Step 5) la hace el controlador y se registra aquí después.
+
+## Bedrock: caché de prompts apagado (2026-10-18)
+
+El fundador vio el gasto de AWS en US$ 23 y pidió saber por qué. Cost Explorer lo repartía así:
+
+- Bedrock, US$ 20,31: US$ 17,90 del Pong del 17 de octubre y US$ 2,22 de la misión de Aria del CRM del 5.
+- RDS, US$ 2,10: una base `db.t3.micro` que corrió del 1 al 4 de octubre y ya estaba borrada.
+- EC2, US$ 1,31: el disco de 30 GB de la instancia detenida `iniciativa-staging-app`, que no es de Forjai.
+
+Forjai había registrado US$ 17,55, un 15 % menos que lo que cobró AWS. AWS cobraba la entrada de kimi-k3 como «cache write (30 min)» a US$ 3,75 por millón, mientras Forjai la calculaba a US$ 3. Bedrock pone un marcador de caché automático en el último mensaje, así que cada llamada escribía en caché el prompt entero. El 17 de octubre se escribieron 3,38 millones de tokens en caché y se leyeron solo 44.000, porque cada llamada empieza distinto (otro agente, otra ronda, otros errores).
+
+Lo verificamos en vivo con dos llamadas iguales de 3.600 tokens:
+
+| Pedido | `cache_write_tokens` |
+|---|---|
+| Sin opciones | 3.633 |
+| Con `"prompt_cache_options": {"mode": "explicit"}` y sin marcadores | 0 |
+
+El fundador aprobó el cambio. El proveedor `bedrock` ahora lleva `prompt-cache-off: true`, y `OpenAiCompatibleClient` agrega ese parámetro en cada llamada de chat. La entrada vuelve a cobrarse a US$ 3 por millón, que es el precio que ya usa Forjai, así que el costo por misión y el tope de costo de la misión coinciden con AWS.
+
+## Entrega del producto: verificación en vivo desplegada (2026-10-18)
+
+Se desplegaron juntos `company-core` y `sandbox-runner`, porque la ruta de staging propia de cada job necesita las dos versiones nuevas. Después se pidió «Generar entrega» del Pong (MISSION-PONG-NIVELES-1792199290, incremento 3, ya COMPLETED).
+
+**Resultado:** READY en 2 min 26 s, con windows, macos, linux y android-apk en PASS. El zip pesa 289 MB y trae `ENTREGA.md`, `codigo-fuente/`, `codigo-fuente.bundle` y `juego/<plataforma>/`. No hay ninguna contraseña en el zip, y `Juego.x86_64 --headless --quit-after 120` sale en 0. Responden bien el chat («¿dónde está MISSION-X?» lo contesta Java con la ruta) y la bitácora (evento de Andrea).
+
+**Bugs que encontró la prueba en vivo (eb51bc6):**
+- `ENTREGA.md` y el evento mostraban las rutas del contenedor (`/data/...`). Ahora muestran `~/entregas-forja` y `~/forjai-products`, con `PRODUCTS_HOST_PATH` y `DELIVERIES_HOST_PATH`.
+- El zip quedaba a nombre de root. Ahora toma el dueño de `~/entregas-forja`.
+- «Verificado» mostraba la hora del empaquetado. Ahora usa `m.verifiedAt`. Las misiones verificadas antes de este cambio dicen «no disponible».
+
+Al regenerar la entrega, el zip queda a nombre del fundador y no aparece ninguna ruta `/data/`.
+
+**Antes de este despliegue:** la revisión final de la rama encontró 8 problemas Important y 6 minors, y se corrigieron todos en una sola tanda (e800c07..9ac1de5):
+- zip-slip y entradas duplicadas;
+- el incremento VERIFIED guardado con su número;
+- un empaquetado a la vez y staging propio por job;
+- `.part` en `.staging` y limpieza de huérfanos;
+- timeout que conserva los targets terminados (paso de 1800 s, 300 s por target);
+- export a una carpeta temporal;
+- clave tachada en los logs y material de la clave descartado;
+- `LEEME.md` con `psql` en orden.
+
+La re-revisión los dio a todos por corregidos.

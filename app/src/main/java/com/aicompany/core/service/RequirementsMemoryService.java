@@ -4,6 +4,7 @@ import org.neo4j.driver.Driver;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -56,15 +57,95 @@ public class RequirementsMemoryService {
         }
     }
 
+    /**
+     * Revisión final Aria (12): CAS contra dos decisiones simultáneas sobre la misma versión (doble clic): solo la primera
+     * la reclama; la versión sigue en DRAFT hasta que la decisión la cambie.
+     */
+    public boolean claimDecision(String missionId, int version, String pendingAdjustment) {
+        // Map.of no admite null: el ajuste es null cuando la decisión no es un ADJUST.
+        var params = new java.util.HashMap<String, Object>();
+        params.put("id", missionId);
+        params.put("v", version);
+        params.put("adjust", pendingAdjustment);
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> !tx.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion "
+                    + "{version:$v}) WHERE r.status = 'DRAFT' AND r.decisionClaimedAt IS NULL SET r.decisionClaimedAt = datetime(), "
+                    + "r.pendingAdjustment = $adjust RETURN r.version",
+                    params).list().isEmpty());
+        }
+    }
+
+    /** Spec misiones durables §2: el ajuste reclamado sobre la última versión DRAFT (Aria no llegó a escribir la nueva). */
+    public Optional<String> pendingAdjustment(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {status:'DRAFT'}) "
+                            + "WHERE r.decisionClaimedAt IS NOT NULL AND r.pendingAdjustment IS NOT NULL "
+                            + "RETURN r.pendingAdjustment AS a ORDER BY r.version DESC LIMIT 1", Map.of("id", missionId))
+                    .list(r -> r.get("a").asString()).stream().findFirst();
+        }
+    }
+
     public void approve(String missionId, int version, String approvedBy) {
         write("MATCH (m:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
                 + "SET r.status='APPROVED', r.approvedBy=$by, r.approvedAt=datetime(), m.approvedSpecVersion=$v",
                 Map.of("id", missionId, "v", version, "by", approvedBy));
     }
 
+    /**
+     * Spec 2026-10-14 Kael §1.2 (revisión final M-1): las HU y el diseño de Kael se aprueban juntos o ninguno, en una
+     * sola transacción (un corte a mitad no deja HU aprobadas con el diseño en DRAFT).
+     */
+    public void approveWithDesign(String missionId, int specVersion, int designVersion, String approvedBy) {
+        var params = Map.<String, Object>of("id", missionId, "v", specVersion, "d", designVersion, "by", approvedBy);
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run("MATCH (m:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
+                        + "SET r.status='APPROVED', r.approvedBy=$by, r.approvedAt=datetime(), m.approvedSpecVersion=$v",
+                        params);
+                tx.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$d}) "
+                        + "SET d.status='APPROVED', d.approvedBy=$by, d.approvedAt=datetime() REMOVE d.pendingAdjustment",
+                        params);
+                return null;
+            });
+        }
+    }
+
+    /**
+     * Revisión final M-1: el CAS de claimDecision (sin ajuste en las HU) y el ajuste pendiente en la versión del diseño,
+     * en una sola transacción; solo la primera decisión gana.
+     */
+    public boolean claimDecisionForKael(String missionId, int specVersion, int designVersion, String adjustment) {
+        var params = Map.<String, Object>of("id", missionId, "v", specVersion, "d", designVersion, "a", adjustment);
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+                var claimed = !tx.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
+                        + "WHERE r.status = 'DRAFT' AND r.decisionClaimedAt IS NULL SET r.decisionClaimedAt = datetime(), "
+                        + "r.pendingAdjustment = null RETURN r.version", params).list().isEmpty();
+                if (claimed) {
+                    tx.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$d}) "
+                            + "SET d.pendingAdjustment=$a", params);
+                }
+                return claimed;
+            });
+        }
+    }
+
     public void reject(String missionId, int version) {
         write("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) SET r.status='REJECTED'",
                 Map.of("id", missionId, "v", version));
+    }
+
+    /**
+     * Revisión final Aria (16): misión del Development Group anterior a Aria (sin ninguna versión de requisitos y con un
+     * plan de Neo ya hecho). Sus rondas reutilizan ese plan como antes y no necesitan a Aria.
+     */
+    public boolean predatesRequirements(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) RETURN NOT EXISTS { (m)-[:HAS_REQUIREMENTS]->() } "
+                            + "AND EXISTS { (m)-[:HAS_TASK]->(:AgentTask {kind:'PLANNING', status:'COMPLETED'}) } AS legacy",
+                            Map.of("id", missionId))
+                    .list(r -> r.get("legacy").asBoolean()).stream().findFirst().orElse(false);
+        }
     }
 
     public int builtIncrement(String missionId) {
@@ -126,6 +207,21 @@ public class RequirementsMemoryService {
         try (var session = driver.session()) {
             return session.run("MATCH (m:Mission {id:$id}) RETURN coalesce(m." + property + ", 0) AS n",
                     Map.of("id", missionId)).list(r -> r.get("n").asInt()).stream().findFirst().orElse(0);
+        }
+    }
+
+    /** Spec 2026-10-14 Kael (Review Focus 2): tras un ajuste a Kael, la versión de HU vuelve a poder decidirse. */
+    public void releaseDecision(String missionId, int version) {
+        write("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion {version:$v}) "
+                + "REMOVE r.decisionClaimedAt, r.pendingAdjustment", Map.of("id", missionId, "v", version));
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): las instrucciones de cada versión, en orden (para no deshacer las del fundador). */
+    public List<String> instructions(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_REQUIREMENTS]->(r:RequirementsVersion) "
+                            + "WHERE r.instruction IS NOT NULL AND r.instruction <> '' RETURN r.instruction AS i ORDER BY r.version",
+                    Map.of("id", missionId)).list(r -> r.get("i").asString());
         }
     }
 

@@ -238,7 +238,7 @@ public class TeamPlanValidator {
                 var b = work.get(j);
                 for (var pathA : a.ownedPathsOrEmpty()) {
                     for (var pathB : b.ownedPathsOrEmpty()) {
-                        if (OwnedPaths.overlap(pathA, pathB)) {
+                        if (OwnedPaths.overlap(pathA, pathB) && !playthroughsInsideGame(pathA, a, pathB, b, membersById)) {
                             errors.add("Los ownedPaths \"" + pathA + "\" (" + a.agentId() + ") y \"" + pathB
                                     + "\" (" + b.agentId() + ") se solapan.");
                         }
@@ -282,6 +282,25 @@ public class TeamPlanValidator {
     }
 
     /** Spec 2026-10-02 B1 §1: ids del catálogo y sin repetidos (el orden lo fija Java). */
+    /** Spec 2026-10-14 Kael §2.1: game/playthroughs (de Vera) puede estar dentro del game/ de Kael; lo hace cumplir un gate. */
+    private static boolean playthroughsInsideGame(String pathA, PlannedTask a, String pathB, PlannedTask b,
+                                                  Map<String, TeamMemberInfo> membersById) {
+        return isQaPlaythroughsOf(pathB, b, pathA, membersById) || isQaPlaythroughsOf(pathA, a, pathB, membersById);
+    }
+
+    private static boolean isQaPlaythroughsOf(String playthroughs, PlannedTask qaTask, String gameRoot,
+                                              Map<String, TeamMemberInfo> membersById) {
+        var member = membersById.get(qaTask.agentId());
+        if (member == null || !"QA".equals(member.roleCode()) || playthroughs == null || gameRoot == null) {
+            return false;
+        }
+        var suffix = "/playthroughs";
+        var game = StackProfile.PLAYTHROUGHS_ROOT.substring(0, StackProfile.PLAYTHROUGHS_ROOT.length() - suffix.length());
+        return playthroughs.endsWith(StackProfile.PLAYTHROUGHS_ROOT)
+                && gameRoot.equals(playthroughs.substring(0, playthroughs.length() - suffix.length()))
+                && (gameRoot.equals(game) || gameRoot.endsWith("/" + game));
+    }
+
     private static void validateComponents(TeamPlan plan, List<String> errors) {
         if (plan.components() == null) {
             return;
@@ -357,23 +376,10 @@ public class TeamPlanValidator {
     }
 
     /**
-     * Las capabilities son atómicas: si el modelo mandó varias concatenadas
-     * en un solo string (verificado en vivo con Neo), el error lo dice
-     * explícitamente y sugiere los elementos individuales reales.
+     * Capability atómica que no es del agente. Una lista concatenada nunca llega acá: {@link #isAtomic} la rechaza antes
+     * con su propio error (FALTANTES, Bloque 1, m-4: la rama que la detectaba acá no se ejecutaba nunca).
      */
     private static String capabilityError(String agentId, String capability, List<String> realCapabilities) {
-
-        var parts = capability == null ? List.<String>of()
-                : java.util.Arrays.stream(capability.split(",")).map(String::strip).filter(p -> !p.isEmpty()).toList();
-        var realParts = parts.stream().filter(realCapabilities::contains).toList();
-
-        if (parts.size() > 1 && !realParts.isEmpty()) {
-            return "La capability de " + agentId + " es una lista concatenada en un solo texto (\"" + capability
-                    + "\"). requiredCapabilities es un arreglo de capabilities individuales: elige solo las necesarias, "
-                    + "cada una como un elemento separado, p. ej. " + realParts.stream().limit(2)
-                    .map(p -> "\"" + p + "\"").collect(java.util.stream.Collectors.joining(", ", "[", "]")) + ".";
-        }
-
         return "La capability \"" + capability + "\" no pertenece a " + agentId
                 + ". Sus capabilities reales son: " + realCapabilities;
     }

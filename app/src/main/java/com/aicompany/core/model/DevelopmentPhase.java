@@ -1,6 +1,6 @@
 package com.aicompany.core.model;
 
-/** Fase vigente del Development Group (spec 2026-10-01): 1 = apps Flutter web y .NET; 2 = PostgreSQL y entrega; 3 = juegos. */
+/** Fase vigente del Development Group (spec 2026-10-01): 1 = apps Flutter web y .NET y juegos Godot (spec 2026-10-14 Kael); 2 = PostgreSQL y entrega; 3 = 3D y creativo. */
 public final class DevelopmentPhase {
 
     public static final int CURRENT = 1;

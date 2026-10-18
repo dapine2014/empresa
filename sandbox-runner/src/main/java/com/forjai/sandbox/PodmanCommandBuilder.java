@@ -16,6 +16,11 @@ public class PodmanCommandBuilder {
     }
 
     public List<String> run(ExecutionProfile profile, ExecutionProfile.Step step, Path workDir) {
+        return run(profile, step, workDir, null);
+    }
+
+    /** Con {@code envFile} las variables (p. ej. la clave de publicación) viajan por archivo, nunca en los args. */
+    public List<String> run(ExecutionProfile profile, ExecutionProfile.Step step, Path workDir, Path envFile) {
         var args = new ArrayList<>(List.of("podman", "--url", podmanUrl, "run", "--rm", "--network=none"));
         if (profile.readOnlyRoot()) {
             args.add("--read-only");
@@ -40,6 +45,9 @@ public class PodmanCommandBuilder {
             args.addAll(List.of("-v", depsRoot.resolve("pub") + ":/opt/pub-cache:O"));
         } else {
             args.addAll(List.of("-v", depsRoot.resolve("nuget") + ":/deps/nuget:ro,z"));
+        }
+        if (envFile != null) {
+            args.addAll(List.of("--env-file", envFile.toString()));
         }
         args.addAll(List.of(profile.image(), "/forjai/run.sh", step.name()));
         return List.copyOf(args);

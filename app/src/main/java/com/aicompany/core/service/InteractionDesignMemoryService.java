@@ -1,0 +1,99 @@
+package com.aicompany.core.service;
+
+import org.neo4j.driver.Driver;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/** Spec 2026-10-14 Kael §1.3: versiones del diseño de Kael ((:Mission)-[:HAS_INTERACTION_DESIGN]->). */
+@Service
+public class InteractionDesignMemoryService {
+
+    public record Version(int version, String designJson, String status, int specVersion, String instruction) {
+    }
+
+    private final Driver driver;
+
+    public InteractionDesignMemoryService(Driver driver) {
+        this.driver = driver;
+    }
+
+    public int saveDraft(String missionId, String designJson, int specVersion, String instruction) {
+        try (var session = driver.session()) {
+            return session.executeWrite(tx -> {
+                var next = tx.run("MATCH (m:Mission {id:$id}) OPTIONAL MATCH (m)-[:HAS_INTERACTION_DESIGN]->(d) "
+                        + "RETURN coalesce(max(d.version), 0) + 1 AS v", Map.of("id", missionId)).single().get("v").asInt();
+                tx.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {status:'DRAFT'}) "
+                        + "SET d.status = 'SUPERSEDED'", Map.of("id", missionId));
+                tx.run("MATCH (m:Mission {id:$id}) CREATE (m)-[:HAS_INTERACTION_DESIGN]->(:InteractionDesignVersion "
+                                + "{version:$v, designJson:$json, status:'DRAFT', specVersion:$spec, instruction:$i, "
+                                + "createdAt:datetime()})",
+                        Map.of("id", missionId, "v", next, "json", designJson, "spec", specVersion,
+                                "i", instruction == null ? "" : instruction));
+                return next;
+            });
+        }
+    }
+
+    public Optional<Version> latest(String missionId) {
+        return query(missionId, "");
+    }
+
+    public Optional<Version> approved(String missionId) {
+        return query(missionId, " AND d.status = 'APPROVED'");
+    }
+
+    private Optional<Version> query(String missionId, String filter) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion) "
+                            + "WHERE true" + filter + " RETURN d.version AS v, d.designJson AS j, d.status AS s, "
+                            + "d.specVersion AS sv, d.instruction AS i ORDER BY d.version DESC LIMIT 1",
+                    Map.of("id", missionId)).list(r -> new Version(r.get("v").asInt(), r.get("j").asString(),
+                    r.get("s").asString(), r.get("sv").asInt(), r.get("i").isNull() ? "" : r.get("i").asString()))
+                    .stream().findFirst();
+        }
+    }
+
+    // Aprobar el diseño y reclamar un ajuste a Kael viven en RequirementsMemoryService (approveWithDesign,
+    // claimDecisionForKael): van en la misma transacción que la versión de HU (revisión final M-1).
+
+    public void reject(String missionId, int version) {
+        write("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {version:$v}) "
+                + "SET d.status='REJECTED'", Map.of("id", missionId, "v", version));
+    }
+
+    /** Spec §1.2: un ajuste a Aria deja colgando el diseño anterior. */
+    public void supersedeDraft(String missionId) {
+        write("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion {status:'DRAFT'}) "
+                + "SET d.status='SUPERSEDED'", Map.of("id", missionId));
+    }
+
+    public Optional<String> pendingAdjustment(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion "
+                            + "{status:'DRAFT'}) WHERE d.pendingAdjustment IS NOT NULL RETURN d.pendingAdjustment AS a "
+                            + "ORDER BY d.version DESC LIMIT 1", Map.of("id", missionId))
+                    .list(r -> r.get("a").asString()).stream().findFirst();
+        }
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): las instrucciones de cada versión, en orden (para no deshacer las del fundador). */
+    public List<String> instructions(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_INTERACTION_DESIGN]->(d:InteractionDesignVersion) "
+                            + "WHERE d.instruction IS NOT NULL AND d.instruction <> '' RETURN d.instruction AS i ORDER BY d.version",
+                    Map.of("id", missionId)).list(r -> r.get("i").asString());
+        }
+    }
+
+    private void write(String cypher, Map<String, Object> params) {
+        try (var session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run(cypher, params);
+                return null;
+            });
+        }
+    }
+}

@@ -58,6 +58,11 @@ ollama:
 
 products:
   workspace-root: ${PRODUCTS_WORKSPACE_ROOT:${user.home}/forjai-products}
+  deliveries-root: ${DELIVERIES_ROOT:${user.home}/entregas-forja}
+  # Solo para mostrar: la ruta de deliveries-root vista desde el equipo del fundador.
+  deliveries-host-path: ${DELIVERIES_HOST_PATH:~/entregas-forja}
+  # Solo para mostrar: la ruta de workspace-root vista desde el equipo del fundador.
+  workspace-host-path: ${PRODUCTS_HOST_PATH:~/forjai-products}
 
 evidence:
   web-search:
@@ -85,16 +90,23 @@ sandbox:
     url: ${SANDBOX_RUNNER_URL:http://localhost:8090}
     token: ${SANDBOX_RUNNER_TOKEN:}
     timeout: ${SANDBOX_RUNNER_TIMEOUT:30m}
+    # Job PACKAGE de la entrega: restore 300 s + package 1800 s + checkout y copia.
+    package-timeout: ${SANDBOX_RUNNER_PACKAGE_TIMEOUT:40m}
 # Keys de modelos editables desde Settings (2026-09-29): llave maestra AES-256 (32 bytes en base64) con la que se
 # cifran en Neo4j. Solo vive en .env; sin ella las keys solo salen del .env.
 forjai:
   secrets-key: ${FORJAI_SECRETS_KEY:}
+  # Cadena de modelos gratis (decisión del fundador 2026-10-15): si el gratis de un agente cae, se prueban estos en
+  # orden antes del respaldo pago (Bedrock) y del suplente local. Solo siembra: después manda Settings.
+  free-model-chain: ${FREE_MODEL_CHAIN:nvidia:moonshotai/kimi-k2.6,nvidia:z-ai/glm-5.3,nvidia:deepseek-ai/deepseek-v4.1-flash,nvidia:nvidia/nemotron-3-super-120b-a12b}
 
 remote-models:
   base-url: ${REMOTE_MODELS_BASE_URL:https://integrate.api.nvidia.com/v1}
   read-timeout: ${REMOTE_MODELS_READ_TIMEOUT:10m}
   # Plazo total por llamada (verificado en vivo 2026-10-03: una llamada quedó colgada 5 h con el read-timeout).
   total-timeout: ${REMOTE_MODELS_TOTAL_TIMEOUT:12m}
+  # Ping de salud y chequeo rápido de la cadena de modelos gratis (decisión del fundador 2026-10-15: 60 s, antes 20 s).
+  probe-timeout: ${REMOTE_MODELS_PROBE_TIMEOUT:60s}
   providers:
     nvidia:
       api-key: ${NVIDIA_API_KEY:}
@@ -115,6 +127,9 @@ remote-models:
       check-models: global.moonshotai.kimi-k3
       # Verificado en vivo (2026-10-04): kimi-k3 en Bedrock razona por defecto; reasoning_effort=none lo apaga.
       thinking-off: reasoning_effort=none
+      # Verificado en vivo (2026-10-18): sin esto Bedrock escribe cada prompt en caché a 1,25× la entrada y casi nunca lo
+      # relee; con prompt_cache_options.mode=explicit (sin marcadores) no hay escrituras ni recargo.
+      prompt-cache-off: true
       # Costo real por misión (2026-10-04): US$ por millón de tokens de kimi-k3 en Bedrock (perfil global).
       price:
         input: 3.0

@@ -43,6 +43,15 @@ class CompanyPolicyDefaultsTest {
         assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.SEED_CAPITAL_USD, 50));
     }
 
+    // Spec misiones durables §3: los frenos de la corrección automática son policies editables.
+    @Test
+    void theCorrectionBrakesHaveTheirDefaults() {
+        var defaults = CompanyPolicyService.defaults(new AppProperties("Forjai", 50, 60));
+        assertEquals(20.0, defaults.get(PolicyKey.MAX_AUTO_CORRECTIONS));
+        assertEquals(10.0, defaults.get(PolicyKey.MAX_MISSION_COST_USD));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.MAX_AUTO_CORRECTIONS, 0));
+    }
+
     // Spec búsqueda de prospectos (2026-09-30): apagada por defecto, 10 prospectos por día.
     @Test
     void prospectingIsOffByDefaultWithTenPerDay() {
@@ -77,5 +86,15 @@ class CompanyPolicyDefaultsTest {
         assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.SPEC_APPROVAL_REQUIRED, 0));
         assertThrows(IllegalArgumentException.class,
                 () -> CompanyPolicyService.validateValue(PolicyKey.SPEC_APPROVAL_REQUIRED, 2));
+    }
+
+    // Revisión conjunta (spec 2026-10-15): encendida por defecto, solo 0 o 1.
+    @Test
+    void jointReviewIsSeededOnAndOnlyAcceptsZeroOrOne() {
+        var defaults = CompanyPolicyService.defaults(new AppProperties("Forjai", 50, 60));
+        assertEquals(1.0, defaults.get(PolicyKey.JOINT_REVIEW_ENABLED));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.JOINT_REVIEW_ENABLED, 0));
+        assertDoesNotThrow(() -> CompanyPolicyService.validateValue(PolicyKey.JOINT_REVIEW_ENABLED, 1));
+        assertThrows(IllegalArgumentException.class, () -> CompanyPolicyService.validateValue(PolicyKey.JOINT_REVIEW_ENABLED, 2));
     }
 }

@@ -11,6 +11,11 @@ import com.aicompany.core.model.PolicyKey;
 import com.aicompany.core.model.MissionStatusResponse;
 import com.aicompany.core.model.RequirementsDecisionCommand;
 import com.aicompany.core.model.RequirementsView;
+import com.aicompany.core.model.ContractView;
+import com.aicompany.core.model.InteractionDesignView;
+import com.aicompany.core.model.JointReviewView;
+import com.aicompany.core.agent.model.InteractionDesign;
+import com.aicompany.core.agent.validation.InteractionDesignText;
 import com.aicompany.core.agent.model.RequirementsSpec;
 import com.aicompany.core.agent.validation.RequirementsText;
 import org.slf4j.Logger;
@@ -61,6 +66,61 @@ public class MissionService {
         this.policies = policies;
     }
 
+    private MissionCancellations cancellations;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCancellations(MissionCancellations cancellations) {
+        this.cancellations = cancellations;
+    }
+
+    /** Ya terminadas: no hay nada que cancelar (una FAILED o COMPLETED se borra, no se cancela). */
+    private static final Set<MissionStatus> NOT_CANCELLABLE = Set.of(
+            MissionStatus.COMPLETED, MissionStatus.CANCELLED, MissionStatus.FAILED);
+
+    /**
+     * Cancelar una misión en curso (decisión del fundador 2026-10-15; antes no había forma y el Pong se canceló a mano en
+     * Neo4j). Queda CANCELLED de inmediato, sus tareas abiertas también, y el trabajo vivo se corta en su siguiente
+     * llamada al modelo (la que ya estaba en curso termina sola). Una misión CANCELLED no se retoma.
+     */
+    public MissionResponse cancel(String missionId, String actor) {
+        var mission = memory.find(missionId)
+                .orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId + "."));
+        if (NOT_CANCELLABLE.contains(mission.status())) {
+            throw new IllegalStateException("La misión " + missionId + " ya terminó (" + mission.status()
+                    + "): no hay nada que cancelar.");
+        }
+        if (cancellations != null) {
+            cancellations.cancel(missionId);
+        }
+        var message = "Cancelada por el fundador (estaba en " + mission.status() + ").";
+        memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Cancelada", message);
+        var tasks = memory.cancelOpenTasks(missionId);
+        log.info("MISSION_CANCELLED missionId={} actor={} from={} openTasks={}", missionId, actor, mission.status(), tasks);
+        events.publishMission("EMPRESA_MISSION_UPDATED", missionId, MissionStatus.CANCELLED.name(), 100, "Cancelada",
+                message);
+        return memory.find(missionId).orElseThrow();
+    }
+
+    private JointReviewMemoryService jointReviews;
+
+    /** Revisión conjunta (spec 2026-10-15): opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setJointReviews(JointReviewMemoryService jointReviews) {
+        this.jointReviews = jointReviews;
+    }
+
+    /** Revisión conjunta (spec 2026-10-15): las rondas de la misión, en orden. */
+    public List<JointReviewView> jointReviews(String missionId) {
+        if (jointReviews == null) {
+            return List.of();
+        }
+        return jointReviews.all(missionId).stream().map(r -> new JointReviewView(r.number(), r.round(), r.specVersion(),
+                r.designVersion(), r.status(),
+                List.of(JSON.readValue(r.contradictionsJson(), com.aicompany.core.agent.model.JointReview.Contradiction[].class)),
+                List.of(JSON.readValue(r.decisionsJson(), com.aicompany.core.agent.model.JointReview.Decision[].class)),
+                r.detail(), r.at())).toList();
+    }
+
     private AgentAvailability agentAvailability;
 
     /** Decisión del fundador (2026-10-01): solo trabajan los agentes encendidos (opcional en tests). */
@@ -69,8 +129,20 @@ public class MissionService {
         this.agentAvailability = agentAvailability;
     }
 
-    /** Agentes sin los cuales la misión no puede correr: discovery, los 6; un equipo, Alex y su líder. */
-    private void requireAgentsOn(String teamId, String what) {
+    /**
+     * Agentes sin los cuales la misión no puede correr: discovery, los 6; un equipo, Alex y su líder (y Aria en el
+     * Development Group). Público para la recuperación (spec misiones durables §2): retomar o corregir nunca llama al
+     * modelo de un agente apagado.
+     */
+    public void requireAgentsOn(String teamId, String what) {
+        requireAgentsOn(teamId, what, true, false);
+    }
+
+    private void requireAgentsOn(String teamId, String what, boolean needsAria) {
+        requireAgentsOn(teamId, what, needsAria, false);
+    }
+
+    private void requireAgentsOn(String teamId, String what, boolean needsAria, boolean needsKael) {
         if (agentAvailability == null) {
             return;
         }
@@ -80,8 +152,11 @@ public class MissionService {
         }
         var team = teamMemory.snapshot(teamId);
         var required = new java.util.ArrayList<>(java.util.List.of(AgentAvailability.CEO, team.leaderAgentId()));
-        if (TeamMemoryService.teamType(teamId).map("DEVELOPMENT"::equals).orElse(false)) {
+        if (needsAria && TeamMemoryService.teamType(teamId).map("DEVELOPMENT"::equals).orElse(false)) {
             required.add(AgentAvailability.PRODUCT_OWNER);
+        }
+        if (needsKael) {
+            required.add(AgentAvailability.INTERACTION_DESIGN);
         }
         agentAvailability.requireEnabled(required, what);
 
@@ -161,6 +236,46 @@ public class MissionService {
         this.requirementsMemory = requirementsMemory;
     }
 
+    private ContractMemoryService contracts;
+
+    /** Contrato (spec 2026-10-16): opcional en tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setContracts(ContractMemoryService contracts) {
+        this.contracts = contracts;
+    }
+
+    private ContractView contractView(String missionId) {
+        if (contracts == null) {
+            return null;
+        }
+        return contracts.latest(missionId).map(v -> {
+            var contract = JSON.readValue(v.contractJson(), com.aicompany.core.agent.model.ClientContract.class);
+            return new ContractView(v.version(), v.status(),
+                    contracts.approved(missionId).map(ContractMemoryService.Version::version).orElse(null), contract,
+                    com.aicompany.core.agent.validation.ContractText.summary(contract, v.version()));
+        }).orElse(null);
+    }
+
+    private InteractionDesignMemoryService designs;
+
+    /** Spec 2026-10-14 Kael: diseño de interacción de Kael (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setInteractionDesign(InteractionDesignMemoryService designs) {
+        this.designs = designs;
+    }
+
+    public Optional<InteractionDesignView> interactionDesign(String missionId) {
+        if (designs == null) {
+            return Optional.empty();
+        }
+        return designs.latest(missionId).map(v -> {
+            var design = JSON.readValue(v.designJson(), InteractionDesign.class);
+            return new InteractionDesignView(missionId, v.version(), v.status(), v.specVersion(),
+                    designs.approved(missionId).map(InteractionDesignMemoryService.Version::version).orElse(null),
+                    design, InteractionDesignText.summary(design));
+        });
+    }
+
     public Optional<RequirementsView> requirements(String missionId) {
         if (requirementsMemory == null) {
             return Optional.empty();
@@ -177,7 +292,7 @@ public class MissionService {
                 requirementsMemory.approved(missionId).map(RequirementsMemoryService.Version::version).orElse(null),
                 requirementsMemory.builtIncrement(missionId),
                 spec == null ? 0 : spec.incrementNumbers().size(), spec,
-                spec == null ? "" : RequirementsText.summary(spec)));
+                spec == null ? "" : RequirementsText.summary(spec), contractView(missionId)));
     }
 
     public RequirementsView decideRequirements(String missionId, RequirementsDecisionCommand command) {
@@ -187,6 +302,13 @@ public class MissionService {
             throw new IllegalStateException("MISSION " + missionId + " no está esperando la aprobación de requisitos "
                     + "(estado actual: " + mission.status() + ").");
         }
+        // Contrato (spec 2026-10-16 §1): mientras el contrato está en DRAFT, la decisión es sobre el contrato.
+        var draftContract = contracts == null ? Optional.<ContractMemoryService.Version>empty()
+                : contracts.latest(missionId).filter(c -> "DRAFT".equals(c.status()));
+        if (draftContract.isPresent()) {
+            decideContract(mission, draftContract.get(), command);
+            return requirements(missionId).orElseThrow();
+        }
         var version = requirementsMemory.latest(missionId)
                 .orElseThrow(() -> new IllegalStateException("MISSION " + missionId + " no tiene requisitos."));
         if (!"DRAFT".equals(version.status())) {
@@ -194,34 +316,124 @@ public class MissionService {
             throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
                     + " ya está " + version.status() + ".");
         }
+        // Spec 2026-10-14 Kael §1.3: el diseño DRAFT vigente, solo si se hizo sobre esta versión de HU.
+        var draftDesign = designs == null ? Optional.<InteractionDesignMemoryService.Version>empty()
+                : designs.latest(missionId).filter(d -> "DRAFT".equals(d.status()));
+        if (draftDesign.isPresent() && draftDesign.get().specVersion() != version.version()) {
+            throw new IllegalStateException("El diseño de Kael de " + missionId + " es de la versión "
+                    + draftDesign.get().specVersion() + " de las HU y la vigente es la " + version.version()
+                    + ": espera a que Kael termine el diseño nuevo.");
+        }
+        var toKael = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && command.targetOrAria() == RequirementsDecisionCommand.Target.KAEL;
+        if (toKael && draftDesign.isEmpty()) {
+            throw new IllegalStateException(missionId + " no tiene un diseño de Kael para ajustar.");
+        }
+        // Revisión final (M-3): una app o un juego se decide con el diseño de Kael; rechazar sigue permitido.
+        if (designs != null && draftDesign.isEmpty()
+                && command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
+            var experience = JSON.readValue(version.specJson(), RequirementsSpec.class).experienceOrNull();
+            if (experience == RequirementsSpec.Experience.APP || experience == RequirementsSpec.Experience.GAME) {
+                throw new IllegalStateException("Kael todavía no terminó el diseño de " + missionId
+                        + ": espera a que esté listo.");
+            }
+        }
         if (command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
             // Revisión final Aria (8): aprobar llama a Neo y ajustar a Aria; ninguno puede estar apagado.
-            requireAgentsOn(mission.teamId(), "decidir sobre los requisitos de " + missionId);
+            requireAgentsOn(mission.teamId(), "decidir sobre los requisitos de " + missionId, true,
+                    draftDesign.isPresent());
+        }
+        if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && (command.instruction() == null || command.instruction().isBlank())) {
+            throw new IllegalArgumentException("Para ajustar los requisitos escribe la instrucción para Aria.");
+        }
+        var adjustment = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                ? command.instruction().strip() : null;
+        // El ajuste se guarda en la versión de HU solo si va a Aria; si va a Kael, en la versión del diseño (misma transacción).
+        var claimed = toKael
+                ? requirementsMemory.claimDecisionForKael(missionId, version.version(), draftDesign.get().version(), adjustment)
+                : requirementsMemory.claimDecision(missionId, version.version(), adjustment);
+        if (!claimed) {
+            // Revisión final Aria (12): doble clic; la primera decisión ya está en curso.
+            throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
+                    + " ya tiene una decisión en curso.");
         }
         switch (command.decision()) {
             case APPROVE -> {
-                requirementsMemory.approve(missionId, version.version(), "founder");
-                events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", Map.of("version", version.version()));
+                if (draftDesign.isPresent()) {
+                    requirementsMemory.approveWithDesign(missionId, version.version(), draftDesign.get().version(), "founder");
+                } else {
+                    requirementsMemory.approve(missionId, version.version(), "founder");
+                }
+                events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", draftDesign
+                        .<Map<String, Object>>map(d -> Map.of("version", version.version(),
+                                "interactionDesignVersion", d.version()))
+                        .orElse(Map.of("version", version.version())));
                 executor.continueAfterApprovalAsync(missionId);
             }
             case ADJUST -> {
-                if (command.instruction() == null || command.instruction().isBlank()) {
-                    throw new IllegalArgumentException("Para ajustar los requisitos escribe la instrucción para Aria.");
+                if (toKael) {
+                    executor.adjustDesignAsync(missionId, adjustment);
+                } else {
+                    executor.adjustRequirementsAsync(missionId, adjustment);
                 }
-                executor.adjustRequirementsAsync(missionId, command.instruction().strip());
             }
             case REJECT -> {
                 requirementsMemory.reject(missionId, version.version());
+                draftDesign.ifPresent(d -> designs.reject(missionId, d.version()));
                 memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Requisitos rechazados",
                         "El fundador rechazó los requisitos de Aria.");
+                // Revisión final Aria (14): mismo aviso que el REJECT del inversionista.
+                events.publishMission("EMPRESA_MISSION_UPDATED", missionId, MissionStatus.CANCELLED.name(), 100,
+                        "Requisitos rechazados", "El fundador rechazó los requisitos de Aria.");
                 events.publish("EMPRESA_REQUIREMENTS_REJECTED", missionId, null, "human", Map.of("version", version.version()));
             }
         }
         return requirements(missionId).orElseThrow();
     }
 
+    private void decideContract(MissionResponse mission, ContractMemoryService.Version contract,
+                                RequirementsDecisionCommand command) {
+        var missionId = mission.missionId();
+        if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && command.targetOrAria() == RequirementsDecisionCommand.Target.KAEL) {
+            throw new IllegalStateException("El contrato de " + missionId + " es de Aria: ajústalo sin «Kael».");
+        }
+        if (command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
+            requireAgentsOn(mission.teamId(), "decidir sobre el contrato de " + missionId, true);
+        }
+        if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && (command.instruction() == null || command.instruction().isBlank())) {
+            throw new IllegalArgumentException("Para ajustar el contrato escribe la instrucción para Aria.");
+        }
+        var adjustment = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                ? command.instruction().strip() : null;
+        if (!contracts.claimDecision(missionId, contract.version(), adjustment)) {
+            throw new IllegalStateException("La versión " + contract.version() + " del contrato de " + missionId
+                    + " ya tiene una decisión en curso.");
+        }
+        switch (command.decision()) {
+            case APPROVE -> {
+                contracts.approve(missionId, contract.version(), "founder");
+                events.publish("EMPRESA_CONTRACT_APPROVED", missionId, null, "human",
+                        Map.of("version", contract.version()));
+                executor.continueAfterContractAsync(missionId);
+            }
+            case ADJUST -> executor.adjustContractAsync(missionId, adjustment);
+            case REJECT -> {
+                contracts.reject(missionId, contract.version());
+                memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Contrato rechazado",
+                        "El fundador rechazó el contrato de Aria.");
+                events.publishMission("EMPRESA_MISSION_UPDATED", missionId, MissionStatus.CANCELLED.name(), 100,
+                        "Contrato rechazado", "El fundador rechazó el contrato de Aria.");
+                events.publish("EMPRESA_CONTRACT_REJECTED", missionId, null, "human",
+                        Map.of("version", contract.version()));
+            }
+        }
+    }
+
     private static final Set<MissionStatus> STOPPED = Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.COMPLETED,
-            MissionStatus.FAILED);
+            MissionStatus.FAILED, MissionStatus.BLOCKED);
 
     public RequirementsView buildIncrement(String missionId, int increment) {
         var mission = memory.find(missionId)
@@ -242,8 +454,31 @@ public class MissionService {
             throw new IllegalStateException("MISSION " + missionId + " está en curso (" + mission.status() + ").");
         }
         requireAgentsOn(mission.teamId(), "construir el incremento " + increment + " de " + missionId);
-        executor.buildIncrementAsync(missionId, increment);
+        var lastRound = memory.evidenceRound(missionId);
+        if (!memory.claimNextRound(missionId, lastRound, STOPPED)) {
+            // Revisión final Aria (12): doble clic; el primer pedido ya lanzó la ronda.
+            throw new IllegalStateException("MISSION " + missionId + " ya arrancó otra ronda; espera a que termine.");
+        }
+        executor.buildIncrementAsync(missionId, increment, lastRound + 1);
         return requirements(missionId).orElseThrow();
+    }
+
+    /**
+     * Rondas de evidencia ya usadas contra {@code MAX_EVIDENCE_ROUNDS}. Revisión final Aria (1): los incrementos ocupan
+     * números de ronda (ids -R<n>) pero no consumen el límite.
+     */
+    public int evidenceRoundsUsed(String missionId) {
+        return memory.evidenceRound(missionId)
+                - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId))
+                // Spec misiones durables §3: las correcciones tampoco consumen el límite.
+                - (recoveryMemory == null ? 0 : recoveryMemory.correctionRounds(missionId).size());
+    }
+
+    private com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryMemory(com.aicompany.core.recovery.RecoveryMemoryService recoveryMemory) {
+        this.recoveryMemory = recoveryMemory;
     }
 
     public Optional<MissionResponse> status(String missionId) {
@@ -273,7 +508,7 @@ public class MissionService {
      * corriendo agentes.
      */
     private static final Set<MissionStatus> DECIDABLE_STATUSES =
-            Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.FAILED);
+            Set.of(MissionStatus.AWAITING_INVESTOR, MissionStatus.FAILED, MissionStatus.BLOCKED);
 
     public Optional<DecisionResponse> recordDecision(
             String missionId,
@@ -288,7 +523,7 @@ public class MissionService {
         if (!DECIDABLE_STATUSES.contains(mission.get().status())) {
             throw new IllegalStateException(
                     "Solo se puede registrar una decisión sobre una misión "
-                            + "en AWAITING_INVESTOR o FAILED (estado actual: "
+                            + "en AWAITING_INVESTOR, FAILED o BLOCKED (estado actual: "
                             + mission.get().status()
                             + ")"
             );
@@ -296,21 +531,28 @@ public class MissionService {
 
         // Spec evidence-rounds (revisión 2026-09-27): el límite se chequea antes de escribir nada.
         Integer nextRound = null;
+        var blockedIndication = false;
         if (command.decision() == InvestorDecision.REQUEST_MORE_EVIDENCE) {
             if (policies == null) {
                 throw new IllegalStateException("Falta CompanyPolicyService");
             }
-            // Revisión final Aria (1): los incrementos ocupan números de ronda (ids -R<n>) pero no consumen el límite.
             var lastRound = memory.evidenceRound(missionId);
-            var current = lastRound
-                    - (requirementsMemory == null ? 0 : requirementsMemory.incrementRounds(missionId));
+            var current = evidenceRoundsUsed(missionId);
             var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
-            if (current >= max) {
+            blockedIndication = mission.get().status() == MissionStatus.BLOCKED;
+            // Spec misiones durables §3: la indicación sobre una BLOCKED no consume rondas de evidencia.
+            if (!blockedIndication && current >= max) {
                 throw new IllegalStateException("MISSION " + missionId + " ya usó " + current + " de " + max
                         + " vueltas de evidencia: decide con APPROVE o REJECT (o sube MAX_EVIDENCE_ROUNDS en Settings).");
             }
             nextRound = lastRound + 1;
-            requireAgentsOn(memory.teamId(missionId).orElse(null), "pedir más evidencia sobre " + missionId);
+            // Revisión final Aria (16): una misión anterior a Aria reutiliza el plan de Neo y no la necesita.
+            requireAgentsOn(memory.teamId(missionId).orElse(null), "pedir más evidencia sobre " + missionId,
+                    requirementsMemory == null || !requirementsMemory.predatesRequirements(missionId));
+            if (!memory.claimNextRound(missionId, lastRound, DECIDABLE_STATUSES)) {
+                // Revisión final Aria (12): doble clic; el primer pedido ya lanzó la ronda y este no escribe nada.
+                throw new IllegalStateException("MISSION " + missionId + " ya arrancó otra ronda; espera a que termine.");
+            }
         }
 
         var decisionId = missionId + "-DECISION-" + Instant.now().toEpochMilli();
@@ -359,9 +601,27 @@ public class MissionService {
                 )
         );
 
-        if (nextRound != null) {
+        if (nextRound != null && blockedIndication) {
             var round = nextRound;
-            memory.setEvidenceRound(missionId, round);
+            var lastValidation = memory.tasks(missionId).stream()
+                    .filter(t -> "VALIDATION".equals(t.kind()) && t.validationStatus() != null)
+                    .max(java.util.Comparator.comparing(com.aicompany.core.model.AgentTask::updatedAt,
+                            java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())));
+            var report = com.aicompany.core.recovery.CorrectionReport.from(lastValidation, mission.get().message());
+            var request = com.aicompany.core.recovery.CorrectionRound.FOUNDER_PREFIX + command.reasoning() + "\n\n" + report.text();
+            var increment = requirementsMemory == null ? 1 : Math.max(1, requirementsMemory.currentIncrement(missionId));
+            if (recoveryMemory != null) {
+                recoveryMemory.addCorrectionRound(missionId,
+                        new com.aicompany.core.recovery.CorrectionRound(round, increment, request, report.failing(), true, report.failures()));
+            }
+            executor.correctAsync(missionId, round, request)
+                    .whenComplete((ignored, error) -> {
+                        if (error != null) {
+                            log.error("MISSION {} - correction round {} failed", missionId, round, error);
+                        }
+                    });
+        } else if (nextRound != null) {
+            var round = nextRound;
             executor.reexecuteAsync(missionId, memory.instructionOf(missionId).orElse(""), round, command.reasoning())
                     .whenComplete((ignored, error) -> {
                         if (error != null) {
@@ -388,6 +648,8 @@ public class MissionService {
             MissionStatus.AWAITING_INVESTOR,
             MissionStatus.AWAITING_SPEC_APPROVAL,
             MissionStatus.FAILED,
+            MissionStatus.INTERRUPTED,
+            MissionStatus.BLOCKED,
             MissionStatus.COMPLETED,
             MissionStatus.CANCELLED
     );
@@ -412,6 +674,11 @@ public class MissionService {
         if (FOUNDATIONAL_MISSION_ID.equals(missionId)) {
             throw new IllegalStateException(
                     FOUNDATIONAL_MISSION_ID + " es la misión fundacional y no se puede borrar");
+        }
+
+        // Una misión recién cancelada puede tener todavía un hilo terminando su última llamada: no se borra hasta que pare.
+        if (mission.get().status() == MissionStatus.CANCELLED && executor.isLive(missionId)) {
+            throw new IllegalStateException("La misión " + missionId + " se está deteniendo: bórrala en un minuto.");
         }
 
         if (!DELETABLE_STATUSES.contains(mission.get().status())) {
@@ -492,5 +759,18 @@ public class MissionService {
         if (financialCriteria.deadline() != null && financialCriteria.deadline().isBefore(LocalDate.now())) {
             throw new IllegalArgumentException("financialCriteria.deadline no puede ser anterior a hoy");
         }
+    }
+
+    private com.aicompany.core.event.MissionEventLog missionEventLog;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMissionEventLog(com.aicompany.core.event.MissionEventLog missionEventLog) {
+        this.missionEventLog = missionEventLog;
+    }
+
+    /** Bitácora (spec 2026-10-17): del más nuevo al más viejo; límite 1..500. */
+    public List<com.aicompany.core.model.MissionEventView> events(String missionId, int limit) {
+        return missionEventLog == null ? List.of()
+                : missionEventLog.recent(missionId, Math.max(1, Math.min(500, limit)));
     }
 }

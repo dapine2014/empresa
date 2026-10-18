@@ -28,7 +28,8 @@ class TeamPlanValidatorTest {
                 member("devops", "DATA_ARCHITECT", List.of("persistence")),
                 member("frontend-ui", "UI_UX", List.of("flutter", "ui")),
                 member("interaction-design", "GAME_DEV", List.of("godot")),
-                member("qa", "QA", List.of("qa", "tests"))
+                member("qa", "QA", List.of("qa", "tests")),
+                member("ops", "DEVOPS", List.of("deploy"))
         ));
     }
 
@@ -141,17 +142,31 @@ class TeamPlanValidatorTest {
     @Test
     void rejectsARoleOfALaterPhase() {
         var tasks = validTasks();
-        tasks.add(new PlannedTask("interaction-design", "WORK", "GAMEPLAY", "Juego",
-                List.of("godot"), List.of("lib/saludo/infrastructure")));
+        tasks.add(new PlannedTask("ops", "WORK", "DEPLOY", "Despliegue",
+                List.of("deploy"), List.of("lib/saludo/infrastructure")));
         var errors = validateDev(plan(tasks));
-        assertTrue(errors.stream().anyMatch(e -> e.contains("interaction-design") && e.contains("habilitado")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("ops") && e.contains("habilitado")), errors.toString());
     }
 
     @Test
-    void rejectsAProfileOfALaterPhase() {
+    void aGodotPlanWithKaelIsValid() {
+        var tasks = validTasks();
+        tasks.add(new PlannedTask("interaction-design", "WORK", "GAMEPLAY", "Juego",
+                List.of("godot"), List.of("game")));
+        tasks.set(2, new PlannedTask("qa", "WORK", "ACCEPTANCE_TESTS", "Tests", List.of("tests"),
+                List.of("test/saludo", "game/playthroughs")));
         var errors = validateDev(plan("GODOT_DOTNET_GAME",
-                List.of(new TeamPlan.BoundedContext("Combate", "Combate")), GLOSSARY, validTasks()));
-        assertTrue(errors.stream().anyMatch(e -> e.contains("GODOT_DOTNET_GAME") && e.contains("habilitado")), errors.toString());
+                List.of(new TeamPlan.BoundedContext("Combate", "Combate")), GLOSSARY, tasks));
+        assertTrue(errors.stream().noneMatch(e -> e.contains("habilitado") || e.contains("solapan")), errors.toString());
+    }
+
+    @Test
+    void nestedPathsOfNonQaTasksStillOverlap() {
+        var tasks = validTasks();
+        tasks.add(new PlannedTask("interaction-design", "WORK", "GAMEPLAY", "Juego", List.of("godot"), List.of("game")));
+        tasks.add(new PlannedTask("devops", "WORK", "DB", "Datos", List.of("persistence"), List.of("game/playthroughs")));
+        var errors = validateDev(plan("GODOT_DOTNET_GAME", CONTEXTS, GLOSSARY, tasks));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("se solapan")), errors.toString());
     }
 
     @Test

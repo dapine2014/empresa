@@ -37,7 +37,12 @@ public final class ScenarioCoverage {
             var failing = new ArrayList<String>();
             for (var test : tests) {
                 if (ScenarioIds.inTestName(test.name()).contains(scenario.id())) {
-                    ("PASSED".equals(test.outcome()) ? passing : failing).add(test.name());
+                    if ("PASSED".equals(test.outcome())) {
+                        passing.add(test.name());
+                    } else {
+                        // Verificado en vivo (Pong, 2026-10-15): sin el paso y el motivo la corrección iba a ciegas.
+                        failing.add(test.detail() == null ? test.name() : test.name() + " (" + test.detail() + ")");
+                    }
                 }
             }
             rows.add(new Row(scenario, passing, failing));
@@ -58,10 +63,28 @@ public final class ScenarioCoverage {
                 .collect(Collectors.joining("; ")) + ".", null, paths);
     }
 
-    /** Reporte de Vera armado por Java: una línea por escenario. */
+    /**
+     * Revisión final QA (M6): los tests de todos los pasos con el componente delante ({@code [backend] …}, {@code [app] …})
+     * cuando la misión tiene varios; con uno solo, los nombres tal cual.
+     */
+    public static List<SandboxResult.TestCase> componentTests(SandboxResult sandbox) {
+        return sandbox.stepsOrEmpty().stream().flatMap(step -> {
+            var slash = step.name() == null ? -1 : step.name().lastIndexOf('/');
+            var component = slash < 0 ? "" : "[" + step.name().substring(0, slash) + "] ";
+            return step.tests().stream().map(t -> component.isEmpty() ? t
+                    : new SandboxResult.TestCase(component + t.name(), t.outcome(), t.detail()));
+        }).toList();
+    }
+
+    /**
+     * Reporte de Vera armado por Java: una línea por escenario. Revisión final QA (M6): "nuevo" = del incremento en curso
+     * (el mayor), "heredado" = de uno anterior.
+     */
     public static String report(List<Row> rows) {
+        var current = rows.stream().mapToInt(r -> r.scenario().increment()).max().orElse(1);
         return rows.stream().map(r -> (r.covered() ? "✅ " : "❌ ") + r.scenario().id() + " (incremento "
-                        + r.scenario().increment() + ") " + r.scenario().title() + ": "
+                        + r.scenario().increment() + ", " + (r.scenario().increment() == current ? "nuevo" : "heredado")
+                        + ") " + r.scenario().title() + ": "
                         + (r.covered() ? String.join(", ", r.passing()) : "sin test aprobado"))
                 .collect(Collectors.joining("\n"));
     }
@@ -81,7 +104,7 @@ public final class ScenarioCoverage {
         var missing = known.stream().filter(id -> !named.contains(id)).toList();
         if (!missing.isEmpty()) {
             errors.add("Faltan tests para " + String.join(", ", missing) + ": escribe al menos un test por escenario con "
-                    + "el id en el nombre del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 …')).");
+                    + "el id en el nombre del test (.NET: método ESC_03_descripcion; Flutter: test('ESC-03 …'); Godot: clase ESC_03_descripcion : Playthrough en game/playthroughs/).");
         }
         var unknown = returned.stream().filter(id -> !known.contains(id)).sorted().toList();
         if (!unknown.isEmpty()) {

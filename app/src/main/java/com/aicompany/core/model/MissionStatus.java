@@ -11,6 +11,8 @@ public enum MissionStatus {
     CONSOLIDATING,
     AWAITING_INVESTOR,
     EXECUTING,
+    INTERRUPTED,
+    BLOCKED,
     COMPLETED,
     FAILED,
     CANCELLED

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { ApiKeyStatus, PolicySnapshot } from '../api/types'
+import type { ApiKeyStatus, PolicyKey, PolicySnapshot } from '../api/types'
 import { DatabasesSettings } from '../components/DatabasesSettings'
 
-const POLICY_LABELS: Record<string, string> = {
+// Record<PolicyKey, …>: una policy nueva sin etiqueta no compila.
+const POLICY_LABELS: Record<PolicyKey, string> = {
   SEED_CAPITAL_USD: 'Capital semilla (US$)',
   CHALLENGE_DAYS: 'Ventana de tiempo (días)',
   CONTRADICTION_SEED_CAPITAL_MULTIPLE: 'Multiplicador de alerta financiera (x capital semilla)',
@@ -18,6 +19,10 @@ const POLICY_LABELS: Record<string, string> = {
   PROSPECTING_ENABLED: 'Búsqueda de clientes encendida (1 = sí, 0 = no)',
   MAX_PROSPECTS_PER_DAY: 'Prospectos nuevos por día (máximo)',
   MAX_OUTREACH_PER_DAY: 'Correos a prospectos por día (máximo)',
+  SPEC_APPROVAL_REQUIRED: 'Aprobar los requisitos de Aria antes de construir (1 = sí, 0 = no)',
+  MAX_AUTO_CORRECTIONS: 'Correcciones automáticas por incremento (máximo)',
+  MAX_MISSION_COST_USD: 'Costo máximo de modelos por misión (US$)',
+  JOINT_REVIEW_ENABLED: 'Revisión conjunta de Neo y Aria de HU y diseño antes de tu aprobación (1 = sí, 0 = no)',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {
@@ -155,6 +160,107 @@ function ApiKeysSection() {
   )
 }
 
+// Cadena de modelos gratis (2026-10-15): si el gratis de un agente cae, se prueban estos en orden (saltando los caídos)
+// antes del respaldo pago en Bedrock y del suplente local.
+function FreeModelChainSection() {
+  const queryClient = useQueryClient()
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['free-model-chain'],
+    queryFn: api.freeModelChain,
+    refetchInterval: 30_000,
+  })
+  const [draft, setDraft] = useState<string[] | null>(null)
+  const [newModel, setNewModel] = useState('')
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const mutation = useMutation({
+    mutationFn: (models: string[]) => api.updateFreeModelChain(models),
+    onSuccess: () => {
+      setDraft(null)
+      setFeedback('Cadena guardada: la próxima llamada ya la usa.')
+      void queryClient.invalidateQueries({ queryKey: ['free-model-chain'] })
+    },
+    onError: (e: Error) => setFeedback(e.message),
+  })
+  const saved = data?.models.map((m) => m.model) ?? []
+  // Sin edición en curso, la lista es la guardada (se refresca con el estado cada 30 s).
+  const models = draft ?? saved
+  const statusOf = (model: string) => data?.models.find((m) => m.model === model)
+  const move = (index: number, delta: number) => {
+    const next = [...models]
+    const [item] = next.splice(index, 1)
+    next.splice(index + delta, 0, item)
+    setDraft(next)
+  }
+  const dirty = JSON.stringify(saved) !== JSON.stringify(models)
+  return (
+    <>
+      <h2>Modelos gratis</h2>
+      <p className="hint">
+        Si el modelo gratis de un agente cae o no responde, se prueban los demás de esta lista en orden, saltando los
+        caídos (cada minuto se validan con una llamada corta). Si fallan todos, pasa al respaldo pago en Bedrock y luego al
+        suplente local.
+        {data?.updatedAt ? ` Última edición: ${new Date(data.updatedAt).toLocaleString()}.` : ' Hoy rige la lista inicial.'}
+      </p>
+      {isLoading && <p>Cargando la cadena...</p>}
+      {error && <p className="error">No se pudo cargar la cadena de modelos gratis.</p>}
+      <ol>
+        {models.map((model, i) => {
+          const health = statusOf(model)
+          return (
+            <li key={model}>
+              {health?.status === 'DOWN' ? '⚠ ' : health ? '✅ ' : '• '}
+              <code>{model}</code>
+              {health?.status === 'DOWN' && (
+                <span className="hint">
+                  {' '}
+                  caído desde {health.since ? new Date(health.since).toLocaleString() : '—'} ({health.lastError})
+                </span>
+              )}
+              {health && health.affectedAgents.length > 0 && (
+                <span className="hint"> · principal de {health.affectedAgents.join(', ')}</span>
+              )}{' '}
+              <button type="button" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Subir">
+                ↑
+              </button>
+              <button type="button" disabled={i === models.length - 1} onClick={() => move(i, 1)} aria-label="Bajar">
+                ↓
+              </button>
+              <button type="button" onClick={() => setDraft(models.filter((m) => m !== model))} aria-label="Quitar">
+                ✕
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+      <form
+        className="decision-form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          const model = newModel.trim()
+          if (model && !models.includes(model)) setDraft([...models, model])
+          setNewModel('')
+        }}
+      >
+        <input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder="nvidia:z-ai/glm-5.3" />
+        <button type="submit" disabled={!newModel.trim()}>
+          Agregar al final
+        </button>
+        <button
+          type="button"
+          disabled={!dirty || mutation.isPending}
+          onClick={() => {
+            setFeedback(null)
+            mutation.mutate(models)
+          }}
+        >
+          {mutation.isPending ? 'Guardando...' : 'Guardar cadena'}
+        </button>
+      </form>
+      {feedback && <p className={mutation.isError ? 'error' : 'feedback'}>{feedback}</p>}
+    </>
+  )
+}
+
 // Contacto con prospectos (spec 2026-09-30): firma que Java agrega al final de cada correo.
 function OutreachSignature() {
   const queryClient = useQueryClient()
@@ -283,6 +389,7 @@ export default function SettingsPage() {
       {policiesQuery.error && <p className="error">No se pudieron cargar las políticas.</p>}
       {policiesQuery.data?.map((policy) => <PolicyRow key={policy.key} policy={policy} />)}
 
+      <FreeModelChainSection />
       <ApiKeysSection />
     </div>
   )

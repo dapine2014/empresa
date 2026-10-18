@@ -86,6 +86,17 @@ public class ProductOrchestrator {
         this.defaultCeoModel = defaultCeoModel;
     }
 
+    private com.aicompany.core.recovery.MissionRecoveryService recovery;
+
+    /**
+     * Revisión final misiones durables (3). {@code @Lazy}: la recuperación depende de MissionExecutor, que depende de este
+     * orquestador (ciclo de beans). Opcional en tests.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecovery(@org.springframework.context.annotation.Lazy com.aicompany.core.recovery.MissionRecoveryService recovery) {
+        this.recovery = recovery;
+    }
+
     public boolean enabled() {
         return policies.activeValue(PolicyKey.ORCHESTRATOR_ENABLED) >= 1;
     }
@@ -402,11 +413,21 @@ public class ProductOrchestrator {
             fail(run, "La misión de construcción " + run.buildMissionId() + " ya no existe.");
             return;
         }
+        if (mission.status() == MissionStatus.AWAITING_SPEC_APPROVAL) {
+            awaitingRequirements(run, mission.missionId());
+            return;
+        }
         if (!FINISHED.contains(mission.status())) {
             return;
         }
         if (mission.status() == MissionStatus.CANCELLED) {
             founderRejected(run, mission.missionId());
+            return;
+        }
+        // Revisión final misiones durables (3): si la corrección automática se ocupa de la misión, el ciclo espera; una
+        // ronda propia del orquestador correría en paralelo sobre el mismo repositorio.
+        if (recovery != null && recovery.willCorrect(mission.missionId())) {
+            autoCorrecting(run, mission.missionId());
             return;
         }
         var p = view.product();
@@ -460,13 +481,36 @@ public class ProductOrchestrator {
             missing.add(0, "La misión de construcción " + mission.missionId() + " falló.");
         }
         var max = (int) policies.activeValue(PolicyKey.MAX_EVIDENCE_ROUNDS);
-        if (missionMemory.evidenceRound(run.buildMissionId()) < max) {
+        // Revisión final Aria (16): los incrementos no consumen rondas de evidencia (igual que el endpoint).
+        if (missions.evidenceRoundsUsed(run.buildMissionId()) < max) {
             var reason = "[Orquestador] Para que el producto quede listo para vender falta: " + String.join(" ", missing);
             missions.recordDecision(run.buildMissionId(), new DecisionCommand(InvestorDecision.REQUEST_MORE_EVIDENCE, reason));
             step(run, "ROUND", reason);
             return;
         }
         fail(run, "No quedó listo para vender tras las rondas de corrección: " + String.join(" ", missing));
+    }
+
+    /** Revisión final misiones durables (3): la espera por la corrección automática se anota una vez en el historial. */
+    private void autoCorrecting(OrchestratorRun run, String missionId) {
+        var steps = runs.steps(run.id());
+        if (!steps.isEmpty() && "AUTO_CORRECTION".equals(steps.get(steps.size() - 1).step())) {
+            return;
+        }
+        step(run, "AUTO_CORRECTION", "En corrección automática: " + missionId + " falló y Forjai la está corrigiendo sola.");
+    }
+
+    /**
+     * Revisión final Aria (16): la construcción quedó esperando que el fundador apruebe los requisitos de Aria (el correo
+     * lo manda la misión). El ciclo lo anota una vez en su historial para que se vea en Productos y en el chat.
+     */
+    private void awaitingRequirements(OrchestratorRun run, String missionId) {
+        var steps = runs.steps(run.id());
+        if (!steps.isEmpty() && "AWAITING_REQUIREMENTS".equals(steps.get(steps.size() - 1).step())) {
+            return;
+        }
+        step(run, "AWAITING_REQUIREMENTS", "Aria escribió los requisitos de " + missionId + ": esperan tu aprobación "
+                + "(Missions → \"Requisitos (Aria)\" o el chat: \"apruebo las HU de " + missionId + "\").");
     }
 
     /** El fundador rechazó la misión (REJECT → CANCELLED): es una decisión suya, no un fallo, y no se reintenta. */

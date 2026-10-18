@@ -97,6 +97,21 @@ class DevelopmentRuntimeTest {
                 anyString(), anyString());
     }
 
+    // Bitácora (spec 2026-10-17): el rechazo con reintento queda en la bitácora con sus motivos.
+    @Test
+    void aRejectedAttemptIsPublishedWithItsReasons() throws Exception {
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("docs/notas.md"))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(events).publish(eq("EMPRESA_TASK_ATTEMPT_REJECTED"), eq("MISSION-1"), eq("T-1"), eq("backend"),
+                argThat(d -> Integer.valueOf(1).equals(d.get("attempt"))
+                        && d.get("reasons") instanceof List<?> l && !l.isEmpty() && l.size() <= 3
+                        && l.stream().allMatch(r -> String.valueOf(r).length() <= 200)));
+    }
+
     // Verificado en vivo (MISSION-SANDBOX-VERIFY-5): Neo, dueño solo de Solution.sln, escribía todo el proyecto
     // y agotaba los 3 intentos. Lo ajeno pertenece a otro agente: se descarta (y se informa), no se reintenta.
     @Test
@@ -167,6 +182,61 @@ class DevelopmentRuntimeTest {
         var inOrder = inOrder(memory);
         inOrder.verify(memory).setAgentStatus("backend", "WORKING");
         inOrder.verify(memory).setAgentStatus("backend", "IDLE");
+    }
+
+    @Test
+    void afterThreeInvalidResultsTheAgentGetsOneMoreAttemptWithThePaidFallback() throws Exception {
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        runtime.setModelHealth(health);
+        when(health.effectiveModel(anyString(), anyString())).thenAnswer(inv -> inv.getArgument(1));
+        when(companyMemory.agentPaidFallbackModel("backend")).thenReturn("bedrock:kimi");
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("qwen3:8b")))
+                .thenReturn(dev("docs/notas.md"));
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("bedrock:kimi")))
+                .thenReturn(dev("web/game/main.js"));
+
+        var result = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        assertEquals("web/game/main.js", result.files().get(0).path());
+        verify(ceoService, times(3)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("qwen3:8b"));
+        verify(ceoService).generateDevelopmentArtifact(anyString(), argThat(p -> p.contains("CORRECCIÓN DEL INTENTO ANTERIOR")
+                && p.contains("docs/notas.md")), anyString(), eq("bedrock:kimi"));
+        verify(memory).setTaskModelUsed("T-1", "bedrock:kimi");
+    }
+
+    @Test
+    void theAgentsModelDownServedByTheFreeChainStillGetsThePaidAttempt() throws Exception {
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        runtime.setModelHealth(health);
+        when(health.isDown("qwen3:8b")).thenReturn(true);
+        when(health.effectiveModel(anyString(), anyString())).thenAnswer(inv ->
+                "qwen3:8b".equals(inv.getArgument(1)) ? "nvidia:nemotron" : inv.getArgument(1));
+        when(companyMemory.agentPaidFallbackModel("backend")).thenReturn("bedrock:kimi");
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("qwen3:8b")))
+                .thenReturn(dev("docs/notas.md"));
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("bedrock:kimi")))
+                .thenReturn(dev("web/game/main.js"));
+
+        runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game")).get();
+
+        verify(ceoService).generateDevelopmentArtifact(anyString(), anyString(), anyString(), eq("bedrock:kimi"));
+        verify(memory).setTaskModelUsed("T-1", "bedrock:kimi");
+    }
+
+    @Test
+    void thePaidFallbackIsNotRetriedWhenTheAttemptsAlreadyRanOnIt() {
+        var health = mock(com.aicompany.core.service.ModelHealthService.class);
+        runtime.setModelHealth(health);
+        when(health.isDown("qwen3:8b")).thenReturn(true);
+        when(health.effectiveModel(anyString(), anyString())).thenReturn("bedrock:kimi");
+        when(companyMemory.agentPaidFallbackModel("backend")).thenReturn("bedrock:kimi");
+        when(ceoService.generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(dev("docs/notas.md"));
+
+        var future = runtime.generate("T-1", "MISSION-1", "backend", "prompt", List.of("web/game"));
+
+        assertThrows(ExecutionException.class, future::get);
+        verify(ceoService, times(3)).generateDevelopmentArtifact(anyString(), anyString(), anyString(), anyString());
     }
 
     @Test

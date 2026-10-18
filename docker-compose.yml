@@ -22,8 +22,12 @@ services:
       NVIDIA_API_KEY_CREATIVE: ${NVIDIA_API_KEY_CREATIVE}
       NVIDIA_API_KEY_CEO: ${NVIDIA_API_KEY_CEO}
       FORJAI_SECRETS_KEY: ${FORJAI_SECRETS_KEY}
+      DELIVERIES_ROOT: /data/entregas-forja
+      DELIVERIES_HOST_PATH: ~/entregas-forja
+      PRODUCTS_HOST_PATH: ~/forjai-products
     volumes:
       - ${HOME}/forjai-products:/data/forjai-products
+      - ${HOME}/entregas-forja:/data/entregas-forja
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -43,11 +47,13 @@ services:
       SANDBOX_WORK_ROOT: ${HOME}/forjai-sandbox-work
       SANDBOX_PODMAN_URL: unix:///run/podman/podman.sock
       SANDBOX_DEPS_ROOT: ${HOME}/forjai-deps
+      SANDBOX_STAGING_ROOT: ${HOME}/entregas-forja/.staging
       HOME: /tmp
     volumes:
       - ${HOME}/forjai-products:${HOME}/forjai-products:ro
       - ${HOME}/forjai-sandbox-work:${HOME}/forjai-sandbox-work
       - ${HOME}/forjai-deps:${HOME}/forjai-deps
+      - ${HOME}/entregas-forja/.staging:${HOME}/entregas-forja/.staging
       - /run/user/${UID:-1000}/podman/podman.sock:/run/podman/podman.sock
     networks:
       - ai-company-net
