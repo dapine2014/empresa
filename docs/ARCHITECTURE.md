@@ -162,6 +162,25 @@ Cada turno se graba en `ConversationMemoryService`. `ProductStatus` (estado del 
 - **Prompt versionado** (`PromptMemoryService`): mismo patrón versión inmutable + `HAS_ACTIVE_PROMPT` que las policies. El prompt activo se inyecta como sección adicional en `CeoService.systemPrompt` / `AgentRuntime.buildPrompt`. Nunca reemplaza las reglas anti-alucinación ni el schema, y nunca llega a `toolDecisionSystemPrompt`. En los 8 agentes que no ejecutan tareas no tiene efecto.
 - `config/agents/ceo.md` es el formato de referencia para definiciones de agentes.
 
+### Entrega del producto (paquete `delivery`, spec `2026-10-17-entrega-del-producto-design.md`)
+
+Cada incremento `VERIFIED` produce un zip descargable. Nada de esto ejecuta código en `company-core`: compila y exporta el `sandbox-runner`.
+
+- **Cuándo.** Al quedar `VERIFIED` el incremento (`DeliveryService`); la recuperación tras un reinicio no rehace misiones en trabajo y el paso de entrega nunca rompe la validación (un fallo queda como entrega `FAILED`, el incremento sigue `VERIFIED`). La verificación humana no empaqueta sola. «Generar entrega» (API, Command Center o chat) solo sirve para el incremento `VERIFIED` actual y cubre misiones anteriores a la feature.
+- **Sandbox.** `jobType: "PACKAGE"` en `POST /jobs`: mismo `git archive` y mismo aislamiento (sin red) que `VERIFY`; corre `restore` y luego `package` (timeout 1200 s). Los targets llegan en `FORJAI_TARGETS`, validados contra el enum `PackageTarget` (nunca comandos). Salida: `<SANDBOX_STAGING_ROOT>/<missionId>/incremento-N/` (se ignoran symlinks). Un paso por target (`package:windows`, ...).
+  - `GODOT_DOTNET_GAME`: `windows`, `macos` (`.app` sin firmar en zip), `linux`, `android-apk` (firmado con la clave de depuración de Forjai) y `android-aab`. Imagen `godot-dotnet-game:3`.
+  - `FLUTTER_WEB_APP`: `flutter build web --release` (imagen `flutter-web-app:2`).
+  - `DOTNET_APP`: `dotnet publish -c Release`; la dll de entrada queda en `app/forjai-entry.txt` (imagen `dotnet-app:2`).
+  - Los tags de imagen se subieron en vez de reconstruir en el lugar.
+- **Targets** (`DeliveryTargets`): por perfil y por el contrato (`delivery.platforms`). En juegos son Windows, macOS, Linux y Android; `WEB` en el contrato de un juego no es error del validador (hoy no se genera: ver FALTANTES). `android-aab` solo en el último incremento y solo con clave de publicación cargada.
+- **Clave de Android** (`AndroidSigningKeyService`): por misión, cifrada con `SecretCipher`, una sola contraseña para keystore y clave (Godot lo exige). El runner la escribe en el job dir y la pasa por env-file; nunca se loguea. API: `GET/PUT/DELETE /api/company/missions/{id}/android-signing-key` (solo se ven los últimos 4 caracteres).
+- **El zip** (`DeliveryPackager`, armado atómico): `ENTREGA.md`, `codigo-fuente/` (árbol del commit), `codigo-fuente.bundle` (git bundle), los compilados por plataforma, Docker (aplicaciones) y las migraciones de la base. Sin contraseñas: `.env.example` con host, puerto, nombre y usuario, y la nota «la contraseña está en Settings». `ENTREGA.md`, Dockerfile y compose los escriben plantillas Java (`DeliveryDocument`, `DockerTemplates`, `DeliveryFactsBuilder`), sin modelo; el título es el `missionId` porque el contrato no tiene nombre de producto.
+- **Dónde.** `~/entregas-forja/<missionId>/incremento-N.zip` (`DELIVERIES_ROOT=/data/entregas-forja` en el contenedor, `DELIVERIES_HOST_PATH` solo para mostrar la ruta del host). `~/entregas-forja/.staging` se monta también en el runner con la misma ruta (`SANDBOX_STAGING_ROOT`). Nodo Neo4j `Delivery` (`DeliveryMemoryService`).
+- **API.** `GET/POST /api/company/missions/{id}/deliveries` y `GET .../deliveries/{n}/download`.
+- **Eventos.** `EMPRESA_DELIVERY_PACKAGED` y `EMPRESA_DELIVERY_FAILED` (agente `delivery`); quedan en la bitácora de la misión. El estado `PACKAGING` va en amarillo en el Command Center.
+- **Command Center y chat.** Sección «Entregas» en `MissionDetailPage` (descargar, generar, clave de Android). Chat: «¿dónde está MISSION-X?», «genera la entrega de MISSION-X» y «entregas» (respuestas de Java).
+- **Verificado en vivo (2026-10-17).** Sobre el commit `dd0a0e0` del Pong: windows, macos, linux y android-apk PASS (111 s), el Linux exportado corre; Flutter `package` PASS; .NET PASS con una webapi armada a mano. `android-aab` falla de forma controlada (ver FALTANTES).
+
 ### Alertas por correo (`AlertMailService`)
 
 Solo se envían para `AWAITING_SPEC_APPROVAL`, `AWAITING_INVESTOR` y `FAILED` (desde `advanceMission`). Las credenciales SMTP de envío (`Company.systemEmail`/`mailPassword`) y el destinatario (`Company.alertEmail`) viven en Neo4j y se editan en `/api/company/settings`. El envío es `synchronized` (bean mutable) y **nunca lanza**, solo loguea. `management.health.mail.enabled=false` es necesario para que la falta de credenciales no ponga `/actuator/health` en `DOWN`.

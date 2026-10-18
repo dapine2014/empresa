@@ -1185,3 +1185,20 @@ En la bitácora se ve cómo fueron bajando los tests en rojo, ronda por ronda:
 Quedó VERIFIED a las 21:52 UTC con 47/47 tests y 8/8 escenarios. La suite pasó de 25 a 47 tests. La misión costó en total US$ 15,27.
 
 Pendiente: el triage de Neo con nemotron-3-super falló en R37 y R39 porque no produjo un JSON válido, ni siquiera en el intento extra con Bedrock.
+
+## Entrega del producto (2026-10-17)
+
+El Pong de 3 niveles quedó VERIFIED y el fundador preguntó dónde estaba el aplicativo: el producto era solo un repositorio git local y lo compilado del sandbox se descartaba. Spec: `docs/superpowers/specs/2026-10-17-entrega-del-producto-design.md`.
+
+Decisiones del fundador:
+- Un zip por incremento VERIFIED en `entregas-forja/`; si el contrato dice otra cosa, manda el contrato.
+- Juegos: Windows, macOS, Linux y Android. Web solo si el contrato la pide y con el juego en GDScript (Godot 4.3 y 4.7.2 no exportan C# a Web).
+- Ninguna contraseña en el zip: `.env.example` y la nota «la contraseña está en Settings».
+- Android: el `.apk` siempre; el `.aab` solo en el último incremento y solo si el fundador o el cliente cargó la clave de publicación.
+- La documentación la escribe Java, no un modelo.
+
+Rulings durante la implementación: una sola contraseña para la clave de Android (Godot); keystore en el job dir con env-file; paso `package` de 1200 s; «Generar entrega» solo para el incremento VERIFIED actual; la verificación humana no empaqueta sola; `WEB` en el contrato de un juego no es error del validador; la dll de entrada de .NET va en `app/forjai-entry.txt`; los eventos usan el agente `delivery`; el título de `ENTREGA.md` es el `missionId`.
+
+Prueba en vivo del paso `package` con podman sin red sobre el commit `dd0a0e0` del Pong: windows, macos, linux y android-apk PASS en 111 s, y el Linux exportado corre. Flutter PASS (REGRESION-FLUTTER-341). .NET PASS con una webapi armada a mano (no hay misión .NET). `android-aab` falla de forma controlada: el AAB necesita Gradle y el sandbox no tiene red ni caché de Gradle (pendiente: precargar Gradle 8.2 y AGP en la imagen). Imágenes: `godot-dotnet-game:3` (4,68 GB), `dotnet-app:2` (1,27 GB), `flutter-web-app:2` (5,23 GB); se subieron los tags en vez de reconstruir en el lugar.
+
+La verificación de punta a punta con el despliegue (Step 5) la hace el controlador y se registra aquí después.

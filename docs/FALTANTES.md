@@ -50,7 +50,14 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | La lista "Retomadas tras el reinicio" del status crece sin límite mientras no se reinicie | Misiones durables (revisión final) | Recortar a las recientes o a las que siguen en curso |
 | [ ] | Assets (sprites, sonido) con Orion y Luna | Kael híbrido (fuera de alcance) | Hoy los juegos se dibujan con nodos; `GameAssetGate` rechaza assets externos |
 | [ ] | Game UI de Mila (HUD y menús en Godot) | Kael híbrido (fuera de alcance) | Mila solo programa Flutter |
-| [ ] | Exportar el juego para que el fundador lo juegue | Kael híbrido (fuera de alcance) | La evidencia es la partida simulada en el sandbox |
+| [x] | Exportar el juego para que el fundador lo juegue | Kael híbrido (fuera de alcance) | Hecho (2026-10-17, entrega del producto): zip por incremento VERIFIED con Windows, macOS, Linux y APK |
+| [ ] | Juegos para Web (HTML5) cuando el contrato lo pide | Entrega del producto (2026-10-17) | Godot 4.3 y 4.7.2 no exportan C# a Web: ese juego tendría que programarse en GDScript |
+| [ ] | Firma y notarización de macOS | Entrega del producto (2026-10-17) | Exigen cuenta de Apple Developer y una Mac; hoy va el `.app` sin firmar |
+| [ ] | iOS | Entrega del producto (2026-10-17) | Fuera de alcance |
+| [ ] | `.aab` sin red: precargar Gradle 8.2 y la caché de AGP en la imagen `godot-dotnet-game` | Entrega del producto (2026-10-17) | Hoy `android-aab` falla de forma controlada (el AAB necesita Gradle y el sandbox no tiene red); el `.apk` sale bien |
+| [ ] | Nombre del producto en el contrato | Entrega del producto (2026-10-17) | El título de `ENTREGA.md` es el `missionId` porque el contrato no tiene ese campo |
+| [ ] | Validar los nombres de entrada del zip (zip-slip y duplicados) que vienen del staging | Entrega del producto (revisión) | Menor, diferido |
+| [ ] | El timeout por target del runner puede sumar más que el paso `package` de 1200 s | Entrega del producto (revisión) | Menor, diferido |
 | [ ] | Juegos 3D | Kael híbrido (fuera de alcance) | Orion (`SPECIALIST_3D`) sigue sin habilitar |
 | [ ] | Juego + backend en una misión | Kael híbrido (fuera de alcance) | Un juego usa solo `GODOT_DOTNET_GAME` |
 | [ ] | Verificar balance y engagement con datos reales (Gael, telemetría) | Kael híbrido (fuera de alcance) | Hoy quedan como hipótesis en el reporte |
