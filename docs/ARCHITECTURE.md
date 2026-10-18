@@ -180,7 +180,7 @@ Cada incremento `VERIFIED` produce un zip descargable. Nada de esto ejecuta cód
 - **API.** `GET/POST /api/company/missions/{id}/deliveries` y `GET .../deliveries/{n}/download`.
 - **Eventos.** `EMPRESA_DELIVERY_PACKAGED` y `EMPRESA_DELIVERY_FAILED` (agente `delivery`); quedan en la bitácora de la misión. El estado `PACKAGING` va en amarillo en el Command Center.
 - **Command Center y chat.** Sección «Entregas» en `MissionDetailPage` (descargar, generar, clave de Android). Chat: «¿dónde está MISSION-X?», «genera la entrega de MISSION-X» y «entregas» (respuestas de Java).
-- **Verificado en vivo (2026-10-17).** Sobre el commit `dd0a0e0` del Pong: windows, macos, linux y android-apk PASS (111 s), el Linux exportado corre; Flutter `package` PASS; .NET PASS con una webapi armada a mano. `android-aab` falla de forma controlada (ver FALTANTES).
+- **Verificado en vivo (2026-10-17 con podman directo; 2026-10-18 desplegado).** El 17, con `podman run` y los flags del runner sobre el commit `dd0a0e0` del Pong: windows, macos, linux y android-apk PASS; Flutter `package` PASS; .NET PASS con una webapi armada a mano. El 18, con `company-core` y el runner desplegados, «Generar entrega» del Pong (incremento 3) dio READY con las 4 plataformas en 2 min 26 s: zip de 289 MB a nombre del fundador, `ENTREGA.md` con rutas `~/…` y sin contraseñas, y el Linux exportado corre. El chat (`¿dónde está MISSION-X?`) y la bitácora muestran la ruta. `android-aab` falla de forma controlada (ver FALTANTES).
 
 ### Alertas por correo (`AlertMailService`)
 

@@ -1223,3 +1223,28 @@ Lo verificamos en vivo con dos llamadas iguales de 3.600 tokens:
 | Con `"prompt_cache_options": {"mode": "explicit"}` y sin marcadores | 0 |
 
 El fundador aprobó el cambio. El proveedor `bedrock` ahora lleva `prompt-cache-off: true`, y `OpenAiCompatibleClient` agrega ese parámetro en cada llamada de chat. La entrada vuelve a cobrarse a US$ 3 por millón, que es el precio que ya usa Forjai, así que el costo por misión y el tope de costo de la misión coinciden con AWS.
+
+## Entrega del producto: verificación en vivo desplegada (2026-10-18)
+
+Se desplegaron juntos `company-core` y `sandbox-runner`, porque la ruta de staging propia de cada job necesita las dos versiones nuevas. Después se pidió «Generar entrega» del Pong (MISSION-PONG-NIVELES-1792199290, incremento 3, ya COMPLETED).
+
+**Resultado:** READY en 2 min 26 s, con windows, macos, linux y android-apk en PASS. El zip pesa 289 MB y trae `ENTREGA.md`, `codigo-fuente/`, `codigo-fuente.bundle` y `juego/<plataforma>/`. No hay ninguna contraseña en el zip, y `Juego.x86_64 --headless --quit-after 120` sale en 0. Responden bien el chat («¿dónde está MISSION-X?» lo contesta Java con la ruta) y la bitácora (evento de Andrea).
+
+**Bugs que encontró la prueba en vivo (eb51bc6):**
+- `ENTREGA.md` y el evento mostraban las rutas del contenedor (`/data/...`). Ahora muestran `~/entregas-forja` y `~/forjai-products`, con `PRODUCTS_HOST_PATH` y `DELIVERIES_HOST_PATH`.
+- El zip quedaba a nombre de root. Ahora toma el dueño de `~/entregas-forja`.
+- «Verificado» mostraba la hora del empaquetado. Ahora usa `m.verifiedAt`. Las misiones verificadas antes de este cambio dicen «no disponible».
+
+Al regenerar la entrega, el zip queda a nombre del fundador y no aparece ninguna ruta `/data/`.
+
+**Antes de este despliegue:** la revisión final de la rama encontró 8 problemas Important y 6 minors, y se corrigieron todos en una sola tanda (e800c07..9ac1de5):
+- zip-slip y entradas duplicadas;
+- el incremento VERIFIED guardado con su número;
+- un empaquetado a la vez y staging propio por job;
+- `.part` en `.staging` y limpieza de huérfanos;
+- timeout que conserva los targets terminados (paso de 1800 s, 300 s por target);
+- export a una carpeta temporal;
+- clave tachada en los logs y material de la clave descartado;
+- `LEEME.md` con `psql` en orden.
+
+La re-revisión los dio a todos por corregidos.
