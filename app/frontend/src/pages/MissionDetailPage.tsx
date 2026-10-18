@@ -463,7 +463,8 @@ function DeliveriesSection({ missionId, verified }: { missionId: string; verifie
           {deliveries.map((d) => (
             <li key={d.increment}>
               {statusDot(d.status)} <strong>Incremento {d.increment}</strong> — {d.status}
-              {d.status !== 'PACKAGING' && d.status !== 'FAILED' && (
+              {/* Una entrega FAILED igual puede tener zip (código y documentos): se descarga si hay ruta. */}
+              {d.status !== 'PACKAGING' && d.path !== '' && (
                 <>
                   {' · '}
                   {(d.sizeBytes / (1024 * 1024)).toFixed(1)} MB
