@@ -83,6 +83,28 @@ class DeliveryPackagerTest {
     }
 
     @Test
+    void symlinksInTheStagingAreNeverFollowedNorPackaged() throws Exception {
+        var outside = Files.createDirectories(tmp.resolve("fuera"));
+        Files.writeString(outside.resolve("secreto.txt"), "SECRETO");
+        var staging = packager.stagingDir("M-1", 3);
+        Files.createDirectories(staging.resolve("juego"));
+        Files.writeString(staging.resolve("juego/ok.bin"), "ok");
+        Files.createSymbolicLink(staging.resolve("enlace-archivo"), outside.resolve("secreto.txt"));
+        Files.createSymbolicLink(staging.resolve("enlace-dir"), outside);
+        var zip = packager.assemble(new DeliveryPackager.Assembly("M-1", 3, sha, "X", staging, "# d", Map.of(), Map.of()));
+        var names = zipEntries(zip);
+        assertTrue(names.contains("juego/ok.bin"));
+        assertTrue(names.stream().noneMatch(n -> n.contains("enlace") || n.contains("secreto")), names.toString());
+        try (var z = new ZipFile(zip.toFile())) {
+            for (var e : java.util.Collections.list(z.entries())) {
+                if (!e.isDirectory()) {
+                    assertFalse(new String(z.getInputStream(e).readAllBytes()).contains("SECRETO"), e.getName());
+                }
+            }
+        }
+    }
+
+    @Test
     void aMissionIdWithPathTraversalIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> packager.zipPath("../x", 1));
     }

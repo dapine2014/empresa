@@ -42,10 +42,15 @@ public class DeliveryMemoryService {
         params.put("targets", mapper.writeValueAsString(r.targets() == null ? List.of() : r.targets()));
         params.put("error", r.error() == null ? "" : r.error());
         params.put("at", r.createdAt() == null ? Instant.now().toString() : r.createdAt());
+        boolean written;
         try (var session = driver.session()) {
-            session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$mission}) MERGE (d:Delivery {id:$id}) MERGE (m)-[:HAS_DELIVERY]->(d) SET d.missionId=$mission, d.increment=$inc, "
+            written = session.executeWrite(tx -> tx.run("MATCH (m:Mission {id:$mission}) MERGE (d:Delivery {id:$id}) "
+                    + "MERGE (m)-[:HAS_DELIVERY]->(d) SET d.missionId=$mission, d.increment=$inc, "
                     + "d.status=$status, d.path=$path, d.sizeBytes=$size, d.targetsJson=$targets, d.error=$error, "
-                    + "d.createdAt=$at", params).consume());
+                    + "d.createdAt=$at RETURN d.id AS id", params).hasNext());
+        }
+        if (!written) {
+            throw new IllegalStateException("La misión " + r.missionId() + " no existe: no se registró la entrega.");
         }
     }
 
