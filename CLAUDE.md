@@ -70,7 +70,7 @@ Las misiones del Development Group sobreviven un reinicio: al arrancar, `Mission
 - **Todo lo configurable se edita en el Command Center** y toda feature debe poder consultarse en el chat.
 - **Rebrand "Forjai" solo de marca**: paquete `com.aicompany.core`, prefijo `EMPRESA_*`, `company-core`, `Company {id:'AI-COMPANY'}` no se tocan.
 - **Secretos**: keys de modelos y claves de bases se cifran con `SecretCipher` (`FORJAI_SECRETS_KEY` solo en `.env`) y nunca salen por API/chat/eventos (solo los últimos 4 caracteres; errores redactados). Un mensaje de chat con una clave corta el turno sin llamar a ningún modelo.
-- **`company-core` nunca ejecuta código generado**: lo hace `sandbox-runner` (Podman sin root, sin red, solo perfiles del catálogo, nunca comandos).
+- **`company-core` nunca ejecuta código generado**: lo hace `sandbox-runner` (Podman sin root, sin red, solo perfiles del catálogo, nunca comandos). Única excepción de red: `FETCH_DEPENDENCIES` sale por el proxy squid `egress-proxy` con lista blanca (ver `docs/ARCHITECTURE.md` "Dependencias gobernadas").
 - Rarezas: `AgentResult.java` vive en `com/aicompany/core/` pero declara `package com.aicompany.core.agent.model`; `CeoService.executeAgentTask` tiene un bloque comentado de código muerto (no copiar lógica de ahí).
 
 ## Arquitectura en grande
