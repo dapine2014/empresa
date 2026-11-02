@@ -1776,6 +1776,102 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return out;
     }
 
+    /** Pantallas (PANT-NN) del incremento en construcción según el diseño de interacción aprobado; vacío sin él. */
+    private java.util.Set<String> incrementScreens(String missionId) {
+        if (designs == null || requirementsMemory == null) {
+            return java.util.Set.of();
+        }
+        try {
+            var design = designs.approved(missionId);
+            var spec = requirementsMemory.approved(missionId);
+            if (design == null || design.isEmpty() || spec == null || spec.isEmpty()) {
+                return java.util.Set.of();
+            }
+            return com.aicompany.core.agent.validation.InteractionDesignText.screensOf(
+                    jsonMapper.readValue(design.get().designJson(), com.aicompany.core.agent.model.InteractionDesign.class),
+                    jsonMapper.readValue(spec.get().specJson(), com.aicompany.core.agent.model.RequirementsSpec.class),
+                    Math.max(1, requirementsMemory.currentIncrement(missionId)));
+        } catch (Exception ex) {
+            log.warn("MISSION {} - could not read the increment screens: {}", missionId, safeMessage(ex, "sin detalle"));
+            return java.util.Set.of();
+        }
+    }
+
+    /** La tarea escribe presentación (o main.dart) de un componente Flutter: la que debe respetar el tema y las vistas previas. */
+    private static boolean writesFlutterPresentation(TeamMissionContext context, List<String> owned) {
+        return context.plan().resolvedComponents().stream().anyMatch(c -> c.profile() == StackProfile.FLUTTER_WEB_APP
+                && owned.stream().anyMatch(p -> c.owns(p) && (p.contains("presentation") || p.endsWith("lib/main.dart"))));
+    }
+
+    private static final java.util.regex.Pattern DATA_ID = java.util.regex.Pattern.compile("data-id\\s*=\\s*[\"']([^\"']+)[\"']");
+
+    /**
+     * Regla R9: con diseño visual aprobado, el contrato que el front debe cumplir (vista previa por pantalla, Keys de la
+     * maqueta, main.dart y tema). Vacío sin diseño aprobado o si la tarea no escribe presentación Flutter.
+     */
+    String visualContractBlock(TeamMissionContext context, List<String> owned) {
+        var design = approvedVisual(context.missionId());
+        if (design.isEmpty() || !writesFlutterPresentation(context, owned)) {
+            return "";
+        }
+        var out = new StringBuilder("\nDISEÑO VISUAL APROBADO — CONTRATO DEL FRONT (Forjai lo verifica y te devuelve el motivo si falla):\n");
+        for (var screen : incrementScreens(context.missionId())) {
+            var nn = screen.replaceAll("\\D", "");
+            nn = nn.length() < 2 ? "0".repeat(2 - nn.length()) + nn : nn;
+            out.append("- ").append(screen).append(": lib/<contexto>/presentation/previews/pant_").append(nn)
+                    .append("_preview.dart con class Pant").append(nn).append("Preview (constructor const sin argumentos); su widget raíz lleva Key('")
+                    .append(screen).append("')");
+            var ids = new java.util.LinkedHashSet<String>();
+            design.get().mockups().screens().stream().filter(m -> screen.equals(m.screen()) && m.html() != null)
+                    .forEach(m -> {
+                        var matcher = DATA_ID.matcher(m.html());
+                        while (matcher.find()) {
+                            ids.add(matcher.group(1));
+                        }
+                    });
+            if (!ids.isEmpty()) {
+                out.append("; los elementos de la maqueta llevan Key igual a su data-id: ")
+                        .append(ids.stream().map(i -> "Key('" + i + "')").collect(Collectors.joining(", ")));
+            }
+            out.append("\n");
+        }
+        out.append("- lib/main.dart arranca con runApp(forjaiPreviewOr(const MiApp())) (forjaiPreviewOr viene de lib/forjai/preview.dart).\n")
+                .append("- Colores, fuentes y tamaños SOLO de AppTheme (lib/theme/app_theme.dart) o Theme.of(context): nunca Color(0x…), ")
+                .append("Colors.* (salvo Colors.transparent), fontFamily: ni fontSize:/color: literales en TextStyle.\n")
+                .append("- lib/theme y lib/forjai son de Forjai: no los escribas.\n");
+        return out.toString();
+    }
+
+    /** Gates del front con diseño visual aprobado (tema sin literales y una vista previa por pantalla); null si no aplican. */
+    java.util.function.Function<DevelopmentResult, List<String>> visualChecks(TeamMissionContext context,
+                                                                              List<String> owned, String headSha) {
+        if (approvedVisual(context.missionId()).isEmpty() || !writesFlutterPresentation(context, owned)) {
+            return null;
+        }
+        var screens = incrementScreens(context.missionId());
+        var existing = new LinkedHashMap<String, String>();
+        if (headSha != null) {
+            try {
+                for (var path : workspace.filesAtCommit(context.missionId(), headSha)) {
+                    if (path.endsWith(".dart")) {
+                        var content = readOrNull(context.missionId(), headSha, path);
+                        if (content != null) {
+                            existing.put(path, content);
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                log.warn("MISSION {} - could not read HEAD for the preview check: {}", context.missionId(), ex.getMessage());
+            }
+        }
+        return result -> {
+            var files = result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files();
+            var errors = new ArrayList<String>(com.aicompany.core.agent.validation.ThemeLiteralGate.check(files));
+            errors.addAll(com.aicompany.core.agent.validation.PreviewGate.check(files, screens, existing));
+            return errors;
+        };
+    }
+
     /** El front escribe el pubspec y las vistas previas: Java mezcla fuentes/SVG y regenera la tabla en el mismo commit. */
     private DevelopmentResult withVisualFiles(TeamMissionContext context, List<String> owned, String headSha,
                                               DevelopmentResult result) {
@@ -2044,6 +2140,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         if (context.plan().hasComponent(StackProfile.GODOT_DOTNET_GAME)) {
             checks.add(gameChecks(context, agentId, owned, headSha));
+        }
+        var visual = visualChecks(context, owned, headSha);
+        if (visual != null) {
+            checks.add(visual);
         }
         var api = apiChecks(context, owned, headSha);
         if (api != null) {
@@ -2506,6 +2606,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private String buildWorkPrompt(TeamMissionContext context, PlannedTask task) {
         return buildWorkPromptBase(context, task) + databaseBlock(context) + fullstackBlock(context, task)
+                + visualContractBlock(context, task.ownedPathsOrEmpty())
                 + (isQa(context, task.agentId()) ? qaScenarioRule(scenarios(context.missionId()),
                 context.plan().hasComponent(StackProfile.GODOT_DOTNET_GAME)) : "");
     }

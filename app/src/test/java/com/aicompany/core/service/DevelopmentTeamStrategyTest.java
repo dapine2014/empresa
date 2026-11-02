@@ -2558,6 +2558,53 @@ class DevelopmentTeamStrategyTest {
         assertTrue(byPath.containsKey("assets/svg/logo.svg"));
     }
 
+    // Regla R9: el contrato de la vista previa y del tema solo aparece en el prompt del front con diseño visual aprobado.
+    @Test
+    void visualContractBlockAppearsOnlyWithAnApprovedVisualDesign() throws Exception {
+        var visuals = mock(VisualDesignMemoryService.class);
+        var interaction = mock(InteractionDesignMemoryService.class);
+        var requirements = mock(RequirementsMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        strategy.setInteractionDesign(interaction);
+        strategy.setRequirements(requirements);
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        when(interaction.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                mapper.writeValueAsString(new com.aicompany.core.agent.model.InteractionDesign("APP",
+                        VisualDesignWriterTest.APP, null)), "APPROVED", 1, "")));
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                mapper.writeValueAsString(VisualDesignWriterTest.SPEC), "APPROVED", "", java.time.Instant.now())));
+        when(requirements.currentIncrement("M-1")).thenReturn(1);
+        var base = context();
+        var plan = new TeamPlan("App", null, null, base.plan().tasks(), List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")), base.plan().ubiquitousLanguage());
+        var ctx = new TeamMissionContext("M-1", "app", base.team(), plan);
+        var owned = List.of("lib/pedidos/presentation");
+
+        when(visuals.approved("M-1")).thenReturn(Optional.empty());
+        assertEquals("", strategy.visualContractBlock(ctx, owned));
+
+        var json = mapper.writeValueAsString(VisualDesignWriterTest.design("#FFFFFF", "PANT-01"));
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1, json, "APPROVED", 1, 1, "")));
+        var block = strategy.visualContractBlock(ctx, owned);
+        assertTrue(block.contains("pant_01_preview.dart") && block.contains("class Pant01Preview"), block);
+        assertTrue(block.contains("Key('PANT-01')") && block.contains("Key('root')"), block);
+        assertTrue(block.contains("forjaiPreviewOr") && block.contains("AppTheme") && block.contains("Colors.transparent"), block);
+        assertFalse(block.contains("PANT-02"), block);
+        assertEquals("", strategy.visualContractBlock(ctx, List.of("lib/pedidos/domain")));
+    }
+
+    @Test
+    void visualChecksAreNullWithoutAnApprovedVisualDesign() {
+        var visuals = mock(VisualDesignMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        when(visuals.approved("M-1")).thenReturn(Optional.empty());
+        var base = context();
+        var plan = new TeamPlan("App", null, null, base.plan().tasks(), List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")), base.plan().ubiquitousLanguage());
+        assertNull(strategy.visualChecks(new TeamMissionContext("M-1", "app", base.team(), plan),
+                List.of("lib/pedidos/presentation"), null));
+    }
+
     private static final class FlutterThemeFilesTestDesign {
         static com.aicompany.core.agent.model.VisualDesign get() {
             return new com.aicompany.core.agent.model.VisualDesign(VisualDesignWriterTest.system("#FFFFFF"),
