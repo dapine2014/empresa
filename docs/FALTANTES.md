@@ -89,3 +89,4 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 |---|---|---|
 | [ ] | Cambiar la contraseña de Neo4j y actualizar `NEO4J_PASSWORD` en `.env` | Quedó expuesta en una salida de comando el 2026-10-01. Los otros proyectos que usan la misma instancia también necesitan la nueva |
 | [ ] | Aviso de lint preexistente en `SettingsPage.tsx:201` (`set-state-in-effect`) | No es del Development Group |
+| [ ] | Correos de salud de modelos sin histéresis: un modelo que alterna entre caído y activo (deepseek-v4.1-flash, 2026-10-29: cada 2 a 5 min) manda un correo MODEL_DOWN/UP en cada cambio | Agrupar los avisos o exigir N minutos estable antes de avisar que volvió |

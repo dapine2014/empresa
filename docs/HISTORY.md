@@ -1248,3 +1248,15 @@ Al regenerar la entrega, el zip queda a nombre del fundador y no aparece ninguna
 - `LEEME.md` con `psql` en orden.
 
 La re-revisión los dio a todos por corregidos.
+
+## Bedrock kimi-k3 como modelo principal del código (2026-10-29)
+
+**Decisión del fundador:** sale más barato pagar un modelo estable que garantice llegar a VERIFIED que usar modelos gratis que se caen. En el Pong, el cambio de modelo a mitad del desarrollo (kimi-k2.6 → nemotron-3-super → Bedrock) hizo que cada modelo reescribiera el código del otro: R32-R35 no convergieron, y con Bedrock estable R37-R42 convergió en 6 rondas.
+
+**Aplicado en vivo** con `PUT /api/company/agents/{id}/model`, sin cambios de código:
+- Iris, Mila, Vera, Kael, Diego, Andrea y Orion → `bedrock:global.moonshotai.kimi-k3`, con `paidFallbackModel` vacío (sería el mismo modelo). Si Bedrock cae, la llamada va directo al suplente local `qwen3-coder:30b`.
+- La cadena gratis quedó **vacía**. Primero se sacó kimi-k2.6, que NVIDIA no soporta para la cuenta (404). Después se sacó deepseek-v4.1-flash: el chequeo de 60 s lo daba caído y vuelto a la vida cada 2 a 5 minutos (14 MODEL_DOWN en 10 h), con un correo en cada cambio, y ya no servía a ningún agente, porque ninguno tiene su modelo principal en la cadena. No hizo falta reconstruir la imagen: es un dato en Neo4j.
+- Siguen gratis los agentes que no escriben código: Neo (nemotron-3-super), Aria, el CEO y Luna (nemotron-3-ultra), todos con Bedrock como respaldo pago.
+- Se levantó `sandbox-runner`, que estaba apagado.
+
+**Pendiente:** medir Claude (Sonnet 5.5) contra kimi-k3 en un incremento de prueba, comparando el costo por incremento VERIFIED y el número de rondas. Requiere conectar la API de Anthropic. También falta ajustar `MAX_MISSION_COST_USD` (hoy US$ 20) al tamaño de cada proyecto.

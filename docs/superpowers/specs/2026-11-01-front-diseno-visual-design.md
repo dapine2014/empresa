@@ -26,7 +26,7 @@ Esta etapa cubre **solo apps**. Las etapas de juegos se describen al final y que
 
 - Juegos (personajes con esqueleto, Blender, Godot 3D): son las etapas 2 y 3.
 - Una herramienta de diseño gráfica (Figma, Penpot). Se descartó porque el agente no puede manejar una interfaz gráfica, y el HTML, CSS y SVG a mano son texto que sí escribe.
-- Que los PO decidan las diferencias de diseño. Por ahora decide el fundador. Cuando se activen los demás modelos, la tarea pasará a los PO.
+- Habilitar ya que el PO decida las diferencias de diseño. Por ahora decide el fundador. Esta etapa deja lista la política y el punto de decisión para pasarle la tarea al PO cuando se activen los demás modelos (ver paso 15).
 - Cambios a Kael (que también programe .NET) y a Iris (que pueda cubrir la escena de un juego). Se pidieron en la misma conversación, pero son un cambio aparte.
 
 ## Anti-metas (lo que sería un fracaso aunque funcione)
@@ -88,6 +88,12 @@ Esta etapa cubre **solo apps**. Las etapas de juegos se describen al final y que
     - **Decisión por pantalla:** «aceptar» vale para esa pantalla. Cuando no queda ninguna pendiente, el incremento sigue solo.
     - **Otra ronda:** «pedir otra ronda» da **una** ronda más con el comentario del fundador, no reinicia el contador de 2. Si tampoco alcanza el umbral, vuelve a esperar al fundador.
     - **Reinicios:** `MissionRecoveryService` deja la misión en `BLOCKED` como cualquier otro freno.
+
+15. **Quién decide es temporal** (decisión del fundador, 2026-11-01). Que decida el fundador es solo mientras Forjai trabaja con el Development Group. Cuando se activen los demás modelos, decidirá el **PO** y el fundador dejará de intervenir en esta tarea.
+    - **Política editable:** quién decide es una política versionada en `CompanyPolicyService`, por ejemplo `designMismatchDecider` con los valores `FOUNDER` (el valor inicial) o `PRODUCT_OWNER`. Se edita en el Command Center y se consulta en el chat («¿quién decide las diferencias de diseño?»). Java la resuelve, no un modelo.
+    - **Un solo punto de decisión:** aceptar o pedir otra ronda pasa siempre por la misma operación, con un `decidedBy` que guarda quién decidió y por qué, y queda en la bitácora de la misión. Lo que cambia según la política es solo **quién** la invoca: el fundador desde el Command Center, o el PO.
+    - **Con `PRODUCT_OWNER`:** la misión no queda en `BLOCKED` esperando al fundador. El PO recibe la corrección de Java (el texto por elemento, sin imágenes) más las HU y los escenarios de la pantalla, y responde con `format` sin `tools`: aceptar (con el motivo) u otra ronda (con el comentario). Java valida la respuesta y la aplica por la misma operación. El fundador puede ver la decisión en la bitácora y anularla.
+    - **Alcance de esta etapa:** se construyen la política y el punto de decisión. El camino del PO queda **sin habilitar** hasta que el fundador active los demás modelos: el valor `PRODUCT_OWNER` se rechaza al guardar, con un mensaje claro, hasta entonces **[decisión del builder]**.
 
 ## Alcance por incremento **[decisión del builder]**
 
