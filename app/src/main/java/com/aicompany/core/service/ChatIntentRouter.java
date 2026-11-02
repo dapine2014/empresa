@@ -376,6 +376,11 @@ public class ChatIntentRouter {
                 return List.of(delivery);
             }
         }
+        // Diseño visual (spec 2026-11-01, Task 13): estado, decisor y sistema visual los responde Java, sin modelo.
+        var design = designReply(message);
+        if (design != null) {
+            return List.of(design);
+        }
         if (MISSION_LOG.matcher(bare).find()) {
             var id = MISSION_ID.matcher(message);
             if (id.find()) {
@@ -396,6 +401,79 @@ public class ChatIntentRouter {
         }
 
         return List.of(ceoReply(resolve(message)));
+    }
+
+    private DesignDecisionService designDecision;
+    private VisualDesignMemoryService visualDesignMemory;
+
+    private static final Pattern DESIGN_STATUS = Pattern.compile("(?i)c[oó]mo va el dise[nñ]o de (" + MISSION_REF + ")");
+    private static final Pattern DESIGN_DECIDER = Pattern.compile("(?i)qui[eé]n decide las diferencias de dise[nñ]o");
+    private static final Pattern VISUAL_SYSTEM = Pattern.compile("(?i)sistema visual de (" + MISSION_REF + ")");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDesignDecision(DesignDecisionService designDecision) {
+        this.designDecision = designDecision;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setVisualDesignMemory(VisualDesignMemoryService visualDesignMemory) {
+        this.visualDesignMemory = visualDesignMemory;
+    }
+
+    private ChatReply designReply(String message) {
+        var status = DESIGN_STATUS.matcher(message);
+        if (designDecision != null && status.find()) {
+            var missionId = status.group(1).toUpperCase(Locale.ROOT);
+            var view = designDecision.view(missionId);
+            if (view.isEmpty()) {
+                return ceoReply(missionId + " no existe.");
+            }
+            conversationMemory.setLastMentioned("MISSION", List.of(missionId));
+            var reasonLine = view.get().blockReason() != null && view.get().blockReason().startsWith("DESIGN_CAPTURE_FAILED")
+                    ? view.get().blockReason() + "\nSe reanuda con \"reanuda " + missionId + "\"." : null;
+            var screens = view.get().screens();
+            if (screens.isEmpty()) {
+                return ceoReply(reasonLine != null ? missionId + " está frenada: " + reasonLine
+                        : missionId + " no tiene revisión de diseño.");
+            }
+            var lines = screens.stream().map(r -> r.screen() + " (" + ("phone".equals(r.size()) ? "teléfono" : "escritorio")
+                    + "): " + switch (r.status()) {
+                        case "PASSED" -> score(r.ssim()) + " ✔";
+                        case "AWAITING_DECISION" -> score(r.ssim()) + " — esperando tu decisión";
+                        case "ACCEPTED" -> "aceptada por " + (r.decidedBy() == null ? "el decisor" : r.decidedBy().toLowerCase(Locale.ROOT));
+                        default -> score(r.ssim()) + " — en revisión";
+                    }).toList();
+            return ceoReply("Diseño de " + missionId + ":\n- " + String.join("\n- ", lines)
+                    + (reasonLine != null ? "\n" + reasonLine : ""));
+        }
+        if (designDecision != null && DESIGN_DECIDER.matcher(message).find()) {
+            return ceoReply(DesignDecisionService.FOUNDER.equals(designDecision.decider())
+                    ? "Hoy decide el fundador. Cuando se activen los demás modelos, decidirá el PO (política DESIGN_MISMATCH_DECIDER)."
+                    : "Hoy decide el PO (política DESIGN_MISMATCH_DECIDER).");
+        }
+        var visual = VISUAL_SYSTEM.matcher(message);
+        if (visualDesignMemory != null && visual.find()) {
+            var missionId = visual.group(1).toUpperCase(Locale.ROOT);
+            var approved = visualDesignMemory.approved(missionId);
+            if (approved.isEmpty()) {
+                return ceoReply(missionId + " no tiene sistema visual aprobado.");
+            }
+            try {
+                var system = JSON.readValue(approved.get().designJson(),
+                        com.aicompany.core.agent.model.VisualDesign.class).system();
+                var colors = system.colorsOrEmpty().stream().map(c -> c.name() + " " + c.hex()).collect(Collectors.joining(", "));
+                var font = system.typography() == null ? "sin tipografía" : system.typography().fontFamily();
+                return ceoReply("Sistema visual de " + missionId + " (v" + approved.get().version() + "):\nPaleta: "
+                        + (colors.isEmpty() ? "sin colores" : colors) + "\nTipografía: " + font);
+            } catch (RuntimeException e) {
+                return ceoReply(missionId + ": no pude leer el sistema visual aprobado.");
+            }
+        }
+        return null;
+    }
+
+    private static String score(double ssim) {
+        return String.format(Locale.forLanguageTag("es"), "%.2f", ssim);
     }
 
     private com.aicompany.core.delivery.DeliveryService deliveryService;

@@ -3292,4 +3292,69 @@ class ChatIntentRouterTest {
         assertTrue(text.contains("No conozco a"), text);
         assertTrue(text.contains("Zed"), text);
     }
+
+    // Spec 2026-11-01 diseño visual (Task 13): el estado del diseño y quién decide los responde Java, sin modelo.
+    @Test
+    void designStatusIsAnsweredByJava() {
+        stubAgents();
+        var decisions = mock(DesignDecisionService.class);
+        router.setDesignDecision(decisions);
+        when(decisions.view("MISSION-PONG")).thenReturn(Optional.of(new com.aicompany.core.model.DesignReviewView(
+                "MISSION-PONG", "BLOCKED", "DESIGN_MISMATCH: 1 pantalla", "FOUNDER", List.of(
+                new com.aicompany.core.model.DesignScreenReview(1, "PANT-01", "phone", 0.93, "PASSED", 0, 0, null, null, "x"),
+                new com.aicompany.core.model.DesignScreenReview(1, "PANT-02", "desktop", 0.82, "AWAITING_DECISION", 2, 0, null, null, "x"),
+                new com.aicompany.core.model.DesignScreenReview(1, "PANT-03", "phone", 0.8, "ACCEPTED", 2, 0, "FOUNDER", null, "x")))));
+
+        var text = router.routeReplies("¿cómo va el diseño de MISSION-PONG?").get(0).text();
+
+        assertTrue(text.contains("PANT-01 (teléfono): 0,93 ✔"), text);
+        assertTrue(text.contains("PANT-02 (escritorio): 0,82 — esperando tu decisión"), text);
+        assertTrue(text.contains("PANT-03 (teléfono): aceptada por founder"), text);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void designStatusSaysPlainlyWhenThereIsNoReviewOrCaptureFailed() {
+        stubAgents();
+        var decisions = mock(DesignDecisionService.class);
+        router.setDesignDecision(decisions);
+        when(decisions.view("MISSION-A")).thenReturn(Optional.of(new com.aicompany.core.model.DesignReviewView(
+                "MISSION-A", "EVALUATING", null, "FOUNDER", List.of())));
+        when(decisions.view("MISSION-B")).thenReturn(Optional.of(new com.aicompany.core.model.DesignReviewView(
+                "MISSION-B", "BLOCKED", "DESIGN_CAPTURE_FAILED: sin captura", "FOUNDER", List.of())));
+
+        assertEquals("MISSION-A no tiene revisión de diseño.", router.routeReplies("como va el diseno de MISSION-A").get(0).text());
+        var blocked = router.routeReplies("cómo va el diseño de MISSION-B").get(0).text();
+        assertTrue(blocked.contains("DESIGN_CAPTURE_FAILED") && blocked.contains("reanuda MISSION-B"), blocked);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void whoDecidesDesignDifferencesIsAnsweredByJava() {
+        stubAgents();
+        var decisions = mock(DesignDecisionService.class);
+        router.setDesignDecision(decisions);
+        when(decisions.decider()).thenReturn("FOUNDER");
+
+        var text = router.routeReplies("¿quién decide las diferencias de diseño?").get(0).text();
+
+        assertEquals("Hoy decide el fundador. Cuando se activen los demás modelos, decidirá el PO (política DESIGN_MISMATCH_DECIDER).", text);
+        verifyNoInteractions(ceoService);
+    }
+
+    @Test
+    void visualSystemIsAnsweredByJava() throws Exception {
+        stubAgents();
+        var visual = mock(VisualDesignMemoryService.class);
+        router.setVisualDesignMemory(visual);
+        var json = "{\"system\":{\"colors\":[{\"name\":\"primary\",\"hex\":\"#112233\"},{\"name\":\"surface\",\"hex\":\"#FFFFFF\"}],"
+                + "\"typography\":{\"fontFamily\":\"Inter\",\"sizes\":{\"body\":16.0}}},\"mockups\":null}";
+        when(visual.approved("MISSION-PONG")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1, json, "APPROVED", 1, 1, "")));
+        when(visual.approved("MISSION-NADA")).thenReturn(Optional.empty());
+
+        var text = router.routeReplies("sistema visual de MISSION-PONG").get(0).text();
+        assertTrue(text.contains("primary #112233") && text.contains("surface #FFFFFF") && text.contains("Inter"), text);
+        assertEquals("MISSION-NADA no tiene sistema visual aprobado.", router.routeReplies("sistema visual de MISSION-NADA").get(0).text());
+        verifyNoInteractions(ceoService);
+    }
 }
