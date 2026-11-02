@@ -85,6 +85,45 @@ public final class RoleLayerCatalog {
     }
 
     /**
+     * Dos o más agentes elegidos con el mismo rol se reparten los contextos. Cada agente conserva los que Neo le
+     * puso en sus assignments (un contexto tiene un solo dueño por rol: gana el primero del plan); los que Neo no
+     * asignó se reparten en orden, por turnos, entre los agentes de ese rol. Los agentes con rol único no aparecen
+     * en el resultado: tienen todos los contextos.
+     */
+    public static Map<String, List<String>> splitByContext(LinkedHashMap<String, String> roleCodeByAgent,
+                                                           Map<String, List<String>> contextsByAgent,
+                                                           List<String> contexts) {
+
+        var result = new LinkedHashMap<String, List<String>>();
+        var agentsByRole = new LinkedHashMap<String, List<String>>();
+        roleCodeByAgent.forEach((agent, role) -> agentsByRole.computeIfAbsent(role, r -> new ArrayList<>()).add(agent));
+
+        for (var agents : agentsByRole.values()) {
+            if (agents.size() < 2) {
+                continue;
+            }
+            agents.forEach(agent -> result.put(agent, new ArrayList<>()));
+            var taken = new java.util.HashSet<String>();
+            for (var agent : agents) {
+                for (var wanted : contextsByAgent.getOrDefault(agent, List.of())) {
+                    contexts.stream().filter(c -> c.equalsIgnoreCase(wanted)).findFirst()
+                            .filter(taken::add).ifPresent(c -> result.get(agent).add(c));
+                }
+            }
+            int turn = 0;
+            for (var context : contexts) {
+                if (taken.add(context)) {
+                    result.get(agents.get(turn % agents.size())).add(context);
+                    turn++;
+                }
+            }
+            agents.forEach(agent -> result.get(agent).sort(
+                    java.util.Comparator.comparingInt(contexts::indexOf)));
+        }
+        return result;
+    }
+
+    /**
      * Revisión final del bloque 1 (I-2): el dueño de una capa no puede depender del orden en que Neo listó las
      * tareas. Se elige por esta prioridad de rol fija (el especialista más cercano a la capa primero) y, solo
      * entre agentes del mismo rol, por orden del plan.

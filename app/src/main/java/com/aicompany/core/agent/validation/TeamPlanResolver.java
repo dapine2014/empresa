@@ -68,9 +68,26 @@ public class TeamPlanResolver {
             var componentContexts = component.contexts(contexts);
             var ownerByLayerRoot = new LinkedHashMap<String, String>();
 
+            // Agentes del mismo rol: todos reciben las capas del rol y se reparten los contextos.
+            var assigned = new LinkedHashMap<String, List<String>>();
+            merged.forEach(task -> assigned.put(task.agentId(), task.assignmentsOrEmpty().stream()
+                    .map(TeamPlan.LayerAssignment::context).filter(Objects::nonNull).toList()));
+            var split = RoleLayerCatalog.splitByContext(componentRoles, assigned, componentContexts);
+            var firstOfRole = new LinkedHashMap<String, String>();
+            componentRoles.forEach((agent, role) -> firstOfRole.putIfAbsent(role, agent));
+            var sharedLayers = new LinkedHashMap<String, List<Layer>>();
+            split.keySet().forEach(agent -> sharedLayers.put(agent, new ArrayList<>(
+                    layersByAgent.getOrDefault(firstOfRole.get(componentRoles.get(agent)), List.of()))));
+            layersByAgent.putAll(sharedLayers);
+
             for (var entry : layersByAgent.entrySet()) {
+                var agentContexts = split.getOrDefault(entry.getKey(), componentContexts);
+                var isFirst = firstOfRole.get(componentRoles.get(entry.getKey())).equals(entry.getKey());
                 for (var layer : entry.getValue()) {
-                    for (var root : roots(component.profile(), componentContexts, layer)) {
+                    if (split.containsKey(entry.getKey()) && !isFirst && component.profile().isSharedLayer(layer)) {
+                        continue;
+                    }
+                    for (var root : roots(component.profile(), agentContexts, layer)) {
                         var prefixed = component.prefix(root);
                         pathsByAgent.get(entry.getKey()).add(prefixed);
                         ownerByLayerRoot.put(prefixed, entry.getKey());
@@ -87,7 +104,7 @@ public class TeamPlanResolver {
                                 + ": incluye a un miembro que escriba domain (BACKEND o UI_UX)."));
             }
 
-            addEntryFiles(component, componentContexts, ownerByLayerRoot, pathsByAgent, errors);
+            addEntryFiles(component, componentContexts, ownerByLayerRoot, pathsByAgent, errors, componentRoles);
         }
 
         var resolved = new ArrayList<PlannedTask>();
@@ -140,7 +157,7 @@ public class TeamPlanResolver {
      */
     private static void addEntryFiles(com.aicompany.core.model.AppComponent component, List<String> contexts,
                                       Map<String, String> ownerByLayerRoot, Map<String, List<String>> pathsByAgent,
-                                      List<String> errors) {
+                                      List<String> errors, Map<String, String> componentRoles) {
 
         var entryFiles = component.profile().leaderOwnedPaths().stream().map(component::prefix).toList();
         if (entryFiles.isEmpty()) {
@@ -163,6 +180,14 @@ public class TeamPlanResolver {
             return;
         }
 
+        // Con varios agentes del mismo rol, los archivos de entrada son del primero del plan.
+        var ownerRole = componentRoles.get(owner);
+        for (var entry : componentRoles.entrySet()) {
+            if (entry.getValue().equals(ownerRole)) {
+                owner = entry.getKey();
+                break;
+            }
+        }
         var paths = pathsByAgent.get(owner);
         entryFiles.stream().filter(file -> !paths.contains(file)).forEach(paths::add);
     }

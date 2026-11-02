@@ -48,6 +48,56 @@ class TeamPlanResolverTest {
         return plan.tasksOrEmpty().stream().filter(t -> t.agentId().equals(agent)).toList();
     }
 
+    private static final TeamSnapshot TWO_FRONTS = new TeamSnapshot("TEAM-DEVELOPMENT", "Development Group", "ACTIVE",
+            "engineering", List.of(
+            m("frontend-ui", "UI_UX", "flutter", "ui"),
+            m("specialist-3d", "UI_UX", "flutter", "ui")));
+
+    private static TeamPlan twoContexts(List<PlannedTask> tasks) {
+        return new TeamPlan("App", null, null, tasks, List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("pedidos", "desc"), new TeamPlan.BoundedContext("clientes", "desc")),
+                List.of(new TeamPlan.GlossaryTerm("a", "b"), new TeamPlan.GlossaryTerm("c", "d"),
+                        new TeamPlan.GlossaryTerm("e", "f")));
+    }
+
+    @Test
+    void milaAndOrionSplitTwoContexts() {
+        var result = resolver.resolve(twoContexts(List.of(t("frontend-ui", "WORK", "flutter"),
+                t("specialist-3d", "WORK", "flutter"))), TWO_FRONTS);
+
+        assertEquals(List.of(), result.errors());
+        var mila = of(result.plan(), "frontend-ui").get(0).ownedPaths();
+        var orion = of(result.plan(), "specialist-3d").get(0).ownedPaths();
+        assertTrue(mila.contains("lib/pedidos/presentation"));
+        assertTrue(mila.contains("lib/main.dart"));
+        assertTrue(orion.contains("lib/clientes/presentation"));
+        assertFalse(orion.contains("lib/pedidos/presentation"));
+        assertFalse(mila.contains("lib/clientes/presentation"));
+        assertFalse(orion.contains("lib/main.dart"));
+    }
+
+    @Test
+    void neoAssignmentWins() {
+        var orionTask = new PlannedTask("specialist-3d", "WORK", "WORK_ITEM", "o", List.of("flutter"), List.of(),
+                List.of(new TeamPlan.LayerAssignment("pedidos", "PRESENTATION")));
+        var result = resolver.resolve(twoContexts(List.of(t("frontend-ui", "WORK", "flutter"), orionTask)), TWO_FRONTS);
+
+        assertEquals(List.of(), result.errors());
+        assertTrue(of(result.plan(), "specialist-3d").get(0).ownedPaths().contains("lib/pedidos/presentation"));
+        var mila = of(result.plan(), "frontend-ui").get(0).ownedPaths();
+        assertTrue(mila.contains("lib/clientes/presentation"));
+        assertFalse(mila.contains("lib/pedidos/presentation"));
+    }
+
+    @Test
+    void sameRoleSingleContextKeepsClearError() {
+        var result = resolver.resolve(plan("FLUTTER_WEB_APP", "pedidos", List.of(t("frontend-ui", "WORK", "flutter"),
+                t("specialist-3d", "WORK", "flutter"))), TWO_FRONTS);
+
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("specialist-3d")
+                && e.contains("no tiene capas") && e.contains("Quítalo del plan")), result.errors().toString());
+    }
+
     @Test
     void flutterWithOnlyUiAndQaGivesUiTheFallbackLayers() {
         var result = resolver.resolve(plan("FLUTTER_WEB_APP", "saludo",
