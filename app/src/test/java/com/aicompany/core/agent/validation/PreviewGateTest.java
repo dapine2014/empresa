@@ -51,4 +51,11 @@ class PreviewGateTest {
         assertEquals(1, errors.size(), errors.toString());
         assertTrue(errors.get(0).contains("forjaiPreviewOr("), errors.toString());
     }
+
+    @Test
+    void mainCheckIsSkippedForATaskThatDoesNotOwnMain() {
+        var old = Map.of("lib/main.dart", "void main() { runApp(const MyApp()); }");
+        assertEquals(List.of(), PreviewGate.check(List.of(), Set.of(), old, false));
+        assertEquals(1, PreviewGate.check(List.of(), Set.of(), old, true).size());
+    }
 }

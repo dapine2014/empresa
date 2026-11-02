@@ -1803,6 +1803,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 && owned.stream().anyMatch(p -> c.owns(p) && (p.contains("presentation") || p.endsWith("lib/main.dart"))));
     }
 
+    /** La tarea es dueña de lib/main.dart de algún componente Flutter (con Task 2, solo el primer front). */
+    private static boolean ownsMain(TeamMissionContext context, List<String> owned) {
+        return context.plan().resolvedComponents().stream().filter(c -> c.profile() == StackProfile.FLUTTER_WEB_APP)
+                .anyMatch(c -> OwnedPaths.coveredByAny(owned, c.prefix("lib/main.dart")));
+    }
+
     private static final java.util.regex.Pattern DATA_ID = java.util.regex.Pattern.compile("data-id\\s*=\\s*[\"']([^\"']+)[\"']");
 
     /**
@@ -1835,8 +1841,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
             out.append("\n");
         }
-        out.append("- lib/main.dart arranca con runApp(forjaiPreviewOr(const MiApp())) (forjaiPreviewOr viene de lib/forjai/preview.dart).\n")
-                .append("- Colores, fuentes y tamaños SOLO de AppTheme (lib/theme/app_theme.dart) o Theme.of(context): nunca Color(0x…), ")
+        if (ownsMain(context, owned)) {
+            out.append("- lib/main.dart arranca con runApp(forjaiPreviewOr(const MiApp())) (forjaiPreviewOr viene de lib/forjai/preview.dart).\n");
+        }
+        out.append("- Colores, fuentes y tamaños SOLO de AppTheme (lib/theme/app_theme.dart) o Theme.of(context): nunca Color(0x…), ")
                 .append("Colors.* (salvo Colors.transparent), fontFamily: ni fontSize:/color: literales en TextStyle.\n")
                 .append("- lib/theme y lib/forjai son de Forjai: no los escribas.\n");
         return out.toString();
@@ -1849,6 +1857,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return null;
         }
         var screens = incrementScreens(context.missionId());
+        var mainOwner = ownsMain(context, owned);
         var existing = new LinkedHashMap<String, String>();
         if (headSha != null) {
             try {
@@ -1867,7 +1876,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return result -> {
             var files = result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files();
             var errors = new ArrayList<String>(com.aicompany.core.agent.validation.ThemeLiteralGate.check(files));
-            errors.addAll(com.aicompany.core.agent.validation.PreviewGate.check(files, screens, existing));
+            errors.addAll(com.aicompany.core.agent.validation.PreviewGate.check(files, screens, existing, mainOwner));
             return errors;
         };
     }

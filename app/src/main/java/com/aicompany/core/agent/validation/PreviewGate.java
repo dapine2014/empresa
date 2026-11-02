@@ -27,6 +27,12 @@ public final class PreviewGate {
      * @param existing archivos .dart que ya están en el repositorio (ruta a contenido); lo devuelto los pisa.
      */
     public static List<String> check(List<GeneratedFile> files, Set<String> screensInIncrement, Map<String, String> existing) {
+        return check(files, screensInIncrement, existing, true);
+    }
+
+    /** checkMain: solo la dueña de lib/main.dart responde por forjaiPreviewOr(; las demás frontales no pueden corregirlo. */
+    public static List<String> check(List<GeneratedFile> files, Set<String> screensInIncrement, Map<String, String> existing,
+                                     boolean checkMain) {
         var merged = new LinkedHashMap<String, String>();
         if (existing != null) {
             existing.forEach((p, c) -> merged.put(OwnedPaths.normalize(p), c == null ? "" : c));
@@ -51,7 +57,7 @@ public final class PreviewGate {
             if (path.isEmpty()) {
                 errors.add("Falta la vista previa de " + screen + ": escribe lib/<contexto>/presentation/previews/pant_" + nn
                         + "_preview.dart con class " + cls + " (constructor const sin argumentos) y Key('" + screen
-                        + "') en su widget raíz.");
+                        + "') en el widget raíz de la vista previa.");
                 continue;
             }
             var code = CSharpComments.strip(merged.get(path.get()));
@@ -59,11 +65,11 @@ public final class PreviewGate {
                 errors.add(path.get() + " debe declarar class " + cls + ".");
             }
             if (!Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()) {
-                errors.add(path.get() + " debe llevar Key('" + screen + "') en su widget raíz.");
+                errors.add(path.get() + " debe incluir Key('" + screen + "') en el widget raíz de la vista previa.");
             }
         }
         merged.forEach((p, c) -> {
-            if ((p.equals("lib/main.dart") || p.endsWith("/lib/main.dart")) && !CSharpComments.strip(c).contains("forjaiPreviewOr(")) {
+            if (checkMain && (p.equals("lib/main.dart") || p.endsWith("/lib/main.dart")) && !CSharpComments.strip(c).contains("forjaiPreviewOr(")) {
                 errors.add(p + " debe arrancar con runApp(forjaiPreviewOr(const MiApp())): así Forjai muestra las vistas previas.");
             }
         });

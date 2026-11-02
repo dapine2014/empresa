@@ -2588,9 +2588,33 @@ class DevelopmentTeamStrategyTest {
         var block = strategy.visualContractBlock(ctx, owned);
         assertTrue(block.contains("pant_01_preview.dart") && block.contains("class Pant01Preview"), block);
         assertTrue(block.contains("Key('PANT-01')") && block.contains("Key('root')"), block);
-        assertTrue(block.contains("forjaiPreviewOr") && block.contains("AppTheme") && block.contains("Colors.transparent"), block);
+        assertTrue(block.contains("AppTheme") && block.contains("Colors.transparent"), block);
         assertFalse(block.contains("PANT-02"), block);
+        assertFalse(block.contains("forjaiPreviewOr"), "sin ser dueña de main.dart no se le pide: " + block);
+        assertTrue(strategy.visualContractBlock(ctx, List.of("lib/pedidos/presentation", "lib/main.dart"))
+                .contains("forjaiPreviewOr"));
         assertEquals("", strategy.visualContractBlock(ctx, List.of("lib/pedidos/domain")));
+    }
+
+    @Test
+    void mainDartIsCheckedOnlyForItsOwner() throws Exception {
+        var visuals = mock(VisualDesignMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        var json = tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                VisualDesignWriterTest.design("#FFFFFF", "PANT-01"));
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1, json, "APPROVED", 1, 1, "")));
+        var base = context();
+        var plan = new TeamPlan("App", null, null, base.plan().tasks(), List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")), base.plan().ubiquitousLanguage());
+        var ctx = new TeamMissionContext("M-1", "app", base.team(), plan);
+        when(workspace.filesAtCommit("M-1", "h")).thenReturn(List.of("lib/main.dart"));
+        when(workspace.readFileAtCommit("M-1", "h", "lib/main.dart")).thenReturn("void main() { runApp(const MyApp()); }");
+        var result = new DevelopmentResult("r", List.of());
+
+        var second = strategy.visualChecks(ctx, List.of("lib/pedidos/presentation"), "h");
+        assertEquals(List.of(), second.apply(result));
+        var first = strategy.visualChecks(ctx, List.of("lib/pedidos/presentation", "lib/main.dart"), "h");
+        assertTrue(first.apply(result).stream().anyMatch(e -> e.contains("forjaiPreviewOr(")), first.apply(result).toString());
     }
 
     @Test
