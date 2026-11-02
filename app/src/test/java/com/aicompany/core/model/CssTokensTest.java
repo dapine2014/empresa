@@ -38,4 +38,20 @@ class CssTokensTest {
         var bare = CssTokens.page(new Mockup("PANT-01", "<div data-id=\"a\"></div>"), VS);
         assertTrue(bare.contains("<style>:root{") && bare.contains("<div data-id"));
     }
+
+    @Test
+    void fragmentWithHeaderTagGetsRealHeadAndCharset() {
+        var page = CssTokens.page(new Mockup("PANT-01", "<header data-id=\"bar\">Inicio</header><main></main>"), VS);
+        assertTrue(page.contains("<head><meta charset=\"utf-8\"><style>:root{"));
+        assertTrue(page.contains("<header data-id=\"bar\">Inicio</header>"));
+        assertTrue(page.indexOf("<style>") < page.indexOf("<header"));
+    }
+
+    @Test
+    void fullDocumentKeepsItsHead() {
+        var page = CssTokens.page(new Mockup("PANT-01",
+                "<!DOCTYPE html><html><head lang=\"es\"><meta charset=\"utf-8\"></head><body><header></header></body></html>"), VS);
+        assertTrue(page.contains("<head lang=\"es\"><style>:root{"));
+        assertTrue(page.indexOf("<style>") < page.indexOf("<header>"));
+    }
 }

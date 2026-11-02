@@ -52,10 +52,10 @@ public final class CssTokens {
     public static String page(Mockup m, VisualSystem vs) {
         var style = "<style>" + root(vs) + "</style>";
         var html = m.html() == null ? "" : m.html();
-        var head = java.util.regex.Pattern.compile("(?i)<head[^>]*>").matcher(html);
+        var head = java.util.regex.Pattern.compile("(?i)<head(\\s[^>]*)?>").matcher(html);
         if (head.find()) return html.substring(0, head.end()) + style + html.substring(head.end());
         var root = java.util.regex.Pattern.compile("(?i)<html[^>]*>").matcher(html);
-        if (root.find()) return html.substring(0, root.end()) + "<head>" + style + "</head>" + html.substring(root.end());
+        if (root.find()) return html.substring(0, root.end()) + "<head><meta charset=\"utf-8\">" + style + "</head>" + html.substring(root.end());
         return "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" + style + "</head><body>" + html + "</body></html>";
     }
 }
