@@ -12,6 +12,16 @@ Hay una segunda razón: en front solo trabaja Mila. Si falla o está ocupada, na
 - **Apps:** diseña aplicaciones visualmente amigables y fáciles de usar, y las construye con Flutter, para que una sola app sirva en cualquier dispositivo.
 - **Juegos:** crea y diseña personajes y ambientes 2D y 3D (Godot `Skeleton2D`, `Polygon2D`, `AnimationPlayer`, y Blender para 3D).
 
+**Quién es front y quién es back (fundador, 2026-11-01):** los front son **solo dos, Mila y Orion**. Kael **no** es front: es back junto con Iris, porque los dos programan en C# (Kael en juegos Godot y, como cambio aparte, también en .NET; Iris en .NET y en las reglas de los juegos Godot). Kael sigue diseñando la estructura de las apps (pantallas y flujos) y la mecánica de los juegos.
+
+| Agente | Área | Lenguaje | Rol |
+|---|---|---|---|
+| Iris | Back | C# (.NET y Godot) | Backend |
+| Kael | Back | C# (Godot y .NET) | Juegos |
+| Diego | Back | SQL (PostgreSQL) | Datos |
+| Mila | Front | Dart (Flutter) + Blender | Interfaz |
+| Orion | Front | Dart (Flutter) + Blender | Interfaz |
+
 Esta etapa cubre **solo apps**. Las etapas de juegos se describen al final y quedan fuera.
 
 ## Metas
