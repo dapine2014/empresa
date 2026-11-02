@@ -19,5 +19,10 @@ public enum PolicyKey {
     MAX_MISSION_COST_USD,
     JOINT_REVIEW_ENABLED,
     /** Spec 2026-11-01 diseño visual §12: SSIM mínimo de la app contra la maqueta aprobada. */
-    DESIGN_SIMILARITY_THRESHOLD
+    DESIGN_SIMILARITY_THRESHOLD,
+    /**
+     * Spec 2026-11-01 diseño visual §15: quién decide las diferencias de diseño. 0 = FOUNDER (hoy); 1 = PRODUCT_OWNER,
+     * rechazado hasta que el fundador active los demás modelos.
+     */
+    DESIGN_MISMATCH_DECIDER
 }

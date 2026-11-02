@@ -13,6 +13,8 @@ public record DesignScreenReview(int increment, String screen, String size, doub
     public static final String PASSED = "PASSED";
     public static final String AWAITING_DECISION = "AWAITING_DECISION";
     public static final String ACCEPTED = "ACCEPTED";
+    /** Transitorio: el claim atómico del punto de decisión (dentro de su transacción). */
+    public static final String DECIDING = "DECIDING";
 
     /** Rondas de corrección del front por pantalla antes de esperar al decisor. */
     public static final int MAX_ROUNDS = 2;

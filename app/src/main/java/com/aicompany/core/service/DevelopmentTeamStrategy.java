@@ -117,6 +117,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         // Spec misiones durables §2: con workspace, primero se limpia y se lee lo ya commiteado de esta ronda.
         var head = workspace.headIfAny(missionId);
         var done = new LinkedHashMap<String, AgentTask>();
+        // Task 12 (diseño visual §14): HEAD es una corrección de diseño de esta ronda (se retoma tras la decisión).
+        String designHead = null;
         var stashNote = "";
         if (head.isPresent()) {
             var byId = memory.tasks(missionId).stream()
@@ -130,6 +132,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 }
                 var headTask = workspace.headTask(missionId).orElse(null);
                 var headRecord = headTask == null ? null : byId.get(headTask);
+                if (headTask != null && headTask.startsWith(missionId + DesignReviewLoop.COMMIT_INFIX)) {
+                    designHead = head.get();
+                }
                 // Un commit "no registrado" es el que la tarea no tiene anotado (el reinicio cayó entre el commit y el
                 // registro). Verificado en vivo: una reparación deja la tarea RUNNING con su commit original, y ese commit
                 // NO se retrocede. El commit raíz tampoco: la tarea se regenera encima.
@@ -338,6 +343,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 forjaiFiles);
 
         var headSha = committed.get(committed.size() - 1).commitSha();
+        // Task 12 (diseño visual §14): sin commits nuevos en este retome, las correcciones de diseño ya commiteadas encima
+        // del último trabajo son el código a verificar y comparar; si no, el ciclo compararía sin ellas (y una pantalla
+        // que pasó gracias a una corrección volvería a esperar al decisor).
+        var workHead = headSha;
+        if (designHead != null && done.values().stream().anyMatch(t -> workHead.equals(t.commitSha()))) {
+            headSha = designHead;
+        }
         SandboxResult sandboxResult = null;
         String sandboxError = null;
         var repairRounds = 0;

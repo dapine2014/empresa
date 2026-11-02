@@ -43,6 +43,8 @@ public final class MissionEventText {
             case "EMPRESA_DELIVERY_FAILED" -> "Entrega del incremento " + d.get("increment") + " falló: " + str(d, "error");
             case "EMPRESA_MODEL_SWITCHED" -> "Modelo de " + who + ": " + str(d, "from") + " → " + str(d, "to")
                     + " (" + str(d, "kind") + ")";
+            case "EMPRESA_DESIGN_DECISION" -> "Diseño de " + str(d, "screen") + ": "
+                    + ("ACCEPT".equals(str(d, "decision")) ? "aceptada" : "otra ronda pedida") + " por " + str(d, "decidedBy");
             default -> (eventType == null ? "EVENTO" : eventType.replaceFirst("^EMPRESA_", "").replace('_', ' '))
                     + " por " + who + detail(d);
         };

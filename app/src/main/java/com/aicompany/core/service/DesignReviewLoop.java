@@ -50,8 +50,12 @@ public class DesignReviewLoop {
     static final int PROMPT_LIMIT = 7_500;
     static final int THEME_BUDGET = 2_000;
     static final int CORRECTION_BUDGET = 2_500;
-    static final String BLOCK_PREFIX = "DESIGN_MISMATCH: ";
-    static final String CAPTURE_PREFIX = "DESIGN_CAPTURE_FAILED: ";
+    /** Motivo del freno por diferencias de diseño: decide el decisor (spec §14). */
+    public static final String BLOCK_PREFIX = "DESIGN_MISMATCH: ";
+    /** Motivo del freno por una captura fallida: no hay nada que decidir, se retoma con «reanuda» (R13). */
+    public static final String CAPTURE_PREFIX = "DESIGN_CAPTURE_FAILED: ";
+    /** Las correcciones de diseño se commitean como {@code <misión>-DESIGN-R<n>}. */
+    public static final String COMMIT_INFIX = "-DESIGN-R";
 
     private static final Pattern PREVIEW = Pattern.compile("(?:(.*)/)?lib/[^/].*/presentation/previews/pant_(\\d+)_preview\\.dart");
     private static final Pattern IMPORT = Pattern.compile("(?m)^\\s*import\\s+['\"]([^'\"]+)['\"]");
@@ -223,7 +227,7 @@ public class DesignReviewLoop {
                             themeOf(missionId, head, files, preview));
                     try {
                         var sha = front.correct(ctx, owner, prompt.text(), prompt.required(), head,
-                                missionId + "-DESIGN-R" + corrections);
+                                missionId + COMMIT_INFIX + corrections);
                         if (sha != null) {
                             head = sha;
                             commits++;

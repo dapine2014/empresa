@@ -10,6 +10,15 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Bitácora (spec 2026-10-17): Java arma el resumen de cada evento, nunca un modelo. */
 class MissionEventTextTest {
 
+    // Spec 2026-11-01 diseño visual §15: la decisión de diseño queda en la bitácora con quién decidió.
+    @Test void designDecisionShowsScreenDecisionAndWho() {
+        assertEquals("Diseño de PANT-01: aceptada por founder", MissionEventText.summary("EMPRESA_DESIGN_DECISION", null,
+                Map.of("screen", "PANT-01", "decision", "ACCEPT", "decidedBy", "founder", "increment", 1)));
+        assertEquals("Diseño de PANT-02: otra ronda pedida por founder", MissionEventText.summary(
+                "EMPRESA_DESIGN_DECISION", null,
+                Map.of("screen", "PANT-02", "decision", "ANOTHER_ROUND", "decidedBy", "founder", "increment", 1)));
+    }
+
     @Test void missionUpdatedShowsStatusStepAndMessage() {
         assertEquals("Misión → WAITING_AGENT_RESULTS: Desarrollo por capas — Kael (2/3) está generando [game]",
                 MissionEventText.summary("EMPRESA_MISSION_UPDATED", "Alex", Map.of("status", "WAITING_AGENT_RESULTS",

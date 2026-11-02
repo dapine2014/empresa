@@ -106,6 +106,33 @@ public class MissionController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    private com.aicompany.core.service.DesignDecisionService designDecisions;
+
+    /** Spec 2026-11-01 diseño visual §14-15: el punto único de decisión del diseño (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDesignDecisions(com.aicompany.core.service.DesignDecisionService designDecisions) {
+        this.designDecisions = designDecisions;
+    }
+
+    /** Spec 2026-11-01 diseño visual §14: el estado de la revisión de diseño por pantalla, el motivo del freno y quién decide. */
+    @GetMapping("/{missionId}/design-review")
+    public ResponseEntity<com.aicompany.core.model.DesignReviewView> designReview(@PathVariable String missionId) {
+        return (designDecisions == null ? java.util.Optional.<com.aicompany.core.model.DesignReviewView>empty()
+                : designDecisions.view(missionId)).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Spec 2026-11-01 diseño visual §14: el fundador acepta una pantalla o pide otra ronda (con comentario). */
+    @PostMapping("/{missionId}/design-review/decision")
+    public ResponseEntity<com.aicompany.core.model.DesignReviewView> designDecision(
+            @PathVariable String missionId, @RequestBody com.aicompany.core.model.DesignDecisionCommand command) {
+        if (designDecisions == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(designDecisions.decide(missionId, command.screen(), command.decision(), command.note(),
+                "founder"));
+    }
+
     /** Spec 2026-10-03 Aria §2: requisitos de Aria de la misión (versión vigente y aprobada). */
     @GetMapping("/{missionId}/requirements")
     public ResponseEntity<RequirementsView> requirements(@PathVariable String missionId) {

@@ -67,6 +67,8 @@ public class CompanyPolicyService {
         map.put(PolicyKey.JOINT_REVIEW_ENABLED, 1.0);
         // Spec 2026-11-01 diseño visual §12: SSIM ≥ 0,90 y ningún elemento faltante (se calibra con la primera misión).
         map.put(PolicyKey.DESIGN_SIMILARITY_THRESHOLD, 0.90);
+        // Spec 2026-11-01 diseño visual §15: decide el fundador (0) mientras Forjai trabaja con el Development Group.
+        map.put(PolicyKey.DESIGN_MISMATCH_DECIDER, 0.0);
         return map;
     }
 
@@ -176,7 +178,24 @@ public class CompanyPolicyService {
      * Revisión en vivo (2026-09-29): {@code ORCHESTRATOR_ENABLED} es un interruptor (0 = pausado, 1 = encendido); exigir
      * un valor positivo hacía imposible pausar el orquestador, desde Settings y desde el chat. El resto sigue siendo > 0.
      */
+    static final String PO_DECIDER_DISABLED = "El PO decidirá las diferencias de diseño cuando se activen los demás "
+            + "modelos; por ahora solo FOUNDER (0).";
+
     static void validateValue(PolicyKey key, double value) {
+        // Spec 2026-11-01 diseño visual §15: el camino del PO queda sin habilitar; 0 = FOUNDER es el único valor válido.
+        if (key == PolicyKey.DESIGN_MISMATCH_DECIDER) {
+            if (value != 0) {
+                throw new IllegalArgumentException(PO_DECIDER_DISABLED);
+            }
+            return;
+        }
+        // Spec 2026-11-01 diseño visual §12: el umbral de similitud (SSIM) se calibra entre 0,5 y 1,0.
+        if (key == PolicyKey.DESIGN_SIMILARITY_THRESHOLD) {
+            if (!(value >= 0.5 && value <= 1.0)) {
+                throw new IllegalArgumentException(key + " va de 0,5 a 1,0 (similitud mínima de cada pantalla con su maqueta)");
+            }
+            return;
+        }
         if (key == PolicyKey.ORCHESTRATOR_ENABLED || key == PolicyKey.PROSPECTING_ENABLED
                 || key == PolicyKey.SPEC_APPROVAL_REQUIRED || key == PolicyKey.JOINT_REVIEW_ENABLED) {
             if (value != 0 && value != 1) {

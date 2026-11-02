@@ -1905,6 +1905,49 @@ class DevelopmentTeamStrategyTest {
         verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
     }
 
+    // Task 12 (diseño visual §14): al retomar tras la decisión de diseño, el código a verificar y comparar es el HEAD con
+    // las correcciones de diseño ya commiteadas (<misión>-DESIGN-R<n>), no el último commit de trabajo de la ronda.
+    @Test
+    void resumingAfterADesignDecisionVerifiesTheDesignCorrections() throws Exception {
+        var context = resumableContext();
+        var designHead = "d".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(designHead));
+        when(workspace.headSha("M-1")).thenReturn(designHead);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-DESIGN-R2"));
+        when(memory.tasks("M-1")).thenReturn(List.of(
+                new AgentTask("M-1-ENGINEERING", "M-1", "engineering", "ARCHITECTURE", "COMPLETED",
+                        "{\"summary\":\"api\",\"files\":[]}", java.time.Instant.now(), "WORK", "/w", SHA_NEO,
+                        List.of("web/index.html"), null, null),
+                new AgentTask("M-1-FRONTEND-UI", "M-1", "frontend-ui", "UI", "COMPLETED",
+                        "{\"summary\":\"ui\",\"files\":[]}", java.time.Instant.now(), "WORK", "/w", SHA_MILA,
+                        List.of("web/ui/hud.js"), null, null)));
+        var visuals = mock(VisualDesignMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                        VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
+        var compared = new java.util.concurrent.atomic.AtomicReference<String>();
+        strategy.setDesignLoopFactory(front -> new DesignReviewLoop(null, null, null, null, null, null, front) {
+            @Override
+            public boolean applies(TeamMissionContext ctx) {
+                return true;
+            }
+
+            @Override
+            public Outcome run(TeamMissionContext ctx, String headSha, int increment) {
+                compared.set(headSha);
+                return new Outcome(true, List.of(), headSha);
+            }
+        });
+
+        strategy.execute(context, progress);
+
+        verify(workspace, never()).dropHeadCommit("M-1");
+        verify(sandbox).verify(eq("M-1"), eq(designHead), eq("GODOT_DOTNET_GAME"));
+        assertEquals(designHead, compared.get());
+        verify(memory).recordVerifiedCommit(eq("M-1"), eq(designHead), any());
+    }
+
     // ---- Spec 2026-10-14 Kael §1.4: DESIGN_CONFORMANCE ----
 
     private static final com.aicompany.core.agent.model.InteractionDesign APP_DESIGN =

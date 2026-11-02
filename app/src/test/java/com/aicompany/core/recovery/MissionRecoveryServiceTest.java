@@ -529,4 +529,87 @@ class MissionRecoveryServiceTest {
         service.recoverAll();
         verify(executor, times(3)).resumeAsync(eq("M-1"), any());
     }
+
+    // Spec 2026-11-01 diseño visual §14 + R13 (Review Focus 4): un freno de diseño no se reanuda solo tras un reinicio y
+    // las decisiones ya tomadas (pantallas ACCEPTED) no se tocan.
+    @Test void designMismatchStaysBlockedAfterRestart() {
+        var reviews = mock(DesignReviewMemoryService.class);
+        service.setDesignReviews(reviews);
+        listed(blocked("M-1", "DESIGN_MISMATCH: PANT-02\n\nESTADO"),
+                blocked("M-2", "DESIGN_CAPTURE_FAILED: sandbox caído\n\nESTADO"));
+        approved("M-1");
+        approved("M-2");
+        when(missions.lastValidationStatus(anyString())).thenReturn(Optional.of("UNVALIDATED"));
+
+        service.onStartup();
+        service.recoverAll();
+
+        verify(executor, never()).resumeAsync(anyString(), any());
+        verify(executor, never()).correctAsync(anyString(), anyInt(), anyString(), anyBoolean());
+        verify(executor, never()).block(anyString(), anyString());
+        verify(executor, never()).interrupt(anyString());
+        verify(reviews, never()).save(anyString(), any(), anyInt(), anyInt(), anyString());
+        verify(reviews, never()).decide(anyString(), anyString(), anyString(), anyString(), anyString(), anyInt());
+    }
+
+    // R13: la falla de captura se retoma a pedido («reanuda M-1»), en la misma ronda: vuelve a verificar y a capturar.
+    // Aunque quede una pantalla AWAITING de una pasada anterior (el punto de decisión rechaza las fallas de captura).
+    @Test void aDesignCaptureFailureIsResumedOnRequest() {
+        var reviews = mock(DesignReviewMemoryService.class);
+        service.setDesignReviews(reviews);
+        when(reviews.all("M-1")).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-02",
+                "phone", 0.7, "AWAITING_DECISION", 2, 0, null, null, null)));
+        listed(blocked("M-1", "DESIGN_CAPTURE_FAILED: sandbox caído"));
+        service.resume("M-1");
+        verify(executor).resumeAsync(eq("M-1"), any());
+    }
+
+    @Test void aDesignMismatchWaitingForADecisionIsNotResumedByHand() {
+        var reviews = mock(DesignReviewMemoryService.class);
+        service.setDesignReviews(reviews);
+        when(reviews.all("M-1")).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-02",
+                "phone", 0.7, "AWAITING_DECISION", 2, 0, null, null, null)));
+        listed(blocked("M-1", "DESIGN_MISMATCH: PANT-02"));
+
+        var ex = assertThrows(IllegalStateException.class, () -> service.resume("M-1"));
+
+        assertTrue(ex.getMessage().contains("PANT-02"), ex.getMessage());
+        verify(executor, never()).resumeAsync(anyString(), any());
+    }
+
+    // Si la reanudación tras la última decisión no pudo arrancar, «reanuda» la arranca (no queda nada que decidir).
+    @Test void aDesignMismatchWithEverythingDecidedIsResumedByHand() {
+        var reviews = mock(DesignReviewMemoryService.class);
+        service.setDesignReviews(reviews);
+        when(reviews.all("M-1")).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-02",
+                "phone", 0.7, "ACCEPTED", 2, 0, "founder", "", null)));
+        listed(blocked("M-1", "DESIGN_MISMATCH: PANT-02"));
+
+        service.resume("M-1");
+
+        verify(executor).resumeAsync(eq("M-1"), any());
+    }
+
+    @Test void resumeDesignOnlyAppliesToADesignBlock() {
+        listed(blocked("M-1", "Se agotaron las 20 correcciones automáticas"),
+                mission("M-2", MissionStatus.EVALUATING, "TEAM-DEVELOPMENT"));
+        assertThrows(IllegalStateException.class, () -> service.resumeDesign("M-1"));
+        assertThrows(IllegalStateException.class, () -> service.resumeDesign("M-2"));
+        when(executor.isLive("M-3")).thenReturn(true);
+        listed(blocked("M-3", "DESIGN_MISMATCH: PANT-01"));
+        assertThrows(IllegalStateException.class, () -> service.resumeDesign("M-3"));
+        verify(executor, never()).resumeAsync(anyString(), any());
+    }
+
+    @Test void resumeDesignResumesTheRoundOfADesignBlock() {
+        listed(blocked("M-1", "DESIGN_MISMATCH: PANT-01\n\nESTADO"));
+        service.resumeDesign("M-1");
+        verify(executor).resumeAsync(eq("M-1"), any());
+        assertTrue(service.resumedSinceStart().contains("M-1"));
+    }
+
+    private static MissionResponse blocked(String id, String reason) {
+        return new MissionResponse(id, MissionStatus.BLOCKED, "TEST", 100, "Bloqueada", reason, Instant.now(), null,
+                "TEAM-DEVELOPMENT");
+    }
 }

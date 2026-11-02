@@ -275,6 +275,7 @@ export type PolicyKey =
   | 'MAX_MISSION_COST_USD'
   | 'JOINT_REVIEW_ENABLED'
   | 'DESIGN_SIMILARITY_THRESHOLD'
+  | 'DESIGN_MISMATCH_DECIDER'
 
 export interface PolicyVersionSummary {
   version: number

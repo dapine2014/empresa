@@ -1,6 +1,7 @@
 package com.aicompany.core.recovery;
 
 import com.aicompany.core.model.AgentTask;
+import com.aicompany.core.model.DesignScreenReview;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatus;
 import com.aicompany.core.model.PolicyKey;
@@ -210,6 +211,18 @@ public class MissionRecoveryService {
      */
     public synchronized void resume(String missionId) {
         var mission = missions.find(missionId).orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId));
+        // Spec 2026-11-01 diseño visual, R13: una falla de captura (o un freno de diseño ya decidido del todo) se retoma acá.
+        if (designBlock(mission)) {
+            // Una falla de captura se retoma siempre (aunque queden pantallas AWAITING de antes: el decide la rechaza).
+            var awaiting = mission.message().startsWith(DesignReviewLoop.CAPTURE_PREFIX) ? List.<String>of()
+                    : awaitingDesignDecision(missionId);
+            if (!awaiting.isEmpty()) {
+                throw new IllegalStateException("MISSION " + missionId + " espera tu decisión de diseño en "
+                        + String.join(", ", awaiting) + ": acepta cada pantalla o pide otra ronda en el Command Center.");
+            }
+            resumeDesign(missionId);
+            return;
+        }
         if (mission.status() != MissionStatus.INTERRUPTED) {
             throw new IllegalStateException("MISSION " + missionId + " no está INTERRUPTED (estado: " + mission.status() + ").");
         }
@@ -236,6 +249,56 @@ public class MissionRecoveryService {
                     requests.isEmpty() ? CeoService.NO_INVESTOR_COMMENT : requests.get(requests.size() - 1));
         }
         resumed.add(missionId);
+    }
+
+    private DesignReviewMemoryService designReviews;
+
+    /** Spec 2026-11-01 diseño visual §14: para saber qué pantallas esperan todavía una decisión (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDesignReviews(DesignReviewMemoryService designReviews) {
+        this.designReviews = designReviews;
+    }
+
+    /**
+     * Spec 2026-11-01 diseño visual §14 y R13: BLOCKED por {@code DESIGN_MISMATCH} o {@code DESIGN_CAPTURE_FAILED}. Igual
+     * que cualquier BLOCKED, recoverAll no la toca: no se reanuda sola tras un reinicio y sus pantallas no cambian.
+     */
+    static boolean designBlock(MissionResponse m) {
+        var message = m.message() == null ? "" : m.message();
+        return m.status() == MissionStatus.BLOCKED && (message.startsWith(DesignReviewLoop.BLOCK_PREFIX)
+                || message.startsWith(DesignReviewLoop.CAPTURE_PREFIX));
+    }
+
+    private List<String> awaitingDesignDecision(String missionId) {
+        if (designReviews == null) {
+            return List.of();
+        }
+        return designReviews.all(missionId).stream()
+                .filter(r -> DesignScreenReview.AWAITING_DECISION.equals(r.status()) || DesignScreenReview.DECIDING.equals(r.status()))
+                .map(DesignScreenReview::screen).distinct().toList();
+    }
+
+    /**
+     * Spec 2026-11-01 diseño visual §14: retoma una misión frenada por el diseño en su misma ronda (sin gastar otra ni
+     * regenerar el código): lo commiteado se salta, se repite la verificación del sandbox y el ciclo de diseño de la
+     * Task 11 vuelve a comparar (las ACCEPTED no se tocan; una «otra ronda» tiene su ronda extra). La llama el punto de
+     * decisión al resolverse la última pantalla, y {@link #resume} para una falla de captura (R13).
+     */
+    public synchronized void resumeDesign(String missionId) {
+        var mission = missions.find(missionId).orElseThrow(() -> new IllegalArgumentException("No existe la misión " + missionId));
+        if (!designBlock(mission)) {
+            throw new IllegalStateException("MISSION " + missionId + " no está frenada por el diseño (estado: "
+                    + mission.status() + ").");
+        }
+        if (executor.isLive(missionId)) {
+            throw new IllegalStateException("MISSION " + missionId + " ya se está ejecutando.");
+        }
+        if (missionService != null) {
+            missionService.requireAgentsOn(mission.teamId(), "retomar " + missionId);
+        }
+        if (!dispatchResume(mission)) {
+            throw new IllegalStateException("No se pudo retomar " + missionId + " (ver el log).");
+        }
     }
 
     /** Revisión 2026-10-06 §5: estados desde los que el fundador puede pedir la verificación humana (misión detenida). */
