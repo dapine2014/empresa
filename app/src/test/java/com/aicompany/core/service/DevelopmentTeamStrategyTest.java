@@ -2617,6 +2617,45 @@ class DevelopmentTeamStrategyTest {
         assertTrue(first.apply(result).stream().anyMatch(e -> e.contains("forjaiPreviewOr(")), first.apply(result).toString());
     }
 
+    // R10: con dos escritoras de presentación, solo la última responde por todas las pantallas del incremento.
+    @Test
+    void onlyTheLastPresentationWriterMustCoverEveryScreen() throws Exception {
+        var visuals = mock(VisualDesignMemoryService.class);
+        var interaction = mock(InteractionDesignMemoryService.class);
+        var requirements = mock(RequirementsMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        strategy.setInteractionDesign(interaction);
+        strategy.setRequirements(requirements);
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        when(interaction.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                mapper.writeValueAsString(new com.aicompany.core.agent.model.InteractionDesign("APP",
+                        VisualDesignWriterTest.APP, null)), "APPROVED", 1, "")));
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                mapper.writeValueAsString(VisualDesignWriterTest.SPEC), "APPROVED", "", java.time.Instant.now())));
+        when(requirements.currentIncrement("M-1")).thenReturn(1);
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
+                mapper.writeValueAsString(VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
+        var base = context();
+        var firstOwned = List.of("lib/clientes/presentation", "lib/main.dart");
+        var lastOwned = List.of("lib/pedidos/presentation");
+        TeamPlan two = new TeamPlan("App", null, null, List.of(
+                new PlannedTask("mila", "UI", "x", "CODE", List.of(), firstOwned), new PlannedTask("orion", "UI", "x", "CODE", List.of(), lastOwned)),
+                List.of(), "FLUTTER_WEB_APP", List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")),
+                base.plan().ubiquitousLanguage());
+        var ctx = new TeamMissionContext("M-1", "app", base.team(), two);
+        var empty = new DevelopmentResult("r", List.of(new GeneratedFile("lib/main.dart", "runApp(forjaiPreviewOr(const A()));")));
+
+        assertEquals(List.of(), strategy.visualChecks(ctx, firstOwned, null).apply(empty));
+        assertTrue(strategy.visualChecks(ctx, lastOwned, null).apply(empty).stream()
+                .anyMatch(e -> e.contains("Falta la vista previa de PANT-01")));
+
+        TeamPlan one = new TeamPlan("App", null, null, List.of(new PlannedTask("orion", "UI", "x", "CODE", List.of(), lastOwned)),
+                List.of(), "FLUTTER_WEB_APP", List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")),
+                base.plan().ubiquitousLanguage());
+        assertTrue(strategy.visualChecks(new TeamMissionContext("M-1", "app", base.team(), one), lastOwned, null)
+                .apply(empty).stream().anyMatch(e -> e.contains("Falta la vista previa de PANT-01")));
+    }
+
     @Test
     void visualChecksAreNullWithoutAnApprovedVisualDesign() {
         var visuals = mock(VisualDesignMemoryService.class);

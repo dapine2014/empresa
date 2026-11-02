@@ -1858,6 +1858,10 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         }
         var screens = incrementScreens(context.missionId());
         var mainOwner = ownsMain(context, owned);
+        // R10: con varias escritoras de presentación, solo la última responde por que estén todas las pantallas.
+        var writers = context.plan().tasksOrEmpty().stream().filter(t -> t != null
+                && writesFlutterPresentation(context, t.ownedPathsOrEmpty())).toList();
+        var complete = writers.isEmpty() || writers.get(writers.size() - 1).ownedPathsOrEmpty().equals(owned);
         var existing = new LinkedHashMap<String, String>();
         if (headSha != null) {
             try {
@@ -1876,7 +1880,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return result -> {
             var files = result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files();
             var errors = new ArrayList<String>(com.aicompany.core.agent.validation.ThemeLiteralGate.check(files));
-            errors.addAll(com.aicompany.core.agent.validation.PreviewGate.check(files, screens, existing, mainOwner));
+            errors.addAll(com.aicompany.core.agent.validation.PreviewGate.check(files, screens, existing, mainOwner, complete));
             return errors;
         };
     }

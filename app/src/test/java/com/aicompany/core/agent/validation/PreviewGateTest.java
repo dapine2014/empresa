@@ -58,4 +58,25 @@ class PreviewGateTest {
         assertEquals(List.of(), PreviewGate.check(List.of(), Set.of(), old, false));
         assertEquals(1, PreviewGate.check(List.of(), Set.of(), old, true).size());
     }
+
+    @Test
+    void earlierWriterIsOnlyCheckedOnThePreviewsItReturns() {
+        // No devuelve vistas previas: sin error de completitud aunque PANT-01 y PANT-02 falten.
+        assertEquals(List.of(), PreviewGate.check(List.of(), Set.of("PANT-01", "PANT-02"), Map.of(), false, false));
+        // Las que devuelve sí se validan.
+        var errors = PreviewGate.check(List.of(new GeneratedFile("lib/pedidos/presentation/previews/pant_02_preview.dart", "class X {}")),
+                Set.of("PANT-01", "PANT-02"), Map.of(), false, false);
+        assertEquals(2, errors.size(), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("Pant02Preview")) && errors.stream().anyMatch(e -> e.contains("Key('PANT-02')")));
+        assertEquals(List.of(), PreviewGate.check(List.of(new GeneratedFile(
+                "lib/pedidos/presentation/previews/pant_01_preview.dart", PREVIEW)), Set.of("PANT-01", "PANT-02"), Map.of(), false, false));
+    }
+
+    @Test
+    void lastWriterMustCoverEveryScreen() {
+        var errors = PreviewGate.check(List.of(new GeneratedFile("lib/clientes/presentation/previews/pant_01_preview.dart", PREVIEW)),
+                Set.of("PANT-01", "PANT-02"), Map.of(), false, true);
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("PANT-02") && errors.get(0).contains("en su vista previa"), errors.toString());
+    }
 }

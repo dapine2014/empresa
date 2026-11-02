@@ -27,12 +27,21 @@ public final class PreviewGate {
      * @param existing archivos .dart que ya están en el repositorio (ruta a contenido); lo devuelto los pisa.
      */
     public static List<String> check(List<GeneratedFile> files, Set<String> screensInIncrement, Map<String, String> existing) {
-        return check(files, screensInIncrement, existing, true);
+        return check(files, screensInIncrement, existing, true, true);
+    }
+
+    public static List<String> check(List<GeneratedFile> files, Set<String> screensInIncrement, Map<String, String> existing,
+                                     boolean checkMain) {
+        return check(files, screensInIncrement, existing, checkMain, true);
     }
 
     /** checkMain: solo la dueña de lib/main.dart responde por forjaiPreviewOr(; las demás frontales no pueden corregirlo. */
+    /**
+     * complete: la dueña de la última presentación responde por que cada pantalla del incremento tenga su vista previa;
+     * las anteriores (R10) solo responden por las vistas previas que devuelven (ruta, clase y Key).
+     */
     public static List<String> check(List<GeneratedFile> files, Set<String> screensInIncrement, Map<String, String> existing,
-                                     boolean checkMain) {
+                                     boolean checkMain, boolean complete) {
         var merged = new LinkedHashMap<String, String>();
         if (existing != null) {
             existing.forEach((p, c) -> merged.put(OwnedPaths.normalize(p), c == null ? "" : c));
@@ -42,7 +51,20 @@ public final class PreviewGate {
                     .forEach(f -> merged.put(OwnedPaths.normalize(f.path()), f.content() == null ? "" : f.content()));
         }
         var errors = new ArrayList<String>();
-        for (var screen : screensInIncrement == null ? Set.<String>of() : screensInIncrement) {
+        if (!complete && files != null) {
+            for (var f : files) {
+                if (f == null || f.path() == null) {
+                    continue;
+                }
+                var path = OwnedPaths.normalize(f.path());
+                var pm = PREVIEW_FILE.matcher(path);
+                if (pm.matches()) {
+                    var number = Integer.parseInt(pm.group(1));
+                    validate(errors, path, f.content(), number, String.format("PANT-%02d", number));
+                }
+            }
+        }
+        for (var screen : complete ? (screensInIncrement == null ? Set.<String>of() : screensInIncrement) : Set.<String>of()) {
             var m = SCREEN.matcher(screen);
             if (!m.matches()) {
                 continue;
@@ -57,16 +79,10 @@ public final class PreviewGate {
             if (path.isEmpty()) {
                 errors.add("Falta la vista previa de " + screen + ": escribe lib/<contexto>/presentation/previews/pant_" + nn
                         + "_preview.dart con class " + cls + " (constructor const sin argumentos) y Key('" + screen
-                        + "') en el widget raíz de la vista previa.");
+                        + "') en su vista previa.");
                 continue;
             }
-            var code = CSharpComments.strip(merged.get(path.get()));
-            if (!Pattern.compile("\\bclass\\s+" + cls + "\\b").matcher(code).find()) {
-                errors.add(path.get() + " debe declarar class " + cls + ".");
-            }
-            if (!Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()) {
-                errors.add(path.get() + " debe incluir Key('" + screen + "') en el widget raíz de la vista previa.");
-            }
+            validate(errors, path.get(), merged.get(path.get()), number, screen);
         }
         merged.forEach((p, c) -> {
             if (checkMain && (p.equals("lib/main.dart") || p.endsWith("/lib/main.dart")) && !CSharpComments.strip(c).contains("forjaiPreviewOr(")) {
@@ -74,5 +90,16 @@ public final class PreviewGate {
             }
         });
         return errors;
+    }
+
+    private static void validate(List<String> errors, String path, String content, int number, String screen) {
+        var cls = String.format("Pant%02dPreview", number);
+        var code = CSharpComments.strip(content == null ? "" : content);
+        if (!Pattern.compile("\\bclass\\s+" + cls + "\\b").matcher(code).find()) {
+            errors.add(path + " debe declarar class " + cls + ".");
+        }
+        if (!Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()) {
+            errors.add(path + " debe incluir Key('" + screen + "') en su vista previa.");
+        }
     }
 }
