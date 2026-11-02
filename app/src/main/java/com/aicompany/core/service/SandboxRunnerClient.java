@@ -118,6 +118,34 @@ public class SandboxRunnerClient {
         }
     }
 
+    /**
+     * Spec 2026-11-01 front con diseño visual: job DESIGN_CAPTURE ({@code mode} = MOCKUPS o APP) sobre la imagen de
+     * Flutter. Nunca lanza salvo por cancelación (vacío + lastError).
+     */
+    public Optional<SandboxResult> designCapture(String missionId, String commitSha, int increment, String mode) {
+        if (cancellations != null && cancellations.isCancelled(missionId)) {
+            throw new MissionCancellations.MissionCancelledException(missionId);
+        }
+        try {
+            lastError = null;
+            var result = client.post().uri("/jobs")
+                    .header("X-Sandbox-Token", token == null ? "" : token)
+                    .body(Map.of("jobType", "DESIGN_CAPTURE", "missionId", missionId, "commitSha", commitSha,
+                            "stackProfile", "FLUTTER_WEB_APP", "increment", increment, "captureMode", mode))
+                    .retrieve()
+                    .body(SandboxResult.class);
+            if (result == null) {
+                lastError = "El sandbox-runner no devolvió resultado.";
+                return Optional.empty();
+            }
+            return Optional.of(result);
+        } catch (Exception ex) {
+            lastError = "sandbox-runner no disponible: " + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+            log.warn("SANDBOX_UNAVAILABLE mission={} job=DESIGN_CAPTURE reason={}", missionId, lastError);
+            return Optional.empty();
+        }
+    }
+
     /** Parte 3: descarga aislada por el proxy con lista blanca. Nunca lanza (vacío + lastError). */
     public Optional<DependencyFetch> fetchDependencies(String ecosystem, List<DependencyRef> packages) {
         try {

@@ -133,6 +133,23 @@ public class MissionController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /** Spec 2026-11-01 front con diseño visual: sistema visual, pantallas y URL de las imágenes (404 = sin diseño visual). */
+    @GetMapping("/{missionId}/visual-design")
+    public ResponseEntity<com.aicompany.core.model.VisualDesignView> visualDesign(@PathVariable String missionId) {
+        return missionService.visualDesign(missionId).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Spec 2026-11-01: un PNG de las maquetas; solo PANT-NN-(phone|desktop).png, cualquier otro nombre da 404. */
+    @GetMapping("/{missionId}/design-images/{name}")
+    public ResponseEntity<org.springframework.core.io.Resource> designImage(@PathVariable String missionId,
+                                                                           @PathVariable String name) {
+        return missionService.designImage(missionId, name)
+                .map(path -> ResponseEntity.ok().contentType(org.springframework.http.MediaType.IMAGE_PNG)
+                        .<org.springframework.core.io.Resource>body(new org.springframework.core.io.FileSystemResource(path)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @PostMapping("/{missionId}/requirements/decision")
     public RequirementsView decideRequirements(@PathVariable String missionId,
                                                @RequestBody RequirementsDecisionCommand command) {

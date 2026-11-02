@@ -33,6 +33,19 @@ class MissionControllerRequirementsTest {
         assertEquals(VIEW, controller.buildIncrement("M-9", 2));
     }
 
+    // Spec 2026-11-01 front con diseño visual: el PNG sale como image/png; un nombre que no es de captura da 404.
+    @Test
+    void designImagesAreServedAsPngOr404() {
+        var png = java.nio.file.Path.of("/tmp/PANT-01-phone.png");
+        when(service.designImage("M-9", "PANT-01-phone.png")).thenReturn(Optional.of(png));
+        when(service.designImage("M-9", "secreto.txt")).thenReturn(Optional.empty());
+
+        var ok = controller.designImage("M-9", "PANT-01-phone.png");
+        assertEquals(org.springframework.http.MediaType.IMAGE_PNG, ok.getHeaders().getContentType());
+        assertEquals(404, controller.designImage("M-9", "secreto.txt").getStatusCode().value());
+        assertEquals(404, controller.visualDesign("M-0").getStatusCode().value());
+    }
+
     @Test
     void resumeResumesAndReturnsTheMission() {
         var view = new com.aicompany.core.model.MissionResponse("M-9", com.aicompany.core.model.MissionStatus.INTERRUPTED,

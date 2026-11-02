@@ -49,6 +49,25 @@ class SandboxRunnerClientTest {
         assertNotNull(client.lastError());
     }
 
+    // Spec 2026-11-01 front con diseño visual: el job de captura va siempre con la imagen de Flutter.
+    @Test
+    void designCaptureSendsTheModeAndReadsTheStagingDir() {
+        var builder = RestClient.builder().baseUrl("http://runner");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("http://runner/jobs"))
+                .andExpect(jsonPath("$.jobType").value("DESIGN_CAPTURE"))
+                .andExpect(jsonPath("$.stackProfile").value("FLUTTER_WEB_APP"))
+                .andExpect(jsonPath("$.captureMode").value("MOCKUPS"))
+                .andExpect(jsonPath("$.increment").value(2))
+                .andRespond(withSuccess("{\"overall\":\"PASS\",\"steps\":[],\"stagingDir\":\"diseno-2-mockups-x\"}",
+                        MediaType.APPLICATION_JSON));
+
+        var result = new SandboxRunnerClient(builder.build(), "t0k").designCapture("M-1", "a".repeat(40), 2, "MOCKUPS");
+
+        assertEquals("diseno-2-mockups-x", result.orElseThrow().stagingDir());
+        server.verify();
+    }
+
     @Test
     void fetchDependenciesSendsTheRequestAndParsesThePackages() {
         var builder = RestClient.builder().baseUrl("http://runner");

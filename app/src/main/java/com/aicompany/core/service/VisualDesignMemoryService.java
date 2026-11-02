@@ -74,6 +74,25 @@ public class VisualDesignMemoryService {
                 + "SET d.status='SUPERSEDED'", Map.of("id", missionId));
     }
 
+    public void reject(String missionId, int version) {
+        write("MATCH (:Mission {id:$id})-[:HAS_VISUAL_DESIGN]->(d:VisualDesignVersion {version:$v}) SET d.status='REJECTED'",
+                Map.of("id", missionId, "v", version));
+    }
+
+    /** La carpeta del staging del sandbox con la captura de las maquetas de esa versión ({@code diseno-N-mockups-<job>}). */
+    public void setCaptureDir(String missionId, int version, String stagingDir) {
+        write("MATCH (:Mission {id:$id})-[:HAS_VISUAL_DESIGN]->(d:VisualDesignVersion {version:$v}) SET d.captureDir=$dir",
+                Map.of("id", missionId, "v", version, "dir", stagingDir));
+    }
+
+    public Optional<String> captureDir(String missionId, int version) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (:Mission {id:$id})-[:HAS_VISUAL_DESIGN]->(d:VisualDesignVersion {version:$v}) "
+                            + "WHERE d.captureDir IS NOT NULL RETURN d.captureDir AS dir", Map.of("id", missionId, "v", version))
+                    .list(r -> r.get("dir").asString()).stream().findFirst();
+        }
+    }
+
     private void write(String cypher, Map<String, Object> params) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {

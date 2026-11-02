@@ -315,9 +315,115 @@ public class MissionExecutor {
             designMemory.supersedeDraft(missionId);
         }
         publishReady(missionId, written);
+        if (visualMemory != null) {
+            visualMemory.supersedeDraft(missionId);
+        }
         var designed = design(missionId, written, previousDesign, JointReviewService.ARIA_CHANGED_ADJUSTMENT);
         var reviewed = reviewed(missionId, written, designed);
         awaitApproval(missionId, reviewed.written(), reviewed.designed(), reviewed.note());
+    }
+
+    static final String MILA = "frontend-ui";
+    static final String ORION = "specialist-3d";
+
+    private VisualDesignWriter visualWriter;
+    private VisualDesignMemoryService visualMemory;
+    private DesignCaptureService designCapture;
+    private AgentAvailability agentAvailability;
+
+    /** Spec 2026-11-01 front con diseño visual: opcional (sin él, una app se aprueba solo con HU y diseño de Kael). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setVisualDesign(VisualDesignWriter visualWriter, VisualDesignMemoryService visualMemory,
+                                DesignCaptureService designCapture, AgentAvailability agentAvailability) {
+        this.visualWriter = visualWriter;
+        this.visualMemory = visualMemory;
+        this.designCapture = designCapture;
+        this.agentAvailability = agentAvailability;
+    }
+
+    /** El sistema visual y las maquetas que el fundador aprueba con las HU; {@code note} = aviso de imágenes (o ""). */
+    record Visual(VisualDesignWriter.Written written, String note) {
+    }
+
+    private boolean needsVisual(InteractionDesignWriter.Written designed) {
+        return visualWriter != null && visualMemory != null && designed != null
+                && "APP".equals(designed.design().experience()) && designed.design().app() != null;
+    }
+
+    /**
+     * Neo todavía no planificó: el front por defecto es Mila, u Orion si Mila está apagada. Sin ninguno encendido se pide
+     * a Mila y {@code VisualDesignWriter.write} lanza (la misión queda FAILED, igual que con Kael apagado).
+     */
+    private String frontAgent() {
+        if (agentAvailability == null || agentAvailability.isEnabled(MILA) || !agentAvailability.isEnabled(ORION)) {
+            return MILA;
+        }
+        return ORION;
+    }
+
+    /** Las maquetas del diseño visual se piden para el primer incremento: la aprobación es antes de construir. */
+    private static int firstIncrement(com.aicompany.core.agent.model.RequirementsSpec spec) {
+        return spec.incrementNumbers().stream().findFirst().orElse(1);
+    }
+
+    /**
+     * Spec 2026-11-01: tras Kael (y la revisión conjunta), el front escribe el sistema visual y las maquetas y Java las
+     * captura. Si ya hay un DRAFT sobre este diseño de Kael (retome, o un ajuste al visual recién guardado) se reutiliza,
+     * y también su captura si ya existe. null si la misión no es una app.
+     */
+    private Visual visualFor(String missionId, RequirementsWriter.Written written, InteractionDesignWriter.Written designed) {
+        if (!needsVisual(designed)) {
+            return null;
+        }
+        var increment = firstIncrement(written.spec());
+        var draft = visualMemory.latest(missionId)
+                .filter(v -> "DRAFT".equals(v.status()) && v.interactionDesignVersion() == designed.version())
+                .map(v -> new VisualDesignWriter.Written(v.version(), jsonMapper.readValue(v.designJson(),
+                        com.aicompany.core.agent.model.VisualDesign.class)));
+        var front = frontAgent();
+        VisualDesignWriter.Written visual;
+        if (draft.isPresent()) {
+            visual = draft.get();
+        } else {
+            advanceMission(missionId, MissionStatus.PLANNING, 7, "Diseño visual (front)",
+                    "El front está diseñando el sistema visual y las maquetas de la app.");
+            visual = visualWriter.write(missionId, front, written.spec(), designed.design().app(), increment,
+                    approvedVisual(missionId), null);
+            events.publish("EMPRESA_VISUAL_DESIGN_READY", missionId, null, front,
+                    Map.of("version", visual.version(), "interactionDesignVersion", designed.version()));
+        }
+        var existing = draft.isPresent() && designCapture != null
+                ? designCapture.mockupCaptures(missionId, visual.version()) : java.util.Optional.<com.aicompany.core.model.Captures>empty();
+        var note = existing.map(c -> missingNote(c, visual.design())).orElseGet(() -> captureNote(missionId, increment, visual));
+        return new Visual(visual, note);
+    }
+
+    private java.util.Optional<com.aicompany.core.agent.model.VisualDesign> approvedVisual(String missionId) {
+        return visualMemory.approved(missionId).map(v -> jsonMapper.readValue(v.designJson(),
+                com.aicompany.core.agent.model.VisualDesign.class));
+    }
+
+    /** Revisión R8: una captura que no llega nunca deja la misión FAILED; el fundador ve el aviso y aprueba sin imágenes. */
+    private String captureNote(String missionId, int increment, VisualDesignWriter.Written visual) {
+        if (designCapture == null) {
+            return " ⚠ Las maquetas quedaron sin imágenes: no hay servicio de captura.";
+        }
+        try {
+            return missingNote(designCapture.captureMockups(missionId, increment, visual.version(), visual.design()),
+                    visual.design());
+        } catch (MissionCancellations.MissionCancelledException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            log.warn("MISSION {} - mockup capture failed: {}", missionId, ex.getMessage());
+            return " ⚠ Las maquetas quedaron sin imágenes: " + ex.getMessage();
+        }
+    }
+
+    private static String missingNote(com.aicompany.core.model.Captures captures,
+                                      com.aicompany.core.agent.model.VisualDesign design) {
+        var missing = captures.missing(design.mockups().screens().stream()
+                .map(com.aicompany.core.agent.model.Mockups.Mockup::screen).toList());
+        return missing.isEmpty() ? "" : " ⚠ Quedaron sin imagen: " + String.join(", ", missing) + ".";
     }
 
     private com.aicompany.core.event.MissionEventLog missionEventLog;
@@ -394,6 +500,9 @@ public class MissionExecutor {
                         Map.of("version", written.version(), "instruction", outcome.requirementsAdjustment()));
                 if (designMemory != null) {
                     designMemory.supersedeDraft(missionId);
+                }
+                if (visualMemory != null) {
+                    visualMemory.supersedeDraft(missionId);
                 }
                 publishReady(missionId, written);
                 var designAdjustment = JointReviewService.ARIA_CHANGED_ADJUSTMENT
@@ -691,16 +800,25 @@ public class MissionExecutor {
             awaitApproval(missionId, written, designed, reviewed.note());
             return;
         }
-        if (designed != null) {
+        // Spec 2026-11-01: el visual también existe (y se captura) aunque lo apruebe la policy.
+        var visual = visualFor(missionId, written, designed);
+        if (visual != null) {
+            requirementsMemory.approveWithDesign(missionId, written.version(), designed.version(),
+                    visual.written().version(), "policy");
+        } else if (designed != null) {
             requirementsMemory.approveWithDesign(missionId, written.version(), designed.version(), "policy");
         } else {
             requirementsMemory.approve(missionId, written.version(), "policy");
         }
         // Revisión final Aria (14): aprobado por la policy, no por el fundador (agentId "policy").
-        events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "policy",
-                designed == null ? Map.of("version", written.version(), "approvedBy", "policy")
-                        : Map.of("version", written.version(), "approvedBy", "policy",
-                        "interactionDesignVersion", designed.version()));
+        var approvedData = new java.util.LinkedHashMap<String, Object>(Map.of("version", written.version(), "approvedBy", "policy"));
+        if (designed != null) {
+            approvedData.put("interactionDesignVersion", designed.version());
+        }
+        if (visual != null) {
+            approvedData.put("visualDesignVersion", visual.written().version());
+        }
+        events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "policy", approvedData);
         planAndRunIncrement(missionId, instruction, teamId, mode, written.spec(), 1, 0);
     }
 
@@ -728,10 +846,18 @@ public class MissionExecutor {
             advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos listos (Aria)", text + note);
             return;
         }
+        var visual = visualFor(missionId, written, designed);
+        var visualText = "";
+        if (visual != null) {
+            var mockups = visual.written().design().mockups().screens().size();
+            visualText = " Además, el front diseñó el sistema visual y " + mockups + (mockups == 1 ? " maqueta" : " maquetas")
+                    + " (versión " + visual.written().version() + "): míralas en la misión." + visual.note();
+        }
         advanceMission(missionId, MissionStatus.AWAITING_SPEC_APPROVAL, 8, "Requisitos y diseño listos (Aria + Kael)",
                 text + " Kael diseñó " + ("GAME".equals(designed.design().experience()) ? "el juego" : "la interacción")
                         + " (versión " + designed.version() + "): "
-                        + com.aicompany.core.agent.validation.InteractionDesignText.summary(designed.design()) + note);
+                        + com.aicompany.core.agent.validation.InteractionDesignText.summary(designed.design()) + visualText
+                        + note);
     }
 
     static String withIncrement(com.aicompany.core.agent.model.RequirementsSpec spec, int increment, String instruction) {
@@ -1202,10 +1328,40 @@ public class MissionExecutor {
         var previous = designMemory.latest(missionId).map(v -> jsonMapper.readValue(v.designJson(),
                 com.aicompany.core.agent.model.InteractionDesign.class));
         var designed = designWriter.write(missionId, written.spec(), written.version(), previous, adjustment);
+        if (visualMemory != null) {
+            // Spec 2026-11-01: el visual era de las pantallas del diseño anterior; el front lo rehace sobre el nuevo.
+            visualMemory.supersedeDraft(missionId);
+        }
         events.publish("EMPRESA_INTERACTION_DESIGN_ADJUSTED", missionId, null, "human",
                 Map.of("version", designed.version(), "instruction", adjustment));
         var reviewed = reviewed(missionId, written, designed);
         awaitApproval(missionId, reviewed.written(), reviewed.designed(), reviewed.note());
+    }
+
+    /** Spec 2026-11-01 front con diseño visual: el front rehace solo el sistema visual y las maquetas y vuelve a esperar. */
+    public CompletableFuture<Void> adjustVisualAsync(String missionId, String adjustment) {
+        advanceMission(missionId, MissionStatus.PLANNING, 7, "Diseño visual (front)",
+                "El front ajusta el diseño visual: " + adjustment);
+        return submit(missionId, "visual adjustment", () -> revisual(missionId, adjustment));
+    }
+
+    private void revisual(String missionId, String adjustment) {
+        var written = latestRequirements(missionId);
+        // Como en redesign (Revisión Task 5, R1): se libera al empezar.
+        requirementsMemory.releaseDecision(missionId, written.version());
+        var designed = draftDesignFor(missionId, written.version());
+        if (!needsVisual(designed)) {
+            throw new IllegalStateException("MISSION " + missionId + ": no hay un diseño visual que ajustar.");
+        }
+        var previous = visualMemory.latest(missionId).map(v -> jsonMapper.readValue(v.designJson(),
+                com.aicompany.core.agent.model.VisualDesign.class));
+        var front = frontAgent();
+        var visual = visualWriter.write(missionId, front, written.spec(), designed.design().app(),
+                firstIncrement(written.spec()), previous, adjustment);
+        events.publish("EMPRESA_VISUAL_DESIGN_ADJUSTED", missionId, null, "human",
+                Map.of("version", visual.version(), "instruction", adjustment, "agentId", front));
+        // awaitApproval reutiliza el DRAFT recién guardado (es de este diseño de Kael) y lo captura.
+        awaitApproval(missionId, written, designed, "");
     }
 
     private RequirementsWriter.Written latestRequirements(String missionId) {

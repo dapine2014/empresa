@@ -487,6 +487,32 @@ class DevelopmentTeamStrategyTest {
                 argThat(allowed -> allowed.contains("db/postgres/migrations/V1__clientes.sql")), anyList());
     }
 
+    // Spec 2026-11-01 front con diseño visual (R7): Forjai commitea las maquetas antes de la aprobación, así que la
+    // ronda 0 ya encuentra un HEAD. El scaffold entra completo con su tarea de siempre y el commit de maquetas no se toca.
+    @Test
+    void theFirstRoundOverAMockupsCommitWritesTheWholeScaffold() throws Exception {
+        stubHappyPath();
+        var mockups = "d".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(mockups));
+        when(workspace.headSha("M-1")).thenReturn(mockups);
+        when(workspace.headTask("M-1")).thenReturn(Optional.of("M-1-MOCKUPS"));
+        when(workspace.headHasParent("M-1")).thenReturn(false);
+        when(workspace.discardUncommitted("M-1")).thenReturn(Optional.empty());
+        when(workspace.readFileAtCommit(eq("M-1"), eq(mockups), anyString())).thenThrow(new java.io.IOException("no existe"));
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+
+        strategy.execute(context(), progress);
+
+        var generated = com.aicompany.core.model.ComponentScaffold.generate(context().plan().resolvedComponents(), context().plan().contextNames(),
+                java.util.Map.of()).stream().map(GeneratedFile::path).toList();
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-SCAFFOLD"), eq("forjai"), eq("Forjai"),
+                argThat(r -> r.files().stream().map(GeneratedFile::path).toList().equals(generated)));
+        verify(workspace, never()).commitAgentWork(any(), endsWith("-SCAFFOLD-R0"), any(), any(), any());
+        verify(workspace, never()).dropHeadCommit(anyString());
+        verify(workspace).commitAgentWork(eq("M-1"), eq("M-1-FRONTEND-UI"), eq("frontend-ui"), eq("Mila"), any());
+    }
+
     // Revisión 2026-10-06 §6: una ronda > 0 sin repositorio (nunca existió) escribe el scaffold de nuevo.
     @Test
     void aLaterRoundWithoutRepositoryWritesTheScaffold() throws Exception {

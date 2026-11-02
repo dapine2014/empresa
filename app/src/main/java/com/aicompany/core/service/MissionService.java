@@ -276,6 +276,40 @@ public class MissionService {
         });
     }
 
+    private VisualDesignMemoryService visuals;
+    private DesignCaptureService designCapture;
+
+    /** Spec 2026-11-01 front con diseño visual: sistema visual y maquetas (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setVisualDesign(VisualDesignMemoryService visuals, DesignCaptureService designCapture) {
+        this.visuals = visuals;
+        this.designCapture = designCapture;
+    }
+
+    public Optional<com.aicompany.core.model.VisualDesignView> visualDesign(String missionId) {
+        if (visuals == null) {
+            return Optional.empty();
+        }
+        return visuals.latest(missionId).map(v -> {
+            var design = JSON.readValue(v.designJson(), com.aicompany.core.agent.model.VisualDesign.class);
+            var urls = new java.util.TreeMap<String, String>();
+            if (designCapture != null) {
+                designCapture.mockupImages(missionId).keySet().forEach(key -> urls.put(key,
+                        "/api/company/missions/" + missionId + "/design-images/" + key + ".png"));
+            }
+            return new com.aicompany.core.model.VisualDesignView(missionId, v.version(), v.status(),
+                    v.interactionDesignVersion(),
+                    visuals.approved(missionId).map(VisualDesignMemoryService.Version::version).orElse(null),
+                    design.system(), design.mockups() == null ? java.util.List.of() : design.mockups().screens().stream()
+                    .map(com.aicompany.core.agent.model.Mockups.Mockup::screen).toList(), urls);
+        });
+    }
+
+    /** Un PNG de las maquetas vigentes; vacío (404) si el nombre no es PANT-NN-(phone|desktop).png o no existe. */
+    public Optional<java.nio.file.Path> designImage(String missionId, String name) {
+        return designCapture == null ? Optional.empty() : designCapture.mockupImage(missionId, name);
+    }
+
     public Optional<RequirementsView> requirements(String missionId) {
         if (requirementsMemory == null) {
             return Optional.empty();
@@ -329,6 +363,21 @@ public class MissionService {
         if (toKael && draftDesign.isEmpty()) {
             throw new IllegalStateException(missionId + " no tiene un diseño de Kael para ajustar.");
         }
+        // Spec 2026-11-01: el visual DRAFT cuenta solo si se hizo sobre el diseño de Kael vigente.
+        var draftVisual = visuals == null || draftDesign.isEmpty() ? Optional.<VisualDesignMemoryService.Version>empty()
+                : visuals.latest(missionId).filter(v -> "DRAFT".equals(v.status())
+                        && v.interactionDesignVersion() == draftDesign.get().version());
+        var toVisual = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
+                && command.targetOrAria() == RequirementsDecisionCommand.Target.VISUAL;
+        if (toVisual && draftVisual.isEmpty()) {
+            throw new IllegalStateException(missionId + " no tiene un diseño visual para ajustar.");
+        }
+        if (toVisual && agentAvailability != null && !agentAvailability.isEnabled(MissionExecutor.MILA)
+                && !agentAvailability.isEnabled(MissionExecutor.ORION)) {
+            throw new IllegalStateException("No se puede ajustar el diseño visual de " + missionId + ": están apagados "
+                    + agentAvailability.label(MissionExecutor.MILA) + " y " + agentAvailability.label(MissionExecutor.ORION)
+                    + ". Activa uno en Agents.");
+        }
         // Revisión final (M-3): una app o un juego se decide con el diseño de Kael; rechazar sigue permitido.
         if (designs != null && draftDesign.isEmpty()
                 && command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
@@ -350,9 +399,10 @@ public class MissionService {
         var adjustment = command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
                 ? command.instruction().strip() : null;
         // El ajuste se guarda en la versión de HU solo si va a Aria; si va a Kael, en la versión del diseño (misma transacción).
+        // Al front no se guarda: un reinicio a mitad retoma la espera con el visual anterior (el fundador vuelve a pedirlo).
         var claimed = toKael
                 ? requirementsMemory.claimDecisionForKael(missionId, version.version(), draftDesign.get().version(), adjustment)
-                : requirementsMemory.claimDecision(missionId, version.version(), adjustment);
+                : requirementsMemory.claimDecision(missionId, version.version(), toVisual ? null : adjustment);
         if (!claimed) {
             // Revisión final Aria (12): doble clic; la primera decisión ya está en curso.
             throw new IllegalStateException("La versión " + version.version() + " de los requisitos de " + missionId
@@ -360,20 +410,25 @@ public class MissionService {
         }
         switch (command.decision()) {
             case APPROVE -> {
-                if (draftDesign.isPresent()) {
+                if (draftVisual.isPresent()) {
+                    requirementsMemory.approveWithDesign(missionId, version.version(), draftDesign.get().version(),
+                            draftVisual.get().version(), "founder");
+                } else if (draftDesign.isPresent()) {
                     requirementsMemory.approveWithDesign(missionId, version.version(), draftDesign.get().version(), "founder");
                 } else {
                     requirementsMemory.approve(missionId, version.version(), "founder");
                 }
-                events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", draftDesign
-                        .<Map<String, Object>>map(d -> Map.of("version", version.version(),
-                                "interactionDesignVersion", d.version()))
-                        .orElse(Map.of("version", version.version())));
+                var approvedData = new java.util.LinkedHashMap<String, Object>(Map.of("version", version.version()));
+                draftDesign.ifPresent(d -> approvedData.put("interactionDesignVersion", d.version()));
+                draftVisual.ifPresent(v -> approvedData.put("visualDesignVersion", v.version()));
+                events.publish("EMPRESA_REQUIREMENTS_APPROVED", missionId, null, "human", approvedData);
                 executor.continueAfterApprovalAsync(missionId);
             }
             case ADJUST -> {
                 if (toKael) {
                     executor.adjustDesignAsync(missionId, adjustment);
+                } else if (toVisual) {
+                    executor.adjustVisualAsync(missionId, adjustment);
                 } else {
                     executor.adjustRequirementsAsync(missionId, adjustment);
                 }
@@ -381,6 +436,7 @@ public class MissionService {
             case REJECT -> {
                 requirementsMemory.reject(missionId, version.version());
                 draftDesign.ifPresent(d -> designs.reject(missionId, d.version()));
+                draftVisual.ifPresent(v -> visuals.reject(missionId, v.version()));
                 memory.updateMission(missionId, MissionStatus.CANCELLED, 100, "Requisitos rechazados",
                         "El fundador rechazó los requisitos de Aria.");
                 // Revisión final Aria (14): mismo aviso que el REJECT del inversionista.
@@ -396,8 +452,8 @@ public class MissionService {
                                 RequirementsDecisionCommand command) {
         var missionId = mission.missionId();
         if (command.decision() == RequirementsDecisionCommand.RequirementsDecision.ADJUST
-                && command.targetOrAria() == RequirementsDecisionCommand.Target.KAEL) {
-            throw new IllegalStateException("El contrato de " + missionId + " es de Aria: ajústalo sin «Kael».");
+                && command.targetOrAria() != RequirementsDecisionCommand.Target.ARIA) {
+            throw new IllegalStateException("El contrato de " + missionId + " es de Aria: ajústalo sin «Kael» ni «visual».");
         }
         if (command.decision() != RequirementsDecisionCommand.RequirementsDecision.REJECT) {
             requireAgentsOn(mission.teamId(), "decidir sobre el contrato de " + missionId, true);

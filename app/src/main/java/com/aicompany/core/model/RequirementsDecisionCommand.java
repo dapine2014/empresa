@@ -7,9 +7,9 @@ public record RequirementsDecisionCommand(RequirementsDecision decision, String 
         APPROVE, ADJUST, REJECT
     }
 
-    /** Spec 2026-10-14 Kael §3: a quién va un ADJUST (default Aria). */
+    /** Spec 2026-10-14 Kael §3: a quién va un ADJUST (default Aria). VISUAL (spec 2026-11-01): al front, el diseño visual. */
     public enum Target {
-        ARIA, KAEL
+        ARIA, KAEL, VISUAL
     }
 
     public RequirementsDecisionCommand(RequirementsDecision decision, String instruction) {

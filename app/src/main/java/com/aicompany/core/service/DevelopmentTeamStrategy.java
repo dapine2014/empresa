@@ -1535,9 +1535,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     .filter(file -> readOrNull(context.missionId(), startHead, file.path()) == null)
                     .toList();
             if (!missing.isEmpty()) {
+                // Spec 2026-11-01 front con diseño visual: en la ronda 0 el HEAD puede ser solo el commit de maquetas de
+                // Forjai (antes de la aprobación); entonces es el scaffold completo, con la tarea de siempre.
+                var first = context.round() == 0;
                 var record = workspace.commitAgentWork(context.missionId(),
-                        context.missionId() + "-SCAFFOLD-R" + context.round(), "forjai", "Forjai",
-                        new DevelopmentResult("Proyectos .csproj de los contextos nuevos, generados por Forjai", missing));
+                        context.missionId() + (first ? "-SCAFFOLD" : "-SCAFFOLD-R" + context.round()), "forjai", "Forjai",
+                        new DevelopmentResult(first ? "Proyectos generados por Forjai (reglas DDD de "
+                                + plan.componentProfiles() + ")"
+                                : "Proyectos .csproj de los contextos nuevos, generados por Forjai", missing));
                 head = record.sha();
             }
             return new CommittedWork(context.missionId() + "-SCAFFOLD", "forjai", head, files);

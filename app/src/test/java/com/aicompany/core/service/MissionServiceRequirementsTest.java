@@ -431,4 +431,63 @@ class MissionServiceRequirementsTest {
         assertEquals("DRAFT", view.contract().status());
         assertTrue(view.contract().summary().startsWith("Contrato (versión 1, aplicación): Un CRM."), view.contract().summary());
     }
+
+    // Spec 2026-11-01 front con diseño visual: el visual DRAFT del diseño de Kael vigente se aprueba con las HU.
+    private final VisualDesignMemoryService visuals = mock(VisualDesignMemoryService.class);
+
+    private void awaitingWithVisual(int visualForDesign) {
+        awaitingWithDesign(2, 2);
+        service.setVisualDesign(visuals, null);
+        when(visuals.latest("M-9")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(3, "{}", "DRAFT", 2,
+                visualForDesign, "")));
+    }
+
+    @Test
+    void approvingApprovesTheVisualDesignToo() {
+        awaitingWithVisual(4);
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(requirements).approveWithDesign("M-9", 2, 4, 3, "founder");
+        verify(events).publish(eq("EMPRESA_REQUIREMENTS_APPROVED"), eq("M-9"), isNull(), eq("human"),
+                argThat(m -> Integer.valueOf(3).equals(m.get("visualDesignVersion"))));
+    }
+
+    // Un visual hecho sobre otro diseño de Kael (Kael ajustó y el front todavía no) no se aprueba con este.
+    @Test
+    void aVisualForAnotherKaelDesignIsNotApproved() {
+        awaitingWithVisual(3);
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.APPROVE, null));
+        verify(requirements).approveWithDesign("M-9", 2, 4, "founder");
+    }
+
+    @Test
+    void anAdjustmentForTheVisualGoesOnlyToTheFront() {
+        awaitingWithVisual(4);
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "más contraste",
+                RequirementsDecisionCommand.Target.VISUAL));
+        verify(requirements).claimDecision("M-9", 2, null);
+        verify(executor).adjustVisualAsync("M-9", "más contraste");
+        verify(executor, never()).adjustDesignAsync(anyString(), anyString());
+        verify(executor, never()).adjustRequirementsAsync(anyString(), anyString());
+    }
+
+    @Test
+    void theVisualCannotBeAdjustedWithoutAVisualDraft() {
+        awaitingWithDesign(2, 2);
+        service.setVisualDesign(visuals, null);
+        when(visuals.latest("M-9")).thenReturn(Optional.empty());
+        assertThrows(IllegalStateException.class, () -> service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.ADJUST, "x", RequirementsDecisionCommand.Target.VISUAL)));
+        verify(executor, never()).adjustVisualAsync(anyString(), anyString());
+    }
+
+    @Test
+    void rejectingRejectsTheVisualToo() {
+        awaitingWithVisual(4);
+        service.decideRequirements("M-9", new RequirementsDecisionCommand(
+                RequirementsDecisionCommand.RequirementsDecision.REJECT, null));
+        verify(visuals).reject("M-9", 3);
+    }
 }
