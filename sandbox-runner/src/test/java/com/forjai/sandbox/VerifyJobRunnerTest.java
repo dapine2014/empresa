@@ -386,4 +386,88 @@ class VerifyJobRunnerTest {
             assertEquals(List.of("otro.txt"), files.map(p -> p.getFileName().toString()).toList());
         }
     }
+
+    /** Fake de podman para DESIGN_CAPTURE: el paso de captura escribe en /work/.forjai/design. */
+    private ProcessExecutor captureFake(List<String> stepsSeen) {
+        return (command, directory, timeout) -> {
+            if (command.get(0).equals("git") || command.get(0).equals("tar")) {
+                return new ProcessExecutor.Execution(0, "", false);
+            }
+            var step = command.get(command.size() - 1);
+            stepsSeen.add(step);
+            if (step.startsWith("capture-")) {
+                var workDir = Path.of(command.stream().filter(a -> a.endsWith(":/work:Z")).findFirst().orElseThrow()
+                        .replace(":/work:Z", ""));
+                try {
+                    var design = Files.createDirectories(workDir.resolve(".forjai/design"));
+                    Files.write(design.resolve("PANT-01-phone.png"), new byte[]{(byte) 0x89, 'P', 'N', 'G'});
+                    Files.writeString(design.resolve("PANT-01-phone.json"),
+                            "[{\"id\":\"btn\",\"x\":0,\"y\":0,\"w\":10,\"h\":10,\"color\":\"#FFFFFF\"}]");
+                    Files.writeString(design.resolve("notas.txt"), "no va");
+                    Files.createDirectories(design.resolve("sub"));
+                    Files.writeString(design.resolve("sub/PANT-02-phone.png"), "no va");
+                    Files.createSymbolicLink(design.resolve("PANT-03-phone.png"),
+                            Files.writeString(Files.createTempFile("host", ".png"), "secreto del host"));
+                    Files.writeString(workDir.resolve(".forjai/results.json"), "no va");
+                } catch (java.io.IOException ex) {
+                    throw new IllegalStateException(ex);
+                }
+            }
+            return new ProcessExecutor.Execution(0, "capturado", false);
+        };
+    }
+
+    @Test
+    void captureCopiesPngAndJsonToStaging() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var steps = new ArrayList<String>();
+        var result = packRunner(staging, captureFake(steps)).capture("M-1", "a".repeat(40),
+                ExecutionProfile.FLUTTER_WEB_APP, 2, ExecutionProfile.CaptureMode.MOCKUPS);
+        assertEquals("PASS", result.overall(), result.toString());
+        assertEquals(List.of("capture-mockups"), steps);
+        assertTrue(result.stagingDir().matches("diseno-2-mockups-[0-9a-f-]{36}"), result.stagingDir());
+        var out = staging.resolve("M-1").resolve(result.stagingDir());
+        try (var files = Files.list(out)) {
+            assertEquals(List.of("PANT-01-phone.json", "PANT-01-phone.png"),
+                    files.map(p -> p.getFileName().toString()).sorted().toList());
+        }
+        try (var files = Files.list(work)) { assertEquals(0, files.count()); }
+    }
+
+    @Test
+    void captureOfTheAppRestoresBeforeCapturing() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var steps = new ArrayList<String>();
+        var result = packRunner(staging, captureFake(steps)).capture("M-1", "a".repeat(40),
+                ExecutionProfile.FLUTTER_WEB_APP, 1, ExecutionProfile.CaptureMode.APP);
+        assertEquals(List.of("restore", "capture-app"), steps);
+        assertEquals(List.of("checkout", "restore", "capture-app"),
+                result.steps().stream().map(SandboxResult.StepResult::name).toList());
+        assertTrue(result.stagingDir().startsWith("diseno-1-app-"));
+    }
+
+    @Test
+    void captureRejectsTraversalInMissionId() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        Files.createDirectories(products.resolve("M-1"));
+        var steps = new ArrayList<String>();
+        var runner = new VerifyJobRunner(products.resolve("M-1"), work,
+                new PodmanCommandBuilder("unix:///s", Path.of("/deps")), captureFake(steps), staging.resolve("M-1"));
+        for (var missionId : List.of("..", "../M-2", ".")) {
+            var result = runner.capture(missionId, "a".repeat(40), ExecutionProfile.FLUTTER_WEB_APP, 1,
+                    ExecutionProfile.CaptureMode.MOCKUPS);
+            assertEquals("FAIL", result.overall(), missionId);
+            assertNull(result.stagingDir());
+        }
+        try (var files = Files.list(staging)) { assertEquals(0, files.count()); }
+        assertEquals(List.of(), steps);
+    }
+
+    @Test
+    void theCaptureStepsHaveTheirOwnTimeout() {
+        assertEquals("capture-mockups", ExecutionProfile.CaptureMode.MOCKUPS.step().name());
+        assertEquals("capture-app", ExecutionProfile.CaptureMode.APP.step().name());
+        assertEquals(600, ExecutionProfile.CaptureMode.APP.step().timeoutSeconds());
+        assertEquals(600, ExecutionProfile.CaptureMode.MOCKUPS.step().timeoutSeconds());
+    }
 }

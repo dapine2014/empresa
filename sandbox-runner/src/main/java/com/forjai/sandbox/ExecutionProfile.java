@@ -14,7 +14,8 @@ public enum ExecutionProfile {
     DOTNET_APP("localhost/forjai-sandbox/dotnet-app:2", true),
     GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:3", true),
     // Verificado en vivo: el SDK de Flutter crea bin/cache/lockfile en cada comando (falla con raíz de solo lectura).
-    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:2", false);
+    // :3 (diseño visual, spec 2026-11-01): fuentes del catálogo en /forjai/fonts y pasos capture-mockups/capture-app.
+    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:3", false);
 
     public record Step(String name, int timeoutSeconds) {
     }
@@ -24,6 +25,30 @@ public enum ExecutionProfile {
      * targets de 300 s más el build Release; run.sh corta los que no entran antes de ~1700 s (revisión final, 5).
      */
     public static final Step PACKAGE_STEP = new Step("package", 1800);
+
+    /**
+     * Diseño visual (spec 2026-11-01 §4 y §9): qué renderiza el job DESIGN_CAPTURE. MOCKUPS abre las maquetas
+     * aprobadas ({@code .forjai/mockups/<PANT-NN>.html}); APP compila la web y abre cada {@code ?preview=<PANT-NN>}.
+     * 600 s: el build web de siempre más las capturas en teléfono y escritorio.
+     */
+    public enum CaptureMode {
+        MOCKUPS(new Step("capture-mockups", 600)),
+        APP(new Step("capture-app", 600));
+
+        private final Step step;
+
+        CaptureMode(Step step) {
+            this.step = step;
+        }
+
+        public Step step() {
+            return step;
+        }
+
+        public static Optional<CaptureMode> parse(String id) {
+            return id == null ? Optional.empty() : Arrays.stream(values()).filter(m -> m.name().equals(id)).findFirst();
+        }
+    }
 
     private static final List<Step> STEPS = List.of(
             new Step("restore", 300), new Step("build", 600), new Step("test", 600), new Step("smoke", 180));

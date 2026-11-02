@@ -4,7 +4,10 @@ set -euo pipefail
 cd /work
 mkdir -p .forjai
 case "$1" in
-  restore) flutter pub get --offline ;;
+  restore)
+    # Diseño visual: con el tema de Java (lib/theme/app_theme.dart) la app usa las mismas fuentes que las maquetas.
+    if [ -f /work/lib/theme/app_theme.dart ]; then mkdir -p /work/assets/fonts && cp /forjai/fonts/*.ttf /work/assets/fonts/; fi
+    flutter pub get --offline ;;
   # Sin red: CanvasKit empaquetado, no desde el CDN. --no-pub: las dependencias ya las resolvió restore y cada paso es
   # un contenedor nuevo (la caché pub en overlay se descarta); verificado en vivo con Flutter 3.41, el pub get implícito
   # intentaba descargar y colgaba el paso hasta el timeout. --no-wasm-dry-run: solo web JS (ahorra una compilación).
@@ -33,5 +36,15 @@ case "$1" in
       echo "FAIL: $(tail -3 /tmp/package-web.log | tr '\n' ' ' | cut -c1-280)" > "$OUT/status/web"
     fi
     cat /tmp/package-web.log; echo "== package web: $(cat "$OUT/status/web")" ;;
+  capture-mockups)
+    # Diseño visual: las maquetas piden fonts/<archivo>.ttf junto al HTML; se abren en file:// sin red.
+    mkdir -p /work/.forjai/mockups/fonts /work/.forjai/design
+    cp /forjai/fonts/*.ttf /work/.forjai/mockups/fonts/
+    python3 /forjai/capture.py mockups /work/.forjai/mockups /work/.forjai/design ;;
+  capture-app)
+    # Diseño visual: el build web de siempre y cada ?preview=<pantalla> de las maquetas, servido en 127.0.0.1.
+    flutter build web --release --no-web-resources-cdn --no-pub --no-wasm-dry-run
+    mkdir -p /work/.forjai/design
+    python3 /forjai/capture.py app /work/build/web /work/.forjai/mockups /work/.forjai/design ;;
   *) echo "paso desconocido: $1"; exit 2 ;;
 esac

@@ -14,7 +14,7 @@ class JobControllerTest {
     private final JobController controller = new JobController(runner, mock(DependencyFetcher.class), mock(DependencyPromoter.class), "secreto");
 
     private static JobController.JobRequest request(String type, String profile) {
-        return new JobController.JobRequest(type, "M-1", "a".repeat(40), profile, null, null, null, null, null);
+        return new JobController.JobRequest(type, "M-1", "a".repeat(40), profile, null, null, null, null, null, null);
     }
 
     @Test
@@ -51,9 +51,9 @@ class JobControllerTest {
         when(fetcher.fetch("NUGET", pkgs)).thenReturn(new FetchedPackage.FetchResult("fetch-1", "PASS", "", List.of()));
 
         assertEquals(200, c.run("secreto", new JobController.JobRequest("FETCH_DEPENDENCIES", null, null, null, null,
-                new DependencyRequest("NUGET", null, pkgs), null, null, null)).getStatusCode().value());
+                new DependencyRequest("NUGET", null, pkgs), null, null, null, null)).getStatusCode().value());
         assertEquals(401, c.run("otro", new JobController.JobRequest("PROMOTE_DEPENDENCIES", null, null, null, null,
-                new DependencyRequest("NUGET", "fetch-1", pkgs), null, null, null)).getStatusCode().value());
+                new DependencyRequest("NUGET", "fetch-1", pkgs), null, null, null, null)).getStatusCode().value());
         verifyNoInteractions(promoter);
     }
 
@@ -61,7 +61,7 @@ class JobControllerTest {
     @Test
     void verifyRejectsAComponentDirOutsideTheCatalog() {
         var response = controller.run("secreto", new JobController.JobRequest("VERIFY", "M-1", "a".repeat(40),
-                "DOTNET_APP", "src", null, null, null, null));
+                "DOTNET_APP", "src", null, null, null, null, null));
         assertEquals(400, response.getStatusCode().value());
         verifyNoInteractions(runner);
     }
@@ -71,15 +71,40 @@ class JobControllerTest {
         var result = new SandboxResult("PASS", java.util.List.of());
         when(runner.verify("M-1", "a".repeat(40), ExecutionProfile.FLUTTER_WEB_APP, "app")).thenReturn(result);
         var response = controller.run("secreto", new JobController.JobRequest("VERIFY", "M-1", "a".repeat(40),
-                "FLUTTER_WEB_APP", "app", null, null, null, null));
+                "FLUTTER_WEB_APP", "app", null, null, null, null, null));
         assertSame(result, response.getBody());
     }
 
     @Test
     void packageRejectsAnUnknownTarget() {
         var response = controller.run("secreto", new JobController.JobRequest("PACKAGE", "M-1", "a".repeat(40),
-                "GODOT_DOTNET_GAME", null, null, 1, List.of("windows", "web"), null));
+                "GODOT_DOTNET_GAME", null, null, 1, List.of("windows", "web"), null, null));
         assertEquals(400, response.getStatusCode().value());
         verifyNoInteractions(runner);
+    }
+
+    private static JobController.JobRequest capture(String profile, Integer increment, String mode) {
+        return new JobController.JobRequest("DESIGN_CAPTURE", "M-1", "a".repeat(40), profile, null, null, increment,
+                null, null, mode);
+    }
+
+    // Diseño visual (spec 2026-11-01 §4 y §9): el modo sale de una lista fija, como los perfiles.
+    @Test
+    void designCaptureRejectsUnknownMode() {
+        assertEquals(400, controller.run("secreto", capture("FLUTTER_WEB_APP", 1, "X")).getStatusCode().value());
+        assertEquals(400, controller.run("secreto", capture("FLUTTER_WEB_APP", 1, null)).getStatusCode().value());
+        assertEquals(400, controller.run("secreto", capture("DOTNET_APP", 1, "MOCKUPS")).getStatusCode().value());
+        assertEquals(400, controller.run("secreto", capture("FLUTTER_WEB_APP", 0, "APP")).getStatusCode().value());
+        verifyNoInteractions(runner);
+    }
+
+    @Test
+    void designCaptureRunsCaptureStep() {
+        var result = new SandboxResult("PASS", List.of(), "diseno-2-mockups-x");
+        when(runner.capture("M-1", "a".repeat(40), ExecutionProfile.FLUTTER_WEB_APP, 2,
+                ExecutionProfile.CaptureMode.MOCKUPS)).thenReturn(result);
+        var response = controller.run("secreto", capture("FLUTTER_WEB_APP", 2, "MOCKUPS"));
+        assertEquals(200, response.getStatusCode().value());
+        assertSame(result, response.getBody());
     }
 }

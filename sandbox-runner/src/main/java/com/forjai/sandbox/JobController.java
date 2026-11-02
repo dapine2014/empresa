@@ -19,7 +19,8 @@ public class JobController {
 
     public record JobRequest(String jobType, String missionId, String commitSha, String stackProfile,
                              String componentDir, DependencyRequest dependencies,
-                             Integer increment, List<String> targets, AndroidRelease androidRelease) {
+                             Integer increment, List<String> targets, AndroidRelease androidRelease,
+                             String captureMode) {
     }
 
     private final VerifyJobRunner runner;
@@ -63,6 +64,10 @@ public class JobController {
             return pack(request);
         }
 
+        if ("DESIGN_CAPTURE".equals(request.jobType())) {
+            return capture(request);
+        }
+
         if (!"VERIFY".equals(request.jobType())) {
             return ResponseEntity.badRequest().body(Map.of("error", "jobType no soportado: " + request.jobType()));
         }
@@ -104,5 +109,22 @@ public class JobController {
         }
         return ResponseEntity.ok(runner.pack(request.missionId(), request.commitSha(), profile.get(),
                 request.increment(), targets, request.androidRelease()));
+    }
+
+    /** Diseño visual: solo la imagen de Flutter trae Chrome y las fuentes; modo e incremento de listas fijas. */
+    private ResponseEntity<?> capture(JobRequest request) {
+        var profile = ExecutionProfile.parse(request.stackProfile());
+        if (profile.isEmpty() || profile.get() != ExecutionProfile.FLUTTER_WEB_APP) {
+            return ResponseEntity.badRequest().body(Map.of("error", "stackProfile sin captura de diseño: " + request.stackProfile()));
+        }
+        if (request.increment() == null || request.increment() < 1) {
+            return ResponseEntity.badRequest().body(Map.of("error", "increment inválido: " + request.increment()));
+        }
+        var mode = ExecutionProfile.CaptureMode.parse(request.captureMode());
+        if (mode.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "captureMode desconocido: " + request.captureMode()));
+        }
+        return ResponseEntity.ok(runner.capture(request.missionId(), request.commitSha(), profile.get(),
+                request.increment(), mode.get()));
     }
 }

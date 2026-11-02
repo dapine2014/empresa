@@ -216,6 +216,79 @@ public class VerifyJobRunner {
         }
     }
 
+    /** Lo único que DESIGN_CAPTURE copia al staging: {@code <pantalla>-<phone|desktop>.<png|json>}. */
+    static final java.util.regex.Pattern CAPTURE_FILE =
+            java.util.regex.Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]*-(phone|desktop)\\.(png|json)");
+
+    /**
+     * DESIGN_CAPTURE (diseño visual, spec 2026-11-01 §4 y §9): mismo checkout que VERIFY; en APP corre restore (pub
+     * offline y las fuentes a assets/) y luego el paso fijo del modo, que escribe en {@code /work/.forjai/design}. Solo
+     * los PNG y JSON de cada pantalla (archivos regulares del primer nivel) pasan a
+     * {@code stagingRoot/<missionId>/diseno-<N>-<modo>-<jobId>}, cuyo nombre va en {@link SandboxResult#stagingDir()}.
+     */
+    public SandboxResult capture(String missionId, String commitSha, ExecutionProfile profile, int increment,
+                                 ExecutionProfile.CaptureMode mode) {
+
+        var steps = new ArrayList<SandboxResult.StepResult>();
+        var missionStaging = missionId == null ? null : stagingRoot.resolve(missionId).normalize();
+        if (missionStaging == null || !missionStaging.startsWith(stagingRoot) || missionStaging.equals(stagingRoot)) {
+            steps.add(new SandboxResult.StepResult("checkout", SandboxResult.FAIL, -1, 0,
+                    "missionId inválido para el staging.", 0, 0));
+            return new SandboxResult(SandboxResult.FAIL, steps);
+        }
+        var jobId = UUID.randomUUID().toString();
+        var jobDir = workRoot.resolve("job-" + jobId);
+
+        try {
+            Files.createDirectories(jobDir);
+
+            var checkout = checkout(missionId, commitSha, "", jobDir);
+            steps.add(checkout);
+            var pending = new ArrayList<ExecutionProfile.Step>();
+            if (mode == ExecutionProfile.CaptureMode.APP) {
+                pending.add(profile.steps().get(0));
+            }
+            pending.add(mode.step());
+            var failed = !SandboxResult.PASS.equals(checkout.status());
+            for (var step : pending) {
+                if (failed) {
+                    steps.add(skipped(step.name()));
+                    continue;
+                }
+                var result = runStep(profile, step, jobDir);
+                steps.add(result);
+                failed = !SandboxResult.PASS.equals(result.status());
+            }
+            if (failed) {
+                return new SandboxResult(SandboxResult.FAIL, steps);
+            }
+
+            var stagingName = "diseno-" + increment + "-" + mode.name().toLowerCase(java.util.Locale.ROOT) + "-" + jobId;
+            var destination = missionStaging.resolve(stagingName);
+            Files.createDirectories(destination);
+            var design = jobDir.resolve(".forjai/design");
+            if (Files.isDirectory(design, LinkOption.NOFOLLOW_LINKS)) {
+                try (var files = Files.list(design)) {
+                    for (var file : files.toList()) {
+                        if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
+                                && CAPTURE_FILE.matcher(file.getFileName().toString()).matches()) {
+                            Files.copy(file, destination.resolve(file.getFileName().toString()),
+                                    StandardCopyOption.REPLACE_EXISTING, LinkOption.NOFOLLOW_LINKS);
+                        }
+                    }
+                }
+            }
+            return new SandboxResult(SandboxResult.PASS, steps, stagingName);
+
+        } catch (IOException ex) {
+            steps.add(new SandboxResult.StepResult(mode.step().name(), SandboxResult.FAIL, -1, 0,
+                    "No se pudo copiar la captura: " + ex.getMessage(), 0, 0));
+            return new SandboxResult(SandboxResult.FAIL, steps);
+        } finally {
+            deleteQuietly(jobDir);
+        }
+    }
+
     static final String KEY_MATERIAL = "la salida contenía material de la clave";
 
     /** Carpeta de la entrega de cada target (la de run.sh). */

@@ -18,6 +18,18 @@ RUN touch /tmp/antes-del-precache && sleep 1 \
     && rm -rf /opt/seed && chown -R 1000:1000 /opt/pub-cache \
     && find /sdks/flutter \( -type d -o -newer /tmp/antes-del-precache \) -exec chown -h 1000:1000 {} + \
     && rm -f /tmp/antes-del-precache
-COPY run.sh failing_tests.py /forjai/
-RUN chmod 0755 /forjai/run.sh /forjai/failing_tests.py
+# Diseño visual (spec 2026-11-01 §10): catálogo cerrado de fuentes (FontCatalog en company-core). Salen de los paquetes
+# de Ubuntu (Roboto y Noto, licencias libres; sin URLs sueltas) y se copian con el nombre exacto que usan Java, las
+# maquetas y assets/fonts; después se desinstalan, para que Chrome no las use como fuentes del sistema y un
+# @font-face roto se vea en la captura.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-roboto-unhinted fonts-noto-core \
+    && mkdir -p /forjai/fonts \
+    && for f in Roboto-Regular Roboto-Bold NotoSans-Regular NotoSans-Bold NotoSerif-Regular NotoSerif-Bold; do \
+         src=$(find /usr/share/fonts -name "$f.ttf" | sort | head -1); \
+         [ -n "$src" ] || { echo "falta la fuente $f"; exit 1; }; cp "$src" "/forjai/fonts/$f.ttf"; \
+       done \
+    && apt-get purge -y fonts-roboto-unhinted fonts-noto-core && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
+    && chmod 0644 /forjai/fonts/*.ttf
+COPY run.sh failing_tests.py capture.py /forjai/
+RUN chmod 0755 /forjai/run.sh /forjai/failing_tests.py /forjai/capture.py
 USER 1000:1000
