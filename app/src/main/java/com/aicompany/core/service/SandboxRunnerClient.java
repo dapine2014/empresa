@@ -123,6 +123,12 @@ public class SandboxRunnerClient {
      * Flutter. Nunca lanza salvo por cancelación (vacío + lastError).
      */
     public Optional<SandboxResult> designCapture(String missionId, String commitSha, int increment, String mode) {
+        return designCapture(missionId, commitSha, increment, mode, "");
+    }
+
+    /** Revisión Task 11 (3): {@code componentDir} = carpeta de la app Flutter ("" = raíz), validada por el runner. */
+    public Optional<SandboxResult> designCapture(String missionId, String commitSha, int increment, String mode,
+                                                 String componentDir) {
         if (cancellations != null && cancellations.isCancelled(missionId)) {
             throw new MissionCancellations.MissionCancelledException(missionId);
         }
@@ -130,8 +136,7 @@ public class SandboxRunnerClient {
             lastError = null;
             var result = client.post().uri("/jobs")
                     .header("X-Sandbox-Token", token == null ? "" : token)
-                    .body(Map.of("jobType", "DESIGN_CAPTURE", "missionId", missionId, "commitSha", commitSha,
-                            "stackProfile", "FLUTTER_WEB_APP", "increment", increment, "captureMode", mode))
+                    .body(captureBody(missionId, commitSha, increment, mode, componentDir))
                     .retrieve()
                     .body(SandboxResult.class);
             if (result == null) {
@@ -144,6 +149,16 @@ public class SandboxRunnerClient {
             log.warn("SANDBOX_UNAVAILABLE mission={} job=DESIGN_CAPTURE reason={}", missionId, lastError);
             return Optional.empty();
         }
+    }
+
+    private static Map<String, Object> captureBody(String missionId, String commitSha, int increment, String mode,
+                                                   String componentDir) {
+        var body = new java.util.LinkedHashMap<String, Object>(Map.of("jobType", "DESIGN_CAPTURE", "missionId", missionId,
+                "commitSha", commitSha, "stackProfile", "FLUTTER_WEB_APP", "increment", increment, "captureMode", mode));
+        if (componentDir != null && !componentDir.isEmpty()) {
+            body.put("componentDir", componentDir);
+        }
+        return body;
     }
 
     /** Parte 3: descarga aislada por el proxy con lista blanca. Nunca lanza (vacío + lastError). */

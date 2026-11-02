@@ -228,6 +228,16 @@ public class VerifyJobRunner {
      */
     public SandboxResult capture(String missionId, String commitSha, ExecutionProfile profile, int increment,
                                  ExecutionProfile.CaptureMode mode) {
+        return capture(missionId, commitSha, profile, increment, mode, "");
+    }
+
+    /**
+     * Revisión Task 11 (3): APP corre dentro de la carpeta del componente Flutter ({@link #COMPONENT_DIRS}) y trae
+     * {@code .forjai/mockups} de la raíz del repositorio (capture.py saca de ahí las pantallas). MOCKUPS siempre corre en
+     * la raíz, donde viven las maquetas.
+     */
+    public SandboxResult capture(String missionId, String commitSha, ExecutionProfile profile, int increment,
+                                 ExecutionProfile.CaptureMode mode, String componentDir) {
 
         var steps = new ArrayList<SandboxResult.StepResult>();
         var missionStaging = missionId == null ? null : stagingRoot.resolve(missionId).normalize();
@@ -242,7 +252,11 @@ public class VerifyJobRunner {
         try {
             Files.createDirectories(jobDir);
 
-            var checkout = checkout(missionId, commitSha, "", jobDir);
+            var dir = mode == ExecutionProfile.CaptureMode.APP && componentDir != null ? componentDir : "";
+            var checkout = checkout(missionId, commitSha, dir, jobDir);
+            if (SandboxResult.PASS.equals(checkout.status()) && !dir.isEmpty()) {
+                checkout = mockupsInto(missionId, commitSha, jobDir, checkout);
+            }
             steps.add(checkout);
             var pending = new ArrayList<ExecutionProfile.Step>();
             if (mode == ExecutionProfile.CaptureMode.APP) {
@@ -450,6 +464,33 @@ public class VerifyJobRunner {
 
     private static boolean unsafeEnvValue(String value) {
         return value == null || value.contains("\n") || value.contains("\r") || value.contains("\0");
+    }
+
+    /** Con la app en una carpeta: extrae {@code <sha>:.forjai/mockups} en {@code jobDir/.forjai/mockups}. */
+    private SandboxResult.StepResult mockupsInto(String missionId, String commitSha, Path jobDir,
+                                                 SandboxResult.StepResult checkout) {
+        var repo = productsRoot.resolve(missionId).normalize();
+        try {
+            var target = Files.createDirectories(jobDir.resolve(".forjai/mockups"));
+            var tar = jobDir.resolve(".forjai-mockups.tar");
+            var archive = executor.run(List.of("git", "-c", "safe.directory=*", "-C", repo.toString(), "archive",
+                    "--format=tar", "-o", tar.toString(), commitSha + ":.forjai/mockups"), jobDir, 60);
+            if (archive.exitCode() != 0) {
+                return new SandboxResult.StepResult("checkout", SandboxResult.FAIL, archive.exitCode(),
+                        checkout.durationMs(), "Sin maquetas en el commit: " + tail(archive.output(), OUTPUT_TAIL_CHARS),
+                        0, 0);
+            }
+            var extract = executor.run(List.of("tar", "-xf", tar.toString(), "-C", target.toString()), jobDir, 60);
+            Files.deleteIfExists(tar);
+            if (extract.exitCode() != 0) {
+                return new SandboxResult.StepResult("checkout", SandboxResult.FAIL, extract.exitCode(),
+                        checkout.durationMs(), tail(extract.output(), OUTPUT_TAIL_CHARS), 0, 0);
+            }
+            return checkout;
+        } catch (IOException ex) {
+            return new SandboxResult.StepResult("checkout", SandboxResult.FAIL, -1, checkout.durationMs(),
+                    "No se pudieron traer las maquetas: " + ex.getMessage(), 0, 0);
+        }
     }
 
     private SandboxResult.StepResult checkout(String missionId, String commitSha, String componentDir, Path jobDir) {

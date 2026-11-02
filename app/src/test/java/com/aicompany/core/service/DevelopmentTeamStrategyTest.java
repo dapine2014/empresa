@@ -1821,6 +1821,90 @@ class DevelopmentTeamStrategyTest {
         assertTrue(result.verifiableState().contains(head), result.verifiableState());
     }
 
+    // Revisión Task 11 (1): con pantallas esperando decisión, la verificación humana no puede dar VERIFIED.
+    @Test
+    void verifyHeadIsNotVerifiedWhileScreensAwaitADecision() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var head = "h".repeat(40);
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        var visuals = mock(VisualDesignMemoryService.class);
+        var reviews = mock(DesignReviewMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        strategy.setDesignReview(mock(DesignCaptureService.class), reviews, mock(CompanyPolicyService.class));
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                        VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
+        when(reviews.pending("M-1", 1)).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-01",
+                "phone", 0.5, "AWAITING_DECISION", 2, 0, null, null, null)));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("UNVALIDATED"), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+    }
+
+    // Revisión Task 11 (4): el pegamento de la estrategia con un ciclo de diseño que no aceptó.
+    @Test
+    void aDesignMismatchBlocksWithoutVerifyingOrApplyingTheDatabase() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var apply = mock(com.aicompany.core.database.DatabaseApplyService.class);
+        strategy.setDatabaseApply(apply);
+        var visuals = mock(VisualDesignMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                        VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
+        var ran = new java.util.concurrent.atomic.AtomicBoolean();
+        strategy.setDesignLoopFactory(front -> new DesignReviewLoop(null, null, null, null, null, null, front) {
+            @Override
+            public boolean applies(TeamMissionContext ctx) {
+                return true;
+            }
+
+            @Override
+            public Outcome run(TeamMissionContext ctx, String headSha, int increment) {
+                ran.set(true);
+                return new Outcome(false, List.of("PANT-01"), headSha);
+            }
+        });
+
+        var result = (TeamExecutionResult.Development) strategy.execute(
+                new TeamMissionContext("M-1", "crear un juego", context().team(), databasePlan()), progress);
+
+        assertTrue(ran.get());
+        assertEquals("DESIGN_MISMATCH: PANT-01", result.blockReason());
+        verify(memory).recordStaticValidation(eq("M-1-QA"), eq("UNVALIDATED"), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+        verify(apply, never()).apply(anyString(), anyString(), any(), anyBoolean());
+        verify(events).publish(eq("EMPRESA_DESIGN_REVIEW_COMPLETED"), eq("M-1"), isNull(), eq("forjai"), anyMap());
+    }
+
+    @Test
+    void theDesignReviewEventIsOnlyPublishedWhenTheLoopRuns() throws Exception {
+        stubHappyPath();
+        when(runtime.review(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(CompletableFuture.completedFuture(cleanReview()));
+        var visuals = mock(VisualDesignMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                        VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
+        // Juego Godot (sin componente Flutter): el ciclo real no aplica.
+        strategy.setDesignLoopFactory(front -> new DesignReviewLoop(null, null, visuals, null, null,
+                tools.jackson.databind.json.JsonMapper.builder().build(), front));
+
+        var result = (TeamExecutionResult.Development) strategy.execute(context(), progress);
+
+        assertNull(result.blockReason());
+        verify(events, never()).publish(eq("EMPRESA_DESIGN_REVIEW_COMPLETED"), anyString(), any(), anyString(), anyMap());
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
+    }
+
     // ---- Spec 2026-10-14 Kael §1.4: DESIGN_CONFORMANCE ----
 
     private static final com.aicompany.core.agent.model.InteractionDesign APP_DESIGN =

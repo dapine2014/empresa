@@ -51,19 +51,30 @@ public class DesignReviewLoop {
     static final int THEME_BUDGET = 2_000;
     static final int CORRECTION_BUDGET = 2_500;
     static final String BLOCK_PREFIX = "DESIGN_MISMATCH: ";
+    static final String CAPTURE_PREFIX = "DESIGN_CAPTURE_FAILED: ";
 
     private static final Pattern PREVIEW = Pattern.compile("(?:(.*)/)?lib/[^/].*/presentation/previews/pant_(\\d+)_preview\\.dart");
     private static final Pattern IMPORT = Pattern.compile("(?m)^\\s*import\\s+['\"]([^'\"]+)['\"]");
 
-    /** {@code note}: texto corto para el estado verificable (vacío si no hay nada que decir). */
-    public record Outcome(boolean accepted, List<String> awaiting, String headSha, String note) {
+    /**
+     * {@code note}: texto corto para el estado verificable (vacío si no hay nada que decir). {@code captureError} no nulo:
+     * no hubo captura comparable (sandbox, maqueta o vista previa sin imagen); no es una diferencia de diseño.
+     */
+    public record Outcome(boolean accepted, List<String> awaiting, String headSha, String note, String captureError) {
         public Outcome {
             awaiting = awaiting == null ? List.of() : List.copyOf(awaiting);
             note = note == null ? "" : note;
         }
 
         public Outcome(boolean accepted, List<String> awaiting, String headSha) {
-            this(accepted, awaiting, headSha, "");
+            this(accepted, awaiting, headSha, "", null);
+        }
+    }
+
+    /** Una captura que no se pudo hacer o leer: el ciclo se corta sin gastar llamadas al modelo. */
+    static final class CaptureFailed extends RuntimeException {
+        CaptureFailed(String message) {
+            super(message);
         }
     }
 
@@ -105,29 +116,48 @@ public class DesignReviewLoop {
 
     /** El motivo del freno ({@code DESIGN_MISMATCH: PANT-01, PANT-03}); null si el diseño quedó aceptado. */
     public static String blockReason(Outcome outcome) {
-        return outcome == null || outcome.accepted() ? null : BLOCK_PREFIX + String.join(", ", outcome.awaiting());
+        if (outcome == null || outcome.accepted()) {
+            return null;
+        }
+        return outcome.captureError() != null ? CAPTURE_PREFIX + outcome.captureError()
+                : BLOCK_PREFIX + String.join(", ", outcome.awaiting());
+    }
+
+    /**
+     * true si el ciclo corre: hay componente Flutter, diseño visual aprobado y legible, y pantallas en el incremento. Si
+     * es false, {@link #run} acepta sin capturar ni llamar a nadie.
+     */
+    public boolean applies(TeamMissionContext ctx) {
+        return approvedDesign(ctx) != null && !front.screens(ctx).isEmpty();
+    }
+
+    private VisualDesign approvedDesign(TeamMissionContext ctx) {
+        if (ctx.plan().resolvedComponents().stream().noneMatch(c -> c.profile() == StackProfile.FLUTTER_WEB_APP)) {
+            return null;
+        }
+        var approved = visuals.approved(ctx.missionId());
+        if (approved.isEmpty()) {
+            return null;
+        }
+        try {
+            return json.readValue(approved.get().designJson(), VisualDesign.class);
+        } catch (RuntimeException ex) {
+            // Igual que los gates del front: un diseño ilegible cuenta como sin diseño.
+            log.warn("MISSION {} - could not read the approved visual design: {}", ctx.missionId(), ex.getMessage());
+            return null;
+        }
     }
 
     public Outcome run(TeamMissionContext ctx, String headSha, int increment) {
         var missionId = ctx.missionId();
-        if (ctx.plan().resolvedComponents().stream().noneMatch(c -> c.profile() == StackProfile.FLUTTER_WEB_APP)) {
+        var design = approvedDesign(ctx);
+        if (design == null) {
             return new Outcome(true, List.of(), headSha);
         }
-        var approved = visuals.approved(missionId);
-        if (approved.isEmpty()) {
-            return new Outcome(true, List.of(), headSha);
-        }
-        VisualDesign design;
-        try {
-            design = json.readValue(approved.get().designJson(), VisualDesign.class);
-        } catch (RuntimeException ex) {
-            // Igual que los gates del front: un diseño ilegible cuenta como sin diseño.
-            log.warn("MISSION {} - could not read the approved visual design: {}", missionId, ex.getMessage());
-            return new Outcome(true, List.of(), headSha);
-        }
+        var version = visuals.approved(missionId).orElseThrow().version();
         var screens = new LinkedHashSet<>(front.screens(ctx));
         if (screens.isEmpty()) {
-            return new Outcome(true, List.of(), headSha, "sin pantallas en el incremento.");
+            return new Outcome(true, List.of(), headSha);
         }
         var threshold = policies.activeValue(PolicyKey.DESIGN_SIMILARITY_THRESHOLD);
         var all = reviews.all(missionId);
@@ -135,28 +165,34 @@ public class DesignReviewLoop {
         all.stream().filter(r -> r.increment() == increment).forEach(r -> state.put(r.screen(), r));
         var corrections = all.stream().mapToInt(DesignScreenReview::rounds).sum();
 
+        var component = ctx.plan().resolvedComponents().stream()
+                .filter(c -> c.profile() == StackProfile.FLUTTER_WEB_APP).findFirst().orElseThrow();
         var head = headSha;
-        var error = "";
+        String captureError = null;
         try {
-            var mockups = mockups(missionId, headSha, increment, approved.get().version());
+            var mockups = mockups(missionId, headSha, increment, version);
             while (true) {
-                var app = captures.captureApp(missionId, head, increment, screens);
-                var files = workspace.filesAtCommit(missionId, head);
+                var app = captureApp(missionId, head, increment, screens, component.dir());
+                var files = files(missionId, head);
+                // Primero se compara todo: una pantalla sin captura corta el ciclo antes de guardar o corregir nada.
                 var results = new LinkedHashMap<String, List<ScreenResult>>();
-                var toCorrect = new ArrayList<String>();
                 for (var screen : screens) {
                     var prev = state.get(screen);
-                    if (prev != null && DesignScreenReview.ACCEPTED.equals(prev.status())) {
-                        continue;
+                    if (prev == null || !DesignScreenReview.ACCEPTED.equals(prev.status())) {
+                        results.put(screen, compare(screen, mockups, app, design, threshold));
                     }
-                    var compared = compare(screen, mockups, app, design, threshold);
-                    results.put(screen, compared);
+                }
+                var toCorrect = new ArrayList<String>();
+                for (var entry : results.entrySet()) {
+                    var screen = entry.getKey();
+                    var compared = entry.getValue();
+                    var prev = state.get(screen);
                     var rounds = prev == null ? 0 : prev.rounds();
                     var limit = prev == null ? DesignScreenReview.MAX_ROUNDS : prev.roundLimit();
                     String status;
-                    if (!compared.isEmpty() && compared.stream().allMatch(ScreenResult::passed)) {
+                    if (compared.stream().allMatch(ScreenResult::passed)) {
                         status = DesignScreenReview.PASSED;
-                    } else if (!compared.isEmpty() && rounds < limit && owner(ctx, preview(files, screen)) != null) {
+                    } else if (rounds < limit && owner(ctx, preview(files, screen)) != null) {
                         status = DesignScreenReview.PENDING;
                         toCorrect.add(screen);
                     } else {
@@ -194,47 +230,54 @@ public class DesignReviewLoop {
                         }
                     } catch (Exception ex) {
                         rethrowCancellation(ex);
+                        // Igual que la reparación: una corrección fallida deja el commit anterior y gasta la ronda.
                         log.warn("MISSION {} - design correction of {} failed: {}", missionId, screen, ex.getMessage());
                     }
                 }
                 if (commits > 0 && !front.rebuild(ctx, head)) {
                     log.warn("MISSION {} - design correction broke the build/tests; dropping {} commit(s)", missionId, commits);
                     for (int i = 0; i < commits; i++) {
-                        workspace.dropHeadCommit(missionId);
+                        try {
+                            workspace.dropHeadCommit(missionId);
+                        } catch (java.io.IOException ex) {
+                            throw new IllegalStateException("No se pudo descartar la corrección de diseño: " + ex.getMessage(), ex);
+                        }
                     }
                     head = before;
                 }
             }
-        } catch (Exception ex) {
-            rethrowCancellation(ex);
-            // Sin captura no hay comparación: lo no resuelto espera al decisor (pedir otra ronda vuelve a capturar).
-            error = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
-            log.warn("MISSION {} - design review could not complete: {}", missionId, error);
-            for (var screen : screens) {
-                var prev = state.get(screen);
-                if (prev != null && (DesignScreenReview.ACCEPTED.equals(prev.status())
-                        || DesignScreenReview.AWAITING_DECISION.equals(prev.status()))) {
-                    continue;
-                }
-                var none = new ScreenResult(screen, prev == null ? "" : prev.size(), prev == null ? 0.0 : prev.ssim(),
-                        List.of(), List.of(), false);
-                var rounds = prev == null ? 0 : prev.rounds();
-                try {
-                    reviews.save(missionId, none, increment, rounds, DesignScreenReview.AWAITING_DECISION);
-                } catch (RuntimeException saveError) {
-                    log.warn("MISSION {} - could not save the design review of {}: {}", missionId, screen,
-                            saveError.getMessage());
-                }
-                state.put(screen, with(prev, increment, none, DesignScreenReview.AWAITING_DECISION, rounds));
-            }
+        } catch (CaptureFailed ex) {
+            // Sin captura no hay comparación: no es una diferencia de diseño. Lo PASSED o decidido no cambia; lo demás
+            // queda como estaba (PENDING) y la misión se frena con su propio motivo.
+            captureError = ex.getMessage();
+            log.warn("MISSION {} - design capture failed: {}", missionId, captureError);
         }
 
         var awaiting = screens.stream().filter(s -> state.get(s) != null
                 && DesignScreenReview.AWAITING_DECISION.equals(state.get(s).status())).toList();
-        var accepted = screens.stream().allMatch(s -> state.get(s) != null
+        var accepted = captureError == null && screens.stream().allMatch(s -> state.get(s) != null
                 && (DesignScreenReview.PASSED.equals(state.get(s).status())
                 || DesignScreenReview.ACCEPTED.equals(state.get(s).status())));
-        return new Outcome(accepted, awaiting, head, note(screens, state, error));
+        return new Outcome(accepted, awaiting, head, note(screens, state, captureError == null ? "" : captureError),
+                captureError);
+    }
+
+    private Captures captureApp(String missionId, String sha, int increment, Set<String> screens, String dir) {
+        try {
+            return captures.captureApp(missionId, sha, increment, screens, dir);
+        } catch (MissionCancellations.MissionCancelledException ex) {
+            throw ex;
+        } catch (IllegalStateException ex) {
+            throw new CaptureFailed(ex.getMessage() == null ? "la captura de la app falló" : ex.getMessage());
+        }
+    }
+
+    private List<String> files(String missionId, String sha) {
+        try {
+            return workspace.filesAtCommit(missionId, sha);
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException("No se pudo leer el commit " + sha + ": " + ex.getMessage(), ex);
+        }
     }
 
     private Captures mockups(String missionId, String headSha, int increment, int version) {
@@ -243,34 +286,36 @@ public class DesignReviewLoop {
             return stored.get();
         }
         // La versión aprobada no tiene captura (o su carpeta ya no está): las maquetas ya están commiteadas en HEAD.
-        return captures.recaptureMockups(missionId, headSha, increment, version);
+        try {
+            return captures.recaptureMockups(missionId, headSha, increment, version);
+        } catch (MissionCancellations.MissionCancelledException ex) {
+            throw ex;
+        } catch (IllegalStateException ex) {
+            throw new CaptureFailed(ex.getMessage() == null ? "la captura de las maquetas falló" : ex.getMessage());
+        }
     }
 
-    /** Un resultado por tamaño con maqueta capturada; vacío si la pantalla no tiene ninguna maqueta capturada. */
+    /**
+     * Un resultado por tamaño. Una maqueta sin captura (o ilegible) o una vista previa sin imagen en la app es una
+     * captura fallida ({@link CaptureFailed}), no una diferencia: no gasta rondas.
+     */
     private static List<ScreenResult> compare(String screen, Captures mockups, Captures app, VisualDesign design,
                                               double threshold) {
         var out = new ArrayList<ScreenResult>();
         for (var size : Captures.SIZES) {
             var key = screen + "-" + size;
             var mockupPng = mockups.pngByScreenSize().get(key);
-            if (mockupPng == null) {
-                continue;
-            }
-            var mockupBoxes = mockups.boxesByScreenSize().getOrDefault(key, List.of());
-            var mockupImg = image(mockupPng);
+            var mockupImg = mockupPng == null ? null : image(mockupPng);
             if (mockupImg == null) {
-                continue;
+                throw new CaptureFailed("la maqueta de " + key + " no tiene captura");
             }
             var appPng = app.pngByScreenSize().get(key);
             var appImg = appPng == null ? null : image(appPng);
             if (appImg == null) {
-                // La vista previa no se pudo abrir en ese tamaño: faltan todos sus elementos.
-                var missing = mockupBoxes.stream().map(Box::id).toList();
-                out.add(new ScreenResult(screen, size, 0.0, List.of(), missing.isEmpty() ? List.of(screen) : missing,
-                        false));
-                continue;
+                throw new CaptureFailed("la vista previa " + key + " no se pudo capturar en la app");
             }
-            out.add(DesignComparison.compare(screen, size, mockupImg, mockupBoxes, appImg,
+            out.add(DesignComparison.compare(screen, size, mockupImg,
+                    mockups.boxesByScreenSize().getOrDefault(key, List.of()), appImg,
                     app.boxesByScreenSize().getOrDefault(key, List.of()), design.system(), threshold));
         }
         return out;

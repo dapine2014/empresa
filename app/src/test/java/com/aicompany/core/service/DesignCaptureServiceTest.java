@@ -142,6 +142,18 @@ class DesignCaptureServiceTest {
         verifyNoInteractions(workspace);
     }
 
+    @Test
+    void theAppCaptureRunsInTheComponentDir() throws Exception {
+        var dir = "diseno-2-app-" + JOB;
+        when(runner.designCapture("M-1", SHA, 2, "APP", "app"))
+                .thenReturn(Optional.of(new SandboxResult("PASS", List.of(), dir)));
+        Files.write(staging("M-1", dir).resolve("PANT-01-phone.png"), new byte[]{1});
+
+        var captures = service().captureApp("M-1", SHA, 2, Set.of("PANT-01"), "app");
+
+        assertEquals(Set.of("PANT-01-phone"), captures.pngByScreenSize().keySet());
+    }
+
     // Solo PANT-NN-(phone|desktop).png del staging de la última versión; cualquier otro nombre no existe.
     @Test
     void onlyImageNamesOfTheCapturePatternAreServed() throws Exception {

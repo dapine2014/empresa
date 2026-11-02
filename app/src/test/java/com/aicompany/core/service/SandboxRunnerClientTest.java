@@ -68,6 +68,23 @@ class SandboxRunnerClientTest {
         server.verify();
     }
 
+    // Revisión Task 11 (3): con la app en su carpeta, el job lleva componentDir.
+    @Test
+    void designCaptureSendsTheComponentDir() {
+        var builder = RestClient.builder().baseUrl("http://runner");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("http://runner/jobs"))
+                .andExpect(jsonPath("$.captureMode").value("APP"))
+                .andExpect(jsonPath("$.componentDir").value("app"))
+                .andRespond(withSuccess("{\"overall\":\"PASS\",\"steps\":[],\"stagingDir\":\"diseno-1-app-x\"}",
+                        MediaType.APPLICATION_JSON));
+
+        var result = new SandboxRunnerClient(builder.build(), "t0k").designCapture("M-1", "a".repeat(40), 1, "APP", "app");
+
+        assertEquals("diseno-1-app-x", result.orElseThrow().stagingDir());
+        server.verify();
+    }
+
     @Test
     void fetchDependenciesSendsTheRequestAndParsesThePackages() {
         var builder = RestClient.builder().baseUrl("http://runner");

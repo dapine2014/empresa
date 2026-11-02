@@ -679,12 +679,32 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * Las correcciones usan el mismo {@link #generate} (mismos gates) y otra pasada VERIFY del sandbox. Una diferencia
      * de diseño nunca es FAILED: el motivo del freno sale en el resultado y MissionExecutor deja la misión BLOCKED.
      */
+    private java.util.function.Function<DesignReviewLoop.Front, DesignReviewLoop> designLoopFactory;
+
+    /** Tests: reemplaza el ciclo de diseño (por defecto, uno real con los servicios inyectados). */
+    void setDesignLoopFactory(java.util.function.Function<DesignReviewLoop.Front, DesignReviewLoop> factory) {
+        this.designLoopFactory = factory;
+    }
+
+    /**
+     * Revisión Task 11 (1): la verificación humana no vuelve a correr el ciclo; con diseño visual aprobado, VERIFIED
+     * exige que ninguna pantalla del incremento quede sin pasar ni aceptar. Sin diseño, aceptado como siempre.
+     */
+    private boolean designAcceptedForHumanVerify(String missionId) {
+        if (designReviews == null || approvedVisual(missionId).isEmpty()) {
+            return true;
+        }
+        var inc = currentIncrementOrNull(missionId);
+        return designReviews.pending(missionId, inc == null ? 1 : inc).isEmpty();
+    }
+
     private DesignReviewLoop.Outcome designReview(TeamMissionContext context, String headSha,
                                                   StaticValidationStatus status, List<String> expectedProjects,
                                                   List<AppComponent> components) {
         var missionId = context.missionId();
-        if (status != StaticValidationStatus.VERIFIED || designCaptures == null || designReviews == null
-                || policies == null || visuals == null || approvedVisual(missionId).isEmpty()) {
+        var available = designLoopFactory != null
+                || (designCaptures != null && designReviews != null && policies != null && visuals != null);
+        if (status != StaticValidationStatus.VERIFIED || !available || approvedVisual(missionId).isEmpty()) {
             return new DesignReviewLoop.Outcome(true, List.of(), headSha);
         }
         var front = new DesignReviewLoop.Front() {
@@ -711,9 +731,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 return verifyComponents(missionId, head, components).map(SandboxResult::passed).orElse(false);
             }
         };
+        var loop = designLoopFactory != null ? designLoopFactory.apply(front)
+                : new DesignReviewLoop(designCaptures, designReviews, visuals, policies, workspace, jsonMapper, front);
+        if (!loop.applies(context)) {
+            return new DesignReviewLoop.Outcome(true, List.of(), headSha);
+        }
         var increment = currentIncrementOrNull(missionId);
-        var outcome = new DesignReviewLoop(designCaptures, designReviews, visuals, policies, workspace, jsonMapper, front)
-                .run(context, headSha, increment == null ? 1 : increment);
+        var outcome = loop.run(context, headSha, increment == null ? 1 : increment);
         events.publish("EMPRESA_DESIGN_REVIEW_COMPLETED", missionId, null, "forjai",
                 Map.of("accepted", outcome.accepted(), "awaiting", outcome.awaiting(), "commitSha", outcome.headSha()));
         return outcome;
@@ -851,14 +875,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             coverageReport = COVERAGE_REPORT + com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
         }
 
-        var status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
+        var designAccepted = designAcceptedForHumanVerify(missionId);
+        var status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode, designAccepted);
         // Revisión final (I3): la misma cascada y clasificación que execute, antes de registrar el commit verificado.
         // Seguimiento: la verificación la pidió el fundador, el chat ya le muestra el problema: sin correo.
         var databaseStep = databaseStep(missionId, headSha, plan, status, false);
         if (databaseStep != null && databaseStep.check() != null) {
             checks = new ArrayList<>(checks);
             checks.add(databaseStep.check());
-            status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode);
+            status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode, designAccepted);
         }
         var summary = "Verificación humana del commit " + headSha + " (sin modelos: sin correcciones, sin diagnóstico de "
                 + "tests ni revisión de un agente).\n"

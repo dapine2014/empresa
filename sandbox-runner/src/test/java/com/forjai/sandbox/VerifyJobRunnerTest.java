@@ -446,6 +446,36 @@ class VerifyJobRunnerTest {
         assertTrue(result.stagingDir().startsWith("diseno-1-app-"));
     }
 
+    // Revisión Task 11 (3): APP corre dentro de la carpeta del componente y trae las maquetas de la raíz; MOCKUPS, en la raíz.
+    @Test
+    void captureOfTheAppRunsInsideTheComponentDir() throws Exception {
+        var staging = Files.createTempDirectory("staging");
+        var steps = new ArrayList<String>();
+        var archives = new ArrayList<String>();
+        var inner = captureFake(steps);
+        ProcessExecutor recording = (command, directory, timeout) -> {
+            if (command.get(0).equals("git")) {
+                archives.add(command.get(command.size() - 1));
+            }
+            return inner.run(command, directory, timeout);
+        };
+        var sha = "a".repeat(40);
+        var result = packRunner(staging, recording).capture("M-1", sha, ExecutionProfile.FLUTTER_WEB_APP, 1,
+                ExecutionProfile.CaptureMode.APP, "app");
+        assertEquals("PASS", result.overall(), result.toString());
+        assertEquals(List.of(sha + ":app", sha + ":.forjai/mockups"), archives);
+        assertEquals(List.of("restore", "capture-app"), steps);
+
+        archives.clear();
+        packRunner(staging, recording).capture("M-1", sha, ExecutionProfile.FLUTTER_WEB_APP, 1,
+                ExecutionProfile.CaptureMode.MOCKUPS, "app");
+        assertEquals(List.of(sha), archives);
+
+        var invalid = packRunner(staging, recording).capture("M-1", sha, ExecutionProfile.FLUTTER_WEB_APP, 1,
+                ExecutionProfile.CaptureMode.APP, "../x");
+        assertEquals("FAIL", invalid.overall());
+    }
+
     @Test
     void captureRejectsTraversalInMissionId() throws Exception {
         var staging = Files.createTempDirectory("staging");

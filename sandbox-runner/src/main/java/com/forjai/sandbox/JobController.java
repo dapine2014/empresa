@@ -124,7 +124,12 @@ public class JobController {
         if (mode.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "captureMode desconocido: " + request.captureMode()));
         }
+        // Revisión Task 11 (3): como VERIFY, la carpeta del componente sale de una lista fija.
+        var componentDir = request.componentDir() == null ? "" : request.componentDir();
+        if (!VerifyJobRunner.COMPONENT_DIRS.contains(componentDir)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "componentDir desconocido: " + componentDir));
+        }
         return ResponseEntity.ok(runner.capture(request.missionId(), request.commitSha(), profile.get(),
-                request.increment(), mode.get()));
+                request.increment(), mode.get(), componentDir));
     }
 }

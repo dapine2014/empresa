@@ -110,7 +110,12 @@ public class DesignCaptureService {
 
     /** Captura la app construida ({@code ?preview=<PANT-NN>}) en ese commit; solo se devuelven las pantallas pedidas. */
     public Captures captureApp(String missionId, String headSha, int increment, Set<String> screens) {
-        return read(missionId, capture(missionId, headSha, increment, "APP"), screens);
+        return captureApp(missionId, headSha, increment, screens, "");
+    }
+
+    /** Revisión Task 11 (3): la app Flutter de una misión con varios componentes vive en su carpeta ({@code app}). */
+    public Captures captureApp(String missionId, String headSha, int increment, Set<String> screens, String componentDir) {
+        return read(missionId, capture(missionId, headSha, increment, "APP", componentDir), screens);
     }
 
     /** La captura ya registrada de esa versión de las maquetas, si existe. */
@@ -149,10 +154,16 @@ public class DesignCaptureService {
     }
 
     private String capture(String missionId, String sha, int increment, String mode) {
+        return capture(missionId, sha, increment, mode, "");
+    }
+
+    private String capture(String missionId, String sha, int increment, String mode, String componentDir) {
         if (missionId == null || !MISSION_ID.matcher(missionId).matches()) {
             throw new IllegalStateException("missionId inválido: " + missionId);
         }
-        SandboxResult result = runner.designCapture(missionId, sha, increment, mode).orElseThrow(() ->
+        var job = componentDir == null || componentDir.isEmpty() ? runner.designCapture(missionId, sha, increment, mode)
+                : runner.designCapture(missionId, sha, increment, mode, componentDir);
+        SandboxResult result = job.orElseThrow(() ->
                 new IllegalStateException(runner.lastError() == null ? "El sandbox-runner no devolvió resultado."
                         : runner.lastError()));
         if (!"PASS".equals(result.overall())) {

@@ -164,7 +164,7 @@ class DesignReviewLoopTest {
 
     @Test
     void passingScreensVerifyWithoutModelCall() {
-        when(captures.captureApp(eq("M-1"), eq(HEAD), eq(1), any())).thenReturn(capture(Set.of("PANT-01"), goodPng));
+        when(captures.captureApp(eq("M-1"), eq(HEAD), eq(1), any(), eq(""))).thenReturn(capture(Set.of("PANT-01"), goodPng));
 
         var outcome = loop().run(context(), HEAD, 1);
 
@@ -178,7 +178,7 @@ class DesignReviewLoopTest {
 
     @Test
     void failingScreenGetsTwoRoundsThenAwaitsDecision() {
-        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any())).thenReturn(capture(Set.of("PANT-01"), badPng));
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenReturn(capture(Set.of("PANT-01"), badPng));
 
         var outcome = loop().run(context(), HEAD, 1);
 
@@ -194,7 +194,7 @@ class DesignReviewLoopTest {
         assertEquals("2".repeat(40), outcome.headSha());
         verify(reviews).save(eq("M-1"), argThat(r -> r.screen().equals("PANT-01")), eq(1), eq(2),
                 eq(DesignScreenReview.AWAITING_DECISION));
-        verify(captures, times(3)).captureApp(eq("M-1"), anyString(), eq(1), eq(Set.of("PANT-01")));
+        verify(captures, times(3)).captureApp(eq("M-1"), anyString(), eq(1), eq(Set.of("PANT-01")), eq(""));
     }
 
     @Test
@@ -209,7 +209,7 @@ class DesignReviewLoopTest {
             bx.put("PANT-01-" + size, boxes);
             bx.put("PANT-02-" + size, boxes);
         }
-        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any())).thenReturn(new Captures(pngs, bx));
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenReturn(new Captures(pngs, bx));
 
         loop().run(context(), HEAD, 1);
 
@@ -227,7 +227,7 @@ class DesignReviewLoopTest {
 
     @Test
     void designMismatchBlocksNotFails() {
-        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any())).thenReturn(capture(Set.of("PANT-01"), badPng));
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenReturn(capture(Set.of("PANT-01"), badPng));
 
         var outcome = loop().run(context(), HEAD, 1);
 
@@ -263,7 +263,7 @@ class DesignReviewLoopTest {
                         "el botón más abajo", null),
                 new DesignScreenReview(1, "PANT-02", "phone", 0.5, DesignScreenReview.ACCEPTED, 2, 0, "founder",
                         "así está bien", null)));
-        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any())).thenReturn(capture(Set.of("PANT-01", "PANT-02"), badPng));
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenReturn(capture(Set.of("PANT-01", "PANT-02"), badPng));
 
         var outcome = loop().run(context(), HEAD, 1);
 
@@ -277,7 +277,7 @@ class DesignReviewLoopTest {
 
     @Test
     void aCorrectionThatBreaksTheBuildIsDropped() throws Exception {
-        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any())).thenReturn(capture(Set.of("PANT-01"), badPng));
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenReturn(capture(Set.of("PANT-01"), badPng));
         var breaking = new FakeFront() {
             @Override
             public boolean rebuild(TeamMissionContext ctx, String headSha) {
@@ -293,5 +293,92 @@ class DesignReviewLoopTest {
         verify(workspace, times(2)).dropHeadCommit("M-1");
         assertEquals(HEAD, outcome.headSha());
         assertFalse(outcome.accepted());
+    }
+
+    // Revisión Task 11 (2): sin captura no hay diferencia de diseño: motivo propio, sin llamadas y sin AWAITING_DECISION.
+    @Test
+    void captureFailureBlocksWithItsOwnReason() {
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenThrow(new IllegalStateException("sandbox caído"));
+
+        var outcome = loop().run(context(), HEAD, 1);
+
+        assertFalse(outcome.accepted());
+        assertEquals("DESIGN_CAPTURE_FAILED: sandbox caído", DesignReviewLoop.blockReason(outcome));
+        assertEquals(0, front.prompts.size());
+        verify(reviews, never()).save(anyString(), any(), anyInt(), anyInt(), anyString());
+    }
+
+    @Test
+    void aCaptureFailureAfterACorrectionDoesNotFlipPassedScreens() {
+        front.screens = new java.util.LinkedHashSet<>(List.of("PANT-01", "PANT-02"));
+        var pngs = new LinkedHashMap<String, Path>();
+        var bx = new LinkedHashMap<String, List<Box>>();
+        for (var size : Captures.SIZES) {
+            pngs.put("PANT-01-" + size, badPng);
+            pngs.put("PANT-02-" + size, goodPng);
+            bx.put("PANT-01-" + size, boxes);
+            bx.put("PANT-02-" + size, boxes);
+        }
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq("")))
+                .thenReturn(new Captures(pngs, bx)).thenThrow(new IllegalStateException("se cayó"));
+
+        var outcome = loop().run(context(), HEAD, 1);
+
+        assertEquals(1, front.prompts.size());
+        assertTrue(DesignReviewLoop.blockReason(outcome).startsWith("DESIGN_CAPTURE_FAILED: se cayó"));
+        verify(reviews, never()).save(anyString(), any(), anyInt(), anyInt(), eq(DesignScreenReview.AWAITING_DECISION));
+        verify(reviews, times(1)).save(eq("M-1"), argThat(r -> r.screen().equals("PANT-02")), eq(1), eq(0),
+                eq(DesignScreenReview.PASSED));
+    }
+
+    @Test
+    void aScreenWithoutMockupCaptureIsACaptureFailure() {
+        when(captures.mockupCaptures("M-1", 1)).thenReturn(Optional.of(capture(Set.of("PANT-02"), mockupPng)));
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenReturn(capture(Set.of("PANT-01"), badPng));
+
+        var outcome = loop().run(context(), HEAD, 1);
+
+        assertTrue(DesignReviewLoop.blockReason(outcome).startsWith("DESIGN_CAPTURE_FAILED: "), DesignReviewLoop.blockReason(outcome));
+        assertTrue(outcome.captureError().contains("PANT-01-phone"));
+        assertEquals(0, front.prompts.size());
+    }
+
+    @Test
+    void aPreviewWithoutAppImageIsACaptureFailure() {
+        var app = capture(Set.of("PANT-01"), badPng);
+        var pngs = new LinkedHashMap<>(app.pngByScreenSize());
+        pngs.remove("PANT-01-desktop");
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq("")))
+                .thenReturn(new Captures(pngs, app.boxesByScreenSize()));
+
+        var outcome = loop().run(context(), HEAD, 1);
+
+        assertTrue(outcome.captureError().contains("PANT-01-desktop"), outcome.captureError());
+        assertEquals(0, front.prompts.size());
+        verify(reviews, never()).save(anyString(), any(), anyInt(), anyInt(), anyString());
+    }
+
+    @Test
+    void aStorageErrorIsARealError() throws Exception {
+        when(captures.captureApp(eq("M-1"), anyString(), eq(1), any(), eq(""))).thenReturn(capture(Set.of("PANT-01"), badPng));
+        when(workspace.filesAtCommit(eq("M-1"), anyString())).thenThrow(new java.io.IOException("git roto"));
+
+        assertThrows(IllegalStateException.class, () -> loop().run(context(), HEAD, 1));
+    }
+
+    @Test
+    void theAppIsCapturedInTheFlutterComponentDir() {
+        var base = context();
+        var plan = new TeamPlan("App", null, null, List.of(
+                new PlannedTask("frontend-ui", "WORK", "UI", "Pantallas", List.of("UI"), List.of("app/lib/pedidos/presentation")),
+                new PlannedTask("qa", "VALIDATION", "STATIC_REVIEW", "Revisar", List.of("QA"), List.of())),
+                List.of(), "DOTNET_APP", List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")), List.of(), null,
+                List.of("DOTNET_APP", "FLUTTER_WEB_APP"));
+        var ctx = new TeamMissionContext("M-1", "app", base.team(), plan);
+        assertEquals("app", plan.resolvedComponents().stream()
+                .filter(c -> c.profile() == com.aicompany.core.model.StackProfile.FLUTTER_WEB_APP).findFirst().orElseThrow().dir());
+        when(captures.captureApp(eq("M-1"), eq(HEAD), eq(1), any(), eq("app"))).thenReturn(capture(Set.of("PANT-01"), goodPng));
+
+        assertTrue(loop().run(ctx, HEAD, 1).accepted());
     }
 }

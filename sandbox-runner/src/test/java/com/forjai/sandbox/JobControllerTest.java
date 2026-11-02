@@ -102,9 +102,24 @@ class JobControllerTest {
     void designCaptureRunsCaptureStep() {
         var result = new SandboxResult("PASS", List.of(), "diseno-2-mockups-x");
         when(runner.capture("M-1", "a".repeat(40), ExecutionProfile.FLUTTER_WEB_APP, 2,
-                ExecutionProfile.CaptureMode.MOCKUPS)).thenReturn(result);
+                ExecutionProfile.CaptureMode.MOCKUPS, "")).thenReturn(result);
         var response = controller.run("secreto", capture("FLUTTER_WEB_APP", 2, "MOCKUPS"));
         assertEquals(200, response.getStatusCode().value());
         assertSame(result, response.getBody());
+    }
+
+    // Revisión Task 11 (3): en una misión con varios componentes la app Flutter vive en su carpeta (app/).
+    @Test
+    void designCaptureValidatesAndPassesTheComponentDir() {
+        var bad = new JobController.JobRequest("DESIGN_CAPTURE", "M-1", "a".repeat(40), "FLUTTER_WEB_APP", "../x", null,
+                1, null, null, "APP");
+        assertEquals(400, controller.run("secreto", bad).getStatusCode().value());
+        verifyNoInteractions(runner);
+        var result = new SandboxResult("PASS", List.of(), "diseno-1-app-x");
+        when(runner.capture("M-1", "a".repeat(40), ExecutionProfile.FLUTTER_WEB_APP, 1,
+                ExecutionProfile.CaptureMode.APP, "app")).thenReturn(result);
+        var ok = new JobController.JobRequest("DESIGN_CAPTURE", "M-1", "a".repeat(40), "FLUTTER_WEB_APP", "app", null,
+                1, null, null, "APP");
+        assertSame(result, controller.run("secreto", ok).getBody());
     }
 }
