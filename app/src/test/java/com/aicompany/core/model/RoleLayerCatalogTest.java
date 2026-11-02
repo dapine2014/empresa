@@ -95,6 +95,12 @@ class RoleLayerCatalogTest {
         assertFalse(RoleLayerCatalog.describe().contains("Kael/GAME_DEV, Orion"), RoleLayerCatalog.describe());
     }
 
+    @Test void describeNamesMilaAndOrionAsFront() {
+        var text = RoleLayerCatalog.describe();
+        assertTrue(text.contains("Mila/UI_UX y Orion/UI_UX"), text);
+        assertFalse(text.contains("Orion/SPECIALIST_3D"), text);
+    }
+
     // Revisión final F4: en un juego con escenas Forjai escribe la .tscn; Kael escribe el script.
     @Test void kaelWritesTheMainSceneScriptNotATscnForjaiAlreadyCreated() {
         var text = RoleLayerCatalog.describe();

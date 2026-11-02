@@ -62,6 +62,21 @@ public class TeamMemoryService {
                 .toList();
     }
 
+    /** Código de rol del catálogo fijo para un agente; vacío si no existe. */
+    static Optional<String> roleCodeOf(String agentId) {
+        return roleOf(agentId).map(RoleDefinition::roleCode);
+    }
+
+    /** Capabilities del catálogo fijo para un agente; vacío si no existe. */
+    static List<String> capabilitiesOf(String agentId) {
+        return roleOf(agentId).map(RoleDefinition::capabilities).orElse(List.of());
+    }
+
+    private static Optional<RoleDefinition> roleOf(String agentId) {
+        return TEAMS.stream().flatMap(team -> team.roles().stream())
+                .filter(role -> role.agentId().equals(agentId)).findFirst();
+    }
+
     private record RoleDefinition(
             String agentId,
             String roleCode,
@@ -88,11 +103,13 @@ public class TeamMemoryService {
                     new RoleDefinition("devops", "DATA_ARCHITECT", List.of(
                             "postgresql", "data-modeling", "persistence", "migrations", "ef-core")),
                     new RoleDefinition("frontend-ui", "UI_UX", List.of(
-                            "flutter", "dart", "ui", "ux", "design-system", "web-ui", "game-ui")),
+                            "flutter", "dart", "ui", "ux", "design-system", "web-ui", "game-ui",
+                            "visual-design", "html-css-svg-mockups")),
                     new RoleDefinition("interaction-design", "GAME_DEV", List.of(
                             "godot", "csharp", "gameplay", "game-loop", "physics")),
-                    new RoleDefinition("specialist-3d", "SPECIALIST_3D", List.of(
-                            "blender", "3d-modeling", "rigging", "gltf")),
+                    new RoleDefinition("specialist-3d", "UI_UX", List.of(
+                            "flutter", "dart", "ui", "ux", "design-system", "web-ui", "game-ui",
+                            "visual-design", "html-css-svg-mockups", "blender", "3d-modeling", "rigging")),
                     new RoleDefinition("product", "CREATIVE", List.of(
                             "2d-art", "textures", "audio", "sfx")),
                     new RoleDefinition("qa", "QA", List.of(

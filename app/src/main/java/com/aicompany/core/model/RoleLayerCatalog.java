@@ -115,12 +115,12 @@ public final class RoleLayerCatalog {
         return "Aria/PRODUCT_OWNER y Neo/TECH_LEAD no escriben código (no les asignes tareas); "
                 + "Iris/BACKEND → DOMAIN, APPLICATION y API (e INFRASTRUCTURE si no participa Diego); "
                 + "Diego/DATA_ARCHITECT → INFRASTRUCTURE; "
-                + "Mila/UI_UX → PRESENTATION y los archivos de entrada (y DOMAIN/APPLICATION/INFRASTRUCTURE si no "
+                + "Mila/UI_UX y Orion/UI_UX (fronts intercambiables) → PRESENTATION y los archivos de entrada (y DOMAIN/APPLICATION/INFRASTRUCTURE si no "
                 + "participa Iris); Vera/QA → los tests de aceptación (después del código) y la revisión final; "
                 + "Kael/GAME_DEV → GAME (todo game/, incluidos project.godot y el script de la escena principal; si Forjai "
                 + "ya creó la .tscn de una escena, no la escribas; y DOMAIN/APPLICATION si no participa Iris), solo en GODOT_DOTNET_GAME; Vera/QA también escribe las partidas simuladas "
                 + "en game/playthroughs; "
-                + "Orion/SPECIALIST_3D, Luna/CREATIVE y Andrea/DEVOPS todavía no están habilitados "
+                + "Luna/CREATIVE y Andrea/DEVOPS todavía no están habilitados "
                 + "(fase " + DevelopmentPhase.CURRENT + ")";
     }
 }
