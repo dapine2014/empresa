@@ -131,4 +131,20 @@ class StaticValidationStatusTest {
         assertEquals(StaticValidationStatus.FAILED, StaticValidationStatus.compute(missing, null, green, true));
         assertEquals(StaticValidationStatus.UNVALIDATED, StaticValidationStatus.compute(coverage, null, null, true));
     }
+
+    // Spec 2026-11-01 diseño visual §14: sin todas las pantallas aprobadas (o aceptadas) el incremento no es VERIFIED,
+    // pero tampoco FAILED (una diferencia de diseño no entra a la corrección automática).
+    @Test
+    void notVerifiedWhileDesignNotAccepted() {
+        var coverage = List.of(StaticCheck.pass("SCENARIO_COVERAGE", "2/2", null, List.of()));
+        var green = new SandboxResult("PASS", List.of(new SandboxResult.StepResult("test", "PASS", 0, 1, "", 2, 0)));
+        assertEquals(StaticValidationStatus.VERIFIED, StaticValidationStatus.compute(coverage, null, green, true, true));
+        assertEquals(StaticValidationStatus.UNVALIDATED, StaticValidationStatus.compute(coverage, null, green, true, false));
+        var red = new SandboxResult("FAIL", List.of(new SandboxResult.StepResult("test", "FAIL", 1, 1, "", 1, 1)));
+        assertEquals(StaticValidationStatus.FAILED, StaticValidationStatus.compute(coverage, null, red, true, false));
+        assertEquals(StaticValidationStatus.UNVALIDATED,
+                StaticValidationStatus.compute(ALL_PASS, review(null), green, false, false));
+        assertEquals(StaticValidationStatus.VERIFIED,
+                StaticValidationStatus.compute(ALL_PASS, review(null), green, false, true));
+    }
 }

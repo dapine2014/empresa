@@ -17,5 +17,7 @@ public enum PolicyKey {
     SPEC_APPROVAL_REQUIRED,
     MAX_AUTO_CORRECTIONS,
     MAX_MISSION_COST_USD,
-    JOINT_REVIEW_ENABLED
+    JOINT_REVIEW_ENABLED,
+    /** Spec 2026-11-01 diseño visual §12: SSIM mínimo de la app contra la maqueta aprobada. */
+    DESIGN_SIMILARITY_THRESHOLD
 }

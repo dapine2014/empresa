@@ -98,6 +98,16 @@ public class DesignCaptureService {
         return captures;
     }
 
+    /**
+     * Vuelve a capturar las maquetas de esa versión desde un commit que ya las tiene ({@code .forjai/mockups/}), sin
+     * commitear nada (el ciclo de diseño no mueve HEAD para esto), y registra la carpeta en la versión.
+     */
+    public Captures recaptureMockups(String missionId, String sha, int increment, int version) {
+        var dir = capture(missionId, sha, increment, "MOCKUPS");
+        visuals.setCaptureDir(missionId, version, dir);
+        return read(missionId, dir, null);
+    }
+
     /** Captura la app construida ({@code ?preview=<PANT-NN>}) en ese commit; solo se devuelven las pantallas pedidas. */
     public Captures captureApp(String missionId, String headSha, int increment, Set<String> screens) {
         return read(missionId, capture(missionId, headSha, increment, "APP"), screens);

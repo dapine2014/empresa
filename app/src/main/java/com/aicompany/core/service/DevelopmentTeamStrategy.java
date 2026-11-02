@@ -578,6 +578,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
         var status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
                 : StaticValidationStatus.compute(checks, review, sandboxResult);
+        // Spec 2026-11-01 diseño visual §11-14: con el código en verde, cada pantalla se compara con su maqueta aprobada.
+        var design = designReview(context, headSha, status, expectedProjects, components);
+        headSha = design.headSha();
+        if (!design.accepted()) {
+            status = StaticValidationStatus.compute(checks, coverageMode ? null : review, sandboxResult, coverageMode, false);
+        }
         // Spec Diego ambientes §2: con el código VERIFIED, la cascada de ambientes corre ANTES de registrar el commit
         // verificado; solo una falla que un agente puede corregir es un chequeo que falla (revisión final, I1).
         var databaseText = "";
@@ -588,8 +594,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             if (databaseStep.check() != null) {
                 checks = new ArrayList<>(checks);
                 checks.add(databaseStep.check());
-                status = coverageMode ? StaticValidationStatus.compute(checks, null, sandboxResult, true)
-                        : StaticValidationStatus.compute(checks, review, sandboxResult);
+                status = StaticValidationStatus.compute(checks, coverageMode ? null : review, sandboxResult,
+                        coverageMode, design.accepted());
             }
         }
         if (status == StaticValidationStatus.VERIFIED) {
@@ -650,7 +656,67 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         repairRounds, autofixRounds, dependencyOutcome, triageNotes)
                         + (databaseText.isEmpty() ? "" : "\nBase de datos: " + databaseText)
                         + (deliveryText.isEmpty() ? "" : "\nEntrega: " + deliveryText)
-                        + (stashNote.isEmpty() ? "" : "\n" + stashNote));
+                        + (design.note().isEmpty() ? "" : "\nDiseño: " + design.note())
+                        + (stashNote.isEmpty() ? "" : "\n" + stashNote),
+                DesignReviewLoop.blockReason(design));
+    }
+
+    private DesignCaptureService designCaptures;
+    private DesignReviewMemoryService designReviews;
+    private CompanyPolicyService policies;
+
+    /** Spec 2026-11-01 diseño visual §11-14: el ciclo de diseño. Opcional: sin él, el diseño cuenta como aceptado. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDesignReview(DesignCaptureService designCaptures, DesignReviewMemoryService designReviews,
+                                CompanyPolicyService policies) {
+        this.designCaptures = designCaptures;
+        this.designReviews = designReviews;
+        this.policies = policies;
+    }
+
+    /**
+     * Corre el ciclo de diseño solo si el código quedó VERIFIED y hay diseño visual aprobado; si no, aceptado sin cambios.
+     * Las correcciones usan el mismo {@link #generate} (mismos gates) y otra pasada VERIFY del sandbox. Una diferencia
+     * de diseño nunca es FAILED: el motivo del freno sale en el resultado y MissionExecutor deja la misión BLOCKED.
+     */
+    private DesignReviewLoop.Outcome designReview(TeamMissionContext context, String headSha,
+                                                  StaticValidationStatus status, List<String> expectedProjects,
+                                                  List<AppComponent> components) {
+        var missionId = context.missionId();
+        if (status != StaticValidationStatus.VERIFIED || designCaptures == null || designReviews == null
+                || policies == null || visuals == null || approvedVisual(missionId).isEmpty()) {
+            return new DesignReviewLoop.Outcome(true, List.of(), headSha);
+        }
+        var front = new DesignReviewLoop.Front() {
+            @Override
+            public Set<String> screens(TeamMissionContext ctx) {
+                return incrementScreens(ctx.missionId());
+            }
+
+            @Override
+            public String correct(TeamMissionContext ctx, PlannedTask owner, String prompt, List<String> required,
+                                  String head, String commitId) throws Exception {
+                var id = taskId(ctx, owner.agentId());
+                var result = generate(id, missionId, owner.agentId(), prompt, owner.ownedPathsOrEmpty(),
+                        expectedProjects, required, ctx, head);
+                var record = workspace.commitAgentWork(missionId, commitId, owner.agentId(),
+                        agentName(ctx, owner.agentId()), result);
+                events.publish("EMPRESA_TASK_COMMITTED", missionId, id, owner.agentId(),
+                        Map.of("commitSha", record.sha(), "files", record.files(), "designRound", commitId));
+                return record.sha();
+            }
+
+            @Override
+            public boolean rebuild(TeamMissionContext ctx, String head) {
+                return verifyComponents(missionId, head, components).map(SandboxResult::passed).orElse(false);
+            }
+        };
+        var increment = currentIncrementOrNull(missionId);
+        var outcome = new DesignReviewLoop(designCaptures, designReviews, visuals, policies, workspace, jsonMapper, front)
+                .run(context, headSha, increment == null ? 1 : increment);
+        events.publish("EMPRESA_DESIGN_REVIEW_COMPLETED", missionId, null, "forjai",
+                Map.of("accepted", outcome.accepted(), "awaiting", outcome.awaiting(), "commitSha", outcome.headSha()));
+        return outcome;
     }
 
     /** Resultado de la base para el estado verificable; {@code check} null = no suma chequeo (no cambia la validación). */

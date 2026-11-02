@@ -54,6 +54,17 @@ public enum StaticValidationStatus {
         return sandbox.passed() && sandbox.testsPassed() > 0 ? VERIFIED : FAILED;
     }
 
+    /**
+     * Spec 2026-11-01 diseño visual §14: con diseño visual aprobado, VERIFIED exige además que todas las pantallas del
+     * incremento alcancen el umbral o que el decisor las acepte. Una diferencia de diseño no es FAILED (no entra a la
+     * corrección automática): lo que sería VERIFIED queda UNVALIDATED.
+     */
+    public static StaticValidationStatus compute(List<StaticCheck> checks, StaticReviewResult review, SandboxResult sandbox,
+                                                 boolean coverageMode, boolean designAccepted) {
+        var status = compute(checks, review, sandbox, coverageMode);
+        return status == VERIFIED && !designAccepted ? UNVALIDATED : status;
+    }
+
     public static StaticValidationStatus compute(List<StaticCheck> checks, StaticReviewResult review, SandboxResult sandbox) {
 
         if (checks == null || checks.isEmpty() || checks.stream().anyMatch(c -> !c.passed())) {

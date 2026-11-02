@@ -169,4 +169,18 @@ class DesignCaptureServiceTest {
         assertTrue(service().mockupImage("M-1", "PANT-01-phone.png").isEmpty());
         assertTrue(service().mockupCaptures("M-1", 1).isEmpty());
     }
+
+    // Task 11: la versión aprobada sin captura se vuelve a capturar desde un commit que ya tiene las maquetas, sin commit.
+    @Test
+    void recapturesTheMockupsFromAnExistingCommitWithoutCommitting() throws Exception {
+        var dir = "diseno-1-mockups-" + JOB;
+        when(runner.designCapture("M-1", SHA, 1, "MOCKUPS")).thenReturn(Optional.of(new SandboxResult("PASS", List.of(), dir)));
+        Files.write(staging("M-1", dir).resolve("PANT-01-phone.png"), new byte[]{1});
+
+        var captures = service().recaptureMockups("M-1", SHA, 1, 2);
+
+        assertEquals(Set.of("PANT-01-phone"), captures.pngByScreenSize().keySet());
+        verify(visuals).setCaptureDir("M-1", 2, dir);
+        verifyNoInteractions(workspace);
+    }
 }

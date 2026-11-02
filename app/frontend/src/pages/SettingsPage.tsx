@@ -23,6 +23,7 @@ const POLICY_LABELS: Record<PolicyKey, string> = {
   MAX_AUTO_CORRECTIONS: 'Correcciones automáticas por incremento (máximo)',
   MAX_MISSION_COST_USD: 'Costo máximo de modelos por misión (US$)',
   JOINT_REVIEW_ENABLED: 'Revisión conjunta de Neo y Aria de HU y diseño antes de tu aprobación (1 = sí, 0 = no)',
+  DESIGN_SIMILARITY_THRESHOLD: 'Similitud mínima de cada pantalla con su maqueta aprobada (SSIM, 0 a 1)',
 }
 
 function PolicyRow({ policy }: { policy: PolicySnapshot }) {

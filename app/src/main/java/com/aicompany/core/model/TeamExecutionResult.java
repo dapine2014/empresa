@@ -13,6 +13,13 @@ public sealed interface TeamExecutionResult {
     record AgentOutcomes(List<AgentExecutionOutcome> outcomes) implements TeamExecutionResult {
     }
 
-    record Development(String resultsForCeo, String verifiableState) implements TeamExecutionResult {
+    /**
+     * {@code blockReason} no nulo (spec 2026-11-01 diseño visual §14, {@code DESIGN_MISMATCH: …}): la misión se frena en
+     * BLOCKED para el decisor en vez de consolidarse.
+     */
+    record Development(String resultsForCeo, String verifiableState, String blockReason) implements TeamExecutionResult {
+        public Development(String resultsForCeo, String verifiableState) {
+            this(resultsForCeo, verifiableState, null);
+        }
     }
 }

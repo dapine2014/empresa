@@ -65,6 +65,8 @@ public class CompanyPolicyService {
         map.put(PolicyKey.MAX_MISSION_COST_USD, 10.0);
         // Revisión conjunta (spec 2026-10-15): Neo y Aria resuelven las contradicciones de HU y diseño antes del fundador.
         map.put(PolicyKey.JOINT_REVIEW_ENABLED, 1.0);
+        // Spec 2026-11-01 diseño visual §12: SSIM ≥ 0,90 y ningún elemento faltante (se calibra con la primera misión).
+        map.put(PolicyKey.DESIGN_SIMILARITY_THRESHOLD, 0.90);
         return map;
     }
 

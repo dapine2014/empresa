@@ -127,6 +127,25 @@ class MissionExecutorTeamTest {
         verify(analysis, never()).execute(any(), any());
     }
 
+    // Spec 2026-11-01 diseño visual §14: una diferencia de diseño frena la misión en BLOCKED (decide el fundador), sin
+    // consolidar ni marcarla FAILED.
+    @Test
+    void aDesignMismatchBlocksTheMissionInsteadOfConsolidating() throws Exception {
+        when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));
+        when(planner.plan(anyString(), anyString(), anyString(), any())).thenReturn(planned("TEAM-DEVELOPMENT"));
+        when(development.execute(any(), any())).thenReturn(new TeamExecutionResult.Development("reporte",
+                "ESTADO VERIFICABLE X", "DESIGN_MISMATCH: PANT-01"));
+
+        executor.executeAsync("M-1", "crear una app").get();
+
+        verify(memory).updateMission(eq("M-1"), eq(MissionStatus.BLOCKED), anyInt(), anyString(),
+                eq("DESIGN_MISMATCH: PANT-01\n\nESTADO VERIFICABLE X"));
+        verify(memory, never()).updateMission(eq("M-1"), eq(MissionStatus.FAILED), anyInt(), anyString(), anyString());
+        verify(memory, never()).updateMission(eq("M-1"), eq(MissionStatus.AWAITING_INVESTOR), anyInt(), anyString(),
+                anyString());
+        verify(ceoService, never()).executeMission(anyString(), anyString(), anyString(), anyString());
+    }
+
     @Test
     void developmentResultsEndWithTheJavaGeneratedVerifiableState() throws Exception {
         when(memory.teamId("M-1")).thenReturn(Optional.of("TEAM-DEVELOPMENT"));

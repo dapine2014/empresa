@@ -1429,6 +1429,9 @@ public class MissionExecutor {
             case TeamExecutionResult.AgentOutcomes outcomes -> consolidateAgentOutcomes(
                     missionId, instruction, outcomes.outcomes(),
                     companyPolicyService.activeValue(PolicyKey.SEED_CAPITAL_USD));
+            // Spec 2026-11-01 diseño visual §14: una diferencia de diseño no es una falla; decide el fundador.
+            case TeamExecutionResult.Development development when development.blockReason() != null ->
+                    block(missionId, development.blockReason() + "\n\n" + development.verifiableState());
             case TeamExecutionResult.Development development ->
                     consolidateDevelopment(missionId, instruction, development);
         }

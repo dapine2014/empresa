@@ -129,6 +129,7 @@ Eventos que antes solo quedaban en el log. `MissionEventText` los resume en espa
 | `EMPRESA_TASK_ATTEMPT_REJECTED` | el agente de la tarea | `attempt` (int, 1-based), `reasons` (las 3 primeras, de 200 caracteres como máximo) |
 | `EMPRESA_MODEL_SWITCHED` | el actor | `operation`, `from`, `to`, `kind` (`FREE` \| `PAID` \| `LOCAL`); solo dentro de una misión |
 | `EMPRESA_DELIVERY_PACKAGED` | `delivery` | `increment` (int), `status` (`READY` \| `PARTIAL` \| `FAILED`), `targets` (ids de los compilados generados), `path` (zip de la entrega). Nunca lleva la clave de Android |
+| `EMPRESA_DESIGN_REVIEW_COMPLETED` | `forjai` | `accepted` (bool), `awaiting` (pantallas `PANT-NN` esperando decisión), `commitSha` (HEAD tras las correcciones de diseño). Las correcciones salen como `EMPRESA_TASK_COMMITTED` con `designRound` (`<misión>-DESIGN-R<n>`) |
 | `EMPRESA_DELIVERY_FAILED` | `delivery` | `increment` (int), `error` (texto; se rompió el empaquetado, no solo un target) |
 
 `EMPRESA_SANDBOX_VERIFICATION_COMPLETED` (resultado final, una sola vez) suma `round` (-1), `failedStep` y `compileErrors`.
