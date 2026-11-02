@@ -16,7 +16,9 @@ public final class BaselineDependencies {
             // Spec 2026-10-02 §2.5: persistencia de Diego (DBA), precargada en sandbox/images/dotnet-app.
             "NUGET:npgsql@8.0.5",
             // Spec 2026-10-02 B1 §2: la app llama a la API (precargado en sandbox/images/flutter-web-app).
-            "PUB:http@1.2.2");
+            "PUB:http@1.2.2",
+            // Spec 2026-11-01 diseño visual: SVG del sistema visual (precargado en sandbox/images/flutter-web-app).
+            "PUB:flutter_svg@" + FlutterThemeFiles.FLUTTER_SVG_VERSION);
 
     public static boolean contains(DependencyRef ref) {
         return IDS.contains(ref.id());

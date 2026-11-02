@@ -1531,9 +1531,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         try {
             var head = workspace.headSha(context.missionId());
             var startHead = head;
-            var missing = generated.stream()
+            var missing = new ArrayList<>(generated.stream()
                     .filter(file -> readOrNull(context.missionId(), startHead, file.path()) == null)
-                    .toList();
+                    .toList());
+            // Diseño visual: el tema se regenera cuando cambia la versión (solo se commitea lo que difiere de HEAD).
+            missing.addAll(visualFiles(context, startHead, List.of()));
             if (!missing.isEmpty()) {
                 // Spec 2026-11-01 front con diseño visual: en la ronda 0 el HEAD puede ser solo el commit de maquetas de
                 // Forjai (antes de la aprobación); entonces es el scaffold completo, con la tarea de siempre.
@@ -1554,7 +1556,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
 
     private CommittedWork commitProjectScaffold(TeamMissionContext context) {
         var plan = context.plan();
-        var files = ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of());
+        var files = new ArrayList<>(ComponentScaffold.generate(plan.resolvedComponents(), plan.contextNames(), Map.of()));
+        files.addAll(visualFiles(context, null, List.of()));
         if (files.isEmpty()) {
             return null;
         }
@@ -1705,6 +1708,92 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setRequirements(RequirementsMemoryService requirementsMemory) {
         this.requirementsMemory = requirementsMemory;
+    }
+
+    private VisualDesignMemoryService visuals;
+
+    /** Spec 2026-11-01 front con diseño visual: el diseño aprobado genera tema y vistas previas. Opcional. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setVisualDesign(VisualDesignMemoryService visuals) {
+        this.visuals = visuals;
+    }
+
+    private java.util.Optional<com.aicompany.core.agent.model.VisualDesign> approvedVisual(String missionId) {
+        if (visuals == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            return visuals.approved(missionId).map(v -> jsonMapper.readValue(v.designJson(),
+                    com.aicompany.core.agent.model.VisualDesign.class));
+        } catch (RuntimeException ex) {
+            log.warn("MISSION {} - could not read the approved visual design: {}", missionId, ex.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * Tema, vistas previas, SVG y pubspec de cada componente Flutter, solo los que difieren de headSha (null = repositorio
+     * nuevo). Vacío sin diseño visual aprobado: las apps sin él conservan el scaffold de siempre.
+     */
+    List<DevelopmentResult.GeneratedFile> visualFiles(TeamMissionContext context, String headSha,
+                                                      List<DevelopmentResult.GeneratedFile> pending) {
+        var design = approvedVisual(context.missionId());
+        if (design.isEmpty()) {
+            return List.of();
+        }
+        var out = new ArrayList<DevelopmentResult.GeneratedFile>();
+        for (var component : context.plan().resolvedComponents()) {
+            if (component.profile() != StackProfile.FLUTTER_WEB_APP) {
+                continue;
+            }
+            var paths = new ArrayList<String>();
+            pending.stream().map(DevelopmentResult.GeneratedFile::path).filter(java.util.Objects::nonNull).forEach(paths::add);
+            if (headSha != null) {
+                try {
+                    paths.addAll(workspace.filesAtCommit(context.missionId(), headSha));
+                } catch (Exception ex) {
+                    log.warn("MISSION {} - could not list HEAD for the previews: {}", context.missionId(), ex.getMessage());
+                }
+            }
+            var previews = com.aicompany.core.model.FlutterThemeFiles.previewPaths(paths.stream()
+                    .filter(component::owns).map(p -> component.strip(p).orElse(p)).toList());
+            for (var file : com.aicompany.core.model.FlutterThemeFiles.files(design.get(), previews).entrySet()) {
+                var path = component.prefix(file.getKey());
+                if (!file.getValue().equals(headSha == null ? null : readOrNull(context.missionId(), headSha, path))) {
+                    out.add(new DevelopmentResult.GeneratedFile(path, file.getValue()));
+                }
+            }
+            var pubspecPath = component.prefix("pubspec.yaml");
+            var pubspec = pending.stream().filter(f -> pubspecPath.equals(f.path())).map(DevelopmentResult.GeneratedFile::content)
+                    .findFirst().orElse(headSha == null ? null : readOrNull(context.missionId(), headSha, pubspecPath));
+            if (pubspec != null) {
+                var merged = com.aicompany.core.model.FlutterThemeFiles.mergePubspec(pubspec, design.get());
+                if (!merged.equals(pubspec) || pending.stream().anyMatch(f -> pubspecPath.equals(f.path()))) {
+                    out.add(new DevelopmentResult.GeneratedFile(pubspecPath, merged));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** El front escribe el pubspec y las vistas previas: Java mezcla fuentes/SVG y regenera la tabla en el mismo commit. */
+    private DevelopmentResult withVisualFiles(TeamMissionContext context, List<String> owned, String headSha,
+                                              DevelopmentResult result) {
+        if (result == null || result.files() == null || approvedVisual(context.missionId()).isEmpty()
+                || context.plan().resolvedComponents().stream().noneMatch(c ->
+                c.profile() == StackProfile.FLUTTER_WEB_APP && owned.stream().anyMatch(c::owns))) {
+            return result;
+        }
+        var returned = result.files().stream().filter(java.util.Objects::nonNull).toList();
+        var extra = visualFiles(context, headSha, returned);
+        if (extra.isEmpty()) {
+            return result;
+        }
+        var byPath = new LinkedHashMap<String, DevelopmentResult.GeneratedFile>();
+        returned.forEach(f -> byPath.put(f.path(), f));
+        extra.forEach(f -> byPath.put(f.path(), f));
+        return new DevelopmentResult(result.summary(), List.copyOf(byPath.values()), result.packages(), result.complete(),
+                result.remainingPaths());
     }
 
     private InteractionDesignMemoryService designs;
@@ -1982,13 +2071,13 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
         }
         if (checks.isEmpty()) {
-            return requiredPaths == null
+            return withVisualFiles(context, owned, headSha, requiredPaths == null
                     ? runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects).join()
-                    : runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects, requiredPaths).join();
+                    : runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects, requiredPaths).join());
         }
-        return runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects,
+        return withVisualFiles(context, owned, headSha, runtime.generate(id, missionId, agentId, prompt, owned, expectedProjects,
                 requiredPaths == null ? owned : requiredPaths,
-                result -> checks.stream().flatMap(c -> c.apply(result).stream()).toList()).join();
+                result -> checks.stream().flatMap(c -> c.apply(result).stream()).toList()).join());
     }
 
     /**
@@ -2021,8 +2110,15 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 log.warn("MISSION {} - could not read HEAD for the layer check: {}", context.missionId(), ex.getMessage());
             }
         }
-        return result -> layerErrors(plan.resolvedComponents(), plan.contextNames(), head,
-                result.files() == null ? List.of() : result.files(), owned);
+        var reserved = approvedVisual(context.missionId()).isPresent();
+        return result -> {
+            var files = result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files();
+            var errors = new ArrayList<>(layerErrors(plan.resolvedComponents(), plan.contextNames(), head, files, owned));
+            if (reserved) {
+                errors.addAll(com.aicompany.core.model.FlutterThemeFiles.reservedErrors(files));
+            }
+            return errors;
+        };
     }
 
     static List<String> layerErrors(List<AppComponent> components, List<String> contexts, Map<String, String> head,

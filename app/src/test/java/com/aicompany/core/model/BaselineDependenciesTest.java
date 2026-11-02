@@ -17,4 +17,9 @@ class BaselineDependenciesTest {
     void httpIsPreapprovedForFlutter() {
         assertTrue(BaselineDependencies.contains(new DependencyRef("PUB", "http", "1.2.2")));
     }
+
+    @Test
+    void flutterSvgIsPreapprovedForTheVisualDesign() {
+        assertTrue(BaselineDependencies.contains(new DependencyRef("PUB", "flutter_svg", FlutterThemeFiles.FLUTTER_SVG_VERSION)));
+    }
 }

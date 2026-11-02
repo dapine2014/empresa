@@ -2531,4 +2531,38 @@ class DevelopmentTeamStrategyTest {
         assertTrue(block.contains("ATENCIÓN: 1 de estos errores ya estaban en tu corrección anterior"), block);
         assertFalse(DevelopmentTeamStrategy.repairBlock(List.of(fresh), Map.of(), java.util.Set.of()).contains("ATENCIÓN"));
     }
+
+    // Spec 2026-11-01 diseño visual: con diseño aprobado Java escribe tema, host de vistas previas y mezcla el pubspec.
+    @Test
+    void visualFilesAreEmptyWithoutAnApprovedDesignAndComplete_withOne() throws Exception {
+        var visuals = mock(VisualDesignMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        var base = context();
+        var plan = new TeamPlan("App", null, null, base.plan().tasks(), List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")), base.plan().ubiquitousLanguage());
+        var ctx = new TeamMissionContext("M-1", "app", base.team(), plan);
+        when(visuals.approved("M-1")).thenReturn(Optional.empty());
+        assertEquals(List.of(), strategy.visualFiles(ctx, null, List.of()));
+
+        var json = tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                FlutterThemeFilesTestDesign.get());
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(2, json, "APPROVED", 1, 1, "")));
+        var files = strategy.visualFiles(ctx, null, List.of(
+                new DevelopmentResult.GeneratedFile("lib/pedidos/presentation/previews/pant_01_preview.dart", "x"),
+                new DevelopmentResult.GeneratedFile("pubspec.yaml", "name: pedidos\ndependencies:\n  flutter:\n    sdk: flutter\n")));
+        var byPath = files.stream().collect(java.util.stream.Collectors.toMap(DevelopmentResult.GeneratedFile::path,
+                DevelopmentResult.GeneratedFile::content));
+        assertTrue(byPath.get("lib/theme/app_theme.dart").contains("Color(0xFF1F4E79)"));
+        assertTrue(byPath.get("lib/forjai/previews.dart").contains("Pant01Preview"));
+        assertTrue(byPath.get("pubspec.yaml").contains("assets/fonts/Roboto-Bold.ttf"));
+        assertTrue(byPath.containsKey("assets/svg/logo.svg"));
+    }
+
+    private static final class FlutterThemeFilesTestDesign {
+        static com.aicompany.core.agent.model.VisualDesign get() {
+            return new com.aicompany.core.agent.model.VisualDesign(VisualDesignWriterTest.system("#FFFFFF"),
+                    new com.aicompany.core.agent.model.Mockups(List.of(), List.of(
+                            new com.aicompany.core.agent.model.Mockups.SvgAsset("logo", "<svg/>"))));
+        }
+    }
 }
