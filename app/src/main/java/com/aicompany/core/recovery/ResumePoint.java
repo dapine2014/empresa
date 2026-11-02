@@ -10,10 +10,12 @@ public record ResumePoint(Stage stage, int round, RoundKind kind, Integer increm
      * DESIGN / DESIGN_ADJUSTMENT (spec 2026-10-14 Kael §1.2): Kael diseña (o ajusta) sobre el borrador de Aria, sin
      * repetir a Aria. JOINT_REVIEW (spec 2026-10-15): Neo y Aria revisan el par DRAFT (HU + diseño) sin repetir a Aria ni
      * a Kael. CONTRACT_ADJUSTMENT (spec 2026-10-16): Aria rehace el contrato con el ajuste reclamado; un contrato DRAFT se
-     * retoma en AWAIT_APPROVAL.
+     * retoma en AWAIT_APPROVAL. DESIGN_DECISION (spec 2026-11-01 diseño visual §14, R14): tras la decisión de diseño
+     * (o una falla de captura), corre el plan guardado de la misma ronda sin modelos antes de VERIFY; nunca sale de
+     * {@link #of}, la arma MissionRecoveryService.resumeDesign.
      */
     public enum Stage { REQUIREMENTS, ADJUSTMENT, AWAIT_APPROVAL, PLAN, GENERATE, VERIFY, INTERRUPT, HUMAN_VERIFY, DESIGN,
-        DESIGN_ADJUSTMENT, JOINT_REVIEW, CONTRACT_ADJUSTMENT }
+        DESIGN_ADJUSTMENT, JOINT_REVIEW, CONTRACT_ADJUSTMENT, DESIGN_DECISION }
 
     public enum RoundKind { ORIGINAL, INCREMENT, EVIDENCE, CORRECTION }
 

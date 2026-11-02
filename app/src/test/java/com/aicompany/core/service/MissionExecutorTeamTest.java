@@ -646,6 +646,44 @@ class MissionExecutorTeamTest {
         verify(recovery, never()).addCorrectionRound(any(), any());
     }
 
+    // Task 12, fix 1 (R14): retomar tras la decisión de diseño corre el plan guardado de la ronda, sin repartir el
+    // pedido con el CEO ni replanificar, cualquiera sea el tipo de ronda (corrección o evidencia).
+    @Test
+    void resumingAfterADesignDecisionInACorrectionRoundRunsTheStoredPlanWithoutModels() throws Exception {
+        resumeAfterDesignDecision(3, com.aicompany.core.recovery.ResumePoint.RoundKind.CORRECTION);
+    }
+
+    @Test
+    void resumingAfterADesignDecisionInAnEvidenceRoundRunsTheStoredPlanWithoutModels() throws Exception {
+        resumeAfterDesignDecision(2, com.aicompany.core.recovery.ResumePoint.RoundKind.EVIDENCE);
+    }
+
+    private void resumeAfterDesignDecision(int round, com.aicompany.core.recovery.ResumePoint.RoundKind kind)
+            throws Exception {
+        withAria();
+        when(requirements.currentIncrement("M-9")).thenReturn(1);
+        when(memory.lastTeamPlanJson("M-9")).thenReturn(Optional.of(JsonMapper.builder().build()
+                .writeValueAsString(planned("TEAM-DEVELOPMENT").plan())));
+        when(planner.teamSnapshot("TEAM-DEVELOPMENT")).thenReturn(planned("TEAM-DEVELOPMENT").team());
+        // La estrategia (VERIFY + ciclo de diseño) vuelve a frenar: así no hay consolidación del CEO después de VERIFY,
+        // y cualquier llamada al CEO sería anterior a VERIFY.
+        when(development.execute(any(), any())).thenReturn(
+                new TeamExecutionResult.Development("r", "estado", "DESIGN_MISMATCH: PANT-01"));
+
+        executor.resumeAsync("M-9", new com.aicompany.core.recovery.ResumePoint(
+                com.aicompany.core.recovery.ResumePoint.Stage.DESIGN_DECISION, round, kind, null)).get();
+
+        verifyNoInteractions(ceoService);
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.BLOCKED), anyInt(), anyString(),
+                startsWith("DESIGN_MISMATCH: PANT-01"));
+        verify(planner, never()).plan(any(), any(), any(), any(), anyInt(), any());
+        verify(planner, never()).revalidate(any(), any(), any(), any());
+        verify(development).execute(argThat(c -> c.round() == round && c.instruction().contains("INCREMENTO 1")), any());
+        verify(memory).updateMission(eq("M-9"), eq(MissionStatus.DELEGATING), anyInt(), anyString(),
+                contains("tras la decisión de diseño"));
+        verify(memory, never()).updateMission(eq("M-9"), any(), anyInt(), contains("evidencia"), anyString());
+    }
+
     private com.aicompany.core.recovery.RecoveryMemoryService strategyRecovery(com.aicompany.core.recovery.CorrectionStrategist strategist)
             throws Exception {
         withAria();

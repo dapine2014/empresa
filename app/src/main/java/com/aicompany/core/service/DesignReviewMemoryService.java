@@ -6,6 +6,7 @@ import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,7 +53,7 @@ public class DesignReviewMemoryService {
     }
 
     /**
-     * Resultado de una decisión: el incremento de la pantalla decidida y cuántas pantallas de la misión siguen esperando
+     * Resultado de una decisión: el incremento de la pantalla decidida y cuántas pantallas de ese incremento siguen esperando
      * (AWAITING_DECISION o DECIDING) después de esta.
      */
     public record Decided(int increment, int stillAwaiting) {
@@ -82,14 +83,14 @@ public class DesignReviewMemoryService {
                     return Optional.<Decided>empty();
                 }
                 var increment = claimed.get(0).get("increment").asInt();
-                var withIncrement = new java.util.HashMap<>(params);
+                var withIncrement = new HashMap<>(params);
                 withIncrement.put("inc", increment);
                 tx.run("MATCH (:Mission {id:$id})-[:HAS_DESIGN_REVIEW]->(r:DesignScreenReview {increment:$inc, screen:$screen}) "
                         + "WHERE r.status = 'DECIDING' SET r.status = $status, r.decidedBy = $decidedBy, "
                         + "r.decisionNote = $note, r.extraRounds = coalesce(r.extraRounds, 0) + $extra, "
                         + "r.updatedAt = datetime()", withIncrement).consume();
-                var awaiting = tx.run("MATCH (:Mission {id:$id})-[:HAS_DESIGN_REVIEW]->(r:DesignScreenReview) "
-                        + "WHERE r.status IN ['AWAITING_DECISION', 'DECIDING'] RETURN count(r) AS n", params)
+                var awaiting = tx.run("MATCH (:Mission {id:$id})-[:HAS_DESIGN_REVIEW]->(r:DesignScreenReview {increment:$inc}) "
+                        + "WHERE r.status IN ['AWAITING_DECISION', 'DECIDING'] RETURN count(r) AS n", withIncrement)
                         .single().get("n").asInt();
                 return Optional.of(new Decided(increment, awaiting));
             });

@@ -1,5 +1,7 @@
 package com.aicompany.core.controller;
 
+import com.aicompany.core.model.DesignDecisionCommand;
+import com.aicompany.core.model.DesignReviewView;
 import com.aicompany.core.model.InteractionDesignView;
 import com.aicompany.core.model.JointReviewView;
 import com.aicompany.core.model.RequirementsDecisionCommand;
@@ -9,12 +11,15 @@ import com.aicompany.core.model.DecisionResponse;
 import com.aicompany.core.model.MissionCommand;
 import com.aicompany.core.model.MissionResponse;
 import com.aicompany.core.model.MissionStatusResponse;
+import com.aicompany.core.service.DesignDecisionService;
 import com.aicompany.core.service.MissionService;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/company/missions")
@@ -106,26 +111,26 @@ public class MissionController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    private com.aicompany.core.service.DesignDecisionService designDecisions;
+    private DesignDecisionService designDecisions;
 
     /** Spec 2026-11-01 diseño visual §14-15: el punto único de decisión del diseño (opcional en tests). */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setDesignDecisions(com.aicompany.core.service.DesignDecisionService designDecisions) {
+    @Autowired(required = false)
+    public void setDesignDecisions(DesignDecisionService designDecisions) {
         this.designDecisions = designDecisions;
     }
 
     /** Spec 2026-11-01 diseño visual §14: el estado de la revisión de diseño por pantalla, el motivo del freno y quién decide. */
     @GetMapping("/{missionId}/design-review")
-    public ResponseEntity<com.aicompany.core.model.DesignReviewView> designReview(@PathVariable String missionId) {
-        return (designDecisions == null ? java.util.Optional.<com.aicompany.core.model.DesignReviewView>empty()
+    public ResponseEntity<DesignReviewView> designReview(@PathVariable String missionId) {
+        return (designDecisions == null ? Optional.<DesignReviewView>empty()
                 : designDecisions.view(missionId)).map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     /** Spec 2026-11-01 diseño visual §14: el fundador acepta una pantalla o pide otra ronda (con comentario). */
     @PostMapping("/{missionId}/design-review/decision")
-    public ResponseEntity<com.aicompany.core.model.DesignReviewView> designDecision(
-            @PathVariable String missionId, @RequestBody com.aicompany.core.model.DesignDecisionCommand command) {
+    public ResponseEntity<DesignReviewView> designDecision(
+            @PathVariable String missionId, @RequestBody DesignDecisionCommand command) {
         if (designDecisions == null) {
             return ResponseEntity.notFound().build();
         }

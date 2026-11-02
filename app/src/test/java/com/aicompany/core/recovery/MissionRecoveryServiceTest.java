@@ -560,6 +560,7 @@ class MissionRecoveryServiceTest {
         when(reviews.all("M-1")).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-02",
                 "phone", 0.7, "AWAITING_DECISION", 2, 0, null, null, null)));
         listed(blocked("M-1", "DESIGN_CAPTURE_FAILED: sandbox caído"));
+        when(missions.lastTeamPlanJson("M-1")).thenReturn(Optional.of("{}"));
         service.resume("M-1");
         verify(executor).resumeAsync(eq("M-1"), any());
     }
@@ -584,6 +585,32 @@ class MissionRecoveryServiceTest {
         when(reviews.all("M-1")).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-02",
                 "phone", 0.7, "ACCEPTED", 2, 0, "founder", "", null)));
         listed(blocked("M-1", "DESIGN_MISMATCH: PANT-02"));
+        when(missions.lastTeamPlanJson("M-1")).thenReturn(Optional.of("{}"));
+
+        service.resume("M-1");
+
+        verify(executor).resumeAsync(eq("M-1"), any());
+    }
+
+    @Test void resumeDesignNeedsAStoredPlan() {
+        listed(blocked("M-1", "DESIGN_MISMATCH: PANT-01"));
+        when(missions.lastTeamPlanJson("M-1")).thenReturn(Optional.empty());
+        assertThrows(IllegalStateException.class, () -> service.resumeDesign("M-1"));
+        verify(executor, never()).resumeAsync(anyString(), any());
+    }
+
+    // Minor 1: lo que espera decisión se mira en el incremento vigente, no en uno viejo.
+    @Test void anAwaitingScreenOfAnOldIncrementDoesNotStopTheResume() {
+        var reviews = mock(DesignReviewMemoryService.class);
+        service.setDesignReviews(reviews);
+        when(requirements.currentIncrement("M-1")).thenReturn(2);
+        when(reviews.all("M-1")).thenReturn(List.of(
+                new com.aicompany.core.model.DesignScreenReview(1, "PANT-01", "phone", 0.7, "AWAITING_DECISION", 2, 0,
+                        null, null, null),
+                new com.aicompany.core.model.DesignScreenReview(2, "PANT-03", "phone", 0.7, "ACCEPTED", 2, 0,
+                        "founder", "", null)));
+        listed(blocked("M-1", "DESIGN_MISMATCH: PANT-03"));
+        when(missions.lastTeamPlanJson("M-1")).thenReturn(Optional.of("{}"));
 
         service.resume("M-1");
 
@@ -603,8 +630,13 @@ class MissionRecoveryServiceTest {
 
     @Test void resumeDesignResumesTheRoundOfADesignBlock() {
         listed(blocked("M-1", "DESIGN_MISMATCH: PANT-01\n\nESTADO"));
+        when(missions.lastTeamPlanJson("M-1")).thenReturn(Optional.of("{}"));
+        when(missions.evidenceRound("M-1")).thenReturn(3);
+        when(recovery.correctionRound("M-1", 3)).thenReturn(Optional.of(new CorrectionRound(3, 1, "x", 1, false)));
         service.resumeDesign("M-1");
-        verify(executor).resumeAsync(eq("M-1"), any());
+        // Fix 1 (R14): etapa propia, misma ronda, cualquiera sea su tipo.
+        verify(executor).resumeAsync(eq("M-1"), argThat(p -> p.stage() == ResumePoint.Stage.DESIGN_DECISION
+                && p.round() == 3 && p.kind() == ResumePoint.RoundKind.CORRECTION));
         assertTrue(service.resumedSinceStart().contains("M-1"));
     }
 

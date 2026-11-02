@@ -273,7 +273,9 @@ public class MissionRecoveryService {
         if (designReviews == null) {
             return List.of();
         }
-        return designReviews.all(missionId).stream()
+        // Minor 1: solo el incremento vigente (una pantalla de un incremento viejo no frena este).
+        var increment = Math.max(1, requirements.currentIncrement(missionId));
+        return designReviews.all(missionId).stream().filter(r -> r.increment() == increment)
                 .filter(r -> DesignScreenReview.AWAITING_DECISION.equals(r.status()) || DesignScreenReview.DECIDING.equals(r.status()))
                 .map(DesignScreenReview::screen).distinct().toList();
     }
@@ -296,7 +298,13 @@ public class MissionRecoveryService {
         if (missionService != null) {
             missionService.requireAgentsOn(mission.teamId(), "retomar " + missionId);
         }
-        if (!dispatchResume(mission)) {
+        if (missions.lastTeamPlanJson(missionId).isEmpty()) {
+            throw new IllegalStateException("MISSION " + missionId + " no tiene un plan guardado: no se sabe qué verificar.");
+        }
+        // R14: etapa propia en la misma ronda, cualquiera sea su tipo (sin CEO ni replanificación antes de VERIFY).
+        var round = ResumePoint.of(snapshot(mission));
+        if (!dispatchResume(mission, new ResumePoint(ResumePoint.Stage.DESIGN_DECISION, round.round(), round.kind(),
+                round.increment()))) {
             throw new IllegalStateException("No se pudo retomar " + missionId + " (ver el log).");
         }
     }
@@ -375,11 +383,16 @@ public class MissionRecoveryService {
     }
 
     private boolean dispatchResume(MissionResponse mission) {
+        return dispatchResume(mission, null);
+    }
+
+    /** {@code point} null: el de {@link ResumePoint#of} (huérfanas e INTERRUPTED). */
+    private boolean dispatchResume(MissionResponse mission, ResumePoint point) {
         if (executor.isLive(mission.missionId())) {
             return false;
         }
         try {
-            executor.resumeAsync(mission.missionId(), ResumePoint.of(snapshot(mission)));
+            executor.resumeAsync(mission.missionId(), point != null ? point : ResumePoint.of(snapshot(mission)));
             pendingOrphans.remove(mission.missionId());
             resumed.add(mission.missionId());
             return true;

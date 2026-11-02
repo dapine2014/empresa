@@ -1056,8 +1056,33 @@ public class MissionExecutor {
             }
             case DESIGN_ADJUSTMENT -> redesign(missionId, designMemory.pendingAdjustment(missionId).orElseThrow());
             case PLAN, GENERATE, VERIFY -> resumeRound(missionId, instruction, teamId, mode, point);
+            case DESIGN_DECISION -> resumeAfterDesignDecision(missionId, instruction, teamId, mode, point.round());
             case INTERRUPT -> interrupt(missionId);
         }
+    }
+
+    /**
+     * Spec 2026-11-01 diseño visual §14 (R14): tras la decisión de diseño (o una falla de captura) la ronda sigue con su
+     * plan guardado, cualquiera sea su tipo: sin repartir el pedido con el CEO, sin replanificar y sin ninguna llamada
+     * al modelo antes de VERIFY. La estrategia salta lo commiteado, verifica de nuevo y vuelve al ciclo de diseño.
+     */
+    private void resumeAfterDesignDecision(String missionId, String instruction, String teamId, TeamExecutionMode mode,
+                                           int round) {
+        var team = teamWorkPlanner.teamSnapshot(teamId);
+        var saved = memory.planJson(TaskIds.planTask(missionId, team.leaderAgentId(), round))
+                .or(() -> memory.lastTeamPlanJson(missionId))
+                .orElseThrow(() -> new IllegalStateException("MISSION " + missionId + " no tiene un plan guardado."));
+        var withIncrement = instruction;
+        if (requirementsMemory != null && requirementsMemory.approved(missionId).isPresent()) {
+            var increment = requirementsMemory.currentIncrement(missionId);
+            if (increment > 0) {
+                withIncrement = withIncrement(missionId, approvedSpec(missionId), increment, instruction);
+            }
+        }
+        advanceMission(missionId, MissionStatus.DELEGATING, 10, "Retomada",
+                "Retomando tras la decisión de diseño: se verifica de nuevo y se compara con las maquetas.");
+        runTeamPlan(missionId, withIncrement, mode, new TeamMissionContext(missionId, withIncrement, team,
+                jsonMapper.readValue(saved, TeamPlan.class), round));
     }
 
     private void resumeRound(String missionId, String instruction, String teamId, TeamExecutionMode mode,
