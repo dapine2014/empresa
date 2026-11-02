@@ -1276,6 +1276,14 @@ public class CeoService {
                 com.aicompany.core.agent.model.InteractionDesign.AppDesign.class);
     }
 
+    /** Spec 2026-11-01 front con diseño visual: sistema visual y maquetas del front. format sin tools. */
+    public com.aicompany.core.agent.model.VisualDesign writeVisualDesign(String agentId, String prompt,
+                                                                        String agentPrompt, String model) {
+        return callStructured("VISUAL_DESIGN", agentId, prompt, agentPrompt, model,
+                com.aicompany.core.agent.model.VisualDesign.SCHEMA,
+                com.aicompany.core.agent.model.VisualDesign.class);
+    }
+
     /** Spec 2026-10-14 Kael §1.3: diseño de un juego. format sin tools. */
     public com.aicompany.core.agent.model.InteractionDesign.GameDesign writeGameDesign(String agentId, String prompt,
                                                                                       String agentPrompt, String model) {
