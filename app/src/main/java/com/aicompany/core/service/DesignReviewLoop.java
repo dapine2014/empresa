@@ -156,8 +156,13 @@ public class DesignReviewLoop {
         return out;
     }
 
+    /** El plan tiene un componente Flutter: sin él el ciclo (y lo que se exige de él) no aplica. */
+    static boolean hasFlutterComponent(TeamMissionContext ctx) {
+        return ctx.plan().resolvedComponents().stream().anyMatch(c -> c.profile() == StackProfile.FLUTTER_WEB_APP);
+    }
+
     private VisualDesign approvedDesign(TeamMissionContext ctx) {
-        if (ctx.plan().resolvedComponents().stream().noneMatch(c -> c.profile() == StackProfile.FLUTTER_WEB_APP)) {
+        if (!hasFlutterComponent(ctx)) {
             return null;
         }
         var approved = visuals.approved(ctx.missionId());

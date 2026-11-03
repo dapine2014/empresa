@@ -706,7 +706,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * Revisión Task 11 (1): la verificación humana no vuelve a correr el ciclo; con diseño visual aprobado, VERIFIED
      * exige que ninguna pantalla del incremento quede sin pasar ni aceptar. Sin diseño, aceptado como siempre.
      */
-    private boolean designAcceptedForHumanVerify(String missionId) {
+    private boolean designAcceptedForHumanVerify(TeamMissionContext context) {
+        var missionId = context.missionId();
+        if (!DesignReviewLoop.hasFlutterComponent(context)) {
+            return true; // el ciclo no aplica sin componente Flutter (p. ej. Neo planeó solo DOTNET_APP)
+        }
         var visual = designReviews == null ? java.util.Optional.<com.aicompany.core.agent.model.VisualDesign>empty()
                 : approvedVisual(missionId);
         if (visual.isEmpty()) {
@@ -912,7 +916,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             coverageReport = COVERAGE_REPORT + com.aicompany.core.agent.validation.ScenarioCoverage.report(rows);
         }
 
-        var designAccepted = designAcceptedForHumanVerify(missionId);
+        var designAccepted = designAcceptedForHumanVerify(context);
         var status = StaticValidationStatus.compute(checks, null, sandboxResult, coverageMode, designAccepted);
         // Revisión final (I3): la misma cascada y clasificación que execute, antes de registrar el commit verificado.
         // Seguimiento: la verificación la pidió el fundador, el chat ya le muestra el problema: sin correo.

@@ -2170,6 +2170,24 @@ class DevelopmentTeamStrategyTest {
         verify(memory).recordVerifiedCommit("M-1", "h".repeat(40), 2);
     }
 
+    // Neo planeó solo DOTNET_APP aunque haya diseño visual aprobado: el ciclo no aplica y no se exigen filas.
+    @Test
+    void verifyHeadWithoutAFlutterComponentDoesNotNeedReviewRows() throws Exception {
+        stubFullstack();
+        var base = withQaWork();
+        var p = base.plan();
+        var plan = new TeamPlan(p.summary(), null, null, p.tasksOrEmpty(), List.of(), p.stackProfile(),
+                p.boundedContexts(), p.ubiquitousLanguage(), null, List.of("DOTNET_APP"));
+        var context = new TeamMissionContext("M-1", base.instruction(), base.team(), plan);
+        humanVerifyWithDesign(1, "PANT-01");
+        when(sandbox.verify(eq("M-1"), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordVerifiedCommit(eq("M-1"), anyString(), any());
+    }
+
     // Solo cuentan las pantallas con maqueta: una pantalla sin maqueta no exige fila.
     @Test
     void verifyHeadOnlyRequiresReviewRowsForScreensWithAMockup() throws Exception {
