@@ -174,6 +174,10 @@ def boxes_script(attr):
 def settle_mockup(cdp, session):
     wait_for(cdp, session, "document.readyState === 'complete'", 30)
     evaluate(cdp, session, "document.fonts.ready.then(() => true)", await_promise=True)
+    # La app Flutter ocupa la ventana de borde a borde; sin esto el margen de 8 px que el navegador le pone al body
+    # corre toda la maqueta (prueba en vivo 3: 1264 px de ancho en vez de 1280).
+    evaluate(cdp, session, "(() => { const s = document.createElement('style');"
+                           " s.textContent = 'html, body { margin: 0; }'; document.head.appendChild(s); return true; })()")
     time.sleep(0.3)
 
 

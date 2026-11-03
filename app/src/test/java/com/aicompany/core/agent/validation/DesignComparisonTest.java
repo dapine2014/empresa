@@ -53,6 +53,15 @@ class DesignComparisonTest {
     }
 
     @Test
+    void hiddenMockupElementIsNotRequiredInTheApp() {
+        // Prueba en vivo 3: login-error/tasks-empty van con display:none en la maqueta (caja 0x0); solo aparecen
+        // ante un error o una lista vacía, nunca en la captura inicial de la app.
+        var r = run(List.of(new Box("login-error", 0, 0, 0, 0, null)), List.of());
+        assertTrue(r.missing().isEmpty(), r.missing().toString());
+        assertTrue(r.passed());
+    }
+
+    @Test
     void flagsMissingElement() {
         var r = run(List.of(new Box("link-olvide", 20, 600, 100, 20, null)), List.of());
         assertEquals(List.of("link-olvide"), r.missing());

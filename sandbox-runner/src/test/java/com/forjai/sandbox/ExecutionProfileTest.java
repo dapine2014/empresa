@@ -29,6 +29,6 @@ class ExecutionProfileTest {
     void imagesAreTheVersionsWithThePackageStep() {
         assertEquals("localhost/forjai-sandbox/godot-dotnet-game:3", ExecutionProfile.GODOT_DOTNET_GAME.image());
         assertEquals("localhost/forjai-sandbox/dotnet-app:2", ExecutionProfile.DOTNET_APP.image());
-        assertEquals("localhost/forjai-sandbox/flutter-web-app:3", ExecutionProfile.FLUTTER_WEB_APP.image());
+        assertEquals("localhost/forjai-sandbox/flutter-web-app:4", ExecutionProfile.FLUTTER_WEB_APP.image());
     }
 }

@@ -15,7 +15,7 @@ public enum ExecutionProfile {
     GODOT_DOTNET_GAME("localhost/forjai-sandbox/godot-dotnet-game:3", true),
     // Verificado en vivo: el SDK de Flutter crea bin/cache/lockfile en cada comando (falla con raíz de solo lectura).
     // :3 (diseño visual, spec 2026-11-01): fuentes del catálogo en /forjai/fonts y pasos capture-mockups/capture-app.
-    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:3", false);
+    FLUTTER_WEB_APP("localhost/forjai-sandbox/flutter-web-app:4", false);
 
     public record Step(String name, int timeoutSeconds) {
     }

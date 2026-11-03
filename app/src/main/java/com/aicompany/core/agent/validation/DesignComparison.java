@@ -35,6 +35,8 @@ public final class DesignComparison {
         List<ElementDiff> diffs = new ArrayList<>();
         List<String> missing = new ArrayList<>();
         for (Box m : mockupBoxes) {
+            // Oculto en la maqueta (display:none, caja 0x0): estado de error o vacío que la captura inicial no muestra.
+            if (m.w() <= 0 || m.h() <= 0) continue;
             Box a = porId.get(m.id());
             if (a == null) { missing.add(m.id()); continue; }
             List<String> motivos = new ArrayList<>();
