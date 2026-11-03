@@ -128,11 +128,27 @@ public class DesignReviewLoop {
     }
 
     /**
-     * true si el ciclo corre: hay componente Flutter, diseño visual aprobado y legible, y pantallas en el incremento. Si
+     * true si el ciclo corre: hay componente Flutter, diseño visual aprobado y legible, y pantallas del incremento con
+     * maqueta aprobada. Si
      * es false, {@link #run} acepta sin capturar ni llamar a nadie.
      */
     public boolean applies(TeamMissionContext ctx) {
-        return approvedDesign(ctx) != null && !front.screens(ctx).isEmpty();
+        var design = approvedDesign(ctx);
+        return design != null && !screens(ctx, design).isEmpty();
+    }
+
+    /**
+     * Revisión final (C3) + decisión del fundador (2026-11-03): el diseño visual se aprueba una sola vez, con las maquetas
+     * del primer incremento con UI. Solo se comparan las pantallas del incremento que tienen maqueta aprobada; las nuevas
+     * de incrementos posteriores quedan atadas al tema aprobado (ThemeLiteralGate) y no se comparan.
+     */
+    private Set<String> screens(TeamMissionContext ctx, VisualDesign design) {
+        var withMockup = design.mockups() == null ? Set.<String>of() : design.mockups().screens().stream()
+                .map(com.aicompany.core.agent.model.Mockups.Mockup::screen).filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        var out = new LinkedHashSet<String>();
+        front.screens(ctx).stream().filter(withMockup::contains).sorted().forEach(out::add);
+        return out;
     }
 
     private VisualDesign approvedDesign(TeamMissionContext ctx) {
@@ -159,7 +175,7 @@ public class DesignReviewLoop {
             return new Outcome(true, List.of(), headSha);
         }
         var version = visuals.approved(missionId).orElseThrow().version();
-        var screens = new LinkedHashSet<>(front.screens(ctx));
+        var screens = screens(ctx, design);
         if (screens.isEmpty()) {
             return new Outcome(true, List.of(), headSha);
         }

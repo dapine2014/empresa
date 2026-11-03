@@ -331,6 +331,36 @@ class DesignReviewLoopTest {
                 eq(DesignScreenReview.PASSED));
     }
 
+    // Revisión final (C3) + decisión del fundador 2026-11-03: el diseño se aprueba una vez (primer incremento con UI);
+    // las pantallas nuevas de incrementos posteriores no tienen maqueta y no se comparan.
+    @Test
+    void screensWithoutAnApprovedMockupAreNotCompared() {
+        front.screens = Set.of("PANT-01", "PANT-03");
+        when(captures.captureApp(eq("M-1"), eq(HEAD), eq(2), any(), eq(""))).thenReturn(capture(Set.of("PANT-01"), goodPng));
+
+        var loop = loop();
+        assertTrue(loop.applies(context()));
+        var outcome = loop.run(context(), HEAD, 2);
+
+        assertTrue(outcome.accepted(), outcome.toString());
+        assertNull(outcome.captureError());
+        verify(captures).captureApp(eq("M-1"), eq(HEAD), eq(2), eq(Set.of("PANT-01")), eq(""));
+        verify(reviews, never()).save(anyString(), argThat(r -> r.screen().equals("PANT-03")), anyInt(), anyInt(), anyString());
+    }
+
+    @Test
+    void anIncrementWithOnlyNewScreensDoesNotApply() {
+        front.screens = Set.of("PANT-03", "PANT-04");
+
+        var loop = loop();
+        assertFalse(loop.applies(context()));
+        var outcome = loop.run(context(), HEAD, 2);
+
+        assertTrue(outcome.accepted());
+        verifyNoInteractions(captures);
+        assertEquals(0, front.prompts.size());
+    }
+
     @Test
     void aScreenWithoutMockupCaptureIsACaptureFailure() {
         when(captures.mockupCaptures("M-1", 1)).thenReturn(Optional.of(capture(Set.of("PANT-02"), mockupPng)));
