@@ -2756,6 +2756,38 @@ class DevelopmentTeamStrategyTest {
         assertEquals("", strategy.visualContractBlock(ctx, List.of("lib/pedidos/domain")));
     }
 
+    // Elementos repetidos en listas: el contrato pide la base más el índice, con los mismos índices de la maqueta.
+    @Test
+    void visualContractBlockAsksRepeatedListElementsWithBaseAndIndex() throws Exception {
+        var visuals = mock(VisualDesignMemoryService.class);
+        var interaction = mock(InteractionDesignMemoryService.class);
+        var requirements = mock(RequirementsMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        strategy.setInteractionDesign(interaction);
+        strategy.setRequirements(requirements);
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        when(interaction.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                mapper.writeValueAsString(new com.aicompany.core.agent.model.InteractionDesign("APP",
+                        VisualDesignWriterTest.APP, null)), "APPROVED", 1, "")));
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                mapper.writeValueAsString(VisualDesignWriterTest.SPEC), "APPROVED", "", java.time.Instant.now())));
+        when(requirements.currentIncrement("M-1")).thenReturn(1);
+        var base = context();
+        var plan = new TeamPlan("App", null, null, base.plan().tasks(), List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")), base.plan().ubiquitousLanguage());
+        var ctx = new TeamMissionContext("M-1", "app", base.team(), plan);
+        var html = "<div data-id=\"titulo\"></div><li data-id=\"task-item-1\"></li><li data-id=\"task-item-2\"></li>";
+        var design = new com.aicompany.core.agent.model.VisualDesign(VisualDesignWriterTest.system("#FFFFFF"),
+                new com.aicompany.core.agent.model.Mockups(List.of(new com.aicompany.core.agent.model.Mockups.Mockup("PANT-01", html)), List.of()));
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
+                mapper.writeValueAsString(design), "APPROVED", 1, 1, "")));
+        var block = strategy.visualContractBlock(ctx, List.of("lib/pedidos/presentation"));
+        assertTrue(block.contains("ForjaiId('titulo', child: …)"), block);
+        assertTrue(block.contains("ForjaiId('task-item-$i', child: …) dentro del bucle de la lista (cubre task-item-1, task-item-2)"), block);
+        assertFalse(block.contains("ForjaiId('task-item-1'"), block);
+        assertTrue(block.contains("empezando en 1") && block.contains("1..N"), block);
+    }
+
     @Test
     void mainDartIsCheckedOnlyForItsOwner() throws Exception {
         var visuals = mock(VisualDesignMemoryService.class);

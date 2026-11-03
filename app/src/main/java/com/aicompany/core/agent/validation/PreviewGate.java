@@ -109,12 +109,11 @@ public final class PreviewGate {
             validate(errors, path.get(), merged.get(path.get()), number, screen);
             var ids = idsByScreen == null ? Set.<String>of() : idsByScreen.getOrDefault(screen, Set.of());
             var missing = ids.stream().filter(id -> !id.equals(screen)).filter(id -> merged.entrySet().stream()
-                    .noneMatch(e -> e.getKey().endsWith(".dart") && Pattern.compile("ForjaiId\\(\\s*['\"]"
-                            + Pattern.quote(id) + "['\"]").matcher(CSharpComments.strip(e.getValue())).find())).toList();
+                    .noneMatch(e -> e.getKey().endsWith(".dart") && wrapsId(CSharpComments.strip(e.getValue()), id))).toList();
             if (!missing.isEmpty()) {
                 errors.add("Los elementos de la maqueta de " + screen + " deben llevar su data-id con ForjaiId (de "
-                        + "lib/forjai/forjai_id.dart; una Key sola no se ve en la captura). Envuelve: " + missing.stream()
-                        .map(id -> "ForjaiId('" + id + "', child: …)").collect(java.util.stream.Collectors.joining(", ")) + ".");
+                        + "lib/forjai/forjai_id.dart; una Key sola no se ve en la captura). Envuelve: "
+                        + String.join(", ", wrapHints(missing)) + ".");
             }
         }
         merged.forEach((p, c) -> {
@@ -123,6 +122,48 @@ public final class PreviewGate {
             }
         });
         return errors;
+    }
+
+    private static final Pattern REPEATED = Pattern.compile("(.*-)(\\d+)");
+
+    /** Base de un elemento repetido en lista (task-item-1 -> task-item-), o null si el id no termina en -N. */
+    static String repeatedBase(String id) {
+        var m = REPEATED.matcher(id);
+        return m.matches() ? m.group(1) : null;
+    }
+
+    /**
+     * El código (sin comentarios) envuelve el data-id: ForjaiId literal o, si el id termina en -N (elemento repetido
+     * en una lista), un id interpolado con la misma base ('base$i', 'base${i}', "base$i", 'base' + i).
+     */
+    static boolean wrapsId(String code, String id) {
+        if (Pattern.compile("ForjaiId\\(\\s*['\"]" + Pattern.quote(id) + "['\"]").matcher(code).find()) {
+            return true;
+        }
+        var base = repeatedBase(id);
+        if (base == null) {
+            return false;
+        }
+        var b = Pattern.quote(base);
+        return Pattern.compile("ForjaiId\\(\\s*['\"]" + b + "\\$").matcher(code).find()
+                || Pattern.compile("['\"]" + b + "['\"]\\s*\\+").matcher(code).find();
+    }
+
+    /** Cómo pedir cada id: literal, o agrupado por base para los elementos repetidos en listas. */
+    public static List<String> wrapHints(java.util.Collection<String> ids) {
+        var out = new ArrayList<String>();
+        var groups = new LinkedHashMap<String, List<String>>();
+        for (var id : ids) {
+            var base = repeatedBase(id);
+            if (base == null) {
+                out.add("ForjaiId('" + id + "', child: …)");
+            } else {
+                groups.computeIfAbsent(base, k -> new ArrayList<>()).add(id);
+            }
+        }
+        groups.forEach((base, list) -> out.add("ForjaiId('" + base + "$i', child: …) dentro del bucle de la lista (cubre "
+                + String.join(", ", list) + ")"));
+        return out;
     }
 
     private static void validate(List<String> errors, String path, String content, int number, String screen) {

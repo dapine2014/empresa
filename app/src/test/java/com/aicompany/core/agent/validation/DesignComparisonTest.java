@@ -44,6 +44,15 @@ class DesignComparisonTest {
     }
 
     @Test
+    void correctionDescribesMissingRepeatedElementsByBase() {
+        var r = run(List.of(new Box("task-item-2", 20, 600, 100, 20, null), new Box("task-item-3", 20, 640, 100, 20, null)),
+                List.of());
+        var t = DesignComparison.correction(List.of(r));
+        assertTrue(t.contains("ForjaiId('task-item-$i', child: …) dentro del bucle de la lista (cubre task-item-2, task-item-3)"), t);
+        assertFalse(t.contains("ForjaiId('task-item-2'"), t);
+    }
+
+    @Test
     void flagsMissingElement() {
         var r = run(List.of(new Box("link-olvide", 20, 600, 100, 20, null)), List.of());
         assertEquals(List.of("link-olvide"), r.missing());

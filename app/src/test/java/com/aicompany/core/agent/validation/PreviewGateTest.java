@@ -9,6 +9,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class PreviewGateTest {
 
@@ -52,6 +53,42 @@ class PreviewGateTest {
         // Las escritoras anteriores (R10) no responden por los data-id de toda la pantalla.
         assertEquals(List.of(), PreviewGate.check(List.of(new GeneratedFile("lib/pedidos/presentation/pedidos_page.dart",
                 "class PedidosPage {}")), Set.of("PANT-01"), Map.of(), false, false, ids));
+    }
+
+    private static List<String> repeated(String body, Set<String> ids) {
+        var page = "import '../../forjai/forjai_id.dart';\nclass PedidosPage { build(c) => " + body + "; }";
+        return PreviewGate.check(List.of(new GeneratedFile("lib/main.dart", MAIN),
+                new GeneratedFile("lib/pedidos/presentation/previews/pant_01_preview.dart", PREVIEW),
+                new GeneratedFile("lib/pedidos/presentation/pedidos_page.dart", page)), Set.of("PANT-01"), Map.of(),
+                true, true, Map.of("PANT-01", ids));
+    }
+
+    @Test
+    void repeatedListIdsAcceptInterpolatedIdsWithTheSameBase() {
+        var ids = Set.of("task-item-1", "task-item-2", "task-item-3");
+        for (var body : List.of("ForjaiId('task-item-$i', child: x)", "ForjaiId('task-item-${i}', child: x)",
+                "ForjaiId(\"task-item-$i\", child: x)", "ForjaiId('task-item-' + i.toString(), child: x)")) {
+            assertEquals(List.of(), repeated(body, ids), body);
+        }
+        assertEquals(List.of(), repeated("ForjaiId('task-item-1', child: x)", Set.of("task-item-1")));
+    }
+
+    @Test
+    void repeatedListIdsStillFailWithoutTheirBaseAndAreGroupedInTheMessage() {
+        var ids = new java.util.LinkedHashSet<>(List.of("task-item-1", "task-item-2", "task-item-3", "task-check-1", "titulo"));
+        var errors = repeated("ForjaiId('otro-$i', child: x)", ids);
+        assertEquals(1, errors.size(), errors.toString());
+        var e = errors.get(0);
+        assertTrue(e.contains("ForjaiId('task-item-$i', child: …) dentro del bucle de la lista (cubre task-item-1, task-item-2, task-item-3)"), e);
+        assertTrue(e.contains("ForjaiId('task-check-$i', child: …) dentro del bucle de la lista (cubre task-check-1)"), e);
+        assertTrue(e.contains("ForjaiId('titulo', child: …)"), e);
+        assertFalse(e.contains("ForjaiId('task-item-1'"), e);
+    }
+
+    @Test
+    void idsWithoutNumericSuffixStillNeedTheLiteral() {
+        assertEquals(1, repeated("ForjaiId('titulo-$i', child: x)", Set.of("titulo")).size());
+        assertEquals(1, repeated("ForjaiId('btn-$i', child: x)", Set.of("btn-guardar")).size());
     }
 
     @Test

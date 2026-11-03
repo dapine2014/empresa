@@ -62,8 +62,7 @@ public final class DesignComparison {
             if (!r.missing().isEmpty()) {
                 // Revisión final (C2): una Key sola no llega a la captura; ForjaiId pone Semantics(identifier:) y la Key.
                 sb.append("\n- Faltan en la app (envuelve cada uno con ForjaiId de lib/forjai/forjai_id.dart): ")
-                        .append(r.missing().stream().map(id -> "ForjaiId('" + id + "', child: …)")
-                                .collect(java.util.stream.Collectors.joining(", "))).append(".");
+                        .append(String.join(", ", PreviewGate.wrapHints(r.missing()))).append(".");
             }
             sb.append("\nLo demás coincide: no lo cambies.");
         }

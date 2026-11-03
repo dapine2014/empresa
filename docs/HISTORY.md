@@ -1291,3 +1291,5 @@ Spec `docs/superpowers/specs/2026-11-01-front-diseno-visual-design.md`, plan del
 - **C3** desde el incremento 2 una pantalla sin maqueta frenaba la misión en `DESIGN_CAPTURE_FAILED` para siempre; resuelto con la decisión de aprobación única (arriba).
 - Además: borrar la misión dejaba huérfanos el diseño visual y las revisiones; una maqueta quitada en un ajuste se seguía capturando; el segundo front podía escribir el `pubspec.yaml` del primero; `decide` tomaba la pantalla del incremento más alto; la captura aceptaba un `commitSha` nulo. Verificación en vivo: sigue PENDIENTE.
 
+
+**Verificación en vivo (2026-11-03), primera corrida:** MISSION-FRONT-VISUAL-1793710348. Contrato, HU, diseño de Kael, sistema visual y 2 maquetas capturadas OK. Mila falló 3+3 intentos porque la regla exigía ForjaiId literal para ítems de lista; cancelada en R1 (US$ 1,63). Corregido: ids con sufijo numérico aceptan interpolación.
