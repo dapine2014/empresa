@@ -48,6 +48,16 @@ class DevelopmentWorkspaceServiceTest {
         assertEquals(40, neo.sha().length());
     }
 
+    @Test
+    void aResultWithoutSummaryStillGetsAReadableCommitSubject() throws Exception {
+        // Prueba en vivo 3: las correcciones de diseño de Mila quedaban con el asunto "null".
+        var ws = workspace();
+        var record = ws.commitAgentWork("MISSION-8", "MISSION-8-DESIGN-R1", "frontend-ui", "Mila",
+                new DevelopmentResult(null, List.of(new GeneratedFile("lib/a.dart", "class A {}"))));
+        assertEquals("Cambios de Mila (MISSION-8-DESIGN-R1)",
+                git.run(ws.missionWorkspace("MISSION-8"), "show", "-s", "--format=%s", record.sha()).trim());
+    }
+
     // Rondas de evidencia (revisión 2026-09-27): un agente puede devolver sus archivos sin cambios; el commit no debe fallar.
     @Test
     void committingTheSameFilesAgainIsAllowedAndKeepsThemInTheCommit() throws Exception {

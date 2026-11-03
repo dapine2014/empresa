@@ -122,7 +122,10 @@ public class DevelopmentWorkspaceService {
             git.run(dir, rmArgs.toArray(String[]::new));
         }
 
-        var message = result.summary()
+        // Prueba en vivo 3: las correcciones de diseño llegaban sin summary y el commit quedaba como "null".
+        var summary = result.summary() == null || result.summary().isBlank()
+                ? "Cambios de " + agentName + " (" + taskId + ")" : result.summary();
+        var message = summary
                 + "\n\nForjai-Mission: " + missionId
                 + "\nForjai-Task: " + taskId;
 

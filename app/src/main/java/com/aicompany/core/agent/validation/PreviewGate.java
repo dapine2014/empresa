@@ -11,13 +11,20 @@ import java.util.regex.Pattern;
 
 /**
  * Spec 2026-11-01 front con diseño visual: cada pantalla del incremento entrega su vista previa
- * lib/&lt;contexto&gt;/presentation/previews/pant_NN_preview.dart (class PantNNPreview, Key('PANT-NN') raíz) y
- * lib/main.dart arranca con forjaiPreviewOr(. Con reintento y el motivo.
+ * lib/&lt;contexto&gt;/presentation/previews/pant_NN_preview.dart (class PantNNPreview) y lib/main.dart arranca con
+ * forjaiPreviewOr(. Con reintento y el motivo.
+ *
+ * <p>Prueba en vivo 3: la vista previa es la pantalla real con datos de ejemplo, no una copia. La pantalla real es un
+ * .dart de presentation/ fuera de previews/ con Key('PANT-NN') en su raíz; la vista previa instancia uno de sus widgets
+ * y no arma su propio Scaffold. Los data-id de la maqueta se buscan en la pantalla real, no en la vista previa: si no,
+ * el front corrige la copia y la app que usa el cliente sigue distinta.
  */
 public final class PreviewGate {
 
     private static final Pattern PREVIEW_FILE = Pattern.compile("(?:.*/)?lib/.+/presentation/previews/pant_(\\d+)_preview\\.dart");
     private static final Pattern SCREEN = Pattern.compile("PANT-(\\d+)");
+    private static final Pattern WIDGET_CLASS = Pattern.compile("\\bclass\\s+([A-Z]\\w*)\\s+extends\\s+(?:StatelessWidget|StatefulWidget)\\b");
+    private static final Pattern SCAFFOLD = Pattern.compile("\\bScaffold\\s*\\(");
 
     private PreviewGate() {
     }
@@ -107,9 +114,11 @@ public final class PreviewGate {
                 continue;
             }
             validate(errors, path.get(), merged.get(path.get()), number, screen);
+            checkRealScreen(errors, path.get(), merged, screen);
             var ids = idsByScreen == null ? Set.<String>of() : idsByScreen.getOrDefault(screen, Set.of());
             var missing = ids.stream().filter(id -> !id.equals(screen)).filter(id -> merged.entrySet().stream()
-                    .noneMatch(e -> e.getKey().endsWith(".dart") && wrapsId(CSharpComments.strip(e.getValue()), id))).toList();
+                    .noneMatch(e -> e.getKey().endsWith(".dart") && !PREVIEW_FILE.matcher(e.getKey()).matches()
+                            && wrapsId(CSharpComments.strip(e.getValue()), id))).toList();
             if (!missing.isEmpty()) {
                 errors.add("Los elementos de la maqueta de " + screen + " deben llevar su data-id con ForjaiId (de "
                         + "lib/forjai/forjai_id.dart; una Key sola no se ve en la captura). Envuelve: "
@@ -172,9 +181,42 @@ public final class PreviewGate {
         if (!Pattern.compile("\\bclass\\s+" + cls + "\\b").matcher(code).find()) {
             errors.add(path + " debe declarar class " + cls + ".");
         }
-        if (!Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()
-                && !Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]").matcher(code).find()) {
-            errors.add(path + " debe incluir Key('" + screen + "') en su vista previa.");
+        if (SCAFFOLD.matcher(code).find()) {
+            errors.add(path + " no puede armar su propio Scaffold: la vista previa muestra la pantalla real de " + screen
+                    + " con datos de ejemplo, no una copia.");
+        }
+    }
+
+    private static boolean hasRootKey(String code, String screen) {
+        return Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()
+                || Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]").matcher(code).find();
+    }
+
+    /** La pantalla real (presentation/ fuera de previews/, con Key('PANT-NN')) existe y la vista previa la instancia. */
+    private static void checkRealScreen(List<String> errors, String previewPath, Map<String, String> merged, String screen) {
+        var classes = new java.util.LinkedHashSet<String>();
+        merged.forEach((p, c) -> {
+            if (!p.endsWith(".dart") || !p.contains("/presentation/") || PREVIEW_FILE.matcher(p).matches()) {
+                return;
+            }
+            var code = CSharpComments.strip(c);
+            if (hasRootKey(code, screen)) {
+                var m = WIDGET_CLASS.matcher(code);
+                while (m.find()) {
+                    classes.add(m.group(1));
+                }
+            }
+        });
+        if (classes.isEmpty()) {
+            errors.add("La pantalla real de " + screen + " (un .dart de lib/<contexto>/presentation/, fuera de previews/) debe "
+                    + "declarar su widget (extends StatelessWidget o StatefulWidget) con Key('" + screen + "') en su raíz.");
+            return;
+        }
+        var preview = CSharpComments.strip(merged.getOrDefault(previewPath, ""));
+        if (classes.stream().noneMatch(c -> Pattern.compile("\\b" + c + "\\s*\\(").matcher(preview).find())) {
+            errors.add(previewPath + " debe mostrar la pantalla real de " + screen + ": instancia " + String.join(" o ", classes)
+                    + "(…) con datos de ejemplo (si necesita casos de uso, pásale implementaciones de ejemplo de las interfaces "
+                    + "de application definidas en la misma vista previa). No copies el layout.");
         }
     }
 }

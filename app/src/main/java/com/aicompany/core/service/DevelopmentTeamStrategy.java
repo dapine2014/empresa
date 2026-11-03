@@ -1993,8 +1993,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             var nn = screen.replaceAll("\\D", "");
             nn = nn.length() < 2 ? "0".repeat(2 - nn.length()) + nn : nn;
             out.append("- ").append(screen).append(": lib/<contexto>/presentation/previews/pant_").append(nn)
-                    .append("_preview.dart con class Pant").append(nn).append("Preview (constructor const sin argumentos); su widget raíz lleva Key('")
-                    .append(screen).append("')");
+                    .append("_preview.dart con class Pant").append(nn).append("Preview (constructor const sin argumentos) que solo instancia ")
+                    .append("la pantalla real con datos de ejemplo (sin Scaffold propio ni copia del layout; si la pantalla pide casos ")
+                    .append("de uso, pásale implementaciones de ejemplo de las interfaces de application definidas en la vista previa); ")
+                    .append("la pantalla real (lib/<contexto>/presentation/, fuera de previews/) lleva Key('")
+                    .append(screen).append("') en su raíz y es la que se compara con la maqueta");
             var ids = new java.util.LinkedHashSet<>(mockupIds(design.get()).getOrDefault(screen, java.util.Set.of()));
             ids.remove(screen);
             if (!ids.isEmpty()) {

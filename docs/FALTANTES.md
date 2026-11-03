@@ -101,6 +101,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | Juegos: navegación preliminar del cliente por todos los escenarios y reporte al PO | Decisión del fundador (2026-11-03) |
 | [ ] | El ajuste VISUAL del fundador no es durable tras un reinicio | Se pierde si company-core reinicia durante el ajuste |
 | [ ] | Alerta visual en el Command Center cuando Forjai está fuera de línea | Pedido del fundador (2026-11-03) |
+| [ ] | Revisar la claridad visual del Command Center: hay textos y pantallas que no se entienden (p. ej. «Construir incremento N» con la misión cerrada, botones de diseño fuera del freno) | Pedido del fundador (2026-11-03), después del ajuste de los front |
 
 ## 3. Fuera del código
 
