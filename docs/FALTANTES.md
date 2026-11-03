@@ -95,8 +95,10 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 | [ ] | Probar contra Neo4j real el guardia del doble clic de `DesignReviewMemoryService.decide` | Solo se probó con mocks |
 | [ ] | La captura de la app es única por misión y se muestra en las tarjetas de incrementos viejos | Engañoso al revisar un incremento anterior |
 | [ ] | El rótulo «Maqueta aprobada» muestra la última versión, no la aprobada | `MissionDetailPage` |
-| [ ] | `.forjai/mockups` entra al contexto de revisión de Vera y al zip de entrega | Debería excluirse (`DevelopmentTeamStrategy`, `DeliveryFactsBuilder`) |
-| [ ] | Las carpetas `diseno-*` del staging de capturas no se limpian | Crecen por misión |
+| [x] | `.forjai/mockups` entra al contexto de revisión de Vera y al zip de entrega | Hecho (revisión final, 2026-11-03): `.forjai/` fuera de la revisión, del código existente de los agentes, de la validación estática y del zip (`DeliveryPackager`) |
+| [ ] | Las carpetas `diseno-*` del staging de capturas no se limpian | Crecen por misión; tampoco se borran al borrar la misión (los nodos `VisualDesignVersion`/`DesignScreenReview` sí, desde la revisión final 2026-11-03) |
+| [ ] | Errores visuales reportados por el cliente al PO → ajuste por front o back (flujo de reporte) | Decisión del fundador (2026-11-03): el diseño se aprueba una vez; lo que el cliente vea mal en las pruebas lo reporta al PO y se corrige |
+| [ ] | Juegos: navegación preliminar del cliente por todos los escenarios y reporte al PO | Decisión del fundador (2026-11-03) |
 | [ ] | El ajuste VISUAL del fundador no es durable tras un reinicio | Se pierde si company-core reinicia durante el ajuste |
 | [ ] | Alerta visual en el Command Center cuando Forjai está fuera de línea | Pedido del fundador (2026-11-03) |
 
