@@ -3303,7 +3303,7 @@ class ChatIntentRouterTest {
                 "MISSION-PONG", "BLOCKED", "DESIGN_MISMATCH: 1 pantalla", "FOUNDER", List.of(
                 new com.aicompany.core.model.DesignScreenReview(1, "PANT-01", "phone", 0.93, "PASSED", 0, 0, null, null, "x"),
                 new com.aicompany.core.model.DesignScreenReview(1, "PANT-02", "desktop", 0.82, "AWAITING_DECISION", 2, 0, null, null, "x"),
-                new com.aicompany.core.model.DesignScreenReview(1, "PANT-03", "phone", 0.8, "ACCEPTED", 2, 0, "FOUNDER", null, "x")))));
+                new com.aicompany.core.model.DesignScreenReview(1, "PANT-03", "phone", 0.8, "ACCEPTED", 2, 0, "FOUNDER", null, "x")), java.util.Map.of())));
 
         var text = router.routeReplies("¿cómo va el diseño de MISSION-PONG?").get(0).text();
 
@@ -3319,9 +3319,9 @@ class ChatIntentRouterTest {
         var decisions = mock(DesignDecisionService.class);
         router.setDesignDecision(decisions);
         when(decisions.view("MISSION-A")).thenReturn(Optional.of(new com.aicompany.core.model.DesignReviewView(
-                "MISSION-A", "EVALUATING", null, "FOUNDER", List.of())));
+                "MISSION-A", "EVALUATING", null, "FOUNDER", List.of(), java.util.Map.of())));
         when(decisions.view("MISSION-B")).thenReturn(Optional.of(new com.aicompany.core.model.DesignReviewView(
-                "MISSION-B", "BLOCKED", "DESIGN_CAPTURE_FAILED: sin captura", "FOUNDER", List.of())));
+                "MISSION-B", "BLOCKED", "DESIGN_CAPTURE_FAILED: sin captura", "FOUNDER", List.of(), java.util.Map.of())));
 
         assertEquals("MISSION-A no tiene revisión de diseño.", router.routeReplies("como va el diseno de MISSION-A").get(0).text());
         var blocked = router.routeReplies("cómo va el diseño de MISSION-B").get(0).text();

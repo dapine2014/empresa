@@ -57,7 +57,13 @@ function PolicyRow({ policy }: { policy: PolicySnapshot }) {
       <div className="policy-row-main">
         <label>
           {POLICY_LABELS[policy.key] ?? policy.key}
-          <input type="number" step="0.01" value={displayedValue} onChange={(e) => setValue(Number(e.target.value))} />
+          <input
+            type="number"
+            step="0.01"
+            {...(policy.key === 'DESIGN_SIMILARITY_THRESHOLD' ? { min: 0.5, max: 1 } : {})}
+            value={displayedValue}
+            onChange={(e) => setValue(Number(e.target.value))}
+          />
         </label>
         <input
           type="text"
@@ -90,6 +96,30 @@ function PolicyRow({ policy }: { policy: PolicySnapshot }) {
           ))}
         </ul>
       )}
+    </div>
+  )
+}
+
+// Spec 2026-11-01 diseño visual §15: quién decide las diferencias de diseño. Hoy solo el fundador (0); la opción del PO
+// se ve pero queda deshabilitada hasta que se activen los demás modelos (el backend la rechaza).
+function DesignDeciderRow({ policy }: { policy: PolicySnapshot }) {
+  return (
+    <div className="policy-row">
+      <div className="policy-row-main">
+        <label>
+          {POLICY_LABELS[policy.key]}
+          <select value={policy.activeValue === 0 ? 'FOUNDER' : 'PRODUCT_OWNER'} onChange={() => undefined}>
+            <option value="FOUNDER">Fundador (temporal; luego el PO)</option>
+            <option value="PRODUCT_OWNER" disabled>
+              PO (todavía no disponible)
+            </option>
+          </select>
+        </label>
+      </div>
+      <p className="hint">
+        El PO decidirá las diferencias de diseño cuando se activen los demás modelos; por ahora solo el fundador (política
+        DESIGN_MISMATCH_DECIDER, v{policy.activeVersion}).
+      </p>
     </div>
   )
 }
@@ -389,7 +419,13 @@ export default function SettingsPage() {
       </p>
       {policiesQuery.isLoading && <p>Cargando políticas...</p>}
       {policiesQuery.error && <p className="error">No se pudieron cargar las políticas.</p>}
-      {policiesQuery.data?.map((policy) => <PolicyRow key={policy.key} policy={policy} />)}
+      {policiesQuery.data?.map((policy) =>
+        policy.key === 'DESIGN_MISMATCH_DECIDER' ? (
+          <DesignDeciderRow key={policy.key} policy={policy} />
+        ) : (
+          <PolicyRow key={policy.key} policy={policy} />
+        ),
+      )}
 
       <FreeModelChainSection />
       <ApiKeysSection />

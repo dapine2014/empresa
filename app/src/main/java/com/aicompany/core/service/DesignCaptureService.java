@@ -115,7 +115,10 @@ public class DesignCaptureService {
 
     /** Revisión Task 11 (3): la app Flutter de una misión con varios componentes vive en su carpeta ({@code app}). */
     public Captures captureApp(String missionId, String headSha, int increment, Set<String> screens, String componentDir) {
-        return read(missionId, capture(missionId, headSha, increment, "APP", componentDir), screens);
+        var dir = capture(missionId, headSha, increment, "APP", componentDir);
+        // Revisión R15: la última captura de la app queda registrada para verla al lado de la maqueta.
+        visuals.setAppCaptureDir(missionId, dir);
+        return read(missionId, dir, screens);
     }
 
     /** La captura ya registrada de esa versión de las maquetas, si existe. */
@@ -136,6 +139,28 @@ public class DesignCaptureService {
         }
         return latestMockupDir(missionId).map(dir -> stagingRoot.resolve(missionId).resolve(dir).resolve(name))
                 .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS));
+    }
+
+    /** Revisión R15: los PNG de la última captura de la app, por {@code PANT-NN-<tamaño>}. */
+    public Map<String, Path> appImages(String missionId) {
+        return appDir(missionId).map(dir -> read(missionId, dir, null).pngByScreenSize())
+                .<Map<String, Path>>map(TreeMap::new).orElse(Map.of());
+    }
+
+    /** Revisión R15: un PNG de la última captura de la app, con la misma lista blanca y NOFOLLOW que las maquetas. */
+    public Optional<Path> appImage(String missionId, String name) {
+        if (name == null || !IMAGE_NAME.matcher(name).matches()) {
+            return Optional.empty();
+        }
+        return appDir(missionId).map(dir -> stagingRoot.resolve(missionId).resolve(dir).resolve(name))
+                .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS));
+    }
+
+    private Optional<String> appDir(String missionId) {
+        if (missionId == null || !MISSION_ID.matcher(missionId).matches()) {
+            return Optional.empty();
+        }
+        return visuals.appCaptureDir(missionId).filter(dir -> isCaptureDir(dir, "app"));
     }
 
     private Optional<String> latestMockupDir(String missionId) {

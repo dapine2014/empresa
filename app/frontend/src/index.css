@@ -566,3 +566,60 @@ button.danger {
   white-space: pre-wrap;
   font-family: inherit;
 }
+
+/* Spec 2026-11-01 front con diseño visual: muestras del sistema visual y maqueta/app lado a lado. */
+.color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.color-swatch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+}
+
+.color-swatch-chip {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.type-sample {
+  margin: 8px 0;
+}
+
+.design-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.design-image {
+  margin: 0;
+  flex: 1 1 200px;
+  max-width: 420px;
+}
+
+.design-image img {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.design-image figcaption {
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.design-review-screen {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+  max-width: 880px;
+}

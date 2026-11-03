@@ -195,6 +195,38 @@ class DesignDecisionServiceTest {
         assertTrue(service.view("M-9").isEmpty());
     }
 
+    // Revisión R15: la vista lleva las diferencias guardadas y la URL de cada PNG de la última captura de la app.
+    @Test
+    void theViewCarriesTheDifferencesAndTheAppImageUrls() {
+        mission(MissionStatus.BLOCKED, "DESIGN_MISMATCH: PANT-01");
+        var captures = mock(DesignCaptureService.class);
+        service.setCaptures(captures);
+        when(captures.appImages("M-1")).thenReturn(new java.util.TreeMap<>(java.util.Map.of(
+                "PANT-01-phone", java.nio.file.Path.of("/x/PANT-01-phone.png"))));
+        when(reviews.all("M-1")).thenReturn(List.of(new DesignScreenReview(1, "PANT-01", "phone", 0.7,
+                DesignScreenReview.AWAITING_DECISION, 2, 0, null, null, null,
+                List.of(new DesignScreenReview.Difference("btn", "tamaño maqueta 10x10 / app 30x30")), List.of("logo"))));
+
+        var view = service.view("M-1").orElseThrow();
+
+        assertEquals(java.util.Map.of("PANT-01-phone", "/api/company/missions/M-1/design-images/app/PANT-01-phone.png"),
+                view.appImageUrls());
+        assertEquals("btn", view.screens().get(0).differences().get(0).id());
+        assertEquals(List.of("logo"), view.screens().get(0).missing());
+    }
+
+    @Test
+    void withoutCapturesTheViewHasNoAppImages() {
+        mission(MissionStatus.BLOCKED, "DESIGN_MISMATCH: PANT-01");
+        when(reviews.all("M-1")).thenReturn(List.of(review("PANT-01", DesignScreenReview.AWAITING_DECISION, 0, null)));
+
+        var view = service.view("M-1").orElseThrow();
+
+        assertEquals(java.util.Map.of(), view.appImageUrls());
+        assertEquals(List.of(), view.screens().get(0).differences());
+        assertEquals(List.of(), view.screens().get(0).missing());
+    }
+
     @Test
     void aFailedResumeKeepsTheDecisionAndSaysHowToRetry() {
         mission(MissionStatus.BLOCKED, "DESIGN_MISMATCH: PANT-01");

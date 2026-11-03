@@ -182,6 +182,16 @@ public class MissionController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /** Revisión R15: un PNG de la última captura de la app, con la misma lista blanca que las maquetas. */
+    @GetMapping("/{missionId}/design-images/app/{name}")
+    public ResponseEntity<org.springframework.core.io.Resource> designAppImage(@PathVariable String missionId,
+                                                                              @PathVariable String name) {
+        return missionService.designAppImage(missionId, name)
+                .map(path -> ResponseEntity.ok().contentType(org.springframework.http.MediaType.IMAGE_PNG)
+                        .<org.springframework.core.io.Resource>body(new org.springframework.core.io.FileSystemResource(path)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @PostMapping("/{missionId}/requirements/decision")
     public RequirementsView decideRequirements(@PathVariable String missionId,
                                                @RequestBody RequirementsDecisionCommand command) {

@@ -93,6 +93,19 @@ public class VisualDesignMemoryService {
         }
     }
 
+    /** Revisión R15: la carpeta del staging con la última captura de la app ({@code diseno-N-app-<job>}), en la misión. */
+    public void setAppCaptureDir(String missionId, String stagingDir) {
+        write("MATCH (m:Mission {id:$id}) SET m.designAppCaptureDir=$dir", Map.of("id", missionId, "dir", stagingDir));
+    }
+
+    public Optional<String> appCaptureDir(String missionId) {
+        try (var session = driver.session()) {
+            return session.run("MATCH (m:Mission {id:$id}) WHERE m.designAppCaptureDir IS NOT NULL "
+                            + "RETURN m.designAppCaptureDir AS dir", Map.of("id", missionId))
+                    .list(r -> r.get("dir").asString()).stream().findFirst();
+        }
+    }
+
     private void write(String cypher, Map<String, Object> params) {
         try (var session = driver.session()) {
             session.executeWrite(tx -> {

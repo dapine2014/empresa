@@ -5,6 +5,8 @@ import com.aicompany.core.model.DesignScreenReview;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.HashMap;
 import java.util.List;
@@ -21,8 +23,11 @@ public class DesignReviewMemoryService {
 
     private static final String RETURN = " RETURN r.increment AS increment, r.screen AS screen, r.size AS size, "
             + "r.ssim AS ssim, r.status AS status, r.rounds AS rounds, r.extraRounds AS extraRounds, "
-            + "r.decidedBy AS decidedBy, r.decisionNote AS decisionNote, toString(r.updatedAt) AS updatedAt "
+            + "r.decidedBy AS decidedBy, r.decisionNote AS decisionNote, toString(r.updatedAt) AS updatedAt, "
+            + "r.differences AS differences, r.missing AS missing "
             + "ORDER BY r.increment, r.screen";
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final Driver driver;
 
@@ -41,11 +46,13 @@ public class DesignReviewMemoryService {
                                 + "MERGE (m)-[:HAS_DESIGN_REVIEW]->(r:DesignScreenReview {increment:$inc, screen:$screen}) "
                                 + "ON CREATE SET r.extraRounds = 0 "
                                 + "SET r.size = $size, r.ssim = $ssim, r.status = $status, r.rounds = $rounds, "
-                                + "r.missing = $missing, r.detail = $detail, r.updatedAt = datetime()",
+                                + "r.missing = $missing, r.differences = $differences, r.detail = $detail, "
+                                + "r.updatedAt = datetime()",
                         Map.of("id", missionId, "inc", increment, "screen", result.screen(),
                                 "size", result.size() == null ? "" : result.size(), "ssim", result.ssim(),
                                 "status", status, "rounds", rounds,
                                 "missing", result.missing() == null ? List.of() : result.missing(),
+                                "differences", differencesJson(result),
                                 "detail", result.passed() ? "" : DesignComparison.correction(List.of(result))));
                 return null;
             });
@@ -110,6 +117,25 @@ public class DesignReviewMemoryService {
                 Map.of("id", missionId));
     }
 
+    /** Revisión R15: las diferencias por elemento de la comparación, como JSON {@code [{id, reason}]} (propiedad de Neo4j). */
+    static String differencesJson(DesignComparison.ScreenResult result) {
+        var diffs = result.diffs() == null ? List.<DesignScreenReview.Difference>of() : result.diffs().stream()
+                .map(d -> new DesignScreenReview.Difference(d.id(), d.reason())).toList();
+        return JSON.writeValueAsString(diffs);
+    }
+
+    /** Lee el JSON guardado; vacío si no hay (revisiones anteriores a R15) o no se puede leer. */
+    static List<DesignScreenReview.Difference> differences(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return JSON.readValue(json, new TypeReference<List<DesignScreenReview.Difference>>() { });
+        } catch (RuntimeException ex) {
+            return List.of();
+        }
+    }
+
     private List<DesignScreenReview> query(String cypher, Map<String, Object> params) {
         try (var session = driver.session()) {
             return session.run(cypher, params).list(DesignReviewMemoryService::review);
@@ -124,6 +150,8 @@ public class DesignReviewMemoryService {
                 r.get("extraRounds").isNull() ? 0 : r.get("extraRounds").asInt(),
                 r.get("decidedBy").isNull() ? null : r.get("decidedBy").asString(),
                 r.get("decisionNote").isNull() ? null : r.get("decisionNote").asString(),
-                r.get("updatedAt").isNull() ? null : r.get("updatedAt").asString());
+                r.get("updatedAt").isNull() ? null : r.get("updatedAt").asString(),
+                differences(r.get("differences").isNull() ? null : r.get("differences").asString()),
+                r.get("missing").isNull() ? List.of() : r.get("missing").asList(org.neo4j.driver.Value::asString));
     }
 }

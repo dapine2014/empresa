@@ -347,7 +347,9 @@ public class DesignReviewLoop {
                                            int rounds) {
         return new DesignScreenReview(increment, r.screen(), r.size(), r.ssim(), status, rounds,
                 prev == null ? 0 : prev.extraRounds(), prev == null ? null : prev.decidedBy(),
-                prev == null ? null : prev.decisionNote(), null);
+                prev == null ? null : prev.decisionNote(), null,
+                r.diffs() == null ? List.of() : r.diffs().stream()
+                        .map(d -> new DesignScreenReview.Difference(d.id(), d.reason())).toList(), r.missing());
     }
 
     /** La vista previa de esa pantalla en el commit, o null si no existe. */

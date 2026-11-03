@@ -310,6 +310,11 @@ public class MissionService {
         return designCapture == null ? Optional.empty() : designCapture.mockupImage(missionId, name);
     }
 
+    /** Revisión R15: un PNG de la última captura de la app; vacío (404) con un nombre fuera de la lista blanca. */
+    public Optional<java.nio.file.Path> designAppImage(String missionId, String name) {
+        return designCapture == null ? Optional.empty() : designCapture.appImage(missionId, name);
+    }
+
     public Optional<RequirementsView> requirements(String missionId) {
         if (requirementsMemory == null) {
             return Optional.empty();

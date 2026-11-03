@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import { statusDot } from '../statusColor'
 import CancelMissionButton from '../components/CancelMissionButton'
 import DeleteMissionButton from '../components/DeleteMissionButton'
-import type { AdjustTarget, DeliveryView, ContractView, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, RequirementsStory, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
+import type { AdjustTarget, DesignDecision, DesignScreenReview, DeliveryView, ContractView, DesignProperty, InvestorDecision, MissionResponse, RequirementsDecision, RequirementsStory, SandboxResult, SandboxStep, StaticCheck } from '../api/types'
 
 function parseChecks(raw: string | null): StaticCheck[] {
   if (!raw) return []
@@ -235,6 +235,7 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
     void queryClient.invalidateQueries({ queryKey: ['requirements', missionId] })
     void queryClient.invalidateQueries({ queryKey: ['missionDetails', missionId] })
     void queryClient.invalidateQueries({ queryKey: ['interactionDesign', missionId] })
+    void queryClient.invalidateQueries({ queryKey: ['visualDesign', missionId] })
   }
   const decide = useMutation({
     mutationFn: (decision: RequirementsDecision) =>
@@ -322,6 +323,7 @@ function MissionRequirements({ missionId, status }: { missionId: string; status:
           {spec.outOfScope.length > 0 && <p>Fuera de alcance: {spec.outOfScope.join('; ')}</p>}
         </>
       )}
+      {spec && <MissionVisualDesign missionId={missionId} status={status} onAdjusted={refresh} />}
       {status === 'AWAITING_SPEC_APPROVAL' && (
         <div>
           <button disabled={decide.isPending} onClick={() => decide.mutate('APPROVE')}>
@@ -759,6 +761,248 @@ function MissionDesign({ missionId }: { missionId: string }) {
   )
 }
 
+const SIZE_LABEL: Record<string, string> = { phone: 'teléfono', desktop: 'escritorio' }
+const SIZES = ['phone', 'desktop']
+const decimal = (n: number) => n.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/**
+ * Spec 2026-11-01 front con diseño visual §5: el sistema visual (colores y tipografía) y las maquetas de cada pantalla
+ * en teléfono y escritorio, que el fundador aprueba junto con las HU y el diseño de Kael (404 = sin diseño visual).
+ */
+function MissionVisualDesign({
+  missionId,
+  status,
+  onAdjusted,
+}: {
+  missionId: string
+  status: string
+  onAdjusted: () => void
+}) {
+  const [instruction, setInstruction] = useState('')
+  const query = useQuery({
+    queryKey: ['visualDesign', missionId],
+    queryFn: () => api.visualDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const adjust = useMutation({
+    mutationFn: () => api.decideRequirements(missionId, 'ADJUST', instruction, 'VISUAL'),
+    onSuccess: () => {
+      setInstruction('')
+      onAdjusted()
+    },
+  })
+  const view = query.data
+  if (!view?.system) return null
+  const { colors, typography } = view.system
+  const canAdjust = status === 'AWAITING_SPEC_APPROVAL' && view.status === 'DRAFT'
+  return (
+    <div>
+      <h3>Sistema visual y maquetas</h3>
+      <p>
+        Versión {view.version} — {view.status}
+        {view.approvedVersion != null && <> — aprobada: v{view.approvedVersion}</>}
+      </p>
+      <div className="color-swatches">
+        {colors.map((c) => (
+          <div key={c.name} className="color-swatch">
+            <span className="color-swatch-chip" style={{ background: c.hex }} />
+            <span>{c.name}</span>
+            <code>{c.hex}</code>
+          </div>
+        ))}
+      </div>
+      {typography && (
+        <div className="type-sample" style={{ fontFamily: typography.fontFamily }}>
+          <p className="hint">Tipografía: {typography.fontFamily}</p>
+          {Object.entries(typography.sizes).map(([name, size]) => (
+            <p key={name} style={{ fontSize: `${size}px`, margin: '4px 0' }}>
+              {name} ({size}px): Forjai construye tu producto
+            </p>
+          ))}
+        </div>
+      )}
+      {view.screens.map((screen) => (
+        <div key={screen}>
+          <h4>{screen}</h4>
+          <div className="design-images">
+            {SIZES.map((size) => {
+              const url = view.imageUrls[`${screen}-${size}`]
+              return (
+                <figure key={size} className={`design-image design-image-${size}`}>
+                  {url ? (
+                    <img src={`${url}?v=${view.version}`} alt={`Maqueta de ${screen} en ${SIZE_LABEL[size]}`} loading="lazy" />
+                  ) : (
+                    <p className="hint">Sin imagen</p>
+                  )}
+                  <figcaption>{SIZE_LABEL[size]}</figcaption>
+                </figure>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+      {canAdjust && (
+        <div>
+          <textarea
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            placeholder="Qué debe cambiar en el diseño visual (colores, tipografía, maquetas)"
+          />
+          <button disabled={adjust.isPending || !instruction.trim()} onClick={() => adjust.mutate()}>
+            {adjust.isPending ? 'Enviando...' : 'Ajustar diseño visual'}
+          </button>
+        </div>
+      )}
+      {adjust.isError && <p className="error">{adjust.error.message}</p>}
+    </div>
+  )
+}
+
+const CAPTURE_FAILED = 'DESIGN_CAPTURE_FAILED: '
+
+/** Spec 2026-11-01 diseño visual §14: una pantalla, su maqueta y la captura de la app lado a lado, y la decisión. */
+function DesignScreenCard({
+  missionId,
+  review,
+  mockupUrl,
+  appUrl,
+  canDecide,
+  onDecided,
+}: {
+  missionId: string
+  review: DesignScreenReview
+  mockupUrl: string | undefined
+  appUrl: string | undefined
+  canDecide: boolean
+  onDecided: () => void
+}) {
+  const [note, setNote] = useState('')
+  const decide = useMutation({
+    mutationFn: (decision: DesignDecision) => api.decideDesign(missionId, { screen: review.screen, decision, note }),
+    onSuccess: () => {
+      setNote('')
+      onDecided()
+    },
+  })
+  const size = SIZE_LABEL[review.size] ?? review.size
+  return (
+    <div className="design-review-screen">
+      <h3>
+        {statusDot(review.status)} {review.screen} ({size}) — incremento {review.increment} — similitud {decimal(review.ssim)}{' '}
+        — {review.status}
+      </h3>
+      <p className="hint">
+        Rondas de corrección: {review.rounds} de {2 + review.extraRounds}
+        {review.decidedBy && (
+          <>
+            {' '}
+            — decidió {review.decidedBy}
+            {review.decisionNote ? `: ${review.decisionNote}` : ''}
+          </>
+        )}
+      </p>
+      <div className="design-images">
+        <figure className="design-image">
+          {mockupUrl ? <img src={mockupUrl} alt={`Maqueta de ${review.screen}`} loading="lazy" /> : <p className="hint">Sin imagen</p>}
+          <figcaption>Maqueta aprobada</figcaption>
+        </figure>
+        <figure className="design-image">
+          {appUrl ? (
+            <img src={`${appUrl}?t=${encodeURIComponent(review.updatedAt ?? '')}`} alt={`App en ${review.screen}`} loading="lazy" />
+          ) : (
+            <p className="hint">Sin imagen</p>
+          )}
+          <figcaption>App construida</figcaption>
+        </figure>
+      </div>
+      {(review.differences.length > 0 || review.missing.length > 0) && (
+        <ul>
+          {review.differences.map((d) => (
+            <li key={d.id}>
+              <strong>{d.id}</strong>: {d.reason}
+            </li>
+          ))}
+          {review.missing.length > 0 && <li>Faltan en la app: {review.missing.join(', ')}</li>}
+        </ul>
+      )}
+      {canDecide && (
+        <div>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Comentario (obligatorio para otra ronda: se agrega a la corrección del front)"
+          />
+          <button disabled={decide.isPending} onClick={() => decide.mutate('ACCEPT')}>
+            Aceptar
+          </button>{' '}
+          <button disabled={decide.isPending || !note.trim()} onClick={() => decide.mutate('ANOTHER_ROUND')}>
+            Otra ronda
+          </button>
+        </div>
+      )}
+      {decide.isError && <p className="error">{decide.error.message}</p>}
+    </div>
+  )
+}
+
+/** Spec 2026-11-01 diseño visual §14-15: revisión de diseño por pantalla (404 o sin pantallas = no se muestra). */
+function MissionDesignReview({ missionId }: { missionId: string }) {
+  const queryClient = useQueryClient()
+  const query = useQuery({
+    queryKey: ['designReview', missionId],
+    queryFn: () => api.designReview(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const visual = useQuery({
+    queryKey: ['visualDesign', missionId],
+    queryFn: () => api.visualDesign(missionId),
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const view = query.data
+  if (!view || (view.screens.length === 0 && !view.blockReason)) return null
+  const captureFailed = view.blockReason?.startsWith(CAPTURE_FAILED) ?? false
+  const founderDecides = view.decider === 'FOUNDER'
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['designReview', missionId] })
+    void queryClient.invalidateQueries({ queryKey: ['missionDetails', missionId] })
+  }
+  const mockupUrl = (key: string) => {
+    const url = visual.data?.imageUrls[key]
+    return url ? `${url}?v=${visual.data?.version}` : undefined
+  }
+  return (
+    <section>
+      <h2>Revisión de diseño</h2>
+      <p className="hint">
+        Decide: {founderDecides ? 'el fundador' : 'el PO'}
+        {view.blockReason && !captureFailed && <> — {view.blockReason}</>}
+      </p>
+      {captureFailed && (
+        <p className="error">
+          Falló la captura: {view.blockReason!.slice(CAPTURE_FAILED.length)}. Reanuda la misión con «reanuda {missionId}».
+        </p>
+      )}
+      {view.screens.map((review) => {
+        const key = `${review.screen}-${review.size}`
+        return (
+          <DesignScreenCard
+            key={`${review.increment}-${review.screen}`}
+            missionId={missionId}
+            review={review}
+            mockupUrl={mockupUrl(key)}
+            appUrl={view.appImageUrls[key]}
+            canDecide={founderDecides && !captureFailed && review.status === 'AWAITING_DECISION'}
+            onDecided={refresh}
+          />
+        )
+      })}
+    </section>
+  )
+}
+
 export default function MissionDetailPage() {
   const { missionId } = useParams<{ missionId: string }>()
   const queryClient = useQueryClient()
@@ -822,6 +1066,7 @@ export default function MissionDetailPage() {
       {mission.teamId && <MissionRequirements missionId={mission.missionId} status={mission.status} />}
       {mission.teamId && <MissionDesign missionId={mission.missionId} />}
       {mission.teamId && <MissionJointReview missionId={mission.missionId} />}
+      {mission.teamId && <MissionDesignReview missionId={mission.missionId} />}
       <MissionEventLog
         missionId={mission.missionId}
         live={!['COMPLETED', 'CANCELLED', 'FAILED', 'INTERRUPTED'].includes(mission.status)}

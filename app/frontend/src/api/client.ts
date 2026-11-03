@@ -2,6 +2,9 @@ import type {
   FreeModelChain,
   AdjustTarget,
   InteractionDesignView,
+  VisualDesignView,
+  DesignReviewView,
+  DesignDecisionCommand,
   JointReviewView,
   MissionEventView,
   DatabaseConnectionForm,
@@ -207,6 +210,15 @@ export const api = {
 
   interactionDesign: (missionId: string) =>
     request<InteractionDesignView>(`/api/company/missions/${missionId}/interaction-design`),
+  visualDesign: (missionId: string) =>
+    request<VisualDesignView>(`/api/company/missions/${missionId}/visual-design`),
+  designReview: (missionId: string) =>
+    request<DesignReviewView>(`/api/company/missions/${missionId}/design-review`),
+  decideDesign: (missionId: string, command: DesignDecisionCommand) =>
+    request<DesignReviewView>(`/api/company/missions/${missionId}/design-review/decision`, {
+      method: 'POST',
+      body: JSON.stringify(command),
+    }),
   deliveries: (missionId: string) => request<DeliveryView[]>(`/api/company/missions/${missionId}/deliveries`),
   generateDelivery: (missionId: string) =>
     request<DeliveryView>(`/api/company/missions/${missionId}/deliveries`, { method: 'POST' }),

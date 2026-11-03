@@ -195,4 +195,39 @@ class DesignCaptureServiceTest {
         verify(visuals).setCaptureDir("M-1", 2, dir);
         verifyNoInteractions(workspace);
     }
+
+    // Revisión R15: la captura de la app queda registrada y sus PNG se sirven con la misma lista blanca y sin seguir enlaces.
+    @Test
+    void theAppCaptureIsRecordedAndOnlyItsCaptureNamesAreServed() throws Exception {
+        var dir = "diseno-2-app-" + JOB;
+        when(runner.designCapture("M-1", SHA, 2, "APP", "app"))
+                .thenReturn(Optional.of(new SandboxResult("PASS", List.of(), dir)));
+        var staging = staging("M-1", dir);
+        Files.write(staging.resolve("PANT-01-phone.png"), new byte[]{1});
+        Files.writeString(staging.resolve("PANT-01-phone.json"), "[]");
+        var outside = Files.write(deliveries.resolve("secreto.png"), new byte[]{7});
+        Files.createSymbolicLink(staging.resolve("PANT-02-phone.png"), outside);
+
+        service().captureApp("M-1", SHA, 2, Set.of("PANT-01"), "app");
+
+        verify(visuals).setAppCaptureDir("M-1", dir);
+        when(visuals.appCaptureDir("M-1")).thenReturn(Optional.of(dir));
+        assertEquals(staging.resolve("PANT-01-phone.png"), service().appImage("M-1", "PANT-01-phone.png").orElseThrow());
+        assertTrue(service().appImage("M-1", "PANT-01-phone.json").isEmpty());
+        assertTrue(service().appImage("M-1", "../PANT-01-phone.png").isEmpty());
+        assertTrue(service().appImage("M-1", "PANT-01-desktop.png").isEmpty());
+        assertTrue(service().appImage("M-1", "PANT-02-phone.png").isEmpty());
+        assertTrue(service().appImage("../M-1", "PANT-01-phone.png").isEmpty());
+        assertEquals(Set.of("PANT-01-phone"), service().appImages("M-1").keySet());
+    }
+
+    @Test
+    void aRecordedAppDirOutsideTheAppPatternServesNothing() throws Exception {
+        var dir = "diseno-1-mockups-" + JOB;
+        Files.write(staging("M-1", dir).resolve("PANT-01-phone.png"), new byte[]{1});
+        when(visuals.appCaptureDir("M-1")).thenReturn(Optional.of(dir));
+
+        assertTrue(service().appImage("M-1", "PANT-01-phone.png").isEmpty());
+        assertTrue(service().appImages("M-1").isEmpty());
+    }
 }

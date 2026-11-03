@@ -725,7 +725,58 @@ export interface InteractionDesignView {
   design: InteractionDesign | null
   summary: string
 }
-export type AdjustTarget = 'ARIA' | 'KAEL'
+export type AdjustTarget = 'ARIA' | 'KAEL' | 'VISUAL'
+
+// Spec 2026-11-01 front con diseño visual: VisualSystem / VisualDesignView en Java.
+export interface ColorToken { name: string; hex: string }
+export interface VisualSystem {
+  colors: ColorToken[]
+  typography: { fontFamily: string; sizes: Record<string, number> } | null
+  spacing: Record<string, number>
+  radii: Record<string, number>
+  components: { component: string; tokens: Record<string, string> }[]
+}
+export interface VisualDesignView {
+  missionId: string
+  version: number | null
+  status: string | null
+  interactionDesignVersion: number | null
+  approvedVersion: number | null
+  system: VisualSystem | null
+  screens: string[]
+  /** "PANT-NN-<phone|desktop>" → URL del PNG de la maqueta. */
+  imageUrls: Record<string, string>
+}
+
+// Spec 2026-11-01 diseño visual §14-15: DesignScreenReview / DesignReviewView / DesignDecisionCommand en Java.
+export type DesignScreenStatus = 'PENDING' | 'PASSED' | 'AWAITING_DECISION' | 'ACCEPTED' | 'DECIDING'
+export interface DesignElementDifference { id: string; reason: string }
+export interface DesignScreenReview {
+  increment: number
+  screen: string
+  size: string
+  ssim: number
+  status: DesignScreenStatus | string
+  rounds: number
+  extraRounds: number
+  decidedBy: string | null
+  decisionNote: string | null
+  updatedAt: string | null
+  differences: DesignElementDifference[]
+  missing: string[]
+}
+export interface DesignReviewView {
+  missionId: string
+  missionStatus: string
+  /** Primera línea del motivo: "DESIGN_MISMATCH: …" o "DESIGN_CAPTURE_FAILED: …"; null si no está frenada por diseño. */
+  blockReason: string | null
+  decider: 'FOUNDER' | 'PRODUCT_OWNER' | string
+  screens: DesignScreenReview[]
+  /** "PANT-NN-<phone|desktop>" → URL del PNG de la última captura de la app. */
+  appImageUrls: Record<string, string>
+}
+export type DesignDecision = 'ACCEPT' | 'ANOTHER_ROUND'
+export interface DesignDecisionCommand { screen: string; decision: DesignDecision; note: string }
 
 // Costo real por misión (2026-10-04): MissionController.ModelCostView.
 export interface ModelUsageRow {

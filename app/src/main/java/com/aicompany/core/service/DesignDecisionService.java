@@ -44,6 +44,14 @@ public class DesignDecisionService {
         this.recovery = recovery;
     }
 
+    private DesignCaptureService captures;
+
+    /** Revisión R15: las capturas de la app para la vista lado a lado (opcional en tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setCaptures(DesignCaptureService captures) {
+        this.captures = captures;
+    }
+
     /** Quién decide las diferencias de diseño, resuelto por Java desde la política (0 = FOUNDER). */
     public String decider() {
         return policies.activeValue(PolicyKey.DESIGN_MISMATCH_DECIDER) == 0 ? FOUNDER : PRODUCT_OWNER;
@@ -52,7 +60,16 @@ public class DesignDecisionService {
     /** La revisión de diseño de la misión (todas las pantallas de todos los incrementos); vacío si no existe la misión. */
     public Optional<DesignReviewView> view(String missionId) {
         return missions.find(missionId).map(m -> new DesignReviewView(missionId, m.status().name(),
-                designBlockReason(m.message()), decider(), reviews.all(missionId)));
+                designBlockReason(m.message()), decider(), reviews.all(missionId), appImageUrls(missionId)));
+    }
+
+    private Map<String, String> appImageUrls(String missionId) {
+        var urls = new java.util.TreeMap<String, String>();
+        if (captures != null) {
+            captures.appImages(missionId).keySet().forEach(key -> urls.put(key,
+                    "/api/company/missions/" + missionId + "/design-images/app/" + key + ".png"));
+        }
+        return urls;
     }
 
     /**
