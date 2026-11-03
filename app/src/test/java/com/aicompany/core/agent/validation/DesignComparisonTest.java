@@ -49,6 +49,9 @@ class DesignComparisonTest {
         assertEquals(List.of("link-olvide"), r.missing());
         assertFalse(r.passed());
         assertTrue(DesignComparison.correction(List.of(r)).contains("link-olvide"));
+        // Revisión final (C2): la corrección pide ForjaiId, no una Key (que no llega a la captura).
+        assertTrue(DesignComparison.correction(List.of(r)).contains("ForjaiId('link-olvide', child: …)"),
+                DesignComparison.correction(List.of(r)));
     }
 
     @Test

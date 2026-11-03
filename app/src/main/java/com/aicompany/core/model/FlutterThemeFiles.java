@@ -20,6 +20,11 @@ public final class FlutterThemeFiles {
     public static final String THEME_PATH = "lib/theme/app_theme.dart";
     public static final String PREVIEW_PATH = "lib/forjai/preview.dart";
     public static final String PREVIEWS_PATH = "lib/forjai/previews.dart";
+    /**
+     * Revisión final (C2): la captura del sandbox lee {@code flt-semantics-identifier}, que solo emite
+     * {@code Semantics(identifier:)}; una Key sola no se ve. El front envuelve cada elemento de la maqueta con ForjaiId.
+     */
+    public static final String FORJAI_ID_PATH = "lib/forjai/forjai_id.dart";
     public static final List<String> RESERVED_ROOTS = List.of("lib/theme", "lib/forjai");
     /** Los SVG del diseño ({@code assets/svg}); la carpeta {@code assets} del componente es de Forjai con diseño aprobado. */
     public static final String ASSETS_ROOT = "assets";
@@ -47,6 +52,7 @@ public final class FlutterThemeFiles {
         files.put(THEME_PATH, theme(d.system()));
         files.put(PREVIEW_PATH, PREVIEW);
         files.put(PREVIEWS_PATH, previews(previewPaths));
+        files.put(FORJAI_ID_PATH, FORJAI_ID);
         for (var svg : d.mockups().svgs()) {
             files.put("assets/svg/" + svg.name() + ".svg", svg.svg());
         }
@@ -123,6 +129,23 @@ public final class FlutterThemeFiles {
                 theme: AppTheme.theme,
                 home: Semantics(identifier: id, container: true, child: builder()),
               );
+            }
+            """;
+
+    private static final String FORJAI_ID = """
+            // GENERADO POR FORJAI: envuelve cada elemento de la maqueta (su data-id); no lo edites.
+            // La captura de diseño lee Semantics(identifier:) y la Key sirve a los tests de widgets.
+            import 'package:flutter/widgets.dart';
+
+            class ForjaiId extends StatelessWidget {
+              const ForjaiId(this.id, {super.key, required this.child});
+
+              final String id;
+              final Widget child;
+
+              @override
+              Widget build(BuildContext context) =>
+                  Semantics(identifier: id, container: true, child: KeyedSubtree(key: Key(id), child: child));
             }
             """;
 

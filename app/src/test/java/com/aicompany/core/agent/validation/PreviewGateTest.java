@@ -29,6 +29,38 @@ class PreviewGateTest {
                 "lib/main.dart", MAIN, "lib/pedidos/presentation/previews/pant_01_preview.dart", PREVIEW)));
     }
 
+    // Revisión final del diseño visual (C2): cada data-id de la maqueta (salvo el de la pantalla, que pone la vista
+    // previa) tiene que aparecer en la app como ForjaiId('<data-id>': una Key sola no llega a la captura.
+    @Test
+    void theLastWriterMustWrapEveryMockupDataIdWithForjaiId() {
+        var ids = Map.of("PANT-01", Set.of("PANT-01", "titulo", "btn-guardar"));
+        var page = "import '../../forjai/forjai_id.dart';\nclass PedidosPage { build(c) => Column(children: ["
+                + "ForjaiId('titulo', child: Text('x')), Text('y', key: Key('btn-guardar'))]); }";
+        var errors = PreviewGate.check(List.of(new GeneratedFile("lib/main.dart", MAIN),
+                new GeneratedFile("lib/pedidos/presentation/previews/pant_01_preview.dart", PREVIEW),
+                new GeneratedFile("lib/pedidos/presentation/pedidos_page.dart", page)), Set.of("PANT-01"), Map.of(),
+                true, true, ids);
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("ForjaiId('btn-guardar'") && errors.get(0).contains("PANT-01")
+                && errors.get(0).contains("lib/forjai/forjai_id.dart"), errors.toString());
+
+        // Lo que ya está en HEAD también cuenta; y con todo envuelto no hay errores.
+        assertEquals(List.of(), PreviewGate.check(List.of(new GeneratedFile("lib/pedidos/presentation/pedidos_page.dart",
+                page.replace("Text('y', key: Key('btn-guardar'))", "ForjaiId(\"btn-guardar\", child: Text('y'))"))),
+                Set.of("PANT-01"), Map.of("lib/main.dart", MAIN, "lib/pedidos/presentation/previews/pant_01_preview.dart", PREVIEW),
+                true, true, ids));
+        // Las escritoras anteriores (R10) no responden por los data-id de toda la pantalla.
+        assertEquals(List.of(), PreviewGate.check(List.of(new GeneratedFile("lib/pedidos/presentation/pedidos_page.dart",
+                "class PedidosPage {}")), Set.of("PANT-01"), Map.of(), false, false, ids));
+    }
+
+    @Test
+    void theRootKeyCanAlsoBeAForjaiId() {
+        var preview = PREVIEW.replace("Scaffold(key: const Key('PANT-01'))", "ForjaiId('PANT-01', child: Scaffold())");
+        assertEquals(List.of(), PreviewGate.check(List.of(new GeneratedFile("lib/main.dart", MAIN),
+                new GeneratedFile("lib/pedidos/presentation/previews/pant_01_preview.dart", preview)), Set.of("PANT-01"), Map.of()));
+    }
+
     @Test
     void rejectsPreviewWithoutClassOrRootKey() {
         var errors = PreviewGate.check(List.of(new GeneratedFile("lib/pedidos/presentation/previews/pant_01_preview.dart",

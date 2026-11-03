@@ -1941,7 +1941,20 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                 .anyMatch(c -> OwnedPaths.coveredByAny(owned, c.prefix("lib/main.dart")));
     }
 
-    private static final java.util.regex.Pattern DATA_ID = java.util.regex.Pattern.compile("data-id\\s*=\\s*[\"']([^\"']+)[\"']");
+    /** Pantalla (PANT-NN) → data-id de su maqueta en el diseño visual. */
+    private static Map<String, java.util.Set<String>> mockupIds(com.aicompany.core.agent.model.VisualDesign design) {
+        var out = new LinkedHashMap<String, java.util.Set<String>>();
+        if (design.mockups() == null) {
+            return out;
+        }
+        for (var m : design.mockups().screens()) {
+            if (m.screen() != null) {
+                out.computeIfAbsent(m.screen(), k -> new java.util.LinkedHashSet<>())
+                        .addAll(com.aicompany.core.agent.validation.PreviewGate.dataIds(m.html()));
+            }
+        }
+        return out;
+    }
 
     /**
      * Regla R9: con diseño visual aprobado, el contrato que el front debe cumplir (vista previa por pantalla, Keys de la
@@ -1959,17 +1972,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             out.append("- ").append(screen).append(": lib/<contexto>/presentation/previews/pant_").append(nn)
                     .append("_preview.dart con class Pant").append(nn).append("Preview (constructor const sin argumentos); su widget raíz lleva Key('")
                     .append(screen).append("')");
-            var ids = new java.util.LinkedHashSet<String>();
-            design.get().mockups().screens().stream().filter(m -> screen.equals(m.screen()) && m.html() != null)
-                    .forEach(m -> {
-                        var matcher = DATA_ID.matcher(m.html());
-                        while (matcher.find()) {
-                            ids.add(matcher.group(1));
-                        }
-                    });
+            var ids = new java.util.LinkedHashSet<>(mockupIds(design.get()).getOrDefault(screen, java.util.Set.of()));
+            ids.remove(screen);
             if (!ids.isEmpty()) {
-                out.append("; los elementos de la maqueta llevan Key igual a su data-id: ")
-                        .append(ids.stream().map(i -> "Key('" + i + "')").collect(Collectors.joining(", ")));
+                // Revisión final (C2): la captura solo ve Semantics(identifier:); ForjaiId pone eso y la Key.
+                out.append("; envuelve cada elemento de la maqueta con ForjaiId(<data-id>, child: …) (import de ")
+                        .append(com.aicompany.core.model.FlutterThemeFiles.FORJAI_ID_PATH)
+                        .append("; una Key sola no se ve en la captura): ")
+                        .append(ids.stream().map(i -> "ForjaiId('" + i + "', child: …)").collect(Collectors.joining(", ")));
             }
             out.append("\n");
         }
@@ -1985,10 +1995,12 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
     /** Gates del front con diseño visual aprobado (tema sin literales y una vista previa por pantalla); null si no aplican. */
     java.util.function.Function<DevelopmentResult, List<String>> visualChecks(TeamMissionContext context,
                                                                               List<String> owned, String headSha) {
-        if (approvedVisual(context.missionId()).isEmpty() || !writesFlutterPresentation(context, owned)) {
+        var design = approvedVisual(context.missionId());
+        if (design.isEmpty() || !writesFlutterPresentation(context, owned)) {
             return null;
         }
         var screens = incrementScreens(context.missionId());
+        var ids = mockupIds(design.get());
         var mainOwner = ownsMain(context, owned);
         // R10: con varias escritoras de presentación, solo la última responde por que estén todas las pantallas.
         var writers = context.plan().tasksOrEmpty().stream().filter(t -> t != null
@@ -2012,7 +2024,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         return result -> {
             var files = result.files() == null ? List.<DevelopmentResult.GeneratedFile>of() : result.files();
             var errors = new ArrayList<String>(com.aicompany.core.agent.validation.ThemeLiteralGate.check(files));
-            errors.addAll(com.aicompany.core.agent.validation.PreviewGate.check(files, screens, existing, mainOwner, complete));
+            errors.addAll(com.aicompany.core.agent.validation.PreviewGate.check(files, screens, existing, mainOwner, complete,
+                    ids));
             return errors;
         };
     }

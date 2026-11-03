@@ -60,8 +60,10 @@ public final class DesignComparison {
                     .append(String.format(Locale.of("es"), "%.2f", r.ssim())).append(":");
             for (ElementDiff d : r.diffs()) sb.append("\n- ").append(d.id()).append(": ").append(d.reason()).append(".");
             if (!r.missing().isEmpty()) {
-                sb.append("\n- Faltan en la app (usa la Key con el mismo id): ")
-                        .append(String.join(", ", r.missing())).append(".");
+                // Revisión final (C2): una Key sola no llega a la captura; ForjaiId pone Semantics(identifier:) y la Key.
+                sb.append("\n- Faltan en la app (envuelve cada uno con ForjaiId de lib/forjai/forjai_id.dart): ")
+                        .append(r.missing().stream().map(id -> "ForjaiId('" + id + "', child: …)")
+                                .collect(java.util.stream.Collectors.joining(", "))).append(".");
             }
             sb.append("\nLo demás coincide: no lo cambies.");
         }

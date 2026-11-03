@@ -2714,7 +2714,10 @@ class DevelopmentTeamStrategyTest {
         when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1, json, "APPROVED", 1, 1, "")));
         var block = strategy.visualContractBlock(ctx, owned);
         assertTrue(block.contains("pant_01_preview.dart") && block.contains("class Pant01Preview"), block);
-        assertTrue(block.contains("Key('PANT-01')") && block.contains("Key('root')"), block);
+        assertTrue(block.contains("Key('PANT-01')"), block);
+        // Revisión final (C2): los data-id de la maqueta se piden con ForjaiId (Semantics + Key), no con una Key sola.
+        assertTrue(block.contains("ForjaiId('root', child: …)") && block.contains("lib/forjai/forjai_id.dart"), block);
+        assertFalse(block.contains("Key('root')"), block);
         assertTrue(block.contains("AppTheme") && block.contains("Colors.transparent"), block);
         assertFalse(block.contains("PANT-02"), block);
         assertFalse(block.contains("forjaiPreviewOr"), "sin ser dueña de main.dart no se le pide: " + block);
@@ -2775,6 +2778,12 @@ class DevelopmentTeamStrategyTest {
         assertEquals(List.of(), strategy.visualChecks(ctx, firstOwned, null).apply(empty));
         assertTrue(strategy.visualChecks(ctx, lastOwned, null).apply(empty).stream()
                 .anyMatch(e -> e.contains("Falta la vista previa de PANT-01")));
+        // Revisión final (C2): la última escritora responde por los data-id de la maqueta (aquí "root").
+        var withPreview = new DevelopmentResult("r", List.of(new GeneratedFile(
+                "lib/pedidos/presentation/previews/pant_01_preview.dart",
+                "class Pant01Preview { build(c) => Scaffold(key: const Key('PANT-01')); }")));
+        var idErrors = strategy.visualChecks(ctx, lastOwned, null).apply(withPreview);
+        assertTrue(idErrors.stream().anyMatch(e -> e.contains("ForjaiId('root'")), idErrors.toString());
 
         TeamPlan one = new TeamPlan("App", null, null, List.of(new PlannedTask("orion", "UI", "x", "CODE", List.of(), lastOwned)),
                 List.of(), "FLUTTER_WEB_APP", List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")),

@@ -37,6 +37,20 @@ class FlutterThemeFilesTest {
         assertTrue(theme.contains("fontFamily = 'Roboto'"));
     }
 
+    // Revisión final del diseño visual (C2): la captura lee flt-semantics-identifier, que solo emite
+    // Semantics(identifier:); Forjai da el envoltorio ForjaiId (Semantics + Key) y la vista previa enciende la semántica.
+    @Test
+    void theForjaiIdHelperEmitsTheSemanticsIdentifierAndTheKey() {
+        var files = FlutterThemeFiles.files(design("#2F6FED"), List.of());
+        var helper = files.get(FlutterThemeFiles.FORJAI_ID_PATH);
+        assertEquals("lib/forjai/forjai_id.dart", FlutterThemeFiles.FORJAI_ID_PATH);
+        assertNotNull(helper, files.keySet().toString());
+        assertTrue(helper.contains("class ForjaiId extends StatelessWidget"), helper);
+        assertTrue(helper.contains("Semantics(identifier: id, container: true, child: KeyedSubtree(key: Key(id), child: child))"),
+                helper);
+        assertTrue(files.get(FlutterThemeFiles.PREVIEW_PATH).contains("SemanticsBinding.instance.ensureSemantics();"));
+    }
+
     @Test
     void previewRegistryImportsEachScreen() {
         var files = FlutterThemeFiles.files(design("#2F6FED"),

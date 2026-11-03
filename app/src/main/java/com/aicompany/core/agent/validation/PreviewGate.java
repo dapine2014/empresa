@@ -42,6 +42,30 @@ public final class PreviewGate {
      */
     public static List<String> check(List<GeneratedFile> files, Set<String> screensInIncrement, Map<String, String> existing,
                                      boolean checkMain, boolean complete) {
+        return check(files, screensInIncrement, existing, checkMain, complete, Map.of());
+    }
+
+    private static final Pattern DATA_ID = Pattern.compile("data-id\\s*=\\s*[\"']([^\"']+)[\"']");
+
+    /** Los data-id de una maqueta HTML, en orden y sin repetir. */
+    public static Set<String> dataIds(String html) {
+        var ids = new java.util.LinkedHashSet<String>();
+        if (html != null) {
+            var m = DATA_ID.matcher(html);
+            while (m.find()) {
+                ids.add(m.group(1));
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * Revisión final (C2): {@code idsByScreen} = data-id de la maqueta aprobada de cada pantalla. La dueña de la última
+     * presentación ({@code complete}) responde por que cada uno (salvo el de la pantalla, que pone la vista previa)
+     * aparezca en algún .dart como {@code ForjaiId('<data-id>'}: es lo único que la captura ve.
+     */
+    public static List<String> check(List<GeneratedFile> files, Set<String> screensInIncrement, Map<String, String> existing,
+                                     boolean checkMain, boolean complete, Map<String, Set<String>> idsByScreen) {
         var merged = new LinkedHashMap<String, String>();
         if (existing != null) {
             existing.forEach((p, c) -> merged.put(OwnedPaths.normalize(p), c == null ? "" : c));
@@ -83,6 +107,15 @@ public final class PreviewGate {
                 continue;
             }
             validate(errors, path.get(), merged.get(path.get()), number, screen);
+            var ids = idsByScreen == null ? Set.<String>of() : idsByScreen.getOrDefault(screen, Set.of());
+            var missing = ids.stream().filter(id -> !id.equals(screen)).filter(id -> merged.entrySet().stream()
+                    .noneMatch(e -> e.getKey().endsWith(".dart") && Pattern.compile("ForjaiId\\(\\s*['\"]"
+                            + Pattern.quote(id) + "['\"]").matcher(CSharpComments.strip(e.getValue())).find())).toList();
+            if (!missing.isEmpty()) {
+                errors.add("Los elementos de la maqueta de " + screen + " deben llevar su data-id con ForjaiId (de "
+                        + "lib/forjai/forjai_id.dart; una Key sola no se ve en la captura). Envuelve: " + missing.stream()
+                        .map(id -> "ForjaiId('" + id + "', child: …)").collect(java.util.stream.Collectors.joining(", ")) + ".");
+            }
         }
         merged.forEach((p, c) -> {
             if (checkMain && (p.equals("lib/main.dart") || p.endsWith("/lib/main.dart")) && !CSharpComments.strip(c).contains("forjaiPreviewOr(")) {
@@ -98,7 +131,8 @@ public final class PreviewGate {
         if (!Pattern.compile("\\bclass\\s+" + cls + "\\b").matcher(code).find()) {
             errors.add(path + " debe declarar class " + cls + ".");
         }
-        if (!Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()) {
+        if (!Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()
+                && !Pattern.compile("ForjaiId\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]").matcher(code).find()) {
             errors.add(path + " debe incluir Key('" + screen + "') en su vista previa.");
         }
     }
