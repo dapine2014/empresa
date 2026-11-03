@@ -143,11 +143,16 @@ public class DesignReviewLoop {
      * de incrementos posteriores quedan atadas al tema aprobado (ThemeLiteralGate) y no se comparan.
      */
     private Set<String> screens(TeamMissionContext ctx, VisualDesign design) {
+        return screensWithMockup(front.screens(ctx), design);
+    }
+
+    /** Las pantallas del incremento con maqueta aprobada, ordenadas: el conjunto que el ciclo compara (y que exige la verificación humana). */
+    static Set<String> screensWithMockup(Set<String> incrementScreens, VisualDesign design) {
         var withMockup = design.mockups() == null ? Set.<String>of() : design.mockups().screens().stream()
                 .map(com.aicompany.core.agent.model.Mockups.Mockup::screen).filter(java.util.Objects::nonNull)
                 .collect(java.util.stream.Collectors.toSet());
         var out = new LinkedHashSet<String>();
-        front.screens(ctx).stream().filter(withMockup::contains).sorted().forEach(out::add);
+        incrementScreens.stream().filter(withMockup::contains).sorted().forEach(out::add);
         return out;
     }
 

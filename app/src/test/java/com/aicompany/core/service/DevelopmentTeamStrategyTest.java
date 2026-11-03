@@ -1826,17 +1826,7 @@ class DevelopmentTeamStrategyTest {
     void verifyHeadIsNotVerifiedWhileScreensAwaitADecision() throws Exception {
         stubFullstack();
         var context = withQaWork();
-        var head = "h".repeat(40);
-        when(workspace.headIfAny("M-1")).thenReturn(Optional.of(head));
-        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
-                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
-        var visuals = mock(VisualDesignMemoryService.class);
-        var reviews = mock(DesignReviewMemoryService.class);
-        strategy.setVisualDesign(visuals);
-        strategy.setDesignReview(mock(DesignCaptureService.class), reviews, mock(CompanyPolicyService.class));
-        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
-                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
-                        VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
+        var reviews = humanVerifyWithDesign(1, "PANT-01");
         when(reviews.pending("M-1", 1)).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-01",
                 "phone", 0.5, "AWAITING_DECISION", 2, 0, null, null, null)));
 
@@ -2115,28 +2105,83 @@ class DevelopmentTeamStrategyTest {
                 argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("PANT-01")));
     }
 
-    // Hueco cerrado: con diseño aprobado y sin ninguna revisión, la verificación humana no da VERIFIED.
-    @Test
-    void verifyHeadWithAnApprovedDesignAndNoReviewRowsIsUnvalidated() throws Exception {
-        stubFullstack();
-        var context = withQaWork();
+    /** QA_SPEC (ESC-01/02 en HU-01, incremento 1) más HU-02 sin escenarios en el incremento 2. */
+    private static com.aicompany.core.agent.model.RequirementsSpec twoIncrementSpec() {
+        var stories = new ArrayList<>(QA_SPEC.userStories());
+        stories.add(new com.aicompany.core.agent.model.RequirementsSpec.UserStory("HU-02", "vendedor", "ver", "seguir",
+                List.of("c"), List.of(), List.of()));
+        return new com.aicompany.core.agent.model.RequirementsSpec("CRM", List.of(), List.of(), QA_SPEC.roles(), stories,
+                List.of(new com.aicompany.core.agent.model.RequirementsSpec.Increment(1, "MVP", List.of("HU-01")),
+                        new com.aicompany.core.agent.model.RequirementsSpec.Increment(2, "Detalle", List.of("HU-02"))),
+                QA_SPEC.experience());
+    }
+
+    /** Diseño visual aprobado (maqueta solo de mockupScreen) + diseño de interacción y requisitos de Kael/Aria en el incremento dado. */
+    private DesignReviewMemoryService humanVerifyWithDesign(int increment, String mockupScreen) throws Exception {
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        var interaction = mock(InteractionDesignMemoryService.class);
+        var requirements = mock(RequirementsMemoryService.class);
+        strategy.setInteractionDesign(interaction);
+        strategy.setRequirements(requirements);
+        when(interaction.approved("M-1")).thenReturn(Optional.of(new InteractionDesignMemoryService.Version(1,
+                mapper.writeValueAsString(new com.aicompany.core.agent.model.InteractionDesign("APP",
+                        VisualDesignWriterTest.APP, null)), "APPROVED", 1, "")));
+        when(requirements.approved("M-1")).thenReturn(Optional.of(new RequirementsMemoryService.Version(1,
+                mapper.writeValueAsString(twoIncrementSpec()), "APPROVED", "", java.time.Instant.now())));
+        when(requirements.currentIncrement("M-1")).thenReturn(increment);
         var visuals = mock(VisualDesignMemoryService.class);
         var reviews = mock(DesignReviewMemoryService.class);
         strategy.setVisualDesign(visuals);
         strategy.setDesignReview(mock(DesignCaptureService.class), reviews, mock(CompanyPolicyService.class));
         when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
-                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
-                        VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
-        when(reviews.pending("M-1", 1)).thenReturn(List.of());
+                mapper.writeValueAsString(VisualDesignWriterTest.design("#FFFFFF", mockupScreen)), "APPROVED", 1, 1, "")));
+        when(reviews.pending("M-1", increment)).thenReturn(List.of());
         when(reviews.all("M-1")).thenReturn(List.of());
+        when(workspace.readFileAtCommit(eq("M-1"), anyString(), eq("app/lib/main.dart")))
+                .thenReturn("Widget build(c) => Scaffold(key: const Key('PANT-01'), body: Container(key: const Key('PANT-02')));");
         when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
         when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
                 .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+        return reviews;
+    }
+
+    // Hueco cerrado: con diseño aprobado y una pantalla con maqueta sin ninguna revisión, no hay VERIFIED.
+    @Test
+    void verifyHeadWithAnApprovedDesignAndNoReviewRowsIsUnvalidated() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        humanVerifyWithDesign(1, "PANT-01");
 
         strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
 
         verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("UNVALIDATED"), anyString());
         verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+    }
+
+    // Incrementos posteriores: sus pantallas nuevas no tienen maqueta, el ciclo no aplica y no hay filas que exigir.
+    @Test
+    void verifyHeadInALaterIncrementWithoutMockupsDoesNotNeedReviewRows() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        humanVerifyWithDesign(2, "PANT-01");
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordVerifiedCommit("M-1", "h".repeat(40), 2);
+    }
+
+    // Solo cuentan las pantallas con maqueta: una pantalla sin maqueta no exige fila.
+    @Test
+    void verifyHeadOnlyRequiresReviewRowsForScreensWithAMockup() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var reviews = humanVerifyWithDesign(1, "PANT-01");
+        when(reviews.all("M-1")).thenReturn(List.of(new com.aicompany.core.model.DesignScreenReview(1, "PANT-01",
+                "phone", 0.99, "PASSED", 0, 0, null, null, null)));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordVerifiedCommit("M-1", "h".repeat(40), 1);
     }
 
     private TeamMissionContext withQaWorkAndDatabase() throws Exception {

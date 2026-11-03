@@ -707,7 +707,14 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
      * exige que ninguna pantalla del incremento quede sin pasar ni aceptar. Sin diseño, aceptado como siempre.
      */
     private boolean designAcceptedForHumanVerify(String missionId) {
-        if (designReviews == null || approvedVisual(missionId).isEmpty()) {
+        var visual = designReviews == null ? java.util.Optional.<com.aicompany.core.agent.model.VisualDesign>empty()
+                : approvedVisual(missionId);
+        if (visual.isEmpty()) {
+            return true;
+        }
+        // Las mismas pantallas que compara el ciclo; si no hay ninguna, el ciclo no aplica y no hay nada que exigir.
+        var screens = DesignReviewLoop.screensWithMockup(incrementScreens(missionId), visual.get());
+        if (screens.isEmpty()) {
             return true;
         }
         var inc = currentIncrementOrNull(missionId);
@@ -723,8 +730,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     .filter(r -> "PASSED".equals(r.status()) || "ACCEPTED".equals(r.status()))
                     .forEach(r -> accepted.add(r.screen()));
         }
-        var screens = incrementScreens(missionId);
-        return !accepted.isEmpty() && accepted.containsAll(screens);
+        return accepted.containsAll(screens);
     }
 
     private DesignReviewLoop.Outcome designReview(TeamMissionContext context, String headSha,
