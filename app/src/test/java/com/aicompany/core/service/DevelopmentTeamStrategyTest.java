@@ -2115,6 +2115,30 @@ class DevelopmentTeamStrategyTest {
                 argThat(json -> json.contains("DESIGN_CONFORMANCE") && json.contains("PANT-01")));
     }
 
+    // Hueco cerrado: con diseño aprobado y sin ninguna revisión, la verificación humana no da VERIFIED.
+    @Test
+    void verifyHeadWithAnApprovedDesignAndNoReviewRowsIsUnvalidated() throws Exception {
+        stubFullstack();
+        var context = withQaWork();
+        var visuals = mock(VisualDesignMemoryService.class);
+        var reviews = mock(DesignReviewMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        strategy.setDesignReview(mock(DesignCaptureService.class), reviews, mock(CompanyPolicyService.class));
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(1,
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                        VisualDesignWriterTest.design("#FFFFFF", "PANT-01")), "APPROVED", 1, 1, "")));
+        when(reviews.pending("M-1", 1)).thenReturn(List.of());
+        when(reviews.all("M-1")).thenReturn(List.of());
+        when(workspace.headIfAny("M-1")).thenReturn(Optional.of("h".repeat(40)));
+        when(sandbox.verify(eq("M-1"), anyString(), anyString(), anyString()))
+                .thenReturn(runWith("Crm.ESC_01_alta_valida", "ESC-02 alta sin nombre"));
+
+        strategy.verifyHead(context, "M-1-HUMAN-VERIFY-1");
+
+        verify(memory).recordStaticValidation(eq("M-1-HUMAN-VERIFY-1"), eq("UNVALIDATED"), anyString());
+        verify(memory, never()).recordVerifiedCommit(anyString(), anyString(), any());
+    }
+
     private TeamMissionContext withQaWorkAndDatabase() throws Exception {
         var base = withQaWork();
         var p = base.plan();
@@ -2748,6 +2772,7 @@ class DevelopmentTeamStrategyTest {
         // Revisión final (C2): los data-id de la maqueta se piden con ForjaiId (Semantics + Key), no con una Key sola.
         assertTrue(block.contains("ForjaiId('root', child: …)") && block.contains("lib/forjai/forjai_id.dart"), block);
         assertFalse(block.contains("Key('root')"), block);
+        assertTrue(block.contains("ForjaiBarId") && block.contains("appBar:") && block.contains("PreferredSizeWidget"), block);
         assertTrue(block.contains("AppTheme") && block.contains("Colors.transparent"), block);
         assertFalse(block.contains("PANT-02"), block);
         assertFalse(block.contains("forjaiPreviewOr"), "sin ser dueña de main.dart no se le pide: " + block);

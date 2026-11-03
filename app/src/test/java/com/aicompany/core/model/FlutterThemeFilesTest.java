@@ -52,6 +52,16 @@ class FlutterThemeFilesTest {
     }
 
     @Test
+    void theForjaiBarIdHelperIsAPreferredSizeWidgetForTheAppBarSlot() {
+        var helper = FlutterThemeFiles.files(design("#2F6FED"), List.of()).get(FlutterThemeFiles.FORJAI_ID_PATH);
+        assertTrue(helper.contains("class ForjaiBarId extends StatelessWidget implements PreferredSizeWidget"), helper);
+        assertTrue(helper.contains("const ForjaiBarId(this.id, {super.key, required this.child});"), helper);
+        assertTrue(helper.contains("final PreferredSizeWidget child;"), helper);
+        assertTrue(helper.contains("Size get preferredSize => child.preferredSize;"), helper);
+        assertTrue(helper.contains("import 'package:flutter/material.dart';"), helper);
+    }
+
+    @Test
     void previewRegistryImportsEachScreen() {
         var files = FlutterThemeFiles.files(design("#2F6FED"),
                 FlutterThemeFiles.previewPaths(List.of("lib/pedidos/presentation/previews/pant_02_preview.dart",

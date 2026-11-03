@@ -135,13 +135,28 @@ public final class FlutterThemeFiles {
     private static final String FORJAI_ID = """
             // GENERADO POR FORJAI: envuelve cada elemento de la maqueta (su data-id); no lo edites.
             // La captura de diseño lee Semantics(identifier:) y la Key sirve a los tests de widgets.
-            import 'package:flutter/widgets.dart';
+            import 'package:flutter/material.dart';
 
             class ForjaiId extends StatelessWidget {
               const ForjaiId(this.id, {super.key, required this.child});
 
               final String id;
               final Widget child;
+
+              @override
+              Widget build(BuildContext context) =>
+                  Semantics(identifier: id, container: true, child: KeyedSubtree(key: Key(id), child: child));
+            }
+
+            /// Para huecos que exigen PreferredSizeWidget (Scaffold.appBar, bottom de un AppBar): ForjaiBarId('id', child: AppBar(...)).
+            class ForjaiBarId extends StatelessWidget implements PreferredSizeWidget {
+              const ForjaiBarId(this.id, {super.key, required this.child});
+
+              final String id;
+              final PreferredSizeWidget child;
+
+              @override
+              Size get preferredSize => child.preferredSize;
 
               @override
               Widget build(BuildContext context) =>

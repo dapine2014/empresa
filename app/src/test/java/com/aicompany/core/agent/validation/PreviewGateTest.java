@@ -55,6 +55,17 @@ class PreviewGateTest {
                 "class PedidosPage {}")), Set.of("PANT-01"), Map.of(), false, false, ids));
     }
 
+    @Test
+    void forjaiBarIdSatisfiesAnIdLikeForjaiId() {
+        var ids = Map.of("PANT-01", Set.of("PANT-01", "barra", "item-1"));
+        var page = "class P { build(c) => Scaffold(appBar: ForjaiBarId('barra', child: AppBar()), body: "
+                + "Column(children: [for (var i = 1; i < 3; i++) ForjaiBarId('item-$i', child: x)])); }";
+        assertEquals(List.of(), PreviewGate.check(List.of(new GeneratedFile("lib/main.dart", MAIN),
+                new GeneratedFile("lib/pedidos/presentation/previews/pant_01_preview.dart", PREVIEW),
+                new GeneratedFile("lib/pedidos/presentation/pedidos_page.dart", page)), Set.of("PANT-01"), Map.of(),
+                true, true, ids));
+    }
+
     private static List<String> repeated(String body, Set<String> ids) {
         var page = "import '../../forjai/forjai_id.dart';\nclass PedidosPage { build(c) => " + body + "; }";
         return PreviewGate.check(List.of(new GeneratedFile("lib/main.dart", MAIN),

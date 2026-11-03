@@ -113,7 +113,7 @@ public final class PreviewGate {
             if (!missing.isEmpty()) {
                 errors.add("Los elementos de la maqueta de " + screen + " deben llevar su data-id con ForjaiId (de "
                         + "lib/forjai/forjai_id.dart; una Key sola no se ve en la captura). Envuelve: "
-                        + String.join(", ", wrapHints(missing)) + ".");
+                        + String.join(", ", wrapHints(missing)) + ". Para appBar: usa ForjaiBarId (es PreferredSizeWidget).");
             }
         }
         merged.forEach((p, c) -> {
@@ -137,7 +137,7 @@ public final class PreviewGate {
      * en una lista), un id interpolado con la misma base ('base$i', 'base${i}', "base$i", 'base' + i).
      */
     static boolean wrapsId(String code, String id) {
-        if (Pattern.compile("ForjaiId\\(\\s*['\"]" + Pattern.quote(id) + "['\"]").matcher(code).find()) {
+        if (Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + Pattern.quote(id) + "['\"]").matcher(code).find()) {
             return true;
         }
         var base = repeatedBase(id);
@@ -145,7 +145,7 @@ public final class PreviewGate {
             return false;
         }
         var b = Pattern.quote(base);
-        return Pattern.compile("ForjaiId\\(\\s*['\"]" + b + "\\$").matcher(code).find()
+        return Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + b + "\\$").matcher(code).find()
                 || Pattern.compile("['\"]" + b + "['\"]\\s*\\+").matcher(code).find();
     }
 
@@ -173,7 +173,7 @@ public final class PreviewGate {
             errors.add(path + " debe declarar class " + cls + ".");
         }
         if (!Pattern.compile("Key\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]\\s*\\)").matcher(code).find()
-                && !Pattern.compile("ForjaiId\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]").matcher(code).find()) {
+                && !Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + Pattern.quote(screen) + "['\"]").matcher(code).find()) {
             errors.add(path + " debe incluir Key('" + screen + "') en su vista previa.");
         }
     }

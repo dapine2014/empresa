@@ -711,7 +711,20 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return true;
         }
         var inc = currentIncrementOrNull(missionId);
-        return designReviews.pending(missionId, inc == null ? 1 : inc).isEmpty();
+        var increment = inc == null ? 1 : inc;
+        if (!designReviews.pending(missionId, increment).isEmpty()) {
+            return false;
+        }
+        // Una pantalla sin fila de revisión no está aceptada: un ciclo de diseño que nunca corrió no da VERIFIED.
+        var accepted = new java.util.HashSet<String>();
+        var rows = designReviews.all(missionId);
+        if (rows != null) {
+            rows.stream().filter(r -> r.increment() == increment)
+                    .filter(r -> "PASSED".equals(r.status()) || "ACCEPTED".equals(r.status()))
+                    .forEach(r -> accepted.add(r.screen()));
+        }
+        var screens = incrementScreens(missionId);
+        return !accepted.isEmpty() && accepted.containsAll(screens);
     }
 
     private DesignReviewLoop.Outcome designReview(TeamMissionContext context, String headSha,
@@ -1976,7 +1989,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             ids.remove(screen);
             if (!ids.isEmpty()) {
                 // Revisión final (C2): la captura solo ve Semantics(identifier:); ForjaiId pone eso y la Key.
-                out.append("; envuelve cada elemento de la maqueta con ForjaiId(<data-id>, child: …) (import de ")
+                out.append("; envuelve cada elemento de la maqueta con ForjaiId(<data-id>, child: …); para appBar: (o cualquier "
+                        + "hueco que exige PreferredSizeWidget) usa ForjaiBarId(<data-id>, child: AppBar(…)) (import de ")
                         .append(com.aicompany.core.model.FlutterThemeFiles.FORJAI_ID_PATH)
                         .append("; una Key sola no se ve en la captura): ")
                         .append(String.join(", ", com.aicompany.core.agent.validation.PreviewGate.wrapHints(ids)));

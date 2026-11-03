@@ -1293,3 +1293,5 @@ Spec `docs/superpowers/specs/2026-11-01-front-diseno-visual-design.md`, plan del
 
 
 **Verificación en vivo (2026-11-03), primera corrida:** MISSION-FRONT-VISUAL-1793710348. Contrato, HU, diseño de Kael, sistema visual y 2 maquetas capturadas OK. Mila falló 3+3 intentos porque la regla exigía ForjaiId literal para ítems de lista; cancelada en R1 (US$ 1,63). Corregido: ids con sufijo numérico aceptan interpolación.
+
+Segunda corrida (2026-11-03), MISSION-FRONT-VISUAL-1793712444. Mila pasó las validaciones del front al primer intento. El sandbox falló en restore porque el despliegue no sembró ~/forjai-deps/pub desde flutter-web-app:3 (flutter_svg); se sembró con el paso de build-images.sh. Luego quedaron 2 errores de compilación, uno porque ForjaiId no es PreferredSizeWidget para el appBar; cancelada en la ronda 2 (US$ 1,25). Corregido con ForjaiBarId. También se cerró el hueco de la verificación humana sin revisión de diseño.
