@@ -2030,8 +2030,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         };
     }
 
-    /** El front escribe el pubspec y las vistas previas: Java mezcla fuentes/SVG y regenera la tabla en el mismo commit. */
-    private DevelopmentResult withVisualFiles(TeamMissionContext context, List<String> owned, String headSha,
+    /**
+     * El front escribe el pubspec y las vistas previas: Java mezcla fuentes/SVG y regenera la tabla en el mismo commit.
+     * El pubspec mezclado entra solo si la tarea es dueña de él.
+     */
+    DevelopmentResult withVisualFiles(TeamMissionContext context, List<String> owned, String headSha,
                                               DevelopmentResult result) {
         if (result == null || result.files() == null || approvedVisual(context.missionId()).isEmpty()
                 || context.plan().resolvedComponents().stream().noneMatch(c ->
@@ -2039,7 +2042,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return result;
         }
         var returned = result.files().stream().filter(java.util.Objects::nonNull).toList();
-        var extra = visualFiles(context, headSha, returned);
+        // Revisión final (I4): el pubspec solo lo mezcla la tarea que es su dueña; con dos front, la otra no lo escribe.
+        var extra = visualFiles(context, headSha, returned).stream()
+                .filter(f -> !f.path().endsWith("pubspec.yaml") || OwnedPaths.coveredByAny(owned, f.path())).toList();
         if (extra.isEmpty()) {
             return result;
         }

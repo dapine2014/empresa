@@ -2685,6 +2685,36 @@ class DevelopmentTeamStrategyTest {
         assertTrue(byPath.containsKey("assets/svg/logo.svg"));
     }
 
+    // Revisión final del diseño visual (I4): con dos front, solo la dueña de pubspec.yaml recibe la mezcla del pubspec;
+    // la otra no lo escribe a nombre de la primera (tema y vistas previas sí, son de Forjai).
+    @Test
+    void onlyThePubspecOwnerGetsThePubspecMerged() throws Exception {
+        var visuals = mock(VisualDesignMemoryService.class);
+        strategy.setVisualDesign(visuals);
+        var base = context();
+        var plan = new TeamPlan("App", null, null, base.plan().tasks(), List.of(), "FLUTTER_WEB_APP",
+                List.of(new TeamPlan.BoundedContext("Pedidos", "Pedidos")), base.plan().ubiquitousLanguage());
+        var ctx = new TeamMissionContext("M-1", "app", base.team(), plan);
+        var json = tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(
+                FlutterThemeFilesTestDesign.get());
+        when(visuals.approved("M-1")).thenReturn(Optional.of(new VisualDesignMemoryService.Version(2, json, "APPROVED", 1, 1, "")));
+        when(workspace.filesAtCommit("M-1", "h")).thenReturn(List.of("pubspec.yaml", "lib/main.dart"));
+        when(workspace.readFileAtCommit("M-1", "h", "pubspec.yaml"))
+                .thenReturn("name: pedidos\ndependencies:\n  flutter:\n    sdk: flutter\n");
+        var returned = new DevelopmentResult("orion", List.of(new DevelopmentResult.GeneratedFile(
+                "lib/pedidos/presentation/previews/pant_01_preview.dart", "x")));
+
+        var second = strategy.withVisualFiles(ctx, List.of("lib/pedidos/presentation"), "h", returned);
+        var paths = second.files().stream().map(DevelopmentResult.GeneratedFile::path).toList();
+        assertFalse(paths.contains("pubspec.yaml"), paths.toString());
+        assertTrue(paths.contains("lib/forjai/previews.dart"), paths.toString());
+
+        var owner = strategy.withVisualFiles(ctx, List.of("pubspec.yaml", "lib/main.dart", "lib/pedidos/presentation"), "h",
+                returned);
+        assertTrue(owner.files().stream().anyMatch(f -> f.path().equals("pubspec.yaml")
+                && f.content().contains("flutter_svg")), owner.files().toString());
+    }
+
     // Regla R9: el contrato de la vista previa y del tema solo aparece en el prompt del front con diseño visual aprobado.
     @Test
     void visualContractBlockAppearsOnlyWithAnApprovedVisualDesign() throws Exception {

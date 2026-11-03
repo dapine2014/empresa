@@ -84,9 +84,13 @@ public class DesignCaptureService {
         }
         String sha;
         try {
-            sha = workspace.commitAgentWork(missionId, missionId + "-MOCKUPS" + (version > 1 ? "-V" + version : ""),
-                    "forjai", "Forjai", new DevelopmentResult("Maquetas del diseño visual (versión " + version
-                            + "), generadas por Forjai", files)).sha();
+            var taskId = missionId + "-MOCKUPS" + (version > 1 ? "-V" + version : "");
+            var result = new DevelopmentResult("Maquetas del diseño visual (versión " + version + "), generadas por Forjai",
+                    files);
+            // Revisión final (I2): lo que un ajuste quitó de las maquetas sale del repositorio en el mismo commit.
+            var stale = staleMockups(missionId, files);
+            sha = (stale.isEmpty() ? workspace.commitAgentWork(missionId, taskId, "forjai", "Forjai", result)
+                    : workspace.commitAgentWork(missionId, taskId, "forjai", "Forjai", result, stale)).sha();
         } catch (IOException ex) {
             throw new IllegalStateException("No se pudieron commitear las maquetas: " + ex.getMessage(), ex);
         }
@@ -96,6 +100,17 @@ public class DesignCaptureService {
         log.info("MISSION {} - mockups v{} captured: {} image(s) in {}", missionId, version,
                 captures.pngByScreenSize().size(), dir);
         return captures;
+    }
+
+    /** Archivos de {@code .forjai/mockups/} en HEAD que la versión nueva ya no trae. */
+    private List<String> staleMockups(String missionId, List<DevelopmentResult.GeneratedFile> files) throws IOException {
+        var head = workspace.headIfAny(missionId);
+        if (head == null || head.isEmpty()) {
+            return List.of();
+        }
+        var kept = files.stream().map(DevelopmentResult.GeneratedFile::path).collect(java.util.stream.Collectors.toSet());
+        return workspace.filesAtCommit(missionId, head.get()).stream()
+                .filter(p -> p.startsWith(MOCKUPS_DIR) && !kept.contains(p)).toList();
     }
 
     /**

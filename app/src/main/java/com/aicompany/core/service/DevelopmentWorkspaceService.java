@@ -60,6 +60,17 @@ public class DevelopmentWorkspaceService {
     public synchronized CommitRecord commitAgentWork(
             String missionId, String taskId, String agentId, String agentName, DevelopmentResult result)
             throws IOException {
+        return commitAgentWork(missionId, taskId, agentId, agentName, result, List.of());
+    }
+
+    /**
+     * Igual, y además saca del repositorio {@code removedPaths} en el mismo commit (revisión final del diseño visual,
+     * I2: las maquetas de pantallas que un ajuste quitó). Solo rutas seguras dentro del workspace; las que no existen
+     * se ignoran.
+     */
+    public synchronized CommitRecord commitAgentWork(
+            String missionId, String taskId, String agentId, String agentName, DevelopmentResult result,
+            List<String> removedPaths) throws IOException {
 
         var dir = missionWorkspace(missionId);
         Files.createDirectories(dir);
@@ -96,6 +107,20 @@ public class DevelopmentWorkspaceService {
         var addArgs = new ArrayList<String>(List.of("add", "--"));
         addArgs.addAll(paths);
         git.run(dir, addArgs.toArray(String[]::new));
+
+        var removed = removedPaths == null ? List.<String>of() : removedPaths.stream().map(OwnedPaths::normalize)
+                .filter(p -> !contentByPath.containsKey(p)).distinct().toList();
+        if (!removed.isEmpty()) {
+            for (var p : removed) {
+                var target = dir.resolve(p).normalize();
+                if (!OwnedPaths.isSafe(p) || !target.startsWith(dir) || target.startsWith(gitDir)) {
+                    throw new IllegalStateException("Ruta fuera del workspace permitido: " + p);
+                }
+            }
+            var rmArgs = new ArrayList<String>(List.of("rm", "-q", "--ignore-unmatch", "--"));
+            rmArgs.addAll(removed);
+            git.run(dir, rmArgs.toArray(String[]::new));
+        }
 
         var message = result.summary()
                 + "\n\nForjai-Mission: " + missionId

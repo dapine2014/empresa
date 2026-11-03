@@ -79,6 +79,36 @@ class DesignCaptureServiceTest {
         verify(visuals).setCaptureDir("M-1", 1, dir);
     }
 
+    // Revisión final del diseño visual (I2): con git real, una maqueta que el ajuste quitó (v1 → v2) sale de
+    // .forjai/mockups, así no se sigue capturando ni mostrando.
+    @Test
+    void anAdjustmentRemovesTheMockupsOfScreensThatAreNoLongerInTheDesign() throws Exception {
+        var git = new GitCommandRunner();
+        var real = new DevelopmentWorkspaceService(deliveries.resolve("products").toString(), git);
+        var service = new DesignCaptureService(runner, real, visuals, JsonMapper.builder().build(), deliveries);
+        var dir = "diseno-1-mockups-" + JOB;
+        staging("M-1", dir);
+        when(runner.designCapture(eq("M-1"), anyString(), eq(1), eq("MOCKUPS")))
+                .thenReturn(Optional.of(new SandboxResult("PASS", List.of(), dir)));
+        var v1 = new VisualDesign(VisualDesignWriterTest.system("#FFFFFF"), new Mockups(List.of(
+                new Mockups.Mockup("PANT-01", "<div data-id=\"PANT-01\">x</div>"),
+                new Mockups.Mockup("PANT-02", "<div data-id=\"PANT-02\">y</div>")),
+                List.of(new Mockups.SvgAsset("logo", "<svg></svg>"), new Mockups.SvgAsset("viejo", "<svg></svg>"))));
+        service.captureMockups("M-1", 1, 1, v1);
+        // Un archivo del producto fuera de .forjai/mockups nunca se toca.
+        real.commitAgentWork("M-1", "M-1-SCAFFOLD", "forjai", "Forjai", new DevelopmentResult("scaffold", List.of(
+                new DevelopmentResult.GeneratedFile("lib/main.dart", "void main() {}"))));
+
+        service.captureMockups("M-1", 1, 2, design());
+
+        var head = real.filesAtCommit("M-1", real.headSha("M-1"));
+        assertTrue(head.containsAll(List.of(".forjai/mockups/PANT-01.html", ".forjai/mockups/svg/logo.svg", "lib/main.dart")),
+                head.toString());
+        assertFalse(head.contains(".forjai/mockups/PANT-02.html"), head.toString());
+        assertFalse(head.contains(".forjai/mockups/svg/viejo.svg"), head.toString());
+        assertEquals(Optional.of("M-1-MOCKUPS-V2"), real.headTask("M-1"));
+    }
+
     @Test
     void anAdjustedVersionCommitsUnderItsOwnTask() throws Exception {
         when(workspace.commitAgentWork(anyString(), anyString(), anyString(), anyString(), any()))
