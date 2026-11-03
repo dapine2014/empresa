@@ -21,6 +21,8 @@ public final class FlutterThemeFiles {
     public static final String PREVIEW_PATH = "lib/forjai/preview.dart";
     public static final String PREVIEWS_PATH = "lib/forjai/previews.dart";
     public static final List<String> RESERVED_ROOTS = List.of("lib/theme", "lib/forjai");
+    /** Los SVG del diseño ({@code assets/svg}); la carpeta {@code assets} del componente es de Forjai con diseño aprobado. */
+    public static final String ASSETS_ROOT = "assets";
     /** Versión exacta que resuelve sin red (precargada en la caché de pub de la imagen flutter-web-app). */
     public static final String FLUTTER_SVG_VERSION = "2.2.0";
 

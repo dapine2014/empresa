@@ -44,6 +44,18 @@ class ComponentStructureCheckerTest {
         assertTrue(named(checks, "PORTABILITY").passed());
     }
 
+    // Revisión final del diseño visual (C1): .forjai/ y las carpetas del diseño visual (raíces de Forjai) no rompen la
+    // estructura de una app de varios componentes.
+    @Test
+    void theForjaiRootAndTheVisualDesignFoldersAreNotPartOfTheStructure() {
+        var files = new java.util.ArrayList<>(FILES);
+        files.addAll(List.of(".forjai/mockups/PANT-01.html", ".forjai/mockups/svg/logo.svg",
+                "app/lib/theme/app_theme.dart", "app/lib/forjai/preview.dart", "app/assets/svg/logo.svg"));
+        var structure = named(ComponentStructureChecker.check(FULLSTACK, List.of("Clientes"), files, Map.of(),
+                List.of("app/lib/api/api_routes.dart", "app/lib/theme", "app/lib/forjai", "app/assets")), "PROFILE_STRUCTURE");
+        assertTrue(structure.passed(), structure.detail());
+    }
+
     @Test
     void aFileOutsideEveryComponentFailsWithItsRealPath() {
         var files = new java.util.ArrayList<>(FILES);

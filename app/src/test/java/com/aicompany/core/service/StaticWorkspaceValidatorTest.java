@@ -98,6 +98,18 @@ class StaticWorkspaceValidatorTest {
         assertFalse(find(validate(List.of(wrong), ALLOWED), "COMMIT_EXISTS").passed());
     }
 
+    // Revisión final del diseño visual (C1): .forjai/ (maquetas de Forjai) no es de ningún agente ni componente.
+    @Test
+    void theForjaiRootIsOutsideTheStructureAndOwnedPathChecks() throws Exception {
+        workspace.commitAgentWork("M-1", "M-1-MOCKUPS", "forjai", "Forjai", new DevelopmentResult("maquetas", List.of(
+                new GeneratedFile(".forjai/mockups/PANT-01.html", "<div data-id=\"PANT-01\"></div>"),
+                new GeneratedFile(".forjai/mockups/svg/logo.svg", "<svg></svg>"))));
+
+        var checks = validate(work, ALLOWED);
+
+        assertTrue(checks.stream().allMatch(StaticCheck::passed), checks.toString());
+    }
+
     @Test
     void failsWhenFilesAreOutsideTheOwnedPaths() {
         assertFalse(find(validate(work, List.of("Juego.sln")), "PATHS_WITHIN_OWNED").passed());

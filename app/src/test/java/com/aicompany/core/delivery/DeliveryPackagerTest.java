@@ -56,6 +56,28 @@ class DeliveryPackagerTest {
         assertEquals(List.of(), leftovers());
     }
 
+    // Revisión final del diseño visual (C1): las maquetas de Forjai (.forjai/mockups) no son parte del producto entregado.
+    @Test
+    void theMockupsOfTheVisualDesignAreNotInTheSourceOfTheZip() throws Exception {
+        var git = new GitCommandRunner();
+        var repo = tmp.resolve("products/M-1");
+        Files.createDirectories(repo.resolve(".forjai/mockups/svg"));
+        Files.writeString(repo.resolve(".forjai/mockups/PANT-01.html"), "<div data-id=\"PANT-01\"></div>");
+        Files.writeString(repo.resolve(".forjai/mockups/svg/logo.svg"), "<svg></svg>");
+        Files.createDirectories(repo.resolve("lib/theme"));
+        Files.writeString(repo.resolve("lib/theme/app_theme.dart"), "class AppTheme {}");
+        git.run(repo, "add", ".");
+        git.run(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "maquetas");
+        var head = git.run(repo, "rev-parse", "HEAD").trim();
+
+        var zip = packager.assemble(new DeliveryPackager.Assembly("M-1", 1, head, "FLUTTER_WEB_APP",
+                packager.stagingDir("M-1", 1), "# doc", Map.of(), Map.of()));
+
+        var names = zipEntries(zip);
+        assertTrue(names.contains("codigo-fuente/lib/theme/app_theme.dart"), names.toString());
+        assertTrue(names.stream().noneMatch(n -> n.contains(".forjai/mockups")), names.toString());
+    }
+
     @Test
     void theZipAndTheMissionFolderTakeTheOwnerOfTheDeliveriesRoot() throws Exception {
         var zip = packager.assemble(new DeliveryPackager.Assembly("M-1", 1, sha, "GODOT_DOTNET_GAME",

@@ -29,6 +29,16 @@ public record AppComponent(StackProfile profile, String dir) {
     public static final List<String> COMMON_ROOT_PATHS =
             List.of("db/postgres/migrations", ".env.example", "README.md", ".gitignore", "docs");
 
+    /**
+     * Revisión final del diseño visual (C1): la raíz de Forjai en el repositorio (maquetas en {@code .forjai/mockups}).
+     * No es de ningún componente ni de ningún agente: los chequeos de estructura y de ownedPaths no la miran.
+     */
+    public static final String FORJAI_ROOT = ".forjai";
+
+    public static boolean isForjaiRoot(String path) {
+        return OwnedPaths.covers(FORJAI_ROOT, path);
+    }
+
     public static String dirOf(StackProfile profile) {
         return DIRS.get(profile);
     }

@@ -42,7 +42,10 @@ public class StaticWorkspaceValidator {
                 contexts, allowedPaths, List.of());
     }
 
-    /** Spec 2026-10-02 B1 §3: chequeos por componente. forjaiFiles = archivos que escribe Java (api_routes.dart). */
+    /**
+     * Spec 2026-10-02 B1 §3: chequeos por componente. forjaiFiles = archivos o carpetas que escribe Java (api_routes.dart;
+     * con diseño visual aprobado, lib/theme, lib/forjai y assets del componente Flutter).
+     */
     public List<StaticCheck> validate(
             String missionId, List<CommittedWork> work, List<AppComponent> components, List<String> contexts,
             List<String> allowedPaths, List<String> forjaiFiles) {
@@ -149,11 +152,16 @@ public class StaticWorkspaceValidator {
 
             var mode = entry.substring(0, space);
             var path = entry.substring(tab + 1);
-            paths.add(path);
 
             if ("120000".equals(mode)) {
                 symlinks.add(path);
             }
+
+            // Revisión final del diseño visual (C1): .forjai/ (maquetas) es de Forjai, fuera de los componentes y del plan.
+            if (AppComponent.isForjaiRoot(path)) {
+                continue;
+            }
+            paths.add(path);
 
             if (!OwnedPaths.coveredByAny(allowedPaths, path)) {
                 outside.add(path);
@@ -179,7 +187,7 @@ public class StaticWorkspaceValidator {
         var contents = new LinkedHashMap<String, String>();
         try {
             for (var path : paths) {
-                var source = forjaiFiles.contains(path) || components.stream().anyMatch(c -> c.owns(path)
+                var source = OwnedPaths.coveredByAny(forjaiFiles, path) || components.stream().anyMatch(c -> c.owns(path)
                         && (path.endsWith(c.profile().sourceExtension()) || path.equals(c.prefix("pubspec.yaml"))));
                 if (source) {
                     contents.put(path, git.run(dir, "show", "HEAD:" + path));

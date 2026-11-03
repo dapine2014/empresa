@@ -128,6 +128,10 @@ public class DeliveryPackager {
                             log.warn("DELIVERY mission={} source entry skipped: {}", a.missionId(), printable(e.getName()));
                             continue;
                         }
+                        // Revisión final del diseño visual (C1): las maquetas de Forjai (.forjai/) no son el producto.
+                        if (com.aicompany.core.model.AppComponent.isForjaiRoot(bare)) {
+                            continue;
+                        }
                         if (!add(written, "codigo-fuente/" + e.getName())) {
                             continue;
                         }

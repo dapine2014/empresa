@@ -11,8 +11,8 @@ import java.util.Map;
 
 /**
  * Spec 2026-10-02 B1 §3: los chequeos de estructura y capas de cada componente, con las piezas de siempre sobre rutas
- * relativas al componente y los resultados con la ruta real. {@code forjaiFiles}: archivos que escribe Java (p. ej.
- * api_routes.dart), fuera de la estructura de los agentes pero permitidos.
+ * relativas al componente y los resultados con la ruta real. {@code forjaiFiles}: archivos o carpetas que escribe Java
+ * (p. ej. api_routes.dart, o lib/theme con diseño visual), fuera de la estructura de los agentes pero permitidos.
  */
 public final class ComponentStructureChecker {
 
@@ -22,6 +22,8 @@ public final class ComponentStructureChecker {
     public static List<StaticCheck> check(List<AppComponent> components, List<String> contexts, List<String> files,
                                           Map<String, String> contents, List<String> forjaiFiles) {
 
+        // Revisión final del diseño visual (C1): .forjai/ es la raíz de Forjai (maquetas), nunca de un componente.
+        files = files.stream().filter(f -> !AppComponent.isForjaiRoot(f)).toList();
         var multi = components.size() > 1;
         var entry = new ArrayList<StaticCheck>();
         var structure = new ArrayList<StaticCheck>();
@@ -33,7 +35,7 @@ public final class ComponentStructureChecker {
             for (var file : files) {
                 var common = AppComponent.COMMON_ROOT_PATHS.stream()
                         .anyMatch(root -> OwnedPaths.covers(root, OwnedPaths.normalize(file)));
-                if (!common && !forjaiFiles.contains(file) && components.stream().noneMatch(c -> c.owns(file))) {
+                if (!common && !OwnedPaths.coveredByAny(forjaiFiles, file) && components.stream().noneMatch(c -> c.owns(file))) {
                     outsideAll.add(file);
                 }
             }
@@ -42,7 +44,7 @@ public final class ComponentStructureChecker {
         for (var component : components) {
             var ctx = component.contexts(contexts);
             // Con un componente (raíz) quedan exactamente los mismos archivos que antes de B1.
-            var own = files.stream().filter(component::owns).filter(f -> !forjaiFiles.contains(f))
+            var own = files.stream().filter(component::owns).filter(f -> !OwnedPaths.coveredByAny(forjaiFiles, f))
                     .map(f -> component.strip(f).orElseThrow()).toList();
             var checks = ProfileStructureChecker.check(component.profile(), ctx, own);
             entry.add(prefixed(checks.get(0), component));
@@ -62,7 +64,7 @@ public final class ComponentStructureChecker {
             if (component.profile() == StackProfile.FLUTTER_WEB_APP) {
                 var dart = new LinkedHashMap<String, String>();
                 relativeContents.forEach((p, c) -> {
-                    if (p.endsWith(".dart") && !forjaiFiles.contains(component.prefix(p))) {
+                    if (p.endsWith(".dart") && !OwnedPaths.coveredByAny(forjaiFiles, component.prefix(p))) {
                         dart.put(p, c);
                     }
                 });

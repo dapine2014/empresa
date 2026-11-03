@@ -201,6 +201,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             generationHead = scenes.commitSha();
         }
         forjaiFiles.addAll(sceneSkeletonPaths(context));
+        // Revisión final del diseño visual (C1): tema, vistas previas y SVG del diseño aprobado son de Forjai.
+        forjaiFiles.addAll(visualForjaiRoots(missionId, plan));
 
         var routesCommitted = false;
         var appComponent = fullstackApp(plan);
@@ -557,7 +559,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
 
             var contents = new LinkedHashMap<String, String>();
-            for (var path : workspace.filesAtCommit(missionId, headSha).stream().sorted().toList()) {
+            // Revisión final del diseño visual (C1): las maquetas (.forjai/) no son código que Vera revise.
+            for (var path : workspace.filesAtCommit(missionId, headSha).stream()
+                    .filter(p -> !com.aicompany.core.model.AppComponent.isForjaiRoot(p)).sorted().toList()) {
                 contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
             }
 
@@ -839,7 +843,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             throw new IllegalStateException("No se pudo leer el último commit: " + safeMessage(ex, "error de Git"), ex);
         }
         var committed = List.of(new CommittedWork(validationTaskId, HUMAN_AGENT, headSha, files));
-        var forjaiFiles = fullstackApp(plan).map(app -> List.of(app.prefix(ApiRoutesGenerator.PATH))).orElse(List.of());
+        var forjaiFiles = new ArrayList<String>(fullstackApp(plan).map(app -> List.of(app.prefix(ApiRoutesGenerator.PATH)))
+                .orElse(List.of()));
+        forjaiFiles.addAll(visualForjaiRoots(missionId, plan));
         // Los commits de un desarrollador no llevan el autor de un agente ni el trailer Forjai-Task: solo se valida HEAD,
         // y todo lo que ya está en el repositorio está permitido.
         var checks = staticValidator.validate(missionId, List.of(), components, plan.contextNames(), files, forjaiFiles);
@@ -960,7 +966,7 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             return review;
         }
         var kept = review.findingsOrEmpty().stream()
-                .filter(f -> f == null || !generatedByForjai.contains(f.path()))
+                .filter(f -> f == null || !OwnedPaths.coveredByAny(generatedByForjai, f.path()))
                 .toList();
         return new StaticReviewResult(review.verdict(), kept, review.missingFiles(), review.architectureConsistency(),
                 review.notValidatableWithoutExecution(), review.evidence());
@@ -1599,7 +1605,8 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
         try {
             var contents = new LinkedHashMap<String, String>();
             for (var path : workspace.filesAtCommit(missionId, headSha).stream().sorted().toList()) {
-                if (path.endsWith(".csproj") || path.endsWith(".sln")) {
+                if (path.endsWith(".csproj") || path.endsWith(".sln")
+                        || com.aicompany.core.model.AppComponent.isForjaiRoot(path)) {
                     continue;
                 }
                 contents.put(path, workspace.readFileAtCommit(missionId, headSha, path));
@@ -1638,7 +1645,11 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                     .filter(file -> readOrNull(context.missionId(), startHead, file.path()) == null)
                     .toList());
             // Diseño visual: el tema se regenera cuando cambia la versión (solo se commitea lo que difiere de HEAD).
-            missing.addAll(visualFiles(context, startHead, List.of()));
+            var visual = visualFiles(context, startHead, List.of());
+            missing.addAll(visual);
+            // Revisión final (C1): lo que Forjai escribe del diseño visual también es del scaffold (permitido en la ronda 0).
+            files = java.util.stream.Stream.concat(files.stream(), visual.stream().map(DevelopmentResult.GeneratedFile::path))
+                    .distinct().toList();
             if (!missing.isEmpty()) {
                 // Spec 2026-11-01 front con diseño visual: en la ronda 0 el HEAD puede ser solo el commit de maquetas de
                 // Forjai (antes de la aprobación); entonces es el scaffold completo, con la tarea de siempre.
@@ -1877,6 +1888,24 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
             }
         }
         return out;
+    }
+
+    /**
+     * Revisión final del diseño visual (C1): con diseño visual aprobado, las carpetas que escribe Java en cada componente
+     * Flutter ({@code lib/theme}, {@code lib/forjai}, {@code assets}); vacío sin él (las misiones de siempre no cambian).
+     */
+    List<String> visualForjaiRoots(String missionId, TeamPlan plan) {
+        if (approvedVisual(missionId).isEmpty()) {
+            return List.of();
+        }
+        var roots = new ArrayList<String>();
+        for (var component : plan.resolvedComponents()) {
+            if (component.profile() == StackProfile.FLUTTER_WEB_APP) {
+                com.aicompany.core.model.FlutterThemeFiles.RESERVED_ROOTS.forEach(r -> roots.add(component.prefix(r)));
+                roots.add(component.prefix(com.aicompany.core.model.FlutterThemeFiles.ASSETS_ROOT));
+            }
+        }
+        return roots;
     }
 
     /** Pantallas (PANT-NN) del incremento en construcción según el diseño de interacción aprobado; vacío sin él. */
