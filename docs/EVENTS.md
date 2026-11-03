@@ -93,6 +93,10 @@ EMPRESA_INTERACTION_DESIGN_READY (`MissionExecutor`, `agentId="interaction-desig
 
 EMPRESA_INTERACTION_DESIGN_ADJUSTED (`MissionExecutor`, `agentId="human"`): Kael rehizo el diseño por un ajuste del fundador dirigido a él (`target: KAEL`, chat «para MISSION-X, Kael: …»); la misión vuelve a esperar aprobación. `data: {version, instruction}`. Un ajuste a Aria publica `EMPRESA_REQUIREMENTS_ADJUSTED` y, al rediseñar Kael sobre las HU nuevas, `EMPRESA_INTERACTION_DESIGN_READY`.
 
+EMPRESA_VISUAL_DESIGN_READY (`MissionExecutor`, `agentId` = el front que lo escribió, Mila u Orion; spec `2026-11-01-front-diseno-visual-design.md`): el front escribió el sistema visual y las maquetas (apps) con un diseño válido, tras el de Kael; la misión espera la aprobación junto con las HU. `data: {version, interactionDesignVersion}`.
+
+EMPRESA_VISUAL_DESIGN_ADJUSTED (`MissionExecutor`, `agentId="human"`): el front rehízo el diseño visual por un ajuste del fundador dirigido a él (`target: VISUAL`); la misión vuelve a esperar aprobación. `data: {version, instruction, agentId}`.
+
 `EMPRESA_REQUIREMENTS_APPROVED` y `EMPRESA_REQUIREMENTS_REJECTED` siguen siendo la decisión conjunta de HU y diseño; en misiones con diseño, `EMPRESA_REQUIREMENTS_APPROVED` agrega `interactionDesignVersion` a `data` (opcional: ausente en misiones sin diseño, `NONE` o anteriores a Kael).
 
 EMPRESA_INCREMENT_STARTED (`MissionExecutor.buildIncrementAsync`, `agentId="human"`): arrancó el incremento N sobre el mismo repositorio, como ronda de la misión que no consume `MAX_EVIDENCE_ROUNDS`. `data: {increment, round}`.

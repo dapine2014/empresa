@@ -83,6 +83,23 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 - [ ] **Entrega B** del contrato: refinar HU tras cada entrega, ajustar lo construido y cambiar un contrato aprobado. Es el pendiente de Aria «HU nuevas después de aprobar».
 - [ ] `systemd-inhibit` de las pruebas en vivo con `--what=sleep:idle:handle-lid-switch` (GNOME suspendió por inactividad, 2026-10-15).
 
+**Front con diseño visual (2026-11-01, rama `front-diseno-visual`)**
+
+| | Pendiente | Notas |
+|---|---|---|
+| [ ] | **Front con diseño visual: verificación en vivo y calibración del umbral** | Falta desplegar `company-core` y `sandbox-runner` con `flutter-web-app:3` y correr una misión `APP` chica (maquetas en la aprobación, `app_theme.dart`, color literal rechazado, puntaje por pantalla, `BLOCKED` + «Aceptar», 3 preguntas del chat); calibrar `DESIGN_SIMILARITY_THRESHOLD` (0,90) y registrarlo en HISTORY. No reiniciar con misión viva |
+| [ ] | Habilitar el PO como decisor de las diferencias de diseño | Hoy `DESIGN_MISMATCH_DECIDER` solo admite `FOUNDER`; falta el camino del PO (responde con `format`, sin `tools`; Java aplica por `DesignDecisionService.decide`, validando `decidedBy`) cuando se activen los demás modelos |
+| [ ] | El segundo front pide cambios en los archivos de entrada | Con Mila y Orion juntos, el segundo no puede cambiar `lib/main.dart`/`pubspec.yaml`; debería pedirlos en su resultado y Java aplicarlos (como las dependencias) |
+| [ ] | Etapa 2 (esqueleto 2D) y etapa 3 (Blender + Godot 3D) del front | Juegos: personajes y ambientes con `Skeleton2D`/`Polygon2D`/`AnimationPlayer` (frontera con Kael por decidir) y scripts `bpy` sin pantalla con imagen nueva del sandbox |
+| [ ] | Kael también en .NET e Iris cubriendo la escena de un juego | Pedidos en la misma conversación del 2026-11-01; cambio aparte del diseño visual |
+| [ ] | Probar contra Neo4j real el guardia del doble clic de `DesignReviewMemoryService.decide` | Solo se probó con mocks |
+| [ ] | La captura de la app es única por misión y se muestra en las tarjetas de incrementos viejos | Engañoso al revisar un incremento anterior |
+| [ ] | El rótulo «Maqueta aprobada» muestra la última versión, no la aprobada | `MissionDetailPage` |
+| [ ] | `.forjai/mockups` entra al contexto de revisión de Vera y al zip de entrega | Debería excluirse (`DevelopmentTeamStrategy`, `DeliveryFactsBuilder`) |
+| [ ] | Las carpetas `diseno-*` del staging de capturas no se limpian | Crecen por misión |
+| [ ] | El ajuste VISUAL del fundador no es durable tras un reinicio | Se pierde si company-core reinicia durante el ajuste |
+| [ ] | Alerta visual en el Command Center cuando Forjai está fuera de línea | Pedido del fundador (2026-11-03) |
+
 ## 3. Fuera del código
 
 | | Pendiente | Notas |

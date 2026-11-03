@@ -1260,3 +1260,26 @@ La re-revisión los dio a todos por corregidos.
 - Se levantó `sandbox-runner`, que estaba apagado.
 
 **Pendiente:** medir Claude (Sonnet 5.5) contra kimi-k3 en un incremento de prueba, comparando el costo por incremento VERIFIED y el número de rondas. Requiere conectar la API de Anthropic. También falta ajustar `MAX_MISSION_COST_USD` (hoy US$ 20) al tamaño de cada proyecto.
+
+## Front con diseño visual (2026-11-01)
+
+Spec `docs/superpowers/specs/2026-11-01-front-diseno-visual-design.md`, plan del mismo día, rama `front-diseno-visual`. **Verificación en vivo: PENDIENTE** (no desplegado; falta correr una misión `APP` chica, comprobar las seis cosas del plan y calibrar el umbral).
+
+**Decisiones del fundador (2026-11-01):**
+- Problema de origen: «problema de muchos, problema de nadie»; Kael diseñaba la estructura, Mila decidía los colores sobre la marcha y cada proyecto salía con el estilo que tocara. Además solo Mila sabía Flutter.
+- Los front son **solo dos, Mila y Orion**, intercambiables (mismo rol `UI_UX`). Kael **no** es front: es back junto con Iris porque los dos programan C# (cambios aparte: Kael también en .NET, Iris cubriendo la escena de un juego).
+- El front diseña antes de construir: sistema visual + una maqueta por pantalla de Kael, escritas **a mano en HTML, CSS y SVG** (se descartó Figma/Penpot: el agente no maneja una GUI). El fundador las aprueba como imágenes junto con las HU y el diseño de Kael.
+- Java garantiza que se aplique lo aprobado: genera el tema de Flutter, rechaza colores y estilos a mano y **compara cada pantalla con su maqueta por SSIM** (más posición/tamaño ±8 px y color por elemento). El modelo nunca ve imágenes (ahorro de tokens; determinismo sobre LLM).
+- **2 rondas** de corrección barata y después decide el fundador; **decidir es temporal**: más adelante decidirá el PO, con política y punto de decisión únicos ya construidos pero el camino del PO sin habilitar.
+- Blender para 2D descartado: el esqueleto 2D se hará con Godot nativo (`Skeleton2D`, `Polygon2D`, `AnimationPlayer`). Etapa 2 = juegos 2D, etapa 3 = Blender + Godot 3D; fuera de esta entrega.
+- Umbral de ejemplo SSIM 0,90 editable en el Command Center; se calibra con la primera misión real.
+
+**Decisiones del builder / dictámenes de implementación notables:**
+- **R7**: las maquetas se commitean (`.forjai/mockups/<PANT>.html`, autor `forjai`) antes de la aprobación porque el sandbox lee de un commit; el scaffold posterior convive con ese HEAD.
+- **R10**: con varias escritoras de presentación, solo la última del plan exige que cada pantalla tenga vista previa; las anteriores responden por las que devuelven.
+- **R13**: una captura fallida es un freno distinto (`DESIGN_CAPTURE_FAILED`), no una diferencia de diseño: el botón de decisión no aplica y se retoma con «reanuda»; así no se mezcla una falla de infraestructura con una decisión.
+- **R14**: tras la decisión la misión se retoma con `ResumePoint.DESIGN_DECISION` (sin modelos, sin regenerar código, sin llamar al CEO), en vez de `CorrectionRound`.
+- **R15**: el backend entrega por pantalla las diferencias/faltantes y las URLs de las capturas de la app para la vista lado a lado.
+- Bugs de revisión corregidos en el camino: regex de `<head>` que atrapaba `<header>`; una falla de captura rotulada `DESIGN_MISMATCH`; la reanudación de diseño en ronda de corrección llamaba al CEO y podía replanificar; `verifyHead` esquivado.
+- Pendiente a verificar en vivo: el guardia del doble clic en la decisión solo se probó con mocks (contra Neo4j real falta).
+
