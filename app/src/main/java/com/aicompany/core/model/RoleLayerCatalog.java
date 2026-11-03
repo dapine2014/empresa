@@ -29,7 +29,6 @@ public final class RoleLayerCatalog {
                     List.of(Layer.DOMAIN, Layer.APPLICATION, Layer.INFRASTRUCTURE), 1, true),
             "QA", new RoleLayers(List.of(Layer.TESTS), List.of(), 1, true),
             "GAME_DEV", new RoleLayers(List.of(Layer.GAME), List.of(Layer.DOMAIN, Layer.APPLICATION), 1, true),
-            "SPECIALIST_3D", new RoleLayers(List.of(), List.of(), 3, true),
             "CREATIVE", new RoleLayers(List.of(), List.of(), 3, true),
             "DEVOPS", new RoleLayers(List.of(), List.of(), 2, true)
     );
@@ -129,7 +128,7 @@ public final class RoleLayerCatalog {
      * entre agentes del mismo rol, por orden del plan.
      */
     private static final List<String> ROLE_PRIORITY =
-            List.of("BACKEND", "DATA_ARCHITECT", "UI_UX", "GAME_DEV", "QA", "SPECIALIST_3D", "CREATIVE", "DEVOPS");
+            List.of("BACKEND", "DATA_ARCHITECT", "UI_UX", "GAME_DEV", "QA", "CREATIVE", "DEVOPS");
 
     private static String firstWith(LinkedHashMap<String, String> roleCodeByAgent, Layer layer, boolean primary) {
         for (var roleCode : ROLE_PRIORITY) {

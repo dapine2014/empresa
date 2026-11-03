@@ -120,6 +120,10 @@ public class JobController {
         if (request.increment() == null || request.increment() < 1) {
             return ResponseEntity.badRequest().body(Map.of("error", "increment inválido: " + request.increment()));
         }
+        // Revisión final del diseño visual: el commit se valida antes de extraer nada (un SHA completo en minúsculas).
+        if (request.commitSha() == null || !request.commitSha().matches("[0-9a-f]{40}")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "commitSha inválido"));
+        }
         var mode = ExecutionProfile.CaptureMode.parse(request.captureMode());
         if (mode.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "captureMode desconocido: " + request.captureMode()));

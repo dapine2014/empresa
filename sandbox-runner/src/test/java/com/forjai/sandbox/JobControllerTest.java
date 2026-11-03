@@ -88,6 +88,17 @@ class JobControllerTest {
                 null, null, mode);
     }
 
+    // Revisión final del diseño visual: un commit nulo o que no es un SHA se rechaza con 400 antes de tocar el runner.
+    @Test
+    void captureRejectsAMissingOrInvalidCommitSha() {
+        for (var sha : java.util.Arrays.asList(null, "", "HEAD", "--output=/tmp/x", "a".repeat(39), "A".repeat(40))) {
+            var request = new JobController.JobRequest("DESIGN_CAPTURE", "M-1", sha, "FLUTTER_WEB_APP", null, null, 1,
+                    null, null, "MOCKUPS");
+            assertEquals(400, controller.run("secreto", request).getStatusCode().value(), "sha=" + sha);
+        }
+        verifyNoInteractions(runner);
+    }
+
     // Diseño visual (spec 2026-11-01 §4 y §9): el modo sale de una lista fija, como los perfiles.
     @Test
     void designCaptureRejectsUnknownMode() {

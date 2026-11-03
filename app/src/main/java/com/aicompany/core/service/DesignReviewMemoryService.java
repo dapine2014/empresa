@@ -83,8 +83,10 @@ public class DesignReviewMemoryService {
         try (var session = driver.session()) {
             return session.executeWrite(tx -> {
                 tx.run("MATCH (m:Mission {id:$id}) SET m.designDecisionAt = datetime()", params).consume();
-                var claimed = tx.run("MATCH (:Mission {id:$id})-[:HAS_DESIGN_REVIEW]->(r:DesignScreenReview {screen:$screen}) "
-                        + "WHERE r.status = 'AWAITING_DECISION' WITH r ORDER BY r.increment DESC LIMIT 1 "
+                // Revisión final: solo la pantalla del incremento en curso (como RequirementsMemoryService.currentIncrement).
+                var claimed = tx.run("MATCH (m:Mission {id:$id})-[:HAS_DESIGN_REVIEW]->(r:DesignScreenReview {screen:$screen}) "
+                        + "WHERE r.status = 'AWAITING_DECISION' "
+                        + "AND r.increment = coalesce(m.buildingIncrement, m.builtIncrement, 0) WITH r LIMIT 1 "
                         + "SET r.status = 'DECIDING' RETURN r.increment AS increment", params).list();
                 if (claimed.isEmpty()) {
                     return Optional.<Decided>empty();

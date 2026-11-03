@@ -138,7 +138,7 @@ public class CompanyMemoryService {
                         new String[]{"frontend-ui", "Mila", "UI/UX / Flutter", "creativa, atenta al detalle visual", defaultAgentModel},
                         new String[]{"interaction-design", "Kael", "Game Development", "analítico, obsesionado con la experiencia de juego", defaultAgentModel},
                         new String[]{"product-owner", "Aria", "Product Owner / Scrum Master", "clara, orientada al valor", "nvidia-discovery:nvidia/nemotron-3-ultra-550b-a55b"},
-                        new String[]{"specialist-3d", "Orion", "3D Specialist", "paciente, obsesionado con la forma", "nvidia:moonshotai/kimi-k3"},
+                        new String[]{"specialist-3d", "Orion", "Front / Flutter + Diseño visual", "paciente, obsesionado con la forma", "nvidia:moonshotai/kimi-k3"},
                         new String[]{"delivery", "Andrea", "DevOps / CI/CD / AWS", "metódica, orientada a la automatización", "nvidia:moonshotai/kimi-k3"},
                         new String[]{"visual-design", "Maya", "Visual & Asset Director AI", "creativa, con ojo estético", defaultAgentModel},
                         new String[]{"telemetry", "Gael", "Telemetry & Analytics AI", "analítico, basado en datos", defaultAgentModel},

@@ -62,7 +62,8 @@ class RoleLayerCatalogTest {
         assertTrue(RoleLayerCatalog.enabledNow("UI_UX"));
         assertTrue(RoleLayerCatalog.enabledNow("DATA_ARCHITECT"));
         assertTrue(RoleLayerCatalog.enabledNow("GAME_DEV"));
-        assertFalse(RoleLayerCatalog.enabledNow("SPECIALIST_3D"));
+        // Revisión final del diseño visual: Orion es UI_UX; SPECIALIST_3D ya no existe en el catálogo.
+        assertTrue(RoleLayerCatalog.of("SPECIALIST_3D").isEmpty());
         assertFalse(RoleLayerCatalog.enabledNow("CREATIVE"));
         assertFalse(RoleLayerCatalog.enabledNow("DEVOPS"));
         assertFalse(RoleLayerCatalog.enabledNow("UNKNOWN"));
@@ -91,7 +92,6 @@ class RoleLayerCatalogTest {
 
     @Test void kaelIsEnabledNow() {
         assertTrue(RoleLayerCatalog.enabledNow("GAME_DEV"));
-        assertFalse(RoleLayerCatalog.enabledNow("SPECIALIST_3D"));
         assertFalse(RoleLayerCatalog.describe().contains("Kael/GAME_DEV, Orion"), RoleLayerCatalog.describe());
     }
 
