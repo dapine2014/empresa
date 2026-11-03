@@ -965,6 +965,8 @@ function MissionDesignReview({ missionId }: { missionId: string }) {
   if (!view || (view.screens.length === 0 && !view.blockReason)) return null
   const captureFailed = view.blockReason?.startsWith(CAPTURE_FAILED) ?? false
   const founderDecides = view.decider === 'FOUNDER'
+  // Prueba en vivo 3: una verificación humana saca la misión de BLOCKED y las pantallas quedan sin decidir.
+  const designBlocked = view.missionStatus === 'BLOCKED' && !!view.blockReason
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['designReview', missionId] })
     void queryClient.invalidateQueries({ queryKey: ['missionDetails', missionId] })
@@ -980,6 +982,12 @@ function MissionDesignReview({ missionId }: { missionId: string }) {
         Decide: {founderDecides ? 'el fundador' : 'el PO'}
         {view.blockReason && !captureFailed && <> — {view.blockReason}</>}
       </p>
+      {!designBlocked && view.screens.some((s) => s.status === 'AWAITING_DECISION') && (
+        <p className="hint">
+          La misión ya no está frenada por el diseño (estado: {view.missionStatus}): decide abajo, en «Decisión del
+          inversionista».
+        </p>
+      )}
       {captureFailed && (
         <p className="error">
           Falló la captura: {view.blockReason!.slice(CAPTURE_FAILED.length)}. Reanuda la misión con «reanuda {missionId}».
@@ -994,7 +1002,7 @@ function MissionDesignReview({ missionId }: { missionId: string }) {
             review={review}
             mockupUrl={mockupUrl(key)}
             appUrl={view.appImageUrls[key]}
-            canDecide={founderDecides && !captureFailed && review.status === 'AWAITING_DECISION'}
+            canDecide={founderDecides && designBlocked && !captureFailed && review.status === 'AWAITING_DECISION'}
             onDecided={refresh}
           />
         )
