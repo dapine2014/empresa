@@ -54,7 +54,8 @@ public final class TestTriageValidator {
                 }
                 for (var file : verdict.codeFilesOrEmpty()) {
                     if (!repoFiles.contains(file) || isTestFile(file)) {
-                        errors.add(verdict.test() + ": codeFiles \"" + file + "\" no es un archivo de código del repositorio.");
+                        errors.add(verdict.test() + ": codeFiles \"" + file + "\" no es un archivo de código del repositorio. "
+                                + "Archivos de código: " + listed(repoFiles, false) + ".");
                     }
                 }
             }
@@ -64,7 +65,8 @@ public final class TestTriageValidator {
                 }
                 for (var file : verdict.testFilesOrEmpty()) {
                     if (!repoFiles.contains(file) || !isTestFile(file)) {
-                        errors.add(verdict.test() + ": testFiles \"" + file + "\" no es un archivo de tests del repositorio.");
+                        errors.add(verdict.test() + ": testFiles \"" + file + "\" no es un archivo de tests del repositorio. "
+                                + "Archivos de tests: " + listed(repoFiles, true) + ".");
                     }
                 }
             }
@@ -76,6 +78,12 @@ public final class TestTriageValidator {
             }
         }
         return errors;
+    }
+
+    /** Prueba en vivo 7 del front: los archivos reales, ordenados y acotados, para que el modelo no invente rutas. */
+    private static String listed(Set<String> repoFiles, boolean tests) {
+        var files = repoFiles.stream().filter(Objects::nonNull).filter(f -> isTestFile(f) == tests).sorted().toList();
+        return files.size() <= 60 ? files.toString() : files.subList(0, 60) + " (y " + (files.size() - 60) + " más)";
     }
 
     /** Un test corregido sigue existiendo con su nombre y el archivo no pierde tests. */

@@ -39,6 +39,20 @@ class TestTriageValidatorTest {
         assertTrue(all.contains("testFiles \"null\" no es un archivo de tests"), all);
     }
 
+    // Prueba en vivo 7 del front: Neo inventó pantalla_lista_tareas.dart 3 veces seguidas en 4 rondas; el motivo no le
+    // decía cuáles existen.
+    @Test
+    void anUnknownFileListsTheRealOnes() {
+        var errors = TestTriageValidator.validate(new TestTriage(List.of(v(CANCELAR.name(), "BOTH",
+                List.of("backend/src/Reservas.Domain/Reserva.cs"), List.of("backend/tests/Reservas.Tests/Otro.cs")))),
+                List.of(CANCELAR), REPO);
+        var all = String.join("\n", errors);
+        assertTrue(all.contains("codeFiles \"backend/src/Reservas.Domain/Reserva.cs\" no es un archivo de código del repositorio. "
+                + "Archivos de código: [backend/src/Reservas.Application/CancelarReserva.cs, backend/src/Reservas.Domain/Turno.cs]"), all);
+        assertTrue(all.contains("Archivos de tests: [backend/tests/Reservas.Tests/CancelarReservaTests.cs, "
+                + "backend/tests/Reservas.Tests/Fakes.cs]"), all);
+    }
+
     @Test
     void aValidVerdictForEveryFailingTestPasses() {
         var triage = new TestTriage(List.of(v(CANCELAR.name(), "CODE_WRONG",
