@@ -2007,9 +2007,9 @@ public class DevelopmentTeamStrategy implements TeamExecutionStrategy {
                         .append(com.aicompany.core.model.FlutterThemeFiles.FORJAI_ID_PATH)
                         .append("; una Key sola no se ve en la captura): ")
                         .append(String.join(", ", com.aicompany.core.agent.validation.PreviewGate.wrapHints(ids)));
-                if (ids.stream().anyMatch(i -> i.matches(".*-\\d+"))) {
-                    out.append(". Los elementos repetidos de una lista (id con sufijo -N) se arman en el bucle con la base más el "
-                            + "índice, empezando en 1 como la maqueta (ForjaiId('task-item-$i', …)); los datos de ejemplo de la vista "
+                if (ids.stream().anyMatch(com.aicompany.core.agent.validation.PreviewGate::isRepeated)) {
+                    out.append(". Los elementos repetidos de una lista (id con índice -N, al final o en el medio) se arman en el bucle con "
+                            + "la plantilla y el índice, empezando en 1 como la maqueta (ForjaiId('task-item-$i', …)); los datos de ejemplo de la vista "
                             + "previa deben dar los mismos índices que la maqueta (1..N) para que la comparación los encuentre");
                 }
             }

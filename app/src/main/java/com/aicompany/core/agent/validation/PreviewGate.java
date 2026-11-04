@@ -133,44 +133,73 @@ public final class PreviewGate {
         return errors;
     }
 
-    private static final Pattern REPEATED = Pattern.compile("(.*-)(\\d+)");
+    private static final Pattern INDEX = Pattern.compile("-(\\d+)(?=-|$)");
+    private static final Pattern SCREEN_PREFIX = Pattern.compile("^PANT-\\d+");
 
-    /** Base de un elemento repetido en lista (task-item-1 -> task-item-), o null si el id no termina en -N. */
-    static String repeatedBase(String id) {
-        var m = REPEATED.matcher(id);
-        return m.matches() ? m.group(1) : null;
+    /** Elemento repetido en una lista: lo que va antes y después del índice (task-item-1, PANT-02-item-1-check). */
+    record Repeated(String prefix, String suffix) {
+        String template() {
+            return prefix + "$i" + suffix;
+        }
     }
 
     /**
-     * El código (sin comentarios) envuelve el data-id: ForjaiId literal o, si el id termina en -N (elemento repetido
-     * en una lista), un id interpolado con la misma base ('base$i', 'base${i}', "base$i", 'base' + i).
+     * El último segmento numérico del id es el índice de la lista (prueba en vivo 5: también en el medio, como
+     * PANT-02-item-1-check); el número de la pantalla (PANT-NN) nunca lo es. Null si no es un elemento repetido.
+     */
+    static Repeated repeated(String id) {
+        var screen = SCREEN_PREFIX.matcher(id);
+        var from = screen.find() ? screen.end() : 0;
+        var m = INDEX.matcher(id);
+        Repeated last = null;
+        while (m.find()) {
+            if (m.start() >= from) {
+                last = new Repeated(id.substring(0, m.start() + 1), id.substring(m.end()));
+            }
+        }
+        return last;
+    }
+
+    /** Si el id es un elemento repetido de una lista (con índice -N). */
+    public static boolean isRepeated(String id) {
+        return repeated(id) != null;
+    }
+
+    /**
+     * El código (sin comentarios) envuelve el data-id: ForjaiId literal o, si es un elemento repetido de una lista,
+     * un id interpolado con el mismo prefijo y sufijo ('base$i', 'base${i}-check', "base$i", 'base' + i + '-check').
      */
     static boolean wrapsId(String code, String id) {
         if (Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + Pattern.quote(id) + "['\"]").matcher(code).find()) {
             return true;
         }
-        var base = repeatedBase(id);
-        if (base == null) {
+        var r = repeated(id);
+        if (r == null) {
             return false;
         }
-        var b = Pattern.quote(base);
-        return Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + b + "\\$").matcher(code).find()
-                || Pattern.compile("['\"]" + b + "['\"]\\s*\\+").matcher(code).find();
+        var p = Pattern.quote(r.prefix());
+        var sfx = Pattern.quote(r.suffix());
+        if (Pattern.compile("Forjai(?:Bar)?Id\\(\\s*['\"]" + p + "(?:\\$\\w+|\\$\\{[^}]+\\})" + sfx + "['\"]").matcher(code).find()) {
+            return true;
+        }
+        var concat = r.suffix().isEmpty() ? "['\"]" + p + "['\"]\\s*\\+"
+                : "['\"]" + p + "['\"]\\s*\\+[^,;]*?\\+\\s*['\"]" + sfx + "['\"]";
+        return Pattern.compile(concat).matcher(code).find();
     }
 
-    /** Cómo pedir cada id: literal, o agrupado por base para los elementos repetidos en listas. */
+    /** Cómo pedir cada id: literal, o agrupado por plantilla para los elementos repetidos en listas. */
     public static List<String> wrapHints(java.util.Collection<String> ids) {
         var out = new ArrayList<String>();
         var groups = new LinkedHashMap<String, List<String>>();
         for (var id : ids) {
-            var base = repeatedBase(id);
-            if (base == null) {
+            var r = repeated(id);
+            if (r == null) {
                 out.add("ForjaiId('" + id + "', child: …)");
             } else {
-                groups.computeIfAbsent(base, k -> new ArrayList<>()).add(id);
+                groups.computeIfAbsent(r.template(), k -> new ArrayList<>()).add(id);
             }
         }
-        groups.forEach((base, list) -> out.add("ForjaiId('" + base + "$i', child: …) dentro del bucle de la lista (cubre "
+        groups.forEach((template, list) -> out.add("ForjaiId('" + template + "', child: …) dentro del bucle de la lista (cubre "
                 + String.join(", ", list) + ")"));
         return out;
     }

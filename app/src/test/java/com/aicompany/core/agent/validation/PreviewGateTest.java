@@ -101,6 +101,29 @@ class PreviewGateTest {
         assertFalse(e.contains("ForjaiId('task-item-1'"), e);
     }
 
+    // Prueba en vivo 5: la maqueta numeró los ítems en el medio (PANT-02-item-1-check); Mila no podía cumplir en un bucle.
+    @Test
+    void repeatedIdsWithTheIndexInTheMiddleAcceptInterpolation() {
+        var ids = new java.util.LinkedHashSet<>(List.of("PANT-02-item-1-check", "PANT-02-item-2-check", "PANT-02-item-1-text"));
+        for (var body : List.of("Row(children: [ForjaiId('PANT-02-item-$i-check', child: x), ForjaiId('PANT-02-item-${i}-text', child: y)])",
+                "Row(children: [ForjaiId('PANT-02-item-' + i.toString() + '-check', child: x), ForjaiId(\"PANT-02-item-$n-text\", child: y)])")) {
+            assertEquals(List.of(), repeated(body, ids), body);
+        }
+        var errors = repeated("ForjaiId('PANT-02-item-$i', child: x)", ids);
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("ForjaiId('PANT-02-item-$i-check', child: …) dentro del bucle de la lista (cubre "
+                + "PANT-02-item-1-check, PANT-02-item-2-check)"), errors.get(0));
+        assertTrue(errors.get(0).contains("ForjaiId('PANT-02-item-$i-text', child: …)"), errors.get(0));
+    }
+
+    @Test
+    void theScreenNumberIsNotAListIndex() {
+        // PANT-02-title no es un elemento repetido: el 02 es la pantalla.
+        var errors = repeated("ForjaiId('PANT-$i-title', child: x)", Set.of("PANT-02-title"));
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.get(0).contains("ForjaiId('PANT-02-title', child: …)"), errors.get(0));
+    }
+
     @Test
     void idsWithoutNumericSuffixStillNeedTheLiteral() {
         assertEquals(1, repeated("ForjaiId('titulo-$i', child: x)", Set.of("titulo")).size());
