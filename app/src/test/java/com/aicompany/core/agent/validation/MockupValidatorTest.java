@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,6 +78,21 @@ class MockupValidatorTest {
                 List.of(new SvgAsset("x", "<svg><script>1</script></svg>"))).isEmpty());
         assertFalse(validate("<div data-id=\"a\"></div>",
                 List.of(new SvgAsset("x", "<svg><image href=\"http://e.com/a.png\"/></svg>"))).isEmpty());
+    }
+
+    // Prueba en vivo 6: un SVG suelto lleva su xmlns y puede usar url(#id) de su propio <defs>; nada de eso sale a la red.
+    @Test
+    void acceptsSvgNamespaceAndInternalFragmentReferences() {
+        var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink='http://www.w3.org/1999/xlink' viewBox=\"0 0 24 24\">"
+                + "<defs><linearGradient id=\"g1\"><stop stop-color=\"var(--color-primary)\"/></linearGradient>"
+                + "<clipPath id=\"c\"><rect/></clipPath></defs>"
+                + "<rect fill=\"url(#g1)\" clip-path=\"url( '#c' )\" mask=\"url(#fade)\"/><use href=\"#face\"/></svg>";
+        assertEquals(List.of(), validate("<div data-id=\"a\"></div>", List.of(new SvgAsset("logo_forjai", svg))));
+        // Otro dominio en xmlns o un url() que no es un fragmento siguen rechazados.
+        assertFalse(validate("<div data-id=\"a\"></div>",
+                List.of(new SvgAsset("x", "<svg xmlns=\"http://e.com/ns\"></svg>"))).isEmpty());
+        assertFalse(validate("<div data-id=\"a\"></div>",
+                List.of(new SvgAsset("x", "<svg><rect fill=\"url(http://e.com/a#g)\"/></svg>"))).isEmpty());
     }
 
     @Test

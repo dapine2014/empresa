@@ -19,6 +19,9 @@ public final class MockupValidator {
     private static final Pattern VAR = Pattern.compile("var\\(\\s*--([\\w-]+)");
     private static final Pattern SCRIPT = Pattern.compile("(?i)<script|javascript:");
     private static final Pattern EXTERNAL = Pattern.compile("(?i)https?:|\\burl\\s*\\(|@import|//\\s*[\\w-]+\\.[a-z]{2,}");
+    // Prueba en vivo 6: el xmlns del SVG (www.w3.org) y url(#id) de su propio <defs> no salen a la red.
+    private static final Pattern SAFE_REFS = Pattern.compile(
+            "(?i)xmlns(?::[\\w-]+)?\\s*=\\s*[\"']https?://www\\.w3\\.org/[^\"']*[\"']|(?:xlink:)?href\\s*=\\s*[\"']#[\\w-]+[\"']|url\\(\\s*[\"']?#[\\w-]+[\"']?\\s*\\)");
     private static final Pattern DATA_ID = Pattern.compile("data-id\\s*=\\s*[\"']([^\"']*)[\"']");
     private static final Pattern SVG_NAME = Pattern.compile("[a-z0-9_]+");
 
@@ -56,7 +59,8 @@ public final class MockupValidator {
         return errors;
     }
 
-    private static void checkText(String where, String text, Set<String> knownVars, List<String> errors) {
+    private static void checkText(String where, String raw, Set<String> knownVars, List<String> errors) {
+        var text = SAFE_REFS.matcher(raw).replaceAll("");
         if (HEX.matcher(text).find() || FUNC_COLOR.matcher(text).find())
             errors.add(where + ": tiene un color literal (#hex, rgb(, hsl(); usa var(--color-<token>) del sistema visual.");
         var vars = VAR.matcher(text);
