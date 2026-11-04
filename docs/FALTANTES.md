@@ -87,7 +87,7 @@ Lo que hoy impide que un pedido grande (p. ej. una plataforma de psicología onl
 
 | | Pendiente | Notas |
 |---|---|---|
-| [ ] | **Front con diseño visual: verificación en vivo y calibración del umbral** | Falta desplegar `company-core` y `sandbox-runner` con `flutter-web-app:3` y correr una misión `APP` chica (maquetas en la aprobación, `app_theme.dart`, color literal rechazado, puntaje por pantalla, `BLOCKED` + «Aceptar», 3 preguntas del chat); calibrar `DESIGN_SIMILARITY_THRESHOLD` (0,90) y registrarlo en HISTORY. No reiniciar con misión viva |
+| [ ] | **Front con diseño visual: corrida completa hasta VERIFIED y calibración del umbral** | Test del front cerrado por el fundador (2026-11-03): creación del front verificada en vivo (corridas 1-7, HISTORY). Falta una misión `APP` chica que llegue a `VERIFIED` con el diseño aceptado (con `b3262eb` desplegado) y calibrar `DESIGN_SIMILARITY_THRESHOLD` (0,90) con los puntajes reales; si la corrección se traba, cortar pasada la ronda 2 |
 | [ ] | Habilitar el PO como decisor de las diferencias de diseño | Hoy `DESIGN_MISMATCH_DECIDER` solo admite `FOUNDER`; falta el camino del PO (responde con `format`, sin `tools`; Java aplica por `DesignDecisionService.decide`, validando `decidedBy`) cuando se activen los demás modelos |
 | [ ] | El segundo front pide cambios en los archivos de entrada | Con Mila y Orion juntos, el segundo no puede cambiar `lib/main.dart`/`pubspec.yaml`; debería pedirlos en su resultado y Java aplicarlos (como las dependencias) |
 | [ ] | Etapa 2 (esqueleto 2D) y etapa 3 (Blender + Godot 3D) del front | Juegos: personajes y ambientes con `Skeleton2D`/`Polygon2D`/`AnimationPlayer` (frontera con Kael por decidir) y scripts `bpy` sin pantalla con imagen nueva del sandbox |
